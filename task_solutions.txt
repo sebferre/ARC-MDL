@@ -1,0 +1,11 @@
+
+# ba97ae07.json (292/400 training)
+
+BUILD
+   rectangle(RA',XA1,YA1,XA2,YA2,ColA)
+   rectangle(RB',XB1,YB1,XB2,YB2,ColB)
+   on(RB',RA')
+WHERE
+   rectangle(RA,XA1,YA1,XA2,YA2,ColA)
+   rectangle(RB,XB1,YB1,XB2,YB2,ColB)
+   on(RA,RB)
