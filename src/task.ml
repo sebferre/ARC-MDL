@@ -2,6 +2,18 @@
 (* as represented in JSON files *)
 
 type color = int
+
+let black = 0
+let blue = 1
+let red = 2
+let green = 3
+let yellow = 4
+let grey = 5
+let pink = 6
+let orange = 7
+let cyan = 8
+let brown = 9
+	       
 type grid = { width : int; height : int; matrix : color array array }
 type pair = { input : grid; output : grid }
 type task = { train : pair list; test : pair list }
@@ -52,11 +64,43 @@ and pp_pair pair =
   pp_grid pair.input;
   print_endline "===>";
   pp_grid pair.output
+and pp_grids grids =
+  let max_height =
+    List.fold_left (fun res g -> max res g.height) 0 grids in
+  for i = 0 to max_height - 1 do
+    List.iter
+      (fun g ->
+       for j = 0 to g.width - 1 do
+	 if i < g.height
+	 then pp_color g.matrix.(i).(j)
+	 else pp_blank ()
+       done;
+       print_string "   ")
+      grids;
+    print_newline ()
+  done
 and pp_grid grid =
   for i = 0 to grid.height - 1 do
     for j = 0 to grid.width - 1 do
-      print_int grid.matrix.(i).(j);
-      print_char ' '
+      pp_color grid.matrix.(i).(j)
     done;
     print_newline ()
   done
+and pp_blank () =
+  print_string "  "
+and pp_color c =
+  let open ANSITerminal in
+  let style, str =
+    match c with
+    | 0 -> [on_black], "  "
+    | 1 -> [on_blue], "  "
+    | 2 -> [on_red], "  "
+    | 3 -> [on_green], "  "
+    | 4 -> [on_yellow], "  "
+    | 5 -> [black; on_white], "##"
+    | 6 -> [on_magenta], "  "
+    | 7 -> [red; on_yellow], "##"
+    | 8 -> [on_cyan], "  "
+    | 9 -> [green; on_red], "##"
+    | _ -> invalid_arg "Invalid color code" in
+  print_string style str
