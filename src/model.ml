@@ -55,12 +55,10 @@ let rec eval_expr : type a. a kind -> def list -> a expr -> a =
 type pixel = int * int * color (* x, y, col *)
 				
 type grid_model =
-  | Background of { height: int expr;
+  | Background of { height: int expr; (* one-color background *)
 		    width: int expr;
-		    color: color expr;
-		    layers: layer list }
-and layer =
-  | Single of shape
+		    color: color expr }
+  | AddShape of shape * grid_model (* shape on top of grid_model *)
 and shape =
   | Point of { offset_i: int expr;
 	       offset_j: int expr;
@@ -76,25 +74,24 @@ type grid_data =
   { params: def list;
     delta: pixel list }
 
-let rec apply_grid (m : grid_model) (params : def list) : grid =
+let rec apply_grid_model (m : grid_model) (params : def list) : grid =
   match m with
-  | Background { height; width; color; layers } ->
+  | Background { height; width; color } ->
      let height = eval_expr Int params height in
      let width = eval_expr Int params width in
      let matrix = Array.make_matrix height width (eval_expr Color params color) in
-     let g : grid = { height; width; matrix } in
-     layers |> List.iter (fun l -> apply_layer l params g);
+     { height; width; matrix }
+  | AddShape (sh,m1) ->
+     let g = apply_grid_model m1 params in
+     apply_shape sh params g;
      g
-and apply_layer (l : layer) params g : unit =
-  match l with
-  | Single sh -> apply_shape sh params g
 and apply_shape (sh : shape) params g : unit =
   match sh with
   | Point {offset_i; offset_j; color} ->
      let i = eval_expr Int params offset_i in
      let j = eval_expr Int params offset_j in
      let c = eval_expr Color params color in
-     g.matrix.(i).(j) <- c
+     set_pixel g i j c
   | Rectangle {height; width; offset_i; offset_j; color; filled} ->
      let h = eval_expr Int params height in
      let w = eval_expr Int params width in
@@ -107,15 +104,15 @@ and apply_shape (sh : shape) params g : unit =
      for i = mini to maxi do
        for j = minj to maxj do
 	 if f || i=mini || i=maxi || j=minj || j=maxj then
-	   g.matrix.(i).(j) <- c
+	   set_pixel g i j c
        done;
      done
 	   
 
 let write_grid (m : grid_model) (d : grid_data) : grid =
-  let g = apply_grid m d.params in
+  let g = apply_grid_model m d.params in
   List.iter
-    (fun (i,j,c) -> g.matrix.(i).(j) <- c)
+    (fun (i,j,c) -> set_pixel g i j c)
     d.delta;
   g
 

@@ -15,6 +15,12 @@ let cyan = 8
 let brown = 9
 	       
 type grid = { width : int; height : int; matrix : color array array }
+
+let set_pixel grid i j c =
+  if i >= 0 && i < grid.height &&
+       j >= 0 && j < grid.width then
+    grid.matrix.(i).(j) <- c
+	      
 type pair = { input : grid; output : grid }
 type task = { train : pair list; test : pair list }
 

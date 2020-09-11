@@ -58,29 +58,29 @@ let tsol_ba97ae07 =
     task = from_file (file_of_name name);
     model =
       { input_pattern =
-	  Background
-	    { height = Var "H";
-	      width = Var "W";
-	      color = Const 0;
-	      layers =
-		[ Single (Rectangle { height = Var "H1"; width = Var "W1";
-				      offset_i = Var "I1"; offset_j = Var "J1";
-				      color = Var "C1"; filled = Const true });
-		  Single (Rectangle { height = Var "H2"; width = Var "W2";
-				      offset_i = Var "I2"; offset_j = Var "J2";
-				      color = Var "C2"; filled = Const true }) ] };
-	output_template =
-	  Background
-	    { height = Var "H";
-	      width = Var "W";
-	      color = Const 0;
-	      layers = (* swapping the two input rectangles *)
-		[ Single (Rectangle { height = Var "H2"; width = Var "W2";
-				      offset_i = Var "I2"; offset_j = Var "J2";
-				      color = Var "C2"; filled = Const true });
-		  Single (Rectangle { height = Var "H1"; width = Var "W1";
-				      offset_i = Var "I1"; offset_j = Var "J1";
-				      color = Var "C1"; filled = Const true }) ] };
+	  AddShape
+	    (Rectangle { height = Var "H2"; width = Var "W2";
+			 offset_i = Var "I2"; offset_j = Var "J2";
+			 color = Var "C2"; filled = Const true },
+	     AddShape
+	       (Rectangle { height = Var "H1"; width = Var "W1";
+			    offset_i = Var "I1"; offset_j = Var "J1";
+			    color = Var "C1"; filled = Const true },
+		Background { height = Var "H";
+			     width = Var "W";
+			     color = Const 0 }));
+	output_template = (* swapping the two rectangles *)
+	  AddShape
+	    (Rectangle { height = Var "H1"; width = Var "W1";
+			 offset_i = Var "I1"; offset_j = Var "J1";
+			 color = Var "C1"; filled = Const true },
+	     AddShape
+	       (Rectangle { height = Var "H2" (* error *); width = Var "W2";
+			    offset_i = Var "I2"; offset_j = Var "J2";
+			    color = Var "C2"; filled = Const true },
+		Background { height = Var "H";
+			     width = Var "W";
+			     color = Const 0 }));
       };
     train_data =
       [ { params = [ dint "H" 13; dint "W" 13;
