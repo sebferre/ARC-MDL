@@ -6,3 +6,5 @@
 *.cmxa
 *.byte
 old/
+main
+test
