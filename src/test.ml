@@ -11,7 +11,7 @@ type task_solution =
   }
 
 let print_grid_mismatch name ~grid ~derived_grid : unit =
-  let diff = diff_grid derived_grid grid in
+  let diff = Grid.diff derived_grid grid in
   match diff with
   | None ->
      Printf.printf "Grid %s: OK\n" name
@@ -20,7 +20,7 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
 		   name src_height src_width tgt_height tgt_width
   | Some (Grid_diff_pixels {height; width; pixels}) ->
      Printf.printf "Grid %s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
-     pp_grids [derived_grid; grid]
+     Grid.pp_grids [derived_grid; grid]
     
 let check_write_grid grid_name grid_model grid_data grid =
   let derived_grid = write_grid grid_model grid_data in
@@ -48,6 +48,18 @@ let check_task (tsol : task_solution) : unit =
 
 
 (* ============================================================ *)
+
+(* conventional colors like in web app *)
+let black = 0
+let blue = 1
+let red = 2
+let green = 3
+let yellow = 4
+let grey = 5
+let pink = 6
+let orange = 7
+let cyan = 8
+let brown = 9	       
 
 let file_of_name name =
   "/local/ferre/data/tasks/ARC/data/training/" ^ name ^ ".json"

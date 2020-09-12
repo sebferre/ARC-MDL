@@ -1,5 +1,5 @@
 
-SRC=task.cmo model.cmo decision.cmo
+SRC=grid.cmo task.cmo model.cmo decision.cmo
 
 FLAGS= -package yojson,ppx_deriving_yojson,ANSITerminal
 
