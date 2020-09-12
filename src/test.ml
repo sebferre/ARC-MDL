@@ -39,8 +39,7 @@ let check_task (tsol : task_solution) : unit =
      incr cpt;
      let _ =
        let parts = Grid.segment_by_color input in
-       Grid.pp_grids
-	 (input :: List.map (fun p -> Grid.part_as_grid input p) parts) in
+       Grid.pp_parts input parts in
      (* checking that input pattern and grid data match input grid *)
      check_write_grid (tsol.name ^ "-input--" ^ string_of_int !cpt)
 		tsol.model.input_pattern gd input;

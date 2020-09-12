@@ -136,6 +136,16 @@ let part_as_grid (g : t) (p : part) : t =
     (fun (i,j) -> set_pixel gp i j col)
     p.pixels;
   gp
+
+let pp_parts (g : t) (ps : part list) : unit =
+  List.iter
+    (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d] "
+			    p.mini p.minj
+			    p.maxi p.maxj
+			    (List.length p.pixels))
+    ps;
+  print_newline ();
+  pp_grids (g :: List.map (part_as_grid g) ps)
 	      
 let segment_by_color (g : t) : part list =
   let h, w = g.height, g.width in
