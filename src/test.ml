@@ -37,6 +37,10 @@ let check_task (tsol : task_solution) : unit =
   List.iter2
     (fun {input; output} gd ->
      incr cpt;
+     let _ =
+       let parts = Grid.segment_by_color input in
+       Grid.pp_grids
+	 (input :: List.map (fun p -> Grid.part_as_grid input p) parts) in
      (* checking that input pattern and grid data match input grid *)
      check_write_grid (tsol.name ^ "-input--" ^ string_of_int !cpt)
 		tsol.model.input_pattern gd input;
@@ -48,18 +52,6 @@ let check_task (tsol : task_solution) : unit =
 
 
 (* ============================================================ *)
-
-(* conventional colors like in web app *)
-let black = 0
-let blue = 1
-let red = 2
-let green = 3
-let yellow = 4
-let grey = 5
-let pink = 6
-let orange = 7
-let cyan = 8
-let brown = 9	       
 
 let file_of_name name =
   "/local/ferre/data/tasks/ARC/data/training/" ^ name ^ ".json"
@@ -96,25 +88,25 @@ let tsol_ba97ae07 =
       };
     train_data =
       [ { params = [ dint "H" 13; dint "W" 13;
-		     dint "H1" 3; dint "W1" 13; dint "I1" 3; dint "J1" 0; dcolor "C1" green;
-		     dint "H2" 13; dint "W2" 2; dint "I2" 0; dint "J2" 3; dcolor "C2" cyan ];
+		     dint "H1" 3; dint "W1" 13; dint "I1" 3; dint "J1" 0; dcolor "C1" Grid.green;
+		     dint "H2" 13; dint "W2" 2; dint "I2" 0; dint "J2" 3; dcolor "C2" Grid.cyan ];
 	  delta = [] };
 	{ params = [ dint "H" 7; dint "W" 9;
-		     dint "H1" 7; dint "W1" 2; dint "I1" 0; dint "J1" 2; dcolor "C1" pink;
-		     dint "H2" 1; dint "W2" 9; dint "I2" 3; dint "J2" 0; dcolor "C2" blue ];
+		     dint "H1" 7; dint "W1" 2; dint "I1" 0; dint "J1" 2; dcolor "C1" Grid.pink;
+		     dint "H2" 1; dint "W2" 9; dint "I2" 3; dint "J2" 0; dcolor "C2" Grid.blue ];
 	  delta = [] };
 	{ params = [ dint "H" 8; dint "W" 7;
-		     dint "H1" 8; dint "W1" 1; dint "I1" 0; dint "J1" 2; dcolor "C1" blue;
-		     dint "H2" 1; dint "W2" 7; dint "I2" 3; dint "J2" 0; dcolor "C2" orange ];
+		     dint "H1" 8; dint "W1" 1; dint "I1" 0; dint "J1" 2; dcolor "C1" Grid.blue;
+		     dint "H2" 1; dint "W2" 7; dint "I2" 3; dint "J2" 0; dcolor "C2" Grid.orange ];
 	  delta = [] };
 	{ params = [ dint "H" 8; dint "W" 6;
-		     dint "H1" 1; dint "W1" 6; dint "I1" 4; dint "J1" 0; dcolor "C1" red;
-		     dint "H2" 8; dint "W2" 1; dint "I2" 0; dint "J2" 1; dcolor "C2" green ];
+		     dint "H1" 1; dint "W1" 6; dint "I1" 4; dint "J1" 0; dcolor "C1" Grid.red;
+		     dint "H2" 8; dint "W2" 1; dint "I2" 0; dint "J2" 1; dcolor "C2" Grid.green ];
 	  delta = [] } ];
     test_data =
       [ { params = [ dint "H" 11; dint "W" 6;
-		     dint "H1" 2; dint "W1" 6; dint "I1" 2; dint "J1" 0; dcolor "C1" grey;
-		     dint "H2" 11; dint "W2" 2; dint "I2" 0; dint "J2" 2; dcolor "C2" yellow ];
+		     dint "H1" 2; dint "W1" 6; dint "I1" 2; dint "J1" 0; dcolor "C1" Grid.grey;
+		     dint "H2" 11; dint "W2" 2; dint "I2" 0; dint "J2" 2; dcolor "C2" Grid.yellow ];
 	  delta = [] } ];
   }
 let _ = check_task tsol_ba97ae07

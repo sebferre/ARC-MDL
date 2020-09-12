@@ -59,3 +59,9 @@ WHERE
    col(0,col=C0)
    col(1,col=C1)
    col(2,col=C2)
+
+
+# e5062a87.json
+
+- error in output of training example 2
+  - there is a missing occurrence of the red shape at the top
