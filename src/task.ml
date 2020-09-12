@@ -15,12 +15,21 @@ let cyan = 8
 let brown = 9
 	       
 type grid = { width : int; height : int; matrix : color array array }
-
+type pixel = int * int * color (* x, y, col *)
+				
 let set_pixel grid i j c =
   if i >= 0 && i < grid.height &&
        j >= 0 && j < grid.width then
     grid.matrix.(i).(j) <- c
-	      
+
+let iter_pixels f grid =
+  let mat = grid.matrix in
+  for i = 0 to grid.height - 1 do
+    for j = 0 to grid.width - 1 do
+      f i j mat.(i).(j)
+    done
+  done
+			     
 type pair = { input : grid; output : grid }
 type task = { train : pair list; test : pair list }
 
