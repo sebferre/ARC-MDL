@@ -13,9 +13,28 @@ let rec task_of_json : Yojson.Safe.t -> task = function
 and pair_of_json : Yojson.Safe.t -> pair = function
   | `Assoc ["input", input; "output", output]
   | `Assoc ["output", output; "input", input] ->
-     { input = Grid.of_json input;
-       output = Grid.of_json output }
+     { input = grid_of_json input;
+       output = grid_of_json output }
   | _ -> invalid_arg "Invalid JSON pair"
+and grid_of_json : Yojson.Safe.t -> Grid.t = function
+  | `List (`List row::_ as rows) ->
+     let height = List.length rows in
+     let width = List.length row in
+     let grid = Grid.make height width 0 in
+     List.iteri
+       (fun i ->
+	function
+	| `List cells ->
+	   List.iteri
+	     (fun j ->
+	      function
+	      | `Int col -> Grid.set_pixel grid i j col
+	      | _ -> invalid_arg "Invalid JSON grid color")
+	     cells
+	| _ -> invalid_arg "Invalid JSON grid row")
+       rows;
+     grid
+  | _ -> invalid_arg "Invalid JSON grid"
 
 let from_file (filename : string) : task =
   let json = Yojson.Safe.from_file filename in
