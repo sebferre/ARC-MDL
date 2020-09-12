@@ -146,22 +146,21 @@ let rec parse_expr : type a. a kind -> a -> a expr -> def list -> def list parse
 	  Result.Ok (set_var_def k v (Const c0) params) )
   | _ -> invalid_arg "Unexpected expression in grid model"
 
-let rec parse_grid_model (g : Grid.t) (m : grid_model) (gd : grid_data) (mask : Grid.mask) : (grid_data * Grid.mask) parse_result =
+let rec parse_grid_model (g : Grid.t) (m : grid_model) (gd : grid_data) (mask : Grid.Mask.t) : (grid_data * Grid.Mask.t) parse_result =
   match m with
   | Background {height; width; color} ->
      let new_params = ref gd.params in
      let new_delta = ref gd.delta in
      Grid.iter_pixels
        (fun i j c ->
-	if mask.(i).(j)
+	if Grid.Mask.mem i j mask
 	then
 	  match parse_expr Color c color !new_params with
 	  (* TODO: choose majority color instead of first matching *)
 	  | Result.Ok params -> new_params := params
-	  | Result.Error _ -> new_delta := (i,j,c)::!new_delta
-	else mask.(i).(j) <- false)
+	  | Result.Error _ -> new_delta := (i,j,c)::!new_delta)
        g;
-     let new_mask = Grid.make_mask g.height g.width false in
+     let new_mask = Grid.Mask.empty in
      Result.Ok ({ params = (!new_params); delta = (!new_delta) }, new_mask)
   | AddShape (sh,m1) ->
      Result.bind
@@ -173,7 +172,7 @@ and parse_shape g (sh : shape) gd mask =
   | Rectangle {height; width; offset_i; offset_j; color; filled} -> raise TODO
 	      
 let read_grid (g : Grid.t) (m : grid_model) : grid_data parse_result =
-  let mask0 = Grid.make_mask g.height g.width true in
+  let mask0 = Grid.Mask.full g.height g.width in
   let gd0 = { params = []; delta = [] } in
   Result.bind
     (parse_grid_model g m gd0 mask0)

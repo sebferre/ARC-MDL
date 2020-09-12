@@ -117,32 +117,55 @@ let diff (source : t) (target : t) : diff option =
 
 (* grid masks *)
 
-type mask = bool array array (* to identify active pixels in a same-size grid *)
+module Intrel2 = Intrel2.Intmap
 
-let make_mask height width b =
-  Array.make_matrix height width b
+module Mask = (* to identify active pixels in a same-size grid *)
+  struct
+    include Intrel2
+
+    let full height width =
+      let res = ref Intrel2.empty in
+      for i = 0 to height - 1 do
+	for j = 0 to width - 1 do
+	  res := Intrel2.add i j !res
+	done
+      done;
+      !res
+  end
 
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;
 	      minj : int; maxj : int;
 	      color : color;
-	      pixels : (int * int) list }
+	      nb_pixels : int;
+	      pixels : Mask.t }
 
 let part_as_grid (g : t) (p : part) : t =
   let gp = make g.height g.width no_color in
   let col = p.color in
-  List.iter
-    (fun (i,j) -> set_pixel gp i j col)
+  Intrel2.iter
+    (fun i j -> set_pixel gp i j col)
     p.pixels;
   gp
 
+let merge_parts (p1 : part) (p2 : part) : part =
+  assert (p1.color = p2.color);
+  { mini = min p1.mini p2.mini;
+    maxi = max p1.maxi p2.maxi;
+    minj = min p1.minj p2.minj;
+    maxj = max p1.maxj p2.maxj;
+    color = p1.color;
+    nb_pixels = p1.nb_pixels + p2.nb_pixels;
+    pixels = Mask.union p1.pixels p2.pixels }
+    
 let pp_parts (g : t) (ps : part list) : unit =
   List.iter
-    (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d] "
+    (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d/%d] "
 			    p.mini p.minj
 			    p.maxi p.maxj
-			    (List.length p.pixels))
+			    p.nb_pixels
+			    ((p.maxi-p.mini+1) * (p.maxj-p.minj+1)))
     ps;
   print_newline ();
   pp_grids (g :: List.map (part_as_grid g) ps)
@@ -154,16 +177,8 @@ let segment_by_color (g : t) : part list =
 	~init_val:
 	{ mini=h-1; maxi=0;
 	  minj=w-1; maxj=0;
-	  color=0; pixels=[] }
-	~merge_val:
-	(fun p1 p2 ->
-	 assert (p1.color = p2.color);
-	 { mini = min p1.mini p2.mini;
-	   maxi = max p1.maxi p2.maxi;
-	   minj = min p1.minj p2.minj;
-	   maxj = max p1.maxj p2.maxj;
-	   color = p1.color;
-	   pixels = p1.pixels @ p2.pixels })
+	  color=0; nb_pixels=0; pixels=Mask.empty }
+	~merge_val:merge_parts
   in
   let mat = g.matrix in
   (* setting initial val of each pixel *)
@@ -174,7 +189,8 @@ let segment_by_color (g : t) : part list =
 		 { mini=i; maxi=i;
 		   minj=j; maxj=j;
 		   color=mat.{i,j};
-		   pixels=[coord] }
+		   nb_pixels=1;
+		   pixels=Mask.singleton i j }
     done
   done;
   (* merging adjacent pixels with same color *)
