@@ -17,7 +17,7 @@ WHERE
 BUILD
    grid(M,N,black)
    rectangle-non-filled(0,0,M-1,N-1,cyan)
-where
+WHERE
    grid(M,N,black)
 
 # 6f8cd79b.json (289/400 training)
@@ -65,3 +65,17 @@ WHERE
 
 - error in output of training example 2
   - there is a missing occurrence of the red shape at the top
+
+# 1caeab9d.json
+
+BUILD
+   same 3 rectangles at same col but all on same row of the blue rectangle
+WHERE
+   3 same-size rectangles with colors red, blue, yellow
+
+
+# 7f4411dc.json
+
+good example for denoizing rectangles
+
+

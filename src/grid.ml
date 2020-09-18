@@ -16,7 +16,9 @@ let cyan = 8
 let brown = 9	       
 
 let no_color = 10
-	       
+
+let nb_color = 10
+		 
 type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 	       
 type t = { height : int; (* equals Array2.dim1 matrix *)
@@ -158,6 +160,11 @@ let merge_parts (p1 : part) (p2 : part) : part =
     color = p1.color;
     nb_pixels = p1.nb_pixels + p2.nb_pixels;
     pixels = Mask.union p1.pixels p2.pixels }
+
+let merge_part_list (ps : part list) : part =
+  match ps with
+  | [] -> invalid_arg "Grid.merge_part_list: empty list"
+  | p1::ps1 -> List.fold_left merge_parts p1 ps1
     
 let pp_parts (g : t) (ps : part list) : unit =
   List.iter
@@ -211,3 +218,75 @@ let segment_by_color (g : t) : part list =
   fm#fold
     (fun _ part res -> part::res)
     []
+
+
+(* locating shapes *)
+
+type rectangle = { height: int; width: int;
+		   offset_i: int; offset_j: int;
+		   color: color;
+		   mask : Mask.t; (* all pixels covered by the shape, including the delta *)
+		   delta : pixel list }
+
+let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option =
+  let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
+  let area = h * w in
+  let valid_area = ref 0 in
+  let r_mask = ref p.pixels in
+  let delta = ref [] in
+  for i = p.mini to p.maxi do
+    for j = p.minj to p.maxj do
+      if Mask.mem i j mask
+      then (
+	r_mask := Mask.add i j !r_mask;
+	let c = g.matrix.{i,j} in
+	if  c = p.color
+	then incr valid_area
+	else delta := (i,j,c)::!delta )
+      else incr valid_area (* out-of-mask pixels are hidden behind another object *)
+    done
+  done;
+  if !valid_area >= 3 * area / 4
+  then Some { height = p.maxi-p.mini+1;
+	      width = p.maxj-p.minj+1;
+	      offset_i = p.mini;
+	      offset_j = p.minj;
+	      color = p.color;
+	      mask = (!r_mask);
+	      delta = (!delta) }
+  else None
+      
+let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
+  let h_sets =
+    (* grouping same-color parts spanning same rows *)
+    Common.group_by
+      (fun part -> part.mini, part.maxi, part.color)
+      parts in
+  let v_sets =
+    (* grouping same-color parts spanning same cols *)
+    Common.group_by
+      (fun part -> part.minj, part.maxj, part.color)
+      parts in
+  let res = [] in
+  let res =
+    List.fold_left
+      (fun res (_, ps) ->
+       assert (ps <> []);
+       let mp = merge_part_list ps in
+       match rectangle_opt_of_part g mask mp with
+       | Some r -> r::res
+       | None -> res)
+      res h_sets in
+  let res =
+    List.fold_left
+      (fun res (_, ps) ->
+       match ps with
+       | _::_::_ -> (* at least two parts to avoid redundancy with h_sets *)
+	  let mp = merge_part_list ps in
+	  ( match rectangle_opt_of_part g mask mp with
+	    | Some r -> r::res
+	    | None -> res )
+       | _ -> res)
+      res v_sets in
+  res
+

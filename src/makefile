@@ -1,5 +1,5 @@
 
-OBJ=bintree.cmo myseq.cmo common.cmo iterator.cmo find_merge.cmo intmap.cmo lSet.cmo cis.cmo intset.cmo intrel2.cmo
+OBJ=bintree.cmo myseq.cmo common.cmo mdl.cmo iterator.cmo find_merge.cmo intmap.cmo lSet.cmo cis.cmo intset.cmo intrel2.cmo
 SRC=grid.cmo task.cmo model.cmo decision.cmo
 
 FLAGS= -I ../../lib -package str,num,yojson,ppx_deriving_yojson,ANSITerminal

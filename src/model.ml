@@ -17,7 +17,22 @@ type _ kind =
   | Bool : bool kind
   | Int : int kind
   | Color : Grid.color kind
-					    
+
+let rec pp_expr : type a. a kind -> a expr -> unit =
+  fun k e ->
+  match k, e with
+  | _, Var v -> print_string v
+  | Bool, Const c -> print_string (if c then "true" else "false")
+  | Int, Const c -> print_int c
+  | Color, Const c -> print_int c
+  | _, Plus (e1,e2) -> pp_expr k e1; print_char '+'; pp_expr k e2
+  | _, If (cond,e1,e2) ->
+     print_string "if "; pp_expr Bool cond;
+     print_string " then "; pp_expr k e1;
+     print_string " else "; pp_expr k e2
+
+exception ComplexExpr (* when neither a Var nor a Const *)
+				    
 type def =
   | DBool of bool var * bool expr (* flags *)
   | DInt of int var * int expr (* positions, sizes, and cardinals *)
@@ -26,7 +41,13 @@ type def =
 let dbool v b = DBool (v, Const b)
 let dint v i = DInt (v, Const i)
 let dcolor v c = DColor (v, Const c)
-				
+
+let pp_def : def -> unit =
+  function
+  | DBool (v,e) -> print_string v; print_char '='; pp_expr Bool e
+  | DInt (v,e) -> print_string v; print_char '='; pp_expr Int e
+  | DColor (v,e) -> print_string v; print_char '='; pp_expr Color e
+			
 exception Unbound_var of string
 				
 let rec get_var_def : type a. a kind -> a var -> def list -> a expr =
@@ -57,7 +78,11 @@ let rec eval_expr : type a. a kind -> def list -> a expr -> a =
      if eval_expr Bool params cond
      then eval_expr k params e1
      else eval_expr k params e2
-				
+
+let eval_var : type a. a kind -> def list -> a var -> a =
+  fun k params v ->
+  let e = get_var_def k v params in
+  eval_expr k params e
 
 (* grid models *)
 (* ----------- *)
@@ -82,6 +107,22 @@ type grid_data =
   { params: def list;
     delta: Grid.pixel list }
 
+let pp_params params =
+  params
+  |> List.sort Stdlib.compare
+  |> List.iter (fun def -> print_char ' '; pp_def def);
+  print_newline ()
+    
+let pp_delta delta =
+  delta
+  |> List.sort Stdlib.compare
+  |> List.iter (fun (i,j,c) -> Printf.printf " (%d,%d)=%d" i j c);
+  print_newline ()
+    
+let pp_grid_data gd =
+  print_string "params:"; pp_params gd.params;
+  print_string "delta:"; pp_delta gd.delta
+    
 (* writing grids from models *)
     
 let rec apply_grid_model (m : grid_model) (params : def list) : Grid.t =
@@ -144,41 +185,98 @@ let rec parse_expr : type a. a kind -> a -> a expr -> def list -> def list parse
        with
        | Unbound_var _ ->
 	  Result.Ok (set_var_def k v (Const c0) params) )
-  | _ -> invalid_arg "Unexpected expression in grid model"
+  | _ -> raise ComplexExpr
 
-let rec parse_grid_model (g : Grid.t) (m : grid_model) (gd : grid_data) (mask : Grid.Mask.t) : (grid_data * Grid.Mask.t) parse_result =
+let rec parse_expr_list : type a. a kind -> (a * a expr) list -> def list -> def list parse_result =
+  fun k lce params ->
+  match lce with
+  | [] -> Result.Ok params
+  | (c,e)::lce1 ->
+     Result.bind
+       (parse_expr k c e params)
+       (fun params -> parse_expr_list k lce1 params)
+		     
+let rec parse_grid_model (g : Grid.t) (m : grid_model) (gd : grid_data) (mask : Grid.Mask.t) (parts : Grid.part list) : (grid_data * Grid.Mask.t * Grid.part list) parse_result =
   match m with
   | Background {height; width; color} ->
-     let new_params = ref gd.params in
-     let new_delta = ref gd.delta in
-     Grid.iter_pixels
-       (fun i j c ->
-	if Grid.Mask.mem i j mask
-	then
-	  match parse_expr Color c color !new_params with
-	  (* TODO: choose majority color instead of first matching *)
-	  | Result.Ok params -> new_params := params
-	  | Result.Error _ -> new_delta := (i,j,c)::!new_delta)
-       g;
-     let new_mask = Grid.Mask.empty in
-     Result.Ok ({ params = (!new_params); delta = (!new_delta) }, new_mask)
-  | AddShape (sh,m1) ->
      Result.bind
-       (parse_shape g sh gd mask)
-       (fun (gd,mask) -> parse_grid_model g m1 gd mask)
-and parse_shape g (sh : shape) gd mask =
+       (parse_expr_list Int [g.height, height; g.width, width] gd.params)
+       (fun new_params ->
+	let new_params = ref new_params in
+	let new_delta = ref gd.delta in
+	Grid.iter_pixels
+	  (fun i j c ->
+	   if Grid.Mask.mem i j mask
+	   then
+	     match parse_expr Color c color !new_params with
+	     (* TODO: choose majority color instead of first matching *)
+	     | Result.Ok params -> new_params := params
+	     | Result.Error _ -> new_delta := (i,j,c)::!new_delta)
+	  g;
+	let new_mask = Grid.Mask.empty in
+	let new_parts = [] in
+	Result.Ok ({ params = (!new_params); delta = (!new_delta) }, new_mask, new_parts))
+  | AddShape (sh,m1) ->
+     parse_shape
+       g sh gd mask parts
+       (fun (gd,mask,parts) ->
+	parse_grid_model g m1 gd mask parts)
+and parse_shape g (sh : shape) gd mask parts kont =
   match sh with
   | Point {offset_i; offset_j; color} -> raise TODO
-  | Rectangle {height; width; offset_i; offset_j; color; filled} -> raise TODO
+  | Rectangle {height; width;
+	       offset_i; offset_j;
+	       color; filled} ->
+     let lr = Grid.rectangles g mask parts in
+     let _, res =
+       List.fold_left
+	 (fun (min_d, res) r ->
+	  let new_res =
+	    Result.bind
+	      (parse_expr_list
+		 Int
+		 [r.Grid.height, height;
+		  r.width, width;
+		  r.offset_i, offset_i;
+		  r.offset_j, offset_j]
+		 gd.params)
+	      (fun new_params ->
+	       Result.bind
+		 (parse_expr Color r.color color new_params)
+		 (fun new_params ->
+		  Result.bind
+		    (parse_expr Bool true filled new_params)
+		    (fun new_params ->
+		     let new_gd = { params = new_params;
+				    delta = r.delta @ gd.delta } in
+		     let new_mask = Grid.Mask.diff mask r.mask in
+		     let new_parts =
+		       List.filter
+			 (fun p ->
+			  Grid.Mask.is_empty
+			    (Grid.Mask.diff p.Grid.pixels mask))
+			 parts in
+		     kont (new_gd, new_mask, new_parts)))) in
+	  match new_res with
+	  | Result.Ok (new_gd,_,_) ->
+	     let d = List.length new_gd.delta in
+	     if d < min_d
+	     then d, new_res
+	     else min_d, res
+	  | Result.Error _ -> min_d, res)
+	 (max_int, Result.Error "no matching rectangle")
+	 lr in
+     res
 	      
-let read_grid (g : Grid.t) (m : grid_model) : grid_data parse_result =
-  let mask0 = Grid.Mask.full g.height g.width in
+let read_grid (g : Grid.t) (m : grid_model) : grid_data =
   let gd0 = { params = []; delta = [] } in
-  Result.bind
-    (parse_grid_model g m gd0 mask0)
-    (fun (gd,mask) -> Result.Ok gd)
-	      
-  
+  let mask0 = Grid.Mask.full g.height g.width in
+  let parts0 = Grid.segment_by_color g in
+  match parse_grid_model g m gd0 mask0 parts0 with
+  | Result.Ok (gd,mask,parts) -> gd
+  | Result.Error msg -> failwith ("Model.read_grid: " ^ msg)
+
+
 (* input->output models *)
     
 type model =
@@ -187,6 +285,145 @@ type model =
   }
 
 
+(* description lengths *)
+
+type 'a code = 'a -> Mdl.bits
+
+let void_code : 'a code = fun _ -> 0.
+	
+let l_color : Grid.color -> Mdl.bits =
+  fun _ -> Mdl.Code.uniform Grid.nb_color
+let l_background_color : Grid.color -> Mdl.bits =
+  function
+  | 0 -> Mdl.Code.usage 0.91
+  | c ->
+     if c > 0 && c < 10 (* 9 colors *)
+     then Mdl.Code.usage 0.01
+     else invalid_arg "Unexpected color"
+
+
+type 'a staged_code = Mdl.bits (* model proper *) * 'a code (* data dependent *)
+
+let (+!) l1 (l2,c2) = (l1+.l2, c2)
+let (+?) (l1,c1) (l2,c2) = (l1+.l2, (fun params -> c1 params +. c2 params))
+		      
+let l_expr : type a. a kind -> code:a code -> a expr -> def list staged_code =
+  fun k ~code e ->
+  match k, e with
+  | _, Var v ->
+     1.,
+     (fun params -> code (eval_var k params v))
+  | Bool, Const c ->
+     1. +. code c,
+     void_code
+  | Int, Const c ->
+     1. +. code c,
+     void_code
+  | Color, Const c ->
+     1. +. code c,
+     void_code
+  | _ -> raise ComplexExpr
+
+(* coding offset given bound *)
+let l_position ~(bound : int expr) (offset : int expr) : def list staged_code =
+  (* TODO: is there a better encoding of choice between Var and Const ? *)
+  match bound, offset with
+  | Const b, Const o ->
+     1. +. Mdl.Code.uniform b,
+     void_code
+  | Var _, Const o ->
+     1. +. Mdl.Code.universal_int_star o,
+     void_code
+  | _, Var _ ->
+     1.,
+     (fun params ->
+      let b = eval_expr Int params bound in
+      Mdl.Code.uniform b)
+  | _ -> raise ComplexExpr
+
+(* coding offset and size given bound *)
+let l_slice ~(bound : int expr) ~(offset : int expr) ~(size: int expr) : def list staged_code =
+  match bound, offset, size with
+  | Const b, Const o, Const s ->
+     2. +. Mdl.Code.uniform (b * (b + 1) / 2), (* number of ways to choose o in [0..b-1], and s in [1..b] *)
+     void_code  
+  | Const b, Const o, Var _ ->
+     2. +. Mdl.Code.uniform b,
+     (fun params -> Mdl.Code.uniform (b - o))
+  | Const b, Var _, Const s ->
+     2. +. Mdl.Code.uniform b,
+     (fun params -> Mdl.Code.uniform (b - s + 1))
+  | Var _, Const o, Const s ->
+     2. +. Mdl.Code.universal_int_star o +. Mdl.Code.universal_int_plus s,
+     void_code
+  | Var vb, Const o, Var _ ->
+     2. +. Mdl.Code.universal_int_star o,
+     (fun params ->
+      let b = eval_var Int params vb in
+      Mdl.Code.uniform (b - o))
+  | Var vb, Var _, Const s ->
+     2. +. Mdl.Code.universal_int_plus s,
+     (fun params ->
+      let b = eval_var Int params vb in
+      Mdl.Code.uniform (b - s + 1))				       
+  | _, Var _, Var _ ->
+     2.,
+     (fun params ->
+      let b = eval_expr Int params bound in
+      Mdl.Code.uniform (b * (b + 1) / 2))
+  | _ -> raise ComplexExpr
+		   
+let rec l_grid_model : grid_model -> def list staged_code * (int expr * int expr) =
+  function
+  | Background {height; width; color} ->
+     let l_code =
+       Mdl.Code.usage 0.5
+       +! l_expr Int height ~code:Mdl.Code.universal_int_plus
+       +? l_expr Int width ~code:Mdl.Code.universal_int_plus
+       +? l_expr Color color ~code:l_background_color in
+     l_code, (height,width)
+  | AddShape (sh,m1) ->
+     let l_code1, hw1 = l_grid_model m1 in
+     let l_code =
+       Mdl.Code.usage 0.5
+       +! l_code1
+       +? l_shape ~hw:hw1 sh in
+     l_code, hw1
+and l_shape ~(hw : int expr * int expr) : shape -> def list staged_code =
+  let h, w = hw in
+  function
+  | Point {offset_i; offset_j; color} ->
+     Mdl.Code.usage 0.
+     +! l_position ~bound:h offset_i
+     +? l_position ~bound:w offset_j
+     +? l_expr Color color ~code:l_color
+  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+     Mdl.Code.usage 1.
+     +! l_slice ~bound:h ~size:height ~offset:offset_i
+     +? l_slice ~bound:w ~size:width ~offset:offset_j
+     +? l_expr Color color ~code:l_color
+	   
+	
+let l_grid_delta ~(height : int) ~(width : int) (pixels : Grid.pixel list) : Mdl.bits =
+  let area = height * width in
+  let nb_pixels = List.length pixels in
+  Mdl.Code.universal_int_star nb_pixels (* how many delta pixels there are *)
+  +. Mdl.Code.comb nb_pixels area (* where they are *)
+  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *)
+    
+let l_grid ~m ~(code_m : def list code) ~(hw : int expr * int expr) (g : Grid.t) : Mdl.bits =
+  let gd = read_grid g m in
+  let he, we = hw in
+  let h = eval_expr Int gd.params he in
+  let w = eval_expr Int gd.params we in
+  code_m gd.params
+  +. l_grid_delta ~height:h ~width:w gd.delta
+
+let l_mgrid_grids (m : grid_model) (grids : Grid.t list) : Mdl.bits * Mdl.bits * Mdl.bits (* model, data, model+data *) =
+  let (l_m, code_m), hw = l_grid_model m in
+  let l_d = Mdl.sum grids (fun g -> l_grid ~m ~code_m ~hw g) in
+  l_m, l_d, l_m +. l_d
+  
 (* naive *)
     
 type t = unit
