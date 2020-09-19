@@ -18,7 +18,22 @@ let brown = 9
 let no_color = 10
 
 let nb_color = 10
-		 
+
+let name_of_color : color -> string =
+  function
+  | 0 -> "black"
+  | 1 -> "blue"
+  | 2 -> "red"
+  | 3 -> "green"
+  | 4 -> "yellow"
+  | 5 -> "grey"
+  | 6 -> "pink"
+  | 7 -> "orange"
+  | 8 -> "cyan"
+  | 9 -> "brown"
+  | c -> "col" ^ string_of_int c
+
+
 type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 	       
 type t = { height : int; (* equals Array2.dim1 matrix *)

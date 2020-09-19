@@ -60,10 +60,10 @@ let check_read_input_grid grid_name grid grid_model grid_data =
 (* TODO: check_learn_model *)
 
 let print_dl_grids name grid_model grids : unit =
-  let lm, ld, lmd = Model.l_mgrid_grids grid_model grids in
+  let gds = List.map (fun g -> Model.read_grid g grid_model) grids in
+  let lm, ld, lmd = Model.l_grid_model_data grid_model gds in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
-  
-			   
+  		   
 let print_dl name model train : unit =
   let inputs = List.map (fun t -> t.Task.input) train in
   let outputs = List.map (fun t -> t.Task.output) train in
@@ -81,6 +81,7 @@ let check_task (tsol : task_solution) : unit =
   Printf.printf "Checking task %s: %d train, %d test\n"
 		tsol.name (List.length tsol.task.train) (List.length tsol.task.test);
   (* checking that input reading match input data *)
+  pp_model tsol.model;
   print_dl tsol.name tsol.model tsol.task.train;
   let cpt = ref 0 in
   List.iter2
