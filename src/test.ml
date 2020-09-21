@@ -15,7 +15,8 @@ let grid_model0 =
 	       width = Var "W";
 	       color = Const 0 }
 let model0 =
-  { input_pattern = grid_model0;
+  { genvar = Genvar.empty;
+    input_pattern = grid_model0;
     output_template = grid_model0 }
     
 let print_grid_mismatch name ~grid ~derived_grid : unit =
@@ -115,7 +116,8 @@ let tsol_ba97ae07 =
   { name;
     task = from_file (file_of_name name);
     model =
-      { input_pattern =
+      { genvar = Genvar.empty;
+	input_pattern =
 	  AddShape
 	    (Rectangle { height = Var "H2"; width = Var "W2";
 			 offset_i = Var "I2"; offset_j = Var "J2";

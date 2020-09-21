@@ -7,6 +7,26 @@ exception TODO
        
 type 'a var = string
 
+(* variable generator *)
+module Genvar =
+  struct
+    module M = Map.Make
+		 (struct
+		     type t = string
+		     let compare = Stdlib.compare
+		   end)
+    type t = int M.t
+    let empty = M.empty
+    let add_var (prefix : string) (gv : t) : string * t =
+      let c =
+	match M.find_opt prefix gv with
+	| Some c -> c
+	| None -> 0 in
+      let c1 = c+1 in
+      let v = prefix ^ string_of_int c1 in
+      v, M.add prefix c1 gv
+  end
+				
 type _ expr =
   | Var: 'a var -> 'a expr
   | Const : 'a -> 'a expr
@@ -17,6 +37,10 @@ type _ kind =
   | Bool : bool kind
   | Int : int kind
   | Color : Grid.color kind
+
+type (_,_) kind_comp =
+  | Same : ('a,'a) kind_comp
+  | Diff : ('a,'b) kind_comp
 
 let rec pp_expr : type a. a kind -> a expr -> unit =
   fun k e ->
@@ -31,6 +55,22 @@ let rec pp_expr : type a. a kind -> a expr -> unit =
      print_string " then "; pp_expr k e1;
      print_string " else "; pp_expr k e2
 
+let rec subst_expr : type a b. a kind -> a var -> a expr -> b kind -> b expr -> b expr =
+  fun k0 v0 e0 k e ->
+  match k0, k, e with
+  | Bool, Bool, Var v when v=v0 -> e0
+  | Int, Int, Var v when v=v0 -> e0
+  | Color, Color, Var v when v=v0 -> e0
+  | _, _, Var _ -> e
+  | _, _, Const _ -> e
+  | _, _, Plus (e1,e2) ->
+     Plus (subst_expr k0 v0 e0 k e1,
+	   subst_expr k0 v0 e0 k e2)
+  | _, _, If (cond,e1,e2) ->
+     If (subst_expr k0 v0 e0 Bool cond,
+	 subst_expr k0 v0 e0 k e1,
+	 subst_expr k0 v0 e0 k e2)
+	
 exception ComplexExpr (* when neither a Var nor a Const *)
 				    
 type def =
@@ -84,9 +124,23 @@ let eval_var : type a. a kind -> def list -> a var -> a =
   let e = get_var_def k v params in
   eval_expr k params e
 
+let inter_defs (ldefs : def list list) : def list =
+  match ldefs with
+  | [] -> invalid_arg "Model.inter_defs: empty list"
+  | defs::l1 ->
+     List.fold_left
+       (fun defs defs1 ->
+	List.filter
+	  (function
+	    | DBool (v,e) -> e = get_var_def Bool v defs1
+	    | DInt (v,e) -> e = get_var_def Int v defs1
+	    | DColor (v,e) -> e = get_var_def Color v defs1)	   
+	  defs)
+       defs l1
+	    
 (* grid models *)
 (* ----------- *)
-		    
+	    
 type grid_model =
   | Background of { height: int expr; (* one-color background *)
 		    width: int expr;
@@ -126,6 +180,31 @@ and pp_shape = function
      print_string ") with color "; pp_expr Color color;
      print_string " and filling "; pp_expr Bool filled
 
+let rec subst_grid_model : type a. a kind -> a var -> a expr -> grid_model -> grid_model =
+  fun k v e ->
+  function
+  | Background {height; width; color} ->
+     Background {height = subst_expr k v e Int height;
+		 width = subst_expr k v e Int width;
+		 color = subst_expr k v e Color color}
+  | AddShape (sh,m1) ->
+     AddShape (subst_shape k v e sh,
+	       subst_grid_model k v e m1)
+and subst_shape : type a. a kind -> a var -> a expr -> shape -> shape =
+  fun k v e ->
+  function
+  | Point {offset_i; offset_j; color} ->
+     Point {offset_i = subst_expr k v e Int offset_i;
+	    offset_j = subst_expr k v e Int offset_j;
+	    color = subst_expr k v e Color color}
+  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+     Rectangle {height = subst_expr k v e Int height;
+		width = subst_expr k v e Int width;
+		offset_i = subst_expr k v e Int offset_i;
+		offset_j = subst_expr k v e Int offset_j;
+		color = subst_expr k v e Color color;
+		filled = subst_expr k v e Bool filled}
+			      
 	   
 type grid_data =
   { params: def list;
@@ -149,7 +228,8 @@ let pp_grid_data gd =
 
 (* input->output models *)    
 type model =
-  { input_pattern : grid_model;
+  { genvar : Genvar.t;
+    input_pattern : grid_model;
     output_template : grid_model
   }
 
@@ -455,24 +535,32 @@ let l_grid_model_data (m : grid_model) (gds : grid_data list) : Mdl.bits * Mdl.b
 
 (* learning *)
 
-let grid_model0 =
-  Background { height = Var "H";
-	       width = Var "W";
-	       color = Var "C" }
+let grid_model0 gv =
+  let vH, gv = Genvar.add_var "H" gv in
+  let vW, gv = Genvar.add_var "W" gv in
+  let vC, gv = Genvar.add_var "C" gv in
+  let m =
+    Background { height = Var vH;
+		 width = Var vW;
+		 color = Var vC } in
+  gv, m
 	     
-let grid_model_refinements (m : grid_model) (gds : grid_data list) : grid_model Myseq.t =
+let grid_model_refinements (gv : Genvar.t) (m : grid_model) (gds : grid_data list) : (Genvar.t * grid_model) Myseq.t =
   raise TODO
 		     
-let learn_grid_model (grids : Grid.t list) : (grid_model * grid_data list * Mdl.bits) list =
+let learn_grid_model (grids : Grid.t list) (gv : Genvar.t)
+    : ((Genvar.t * grid_model) * grid_data list * Mdl.bits) list =
   Mdl.Strategy.beam
     ~beam_width:3
     ~refine_degree:3
-    ~m0:grid_model0
-    ~data:(fun m -> List.map (fun g -> read_grid g m) grids)
-    ~code:(fun m gds ->
+    ~m0:(grid_model0 gv)
+    ~data:(fun (gv,m) ->
+	   List.map (fun g -> read_grid g m) grids)
+    ~code:(fun (gv,m) gds ->
 	   let _, _, l = l_grid_model_data m gds in
 	   l)
-    ~refinements:(fun m gds -> grid_model_refinements m gds)
+    ~refinements:(fun (gv,m) gds ->
+		  grid_model_refinements gv m gds)
 		     
 (* naive *)
     
