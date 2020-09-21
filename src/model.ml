@@ -55,22 +55,6 @@ let rec pp_expr : type a. a kind -> a expr -> unit =
      print_string " then "; pp_expr k e1;
      print_string " else "; pp_expr k e2
 
-let rec subst_expr : type a b. a kind -> a var -> a expr -> b kind -> b expr -> b expr =
-  fun k0 v0 e0 k e ->
-  match k0, k, e with
-  | Bool, Bool, Var v when v=v0 -> e0
-  | Int, Int, Var v when v=v0 -> e0
-  | Color, Color, Var v when v=v0 -> e0
-  | _, _, Var _ -> e
-  | _, _, Const _ -> e
-  | _, _, Plus (e1,e2) ->
-     Plus (subst_expr k0 v0 e0 k e1,
-	   subst_expr k0 v0 e0 k e2)
-  | _, _, If (cond,e1,e2) ->
-     If (subst_expr k0 v0 e0 Bool cond,
-	 subst_expr k0 v0 e0 k e1,
-	 subst_expr k0 v0 e0 k e2)
-	
 exception ComplexExpr (* when neither a Var nor a Const *)
 				    
 type def =
@@ -98,6 +82,10 @@ let rec get_var_def : type a. a kind -> a var -> def list -> a expr =
   | Int, DInt (v1,e)::_ when v1 = v -> e
   | Color, DColor (v1,e)::_ when v1 = v -> e
   | _, _::defs1 -> get_var_def (k : a kind) v defs1
+let get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
+  fun k v defs ->
+  try Some (get_var_def k v defs)
+  with Unbound_var _ -> None
 
 let set_var_def : type a. a kind -> a var -> a expr -> def list -> def list =
   fun k v e defs ->
@@ -124,6 +112,22 @@ let eval_var : type a. a kind -> def list -> a var -> a =
   let e = get_var_def k v params in
   eval_expr k params e
 
+let rec subst_expr : type a. def list -> a kind -> a expr -> a expr =
+  fun params k e ->
+  match e with
+  | Var v ->
+     ( match get_var_def_opt k v params with
+       | Some e0 -> e0
+       | None -> e )
+  | Const _ -> e
+  | Plus (e1,e2) ->
+     Plus (subst_expr params k e1,
+	   subst_expr params k e2)
+  | If (cond,e1,e2) ->
+     If (subst_expr params Bool cond,
+	 subst_expr params k e1,
+	 subst_expr params k e2)
+	    
 let inter_defs (ldefs : def list list) : def list =
   match ldefs with
   | [] -> invalid_arg "Model.inter_defs: empty list"
@@ -180,30 +184,28 @@ and pp_shape = function
      print_string ") with color "; pp_expr Color color;
      print_string " and filling "; pp_expr Bool filled
 
-let rec subst_grid_model : type a. a kind -> a var -> a expr -> grid_model -> grid_model =
-  fun k v e ->
+let rec subst_grid_model (params : def list) : grid_model -> grid_model =
   function
   | Background {height; width; color} ->
-     Background {height = subst_expr k v e Int height;
-		 width = subst_expr k v e Int width;
-		 color = subst_expr k v e Color color}
+     Background {height = subst_expr params Int height;
+		 width = subst_expr params Int width;
+		 color = subst_expr params Color color}
   | AddShape (sh,m1) ->
-     AddShape (subst_shape k v e sh,
-	       subst_grid_model k v e m1)
-and subst_shape : type a. a kind -> a var -> a expr -> shape -> shape =
-  fun k v e ->
+     AddShape (subst_shape params sh,
+	       subst_grid_model params m1)
+and subst_shape (params : def list) : shape -> shape =
   function
   | Point {offset_i; offset_j; color} ->
-     Point {offset_i = subst_expr k v e Int offset_i;
-	    offset_j = subst_expr k v e Int offset_j;
-	    color = subst_expr k v e Color color}
+     Point {offset_i = subst_expr params Int offset_i;
+	    offset_j = subst_expr params Int offset_j;
+	    color = subst_expr params Color color}
   | Rectangle {height; width; offset_i; offset_j; color; filled} ->
-     Rectangle {height = subst_expr k v e Int height;
-		width = subst_expr k v e Int width;
-		offset_i = subst_expr k v e Int offset_i;
-		offset_j = subst_expr k v e Int offset_j;
-		color = subst_expr k v e Color color;
-		filled = subst_expr k v e Bool filled}
+     Rectangle {height = subst_expr params Int height;
+		width = subst_expr params Int width;
+		offset_i = subst_expr params Int offset_i;
+		offset_j = subst_expr params Int offset_j;
+		color = subst_expr params Color color;
+		filled = subst_expr params Bool filled}
 			      
 	   
 type grid_data =
@@ -295,12 +297,9 @@ let rec parse_expr : type a. a kind -> a -> a expr -> def list -> def list parse
      then Result.Ok params
      else Result.Error "value mismatch"
   | Var v ->
-     ( try
-	 let e1 = get_var_def k v params in
-	 parse_expr k c0 e1 params
-       with
-       | Unbound_var _ ->
-	  Result.Ok (set_var_def k v (Const c0) params) )
+     ( match get_var_def_opt k v params with
+       | Some e1 -> parse_expr k c0 e1 params
+       | None -> Result.Ok (set_var_def k v (Const c0) params) )
   | _ -> raise ComplexExpr
 
 let rec parse_expr_list : type a. a kind -> (a * a expr) list -> def list -> def list parse_result =
