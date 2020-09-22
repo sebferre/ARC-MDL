@@ -88,16 +88,16 @@ and pp_color c =
   let open ANSITerminal in
   let style, str =
     match c with
-    | 0 -> [on_black], "  "
-    | 1 -> [on_blue], "  "
-    | 2 -> [on_red], "  "
-    | 3 -> [on_green], "  "
-    | 4 -> [on_yellow], "  "
-    | 5 -> [black; on_white], "##"
-    | 6 -> [on_magenta], "  "
-    | 7 -> [red; on_yellow], "##"
-    | 8 -> [on_cyan], "  "
-    | 9 -> [green; on_red], "##"
+    | 0 -> [white; on_black], "0 "
+    | 1 -> [white; on_blue], "1 "
+    | 2 -> [white; on_red], "2 "
+    | 3 -> [white; on_green], "3 "
+    | 4 -> [white; on_yellow], "4 "
+    | 5 -> [black; on_white], "5#"
+    | 6 -> [white; on_magenta], "6 "
+    | 7 -> [red; on_yellow], "7#"
+    | 8 -> [white; on_cyan], "8 "
+    | 9 -> [green; on_red], "9#"
     | 10 -> [on_white], "  "
     | _ -> invalid_arg "Invalid color code" in
   print_string style str
@@ -261,7 +261,7 @@ let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option 
       else incr valid_area (* out-of-mask pixels are hidden behind another object *)
     done
   done;
-  if !valid_area >= 3 * area / 4
+  if !valid_area >= 1 * area / 2
   then Some { height = p.maxi-p.mini+1;
 	      width = p.maxj-p.minj+1;
 	      offset_i = p.mini;

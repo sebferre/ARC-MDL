@@ -17,7 +17,7 @@ module Genvar =
 		   end)
     type t = int M.t
     let empty = M.empty
-    let add_var (prefix : string) (gv : t) : string * t =
+    let add (prefix : string) (gv : t) : string * t =
       let c =
 	match M.find_opt prefix gv with
 	| Some c -> c
@@ -127,21 +127,7 @@ let rec subst_expr : type a. def list -> a kind -> a expr -> a expr =
      If (subst_expr params Bool cond,
 	 subst_expr params k e1,
 	 subst_expr params k e2)
-	    
-let inter_defs (ldefs : def list list) : def list =
-  match ldefs with
-  | [] -> invalid_arg "Model.inter_defs: empty list"
-  | defs::l1 ->
-     List.fold_left
-       (fun defs defs1 ->
-	List.filter
-	  (function
-	    | DBool (v,e) -> e = get_var_def Bool v defs1
-	    | DInt (v,e) -> e = get_var_def Int v defs1
-	    | DColor (v,e) -> e = get_var_def Color v defs1)	   
-	  defs)
-       defs l1
-	    
+
 (* grid models *)
 (* ----------- *)
 	    
@@ -221,7 +207,7 @@ let pp_params params =
 let pp_delta delta =
   delta
   |> List.sort Stdlib.compare
-  |> List.iter (fun (i,j,c) -> Printf.printf " (%d,%d)=%d" i j c);
+  |> List.iter (fun (i,j,c) -> Printf.printf " (%d,%d)=" i j; Grid.pp_color c);
   print_newline ()
     
 let pp_grid_data gd =
@@ -319,15 +305,28 @@ let rec parse_grid_model (g : Grid.t) (m : grid_model) (gd : grid_data) (mask : 
        (fun new_params ->
 	let new_params = ref new_params in
 	let new_delta = ref gd.delta in
-	Grid.iter_pixels
-	  (fun i j c ->
-	   if Grid.Mask.mem i j mask
-	   then
-	     match parse_expr Color c color !new_params with
-	     (* TODO: choose majority color instead of first matching *)
-	     | Result.Ok params -> new_params := params
-	     | Result.Error _ -> new_delta := (i,j,c)::!new_delta)
-	  g;
+	let bc = (* background color *)
+	  try eval_expr Color !new_params color
+	  with Unbound_var _ ->
+	    (* determining the majority color *)
+	    let color_counter = new Common.counter in
+	    Grid.Mask.iter
+	      (fun i j -> color_counter#add g.matrix.{i,j})
+	      mask;
+	    let bc =
+	      match color_counter#most_frequents with
+	      | _, bc::_ -> bc
+	      | _ -> Grid.black in
+	    (* setting the variable *)
+	    match parse_expr Color bc color !new_params with
+	    | Result.Ok params -> new_params := params; bc
+	    | Result.Error msg -> assert false in
+	(* adding mask pixels with other color than background to delta *)
+	Grid.Mask.iter
+	  (fun i j ->
+	   if g.matrix.{i,j} <> bc then
+	     new_delta := (i,j, g.matrix.{i,j})::!new_delta)
+	  mask;
 	let new_mask = Grid.Mask.empty in
 	let new_parts = [] in
 	Result.Ok ({ params = (!new_params); delta = (!new_delta) }, new_mask, new_parts))
@@ -383,22 +382,32 @@ and parse_shape g (sh : shape) gd mask parts kont =
 	 lr in
      res
 	      
-let read_grid (g : Grid.t) (m : grid_model) : grid_data =
+let read_grid (g : Grid.t) (m : grid_model) : grid_data parse_result =
   let gd0 = { params = []; delta = [] } in
   let mask0 = Grid.Mask.full g.height g.width in
   let parts0 = Grid.segment_by_color g in
-  match parse_grid_model g m gd0 mask0 parts0 with
-  | Result.Ok (gd,mask,parts) -> gd
-  | Result.Error msg -> failwith ("Model.read_grid: " ^ msg)
+  Result.bind
+    (parse_grid_model g m gd0 mask0 parts0)
+    (fun (gd,mask,parts) -> Result.Ok gd)
 
-
-
+let read_grids (grids: Grid.t list) (m : grid_model) : grid_data list option =
+  let r_gds = List.map (fun g -> read_grid g m) grids in
+  List.fold_right (* checking no errors, and aggregating *)
+    (fun r_gd res ->
+     match r_gd, res with
+     | Result.Ok gd, Some gds -> Some (gd::gds)
+     | _ -> None)
+    r_gds (Some [])
+    
 (* description lengths *)
 
 type 'a code = 'a -> Mdl.bits
 
 let void_code : 'a code = fun _ -> 0.
-	
+
+let l_bool : bool -> Mdl.bits =
+  fun _ -> 1.
+				     
 let l_color : Grid.color -> Mdl.bits =
   fun _ -> Mdl.Code.uniform Grid.nb_color
 let l_background_color : Grid.color -> Mdl.bits =
@@ -510,6 +519,7 @@ and l_shape ~(hw : int expr * int expr) : shape -> def list staged_code =
      +! l_slice ~bound:h ~size:height ~offset:offset_i
      +? l_slice ~bound:w ~size:width ~offset:offset_j
      +? l_expr Color color ~code:l_color
+     +? l_expr Bool filled ~code:l_bool
 	   
 	
 let l_grid_delta ~(height : int) ~(width : int) (pixels : Grid.pixel list) : Mdl.bits =
@@ -535,28 +545,82 @@ let l_grid_model_data (m : grid_model) (gds : grid_data list) : Mdl.bits * Mdl.b
 (* learning *)
 
 let grid_model0 gv =
-  let vH, gv = Genvar.add_var "H" gv in
-  let vW, gv = Genvar.add_var "W" gv in
-  let vC, gv = Genvar.add_var "C" gv in
+  let vH, gv = Genvar.add "H" gv in
+  let vW, gv = Genvar.add "W" gv in
+  let vC, gv = Genvar.add "C" gv in
   let m =
     Background { height = Var vH;
 		 width = Var vW;
 		 color = Var vC } in
   gv, m
-	     
+
+let model0 =
+  let gv = Genvar.empty in
+  let gv, mi = grid_model0 gv in
+  let gv, mo = grid_model0 gv in
+  { genvar = gv;
+    input_pattern = mi;
+    output_template = mo }
+	
+(* computing common definitions among a list of definition lists *)
+let inter_defs (ldefs : def list list) : def list =
+  match ldefs with
+  | [] -> invalid_arg "Model.inter_defs: empty list"
+  | defs::l1 ->
+     List.fold_left
+       (fun defs defs1 ->
+	List.filter
+	  (function
+	    | DBool (v,e) -> Some e = get_var_def_opt Bool v defs1
+	    | DInt (v,e) -> Some e = get_var_def_opt Int v defs1
+	    | DColor (v,e) -> Some e = get_var_def_opt Color v defs1)	   
+	  defs)
+       defs l1
+
+let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
+  Myseq.cons
+    (let vH, gv = Genvar.add "H" gv in
+     let vW, gv = Genvar.add "W" gv in
+     let vI, gv = Genvar.add "I" gv in
+     let vJ, gv = Genvar.add "J" gv in
+     let vC, gv = Genvar.add "C" gv in
+     let vF, gv = Genvar.add "F" gv in
+     let sh = Rectangle {height=Var vH; width=Var vW;
+			 offset_i=Var vI; offset_j=Var vJ;
+			 color=Var vC; filled=Var vF} in
+     gv, AddShape (sh,m))
+    (if max_depth = 0
+     then Myseq.empty
+     else
+       match m with
+       | Background _ -> Myseq.empty
+       | AddShape (sh1,m1) ->
+	  insert_a_shape ~max_depth:(max_depth - 1) gv m1
+	  |> Myseq.map (fun (gv,m1') -> (gv, AddShape (sh1,m1'))))
+       
 let grid_model_refinements (gv : Genvar.t) (m : grid_model) (gds : grid_data list) : (Genvar.t * grid_model) Myseq.t =
-  raise TODO
+  let common_params =
+    gds |> List.map (fun gd -> gd.params) |> inter_defs in
+  if common_params = []
+  then insert_a_shape gv m
+  else (
+    Myseq.cons
+      (gv, subst_grid_model common_params m)
+      (insert_a_shape gv m))
 		     
-let learn_grid_model (grids : Grid.t list) (gv : Genvar.t)
+let learn_grid_model ~beam_width ~refine_degree
+		     (grids : Grid.t list) (gv : Genvar.t)
     : ((Genvar.t * grid_model) * grid_data list * Mdl.bits) list =
   Mdl.Strategy.beam
-    ~beam_width:3
-    ~refine_degree:3
+    ~beam_width
+    ~refine_degree
     ~m0:(grid_model0 gv)
     ~data:(fun (gv,m) ->
-	   List.map (fun g -> read_grid g m) grids)
+	   read_grids grids m)
     ~code:(fun (gv,m) gds ->
+	   (*pp_grid_model m; print_newline ();*)
 	   let _, _, l = l_grid_model_data m gds in
+	   Printf.printf "DL = %.1f\n" l;
 	   l)
     ~refinements:(fun (gv,m) gds ->
 		  grid_model_refinements gv m gds)
