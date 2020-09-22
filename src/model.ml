@@ -26,17 +26,17 @@ module Genvar =
       let v = prefix ^ string_of_int c1 in
       v, M.add prefix c1 gv
   end
-				
+
 type _ expr =
   | Var: 'a var -> 'a expr
   | Const : 'a -> 'a expr
   | Plus: int expr * int expr -> int expr
   | If: bool expr * 'a expr * 'a expr -> 'a expr
-
+							    
 type _ kind =
-  | Bool : bool kind
-  | Int : int kind
-  | Color : Grid.color kind
+  | Bool : bool kind (* flags *)
+  | Int : int kind (* positions, lengths *)
+  | Color : Grid.color kind (* colors *)
 
 type (_,_) kind_comp =
   | Same : ('a,'a) kind_comp
@@ -57,20 +57,15 @@ let rec pp_expr : type a. a kind -> a expr -> unit =
 
 exception ComplexExpr (* when neither a Var nor a Const *)
 				    
-type def =
-  | DBool of bool var * bool expr (* flags *)
-  | DInt of int var * int expr (* positions, sizes, and cardinals *)
-  | DColor of Grid.color var * Grid.color expr
+type def = Def : 'a kind * 'a var * 'a expr -> def
 
-let dbool v b = DBool (v, Const b)
-let dint v i = DInt (v, Const i)
-let dcolor v c = DColor (v, Const c)
+let dbool v b = Def (Bool, v, Const b)
+let dint v i = Def (Int, v, Const i)
+let dcolor v c = Def (Color, v, Const c)
 
 let pp_def : def -> unit =
   function
-  | DBool (v,e) -> print_string v; print_char '='; pp_expr Bool e
-  | DInt (v,e) -> print_string v; print_char '='; pp_expr Int e
-  | DColor (v,e) -> print_string v; print_char '='; pp_expr Color e
+  | Def (k,v,e) -> print_string v; print_char '='; pp_expr k e
 			
 exception Unbound_var of string
 				
@@ -78,9 +73,9 @@ let rec get_var_def : type a. a kind -> a var -> def list -> a expr =
   fun k v defs ->
   match k, defs with
   | _, [] -> raise (Unbound_var v)
-  | Bool, DBool (v1,e)::_ when v1 = v -> e
-  | Int, DInt (v1,e)::_ when v1 = v -> e
-  | Color, DColor (v1,e)::_ when v1 = v -> e
+  | Bool, Def (Bool,v1,e)::_ when v1 = v -> e
+  | Int, Def (Int,v1,e)::_ when v1 = v -> e
+  | Color, Def (Color,v1,e)::_ when v1 = v -> e
   | _, _::defs1 -> get_var_def (k : a kind) v defs1
 let get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
   fun k v defs ->
@@ -89,10 +84,7 @@ let get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
 
 let set_var_def : type a. a kind -> a var -> a expr -> def list -> def list =
   fun k v e defs ->
-  match k with
-  | Bool -> DBool (v,e)::defs
-  | Int -> DInt (v,e)::defs
-  | Color -> DColor (v,e)::defs
+  Def (k,v,e)::defs
 			       
 let rec eval_expr : type a. a kind -> def list -> a expr -> a =
   fun k params e ->
@@ -217,8 +209,8 @@ let pp_grid_data gd =
 (* input->output models *)    
 type model =
   { genvar : Genvar.t;
-    input_pattern : grid_model;
-    output_template : grid_model
+    input_pattern : grid_model; (* only consts and vars allowed *)
+    output_template : grid_model (* complex expressions allowed *)
   }
 
 let pp_model m =
@@ -571,9 +563,7 @@ let inter_defs (ldefs : def list list) : def list =
        (fun defs defs1 ->
 	List.filter
 	  (function
-	    | DBool (v,e) -> Some e = get_var_def_opt Bool v defs1
-	    | DInt (v,e) -> Some e = get_var_def_opt Int v defs1
-	    | DColor (v,e) -> Some e = get_var_def_opt Color v defs1)	   
+	    | Def (k,v,e) -> Some e = get_var_def_opt k v defs1)
 	  defs)
        defs l1
 
