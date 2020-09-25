@@ -623,6 +623,40 @@ let inter_defs (ldefs : def list list) : def list =
 	  defs)
        defs l1
 
+let rec find_defs (egds : (env * grid_data) list) : def list =
+  (* find if some gd param unknowns can be replaced
+     by some expression over env vars *)
+  assert (egds <> []);
+  let es, gds = List.split egds in
+  let ps = List.map (fun gd -> gd.params) gds in
+  List.fold_left
+    (fun defs (Def (k,u,_)) ->
+     match find_defs_aux k u ps es with
+     | None -> defs
+     | Some d -> d::defs)
+    [] (List.hd ps)
+and find_defs_aux : type a. a kind -> a var -> params list -> env list -> def option =
+  fun k u ps es ->
+  (* unknown values *)
+  let u_cs = List.map (fun p -> eval_var p k u) ps in
+  (* env variables *)
+  let lv =
+    List.fold_left
+      (fun lv d ->
+       match k, d with
+       | Bool, Def (Bool,v,_) -> v::lv
+       | Int, Def (Int,v,_) -> v::lv
+       | Color, Def (Color,v,_) -> v::lv
+       | _ -> lv)
+      [] (List.hd es) in
+  let v_opt =
+    List.find_opt
+      (fun v ->
+       let v_cs = List.map (fun env -> eval_var env k v) es in
+       v_cs = u_cs)
+      lv in
+  v_opt |> Option.map (fun v -> Def (k,u,Var v))
+       
 let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
   Myseq.cons
     (let vH, gv = Genvar.add "H" gv in
@@ -647,11 +681,13 @@ let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
 let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (Genvar.t * grid_model) Myseq.t =
   let common_params =
     egds |> List.map (fun (env,gd) -> gd.params) |> inter_defs in
-  if common_params = []
+  let env_defs = find_defs egds in
+  let defs = common_params @ env_defs in (* TODO: beware of collisions *)
+  if defs = []
   then insert_a_shape gv m
   else (
     Myseq.cons
-      (gv, subst_grid_model common_params m)
+      (gv, subst_grid_model defs m)
       (insert_a_shape gv m))
 		     
 let learn_grid_model ~beam_width ~refine_degree ~env_size

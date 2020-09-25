@@ -78,4 +78,7 @@ WHERE
 
 good example for denoizing rectangles
 
+# b94a9452.json
 
+good example with rectangles
+maybe nested rectangles
