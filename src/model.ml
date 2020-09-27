@@ -35,7 +35,8 @@ type _ kind = (* kinds of values manipulated by models *)
 type _ expr =
   | Var: 'a var -> 'a expr
   | Const : 'a -> 'a expr
-  | Plus: int expr * int expr -> int expr
+  | Plus : int expr * int expr -> int expr
+  | Minus : int expr * int expr -> int expr
   | If: bool expr * 'a expr * 'a expr -> 'a expr
 							    
 exception ComplexExpr (* when neither a Var nor a Const *)
@@ -52,7 +53,8 @@ let rec pp_expr : type a. a kind -> a expr -> unit =
   match e with
   | Var v -> print_string v
   | Const c -> pp_const k c
-  | Plus (e1,e2) -> pp_expr k e1; print_char '+'; pp_expr k e2
+  | Plus (e1,e2) -> pp_expr k e1; print_string " + "; pp_expr k e2
+  | Minus (e1,e2) -> pp_expr k e1; print_string " - "; pp_expr k e2
   | If (cond,e1,e2) ->
      print_string "if "; pp_expr Bool cond;
      print_string " then "; pp_expr k e1;
@@ -99,6 +101,9 @@ let rec subst_expr : type a. def list -> a kind -> a expr -> a expr =
   | Plus (e1,e2) ->
      Plus (subst_expr env k e1,
 	   subst_expr env k e2)
+  | Minus (e1,e2) ->
+     Minus (subst_expr env k e1,
+	    subst_expr env k e2)
   | If (cond,e1,e2) ->
      If (subst_expr env Bool cond,
 	 subst_expr env k e1,
@@ -117,6 +122,7 @@ let rec eval_expr : type a. def list -> a kind -> a expr -> a =
      eval_expr env k e
   | Const c -> c
   | Plus (e1,e2) -> eval_expr env k e1 + eval_expr env k e2
+  | Minus (e1,e2) -> eval_expr env k e1 - eval_expr env k e2
   | If (cond,e1,e2) ->
      if eval_expr env Bool cond
      then eval_expr env k e1
@@ -264,7 +270,7 @@ let pp_model m =
 				 
 (* writing grids from models *)
     
-let rec apply_grid_model (m : grid_model) (env : env) (params : params) : Grid.t =
+let rec apply_grid_model (m : grid_model) (env : env) (params : params) : Grid.t (* may raise Unbound_var *) =
   match m with
   | Background { height; width; color } ->
      Grid.make
@@ -470,24 +476,30 @@ type staged_code = Mdl.bits (* model proper *) * (env -> params -> Mdl.bits) (* 
 let no_staged_code = fun env params -> 0.
 let (+!) l1 (l2,c2) = (l1+.l2, c2)
 let (+?) (l1,c1) (l2,c2) = (l1+.l2, (fun env params -> c1 env params +. c2 env params))
-		      
-let l_expr : type a. env_size:int -> a kind -> code:a code -> a expr -> Mdl.bits =
+
+let rec l_expr : type a. env_size:int -> a kind -> code:a code -> a expr -> Mdl.bits =
   fun ~env_size k ~code e ->
-  match k, e with
-  | _, Var v ->
-     Mdl.Code.usage 0.5
+  match e with
+  | Var v ->
+     Mdl.Code.usage 0.3
      +. Mdl.Code.uniform env_size (* identifying one env var *)
-  (* the 3 following cases count as one => same usage *)
-  | Bool, Const c -> Mdl.Code.usage 0.5 +. code c
-  | Int, Const c -> Mdl.Code.usage 0.5 +. code c
-  | Color, Const c -> Mdl.Code.usage 0.5 +. code c
+  | Const c ->
+     Mdl.Code.usage 0.5 +. code c
+  | Plus (e1,e2) ->
+     Mdl.Code.usage 0.1
+     +. l_expr ~env_size k ~code e1
+     +. l_expr ~env_size k ~code e2
+  | Minus (e1,e2) ->
+     Mdl.Code.usage 0.1
+     +. l_expr ~env_size k ~code e1
+     +. l_expr ~env_size k ~code e2
   | _ -> raise TODO
 
 let l_attr : type a. env_size:int -> a kind -> a attr -> code:a code -> u_code:(env -> params -> a code) -> staged_code =
   fun ~env_size k a ~code ~u_code ->
   match a with
-  | U u -> 1., (fun env params -> u_code env params (eval_var params k u))
-  | E e -> 1. +. l_expr ~env_size k ~code e, no_staged_code
+  | U u -> Mdl.Code.usage 0.5, (fun env params -> u_code env params (eval_var params k u))
+  | E e -> Mdl.Code.usage 0.5 +. l_expr ~env_size k ~code e, no_staged_code
 
 		       
 let l_bool ~env_size (bool : bool attr) : staged_code =
@@ -631,11 +643,11 @@ let rec find_defs (egds : (env * grid_data) list) : def list =
   let ps = List.map (fun gd -> gd.params) gds in
   List.fold_left
     (fun defs (Def (k,u,_)) ->
-     match find_defs_aux k u ps es with
+     match find_defs_u k u ps es with
      | None -> defs
      | Some d -> d::defs)
     [] (List.hd ps)
-and find_defs_aux : type a. a kind -> a var -> params list -> env list -> def option =
+and find_defs_u : type a. a kind -> a var -> params list -> env list -> def option =
   fun k u ps es ->
   (* unknown values *)
   let u_cs = List.map (fun p -> eval_var p k u) ps in
@@ -649,13 +661,55 @@ and find_defs_aux : type a. a kind -> a var -> params list -> env list -> def op
        | Color, Def (Color,v,_) -> v::lv
        | _ -> lv)
       [] (List.hd es) in
-  let v_opt =
-    List.find_opt
-      (fun v ->
-       let v_cs = List.map (fun env -> eval_var env k v) es in
-       v_cs = u_cs)
-      lv in
-  v_opt |> Option.map (fun v -> Def (k,u,Var v))
+  let seq_v : a var Myseq.t = Myseq.from_list lv in
+  let le1 : a expr Myseq.t =    
+    seq_v
+    |> Myseq.map (fun v -> Var v) in
+  let le2 : a expr Myseq.t =
+    match k with
+    | Int ->
+       seq_v
+       |> Myseq.flat_map
+	    (fun v1 ->
+	     seq_v
+	     |> Myseq.flat_map
+		  (fun v2 ->
+		   Myseq.cons
+		     (Minus (Var v1, Var v2))
+		     (Myseq.cons
+			(Plus (Var v1, Var v2))
+			Myseq.empty)))
+    | _ -> Myseq.empty in
+  let le3 : a expr Myseq.t =
+    match k with
+    | Int ->
+       seq_v
+       |> Myseq.flat_map
+	    (fun v ->
+	     Myseq.range 1 3
+	     |> Myseq.flat_map
+		  (fun c ->
+		   Myseq.cons
+		     (Plus (Var v, Const c))
+		     (Myseq.cons
+			(Minus (Var v, Const c))
+			Myseq.empty)))
+    | _ -> Myseq.empty in
+  let le = Myseq.concat [le1; le2; le3] in
+  match
+    le
+    |> Myseq.find_map
+	 (fun e ->
+	  let e_cs = List.map (fun env -> eval_expr env k e) es in
+	  if e_cs = u_cs
+	  then (
+	    print_string "EQ: ?"; print_string u;
+	    print_string " = "; pp_expr k e; print_newline ();
+	    Some e
+	  )
+	  else None) with
+  | None -> None
+  | Some (e,_next) -> Some (Def (k,u,e))
        
 let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
   Myseq.cons
@@ -701,9 +755,9 @@ let learn_grid_model ~beam_width ~refine_degree ~env_size
 	   read_grids egrids m)
     ~code:(fun (gv,m) egds ->
 	   (*pp_grid_model m; print_newline ();*)
-	   let _, _, l = l_grid_model_data ~env_size m egds in
-	   Printf.printf "DL = %.1f\n" l;
-	   l)
+	   let lm, ld, lmd = l_grid_model_data ~env_size m egds in
+	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
+	   ld) (* tentative: ignoring model cost *)
     ~refinements:(fun (gv,m) egds ->
 		  grid_model_refinements gv m egds)
 		     
