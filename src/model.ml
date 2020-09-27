@@ -588,7 +588,9 @@ let l_grid_data ~m ~(code_m : env -> params -> Mdl.bits) ~(hw : int attr * int a
 
 let l_grid_model_data ~env_size (m : grid_model) (egds : (env * grid_data) list) : Mdl.bits * Mdl.bits * Mdl.bits (* model, data, model+data *) =
   let (l_m, code_m), hw = l_grid_model ~env_size m in
-  let l_d = Mdl.sum egds (fun (env,gd) -> l_grid_data ~m ~code_m ~hw env gd) in
+  let l_d =
+    10. (* because given training examples are only a sample from a class of grids *)
+    *. Mdl.sum egds (fun (env,gd) -> l_grid_data ~m ~code_m ~hw env gd) in
   l_m, l_d, l_m +. l_d
 
 let l_model_data (m : model) (egds_out : (env * grid_data) list) : Mdl.bits * Mdl.bits * Mdl.bits =
@@ -599,7 +601,9 @@ let l_model_data (m : model) (egds_out : (env * grid_data) list) : Mdl.bits * Md
   let (l_mi, code_mi), hwi = l_grid_model ~env_size:0 m.input_pattern in
   let (l_mo, code_mo), hwo = l_grid_model ~env_size m.output_template in
   let l_m = l_mi +. l_mo in
-  let l_d = Mdl.sum egds_out (fun (env,gdo) -> l_grid_data ~m:m.output_template ~code_m:code_mo ~hw:hwo env gdo) in
+  let l_d =
+    10. (* because given training examples are only a sample from a class of grids *)
+    *. Mdl.sum egds_out (fun (env,gdo) -> l_grid_data ~m:m.output_template ~code_m:code_mo ~hw:hwo env gdo) in
   l_m, l_d, l_m +. l_d
 
 (* learning *)
@@ -622,20 +626,30 @@ let model0 =
     input_pattern = mi;
     output_template = mo }
 
-type refinement =
-  | RInit
+type grid_refinement =
+  | RGridInit
   | RDefs of def list
   | RShape of int * shape
 
-let pp_refinement = function
-  | RInit -> ()
+let pp_grid_refinement = function
+  | RGridInit -> ()
   | RDefs ds ->
      print_string "DEFS:";
      ds |> List.iter (fun d -> print_char ' '; pp_def d)
   | RShape (depth,sh) ->
      Printf.printf "SHAPE (depth=%d): " depth;
      pp_shape sh
-	       
+
+type refinement =
+  | RInit
+  | Rinput of grid_refinement
+  | Routput of grid_refinement
+
+let pp_refinement = function
+  | RInit -> ()
+  | Rinput r -> print_string "IN  "; pp_grid_refinement r
+  | Routput r -> print_string "OUT "; pp_grid_refinement r
+	      
 (* computing common definitions among a list of definition lists *)
 let inter_defs (ldefs : def list list) : def list =
   match ldefs with
@@ -721,7 +735,7 @@ and find_defs_u : type a. a kind -> a var -> params list -> env list -> def opti
   | None -> None
   | Some (e,_next) -> Some (Def (k,u,e))
        
-let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (refinement * Genvar.t * grid_model) Myseq.t =
+let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (grid_refinement * Genvar.t * grid_model) Myseq.t =
   Myseq.cons
     (let vH, gv = Genvar.add "H" gv in
      let vW, gv = Genvar.add "W" gv in
@@ -742,7 +756,7 @@ let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (refinement * Genvar
 	  insert_a_shape ~max_depth ~depth:(depth + 1) gv m1
 	  |> Myseq.map (fun (r,gv,m1') -> (r, gv, AddShape (sh1,m1'))))
 
-let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (refinement * Genvar.t * grid_model) Myseq.t =
+let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (grid_refinement * Genvar.t * grid_model) Myseq.t =
   let common_params =
     egds |> List.map (fun (env,gd) -> gd.params) |> inter_defs in
   let env_defs = find_defs egds in
@@ -756,23 +770,71 @@ let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_
 		     
 let learn_grid_model ~beam_width ~refine_degree ~env_size
 		     (egrids : (env * Grid.t) list) (gv : Genvar.t)
-    : ((refinement * Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list =
+    : ((grid_refinement * Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list =
   Mdl.Strategy.beam
     ~beam_width
     ~refine_degree
     ~m0:(let gv,m = grid_model0 gv in
-	 RInit, gv, m)
+	 RGridInit, gv, m)
     ~data:(fun (r,gv,m) ->
 	   read_grids egrids m)
     ~code:(fun (r,gv,m) egds ->
 	   (*pp_grid_model m; print_newline ();*)
-	   pp_refinement r; print_newline ();
+	   pp_grid_refinement r; print_newline ();
 	   let lm, ld, lmd = l_grid_model_data ~env_size m egds in
 	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
-	   ld) (* tentative: ignoring model cost *)
+	   ld) (* lmd :TODO: tentative: ignoring model cost *)
     ~refinements:(fun (r,gv,m) egds ->
 		  grid_model_refinements gv m egds)
-		     
+
+let learn_model
+      ~beam_width ~refine_degree
+      (data : Task.pair list)
+    : ((refinement * model) * ((env * grid_data) list * int * (env * grid_data) list) * Mdl.bits) list =
+  let egis = List.map (fun {input} -> env0, input) data in
+  Mdl.Strategy.beam
+    ~beam_width
+    ~refine_degree
+    ~m0:(RInit, model0)
+    ~data:(fun (r,m) ->
+	   match read_grids egis m.input_pattern with
+	   | None -> None
+	   | Some egdis ->
+	      let egos =
+		List.map2
+		  (fun (envi,gdi) {output} -> gdi.params, output)
+		  egdis data in
+	      match read_grids egos m.output_template with
+	      | None -> None
+	      | Some egdos ->
+		 let env_size =
+		   match egdos with
+		   | (envo,gdo)::_ -> List.length envo
+		   | _ -> assert false in
+		 Some (egdis, env_size, egdos))
+    ~code:(fun (r,m) (egdis,env_size,egdos) ->
+	   pp_refinement r; print_newline ();
+	   let lmi, ldi, lmdi =
+	     l_grid_model_data ~env_size:0 m.input_pattern egdis in
+	   let lmo, ldo, lmdo =
+	     l_grid_model_data ~env_size m.output_template egdos in
+	   let lm, ld, lmd = lmi+.lmo, ldi+.ldo, lmdi+.lmdo in
+	   Printf.printf "    l = %.1f + %.1f = %.1f\n" lm ld lmd;
+	   lmd)
+    ~refinements:
+    (fun (r,m) (egdis,env_size,egdos) ->
+     Myseq.concat
+       [
+	 grid_model_refinements m.genvar m.output_template egdos
+	 |> Myseq.map
+	      (fun (gr,gv',mo') ->
+	       (Routput gr, {m with genvar=gv'; output_template=mo'}));
+	 grid_model_refinements m.genvar m.input_pattern egdis
+	 |> Myseq.map
+	      (fun (gr,gv',mi') ->
+	       (Rinput gr, {m with genvar=gv'; input_pattern=mi'}));
+       ])
+    
 (* naive *)
     
 type t = unit

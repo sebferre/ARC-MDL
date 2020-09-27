@@ -136,52 +136,33 @@ let print_l_task_model name task model =
   print_l_md  "function    M " model egdos
 	      
 (* monitoring learning *)
-	      
+
 let print_learned_model name train : unit =
-  let gv = Genvar.empty in
-  let egis = List.map (fun t -> env0, t.input) train in
-  print_endline "Learning the input model...";
-  let lmi = Model.learn_grid_model
-	      ~beam_width:1 ~refine_degree:1 ~env_size:0
-	      egis gv in
-  match lmi with
+  let lm = Model.learn_model
+	     ~beam_width:1 ~refine_degree:1
+	     train in
+  match lm with
   | [] -> assert false
-  | ((_,gv,mi), egdis, li)::_ ->
-     let egos =
-       List.map2
-	 (fun (envi,gdi) t -> gdi.params, t.output)
-	 (* input params is output env *)
-	 egdis train in
-     let env_size =
-       match egos with
-       | (envo,_)::_ -> List.length envo
-       | _ -> assert false in
-     print_endline "Learning the output model...";
-     let lmo = Model.learn_grid_model
-		 ~beam_width:1 ~refine_degree:1 ~env_size
-		 egos gv in
-     match lmo with
-     | [] -> assert false
-     | ((_,gv,mo), egdos, lo)::_ ->
-	let m = { genvar=gv; input_pattern=mi; output_template=mo} in
-	print_endline "\nLearned model:";
-	pp_model m;
-	print_newline ();
-	print_l_gmd "input  with Mi" ~env_size:0 mi egdis;
-	print_l_gmd "output with Mo" ~env_size mo egdos;
-	print_l_md  "function    M " m egdos;
+  | ((_,m), (egdis,env_size,egdos), l)::_ ->
+     print_endline "\nLearned model:";
+     pp_model m;
+     print_newline ();
+     print_l_gmd "input  with Mi" ~env_size:0 m.input_pattern egdis;
+     print_l_gmd "output with Mo" ~env_size m.output_template egdos;
+     print_l_md  "function    M " m egdos;
 	
-	print_endline "\nInput/output grids data";
-	List.combine (List.combine egdis egdos) egos
-	|> List.iter
-	     (fun (((_envi,gdi),(_envo,gdo)), (envo,go)) ->
-	      Model.pp_grid_data gdi;
-	      Model.pp_grid_data gdo;
-	      (try check_write_grid "predicted" mo envo grid_data0 go
-	       with Unbound_var _ ->
-		 print_endline "Grid predicted: unbound parameter");
-	      print_newline ())
-	
+     print_endline "\nInput/output grids data";
+     let egdios = List.combine egdis egdos in
+     List.iter2
+       (fun ((_envi,gdi),(envo,gdo)) {output} ->
+	Model.pp_grid_data gdi;
+	Model.pp_grid_data gdo;
+	(try check_write_grid "predicted" m.output_template envo grid_data0 output
+	 with Unbound_var _ ->
+	   print_endline "Grid predicted: unbound parameter");
+	print_newline ())
+       egdios train
+	      
 			   
 (* check task *)
 			   
@@ -309,5 +290,4 @@ let main_tasks names =
     (fun name -> check_task name (task_of_name name))
     names
 
-let _ = main_tasks solved_train_names
-		       
+let _ = main_tasks ["543a7ed5.json"]
