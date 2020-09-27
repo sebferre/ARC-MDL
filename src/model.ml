@@ -71,20 +71,14 @@ let pp_def : def -> unit =
   function
   | Def (k,v,e) -> print_string v; print_char '='; pp_expr k e
 			
-exception Unbound_var of string
-				
-let rec get_var_def : type a. a kind -> a var -> def list -> a expr =
+let rec get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
   fun k v defs ->
   match k, defs with
-  | _, [] -> raise (Unbound_var v)
-  | Bool, Def (Bool,v1,e)::_ when v1 = v -> e
-  | Int, Def (Int,v1,e)::_ when v1 = v -> e
-  | Color, Def (Color,v1,e)::_ when v1 = v -> e
-  | _, _::defs1 -> get_var_def (k : a kind) v defs1
-let get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
-  fun k v defs ->
-  try Some (get_var_def k v defs)
-  with Unbound_var _ -> None
+  | _, [] -> None
+  | Bool, Def (Bool,v1,e)::_ when v1 = v -> Some e
+  | Int, Def (Int,v1,e)::_ when v1 = v -> Some e
+  | Color, Def (Color,v1,e)::_ when v1 = v -> Some e
+  | _, _::defs1 -> get_var_def_opt (k : a kind) v defs1
 
 let set_var_def : type a. a kind -> a var -> a expr -> def list -> def list =
   fun k v e defs ->
@@ -114,12 +108,13 @@ type env = def list (* variable bindings *)
 
 let env0 = []
 	       
-let rec eval_expr : type a. def list -> a kind -> a expr -> a =
+let rec eval_expr : type a. def list -> a kind -> a expr -> a (* raises a fatal exception if some var undefined *) =
   fun env k e ->
   match e with
   | Var v ->
-     let e = get_var_def k v env in
-     eval_expr env k e
+     ( match get_var_def_opt k v env with
+       | Some e -> eval_expr env k e
+       | None -> invalid_arg ("Model.eval_expr: undefined var: " ^ v) )
   | Const c -> c
   | Plus (e1,e2) -> eval_expr env k e1 + eval_expr env k e2
   | Minus (e1,e2) -> eval_expr env k e1 - eval_expr env k e2
@@ -128,10 +123,11 @@ let rec eval_expr : type a. def list -> a kind -> a expr -> a =
      then eval_expr env k e1
      else eval_expr env k e2
 
-let eval_var : type a. def list -> a kind -> a var -> a =
+let eval_var : type a. def list -> a kind -> a var -> a (* raises a fatal exception if some var undefined *) =
   fun env k v ->
-  let e = get_var_def k v env in
-  eval_expr env k e
+  match get_var_def_opt k v env with
+  | Some e -> eval_expr env k e
+  | None -> invalid_arg ("Model.eval_var: undefined var: " ^ v)
 
 
 (* parameters *)
@@ -270,7 +266,7 @@ let pp_model m =
 				 
 (* writing grids from models *)
     
-let rec apply_grid_model (m : grid_model) (env : env) (params : params) : Grid.t (* may raise Unbound_var *) =
+let rec apply_grid_model (m : grid_model) (env : env) (params : params) : Grid.t =
   match m with
   | Background { height; width; color } ->
      Grid.make
@@ -359,21 +355,22 @@ let rec parse_grid_model
 	let new_params = ref new_params in
 	let new_delta = ref gd.delta in
 	let bc = (* background color *)
-	  try eval_attr env !new_params Color color
-	  with Unbound_var _ ->
+	  match color with
+	  | E e -> eval_expr env Color e
+	  | U u ->
 	    (* determining the majority color *)
-	    let color_counter = new Common.counter in
-	    Grid.Mask.iter
-	      (fun i j -> color_counter#add g.matrix.{i,j})
-	      mask;
-	    let bc =
-	      match color_counter#most_frequents with
-	      | _, bc::_ -> bc
-	      | _ -> Grid.black in
-	    (* setting the variable *)
-	    match parse_attr env Color bc color !new_params with
-	    | Result.Ok params -> new_params := params; bc
-	    | Result.Error msg -> assert false in
+	     let color_counter = new Common.counter in
+	     Grid.Mask.iter
+	       (fun i j -> color_counter#add g.matrix.{i,j})
+	       mask;
+	     let bc =
+	       match color_counter#most_frequents with
+	       | _, bc::_ -> bc
+	       | _ -> Grid.black in
+	     (* setting the variable *)
+	     match parse_attr env Color bc color !new_params with
+	     | Result.Ok params -> new_params := params; bc
+	     | Result.Error msg -> assert false in
 	(* adding mask pixels with other color than background to delta *)
 	Grid.Mask.iter
 	  (fun i j ->
@@ -797,6 +794,7 @@ let learn_model
     ~refine_degree
     ~m0:(RInit, model0)
     ~data:(fun (r,m) ->
+	   try
 	   match read_grids egis m.input_pattern with
 	   | None -> None
 	   | Some egdis ->
@@ -811,7 +809,11 @@ let learn_model
 		   match egdos with
 		   | (envo,gdo)::_ -> List.length envo
 		   | _ -> assert false in
-		 Some (egdis, env_size, egdos))
+		 Some (egdis, env_size, egdos)
+	   with exn ->
+	     print_endline (Printexc.to_string exn);
+	     pp_model m;
+	     raise exn)
     ~code:(fun (r,m) (egdis,env_size,egdos) ->
 	   pp_refinement r; print_newline ();
 	   let lmi, ldi, lmdi =

@@ -157,9 +157,7 @@ let print_learned_model name train : unit =
        (fun ((_envi,gdi),(envo,gdo)) {output} ->
 	Model.pp_grid_data gdi;
 	Model.pp_grid_data gdo;
-	(try check_write_grid "predicted" m.output_template envo grid_data0 output
-	 with Unbound_var _ ->
-	   print_endline "Grid predicted: unbound parameter");
+	check_write_grid "predicted" m.output_template envo grid_data0 output;
 	print_newline ())
        egdios train
 	      
