@@ -621,7 +621,21 @@ let model0 =
   { genvar = gv;
     input_pattern = mi;
     output_template = mo }
-	
+
+type refinement =
+  | RInit
+  | RDefs of def list
+  | RShape of int * shape
+
+let pp_refinement = function
+  | RInit -> ()
+  | RDefs ds ->
+     print_string "DEFS:";
+     ds |> List.iter (fun d -> print_char ' '; pp_def d)
+  | RShape (depth,sh) ->
+     Printf.printf "SHAPE (depth=%d): " depth;
+     pp_shape sh
+	       
 (* computing common definitions among a list of definition lists *)
 let inter_defs (ldefs : def list list) : def list =
   match ldefs with
@@ -702,16 +716,12 @@ and find_defs_u : type a. a kind -> a var -> params list -> env list -> def opti
 	 (fun e ->
 	  let e_cs = List.map (fun env -> eval_expr env k e) es in
 	  if e_cs = u_cs
-	  then (
-	    print_string "EQ: ?"; print_string u;
-	    print_string " = "; pp_expr k e; print_newline ();
-	    Some e
-	  )
+	  then Some e
 	  else None) with
   | None -> None
   | Some (e,_next) -> Some (Def (k,u,e))
        
-let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
+let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (refinement * Genvar.t * grid_model) Myseq.t =
   Myseq.cons
     (let vH, gv = Genvar.add "H" gv in
      let vW, gv = Genvar.add "W" gv in
@@ -722,17 +732,17 @@ let rec insert_a_shape ?(max_depth = 2) gv m : (Genvar.t * grid_model) Myseq.t =
      let sh = Rectangle {height=U vH; width=U vW;
 			 offset_i=U vI; offset_j=U vJ;
 			 color=U vC; filled=U vF} in
-     gv, AddShape (sh,m))
-    (if max_depth = 0
+     RShape (depth,sh), gv, AddShape (sh,m))
+    (if depth >= max_depth
      then Myseq.empty
      else
        match m with
        | Background _ -> Myseq.empty
        | AddShape (sh1,m1) ->
-	  insert_a_shape ~max_depth:(max_depth - 1) gv m1
-	  |> Myseq.map (fun (gv,m1') -> (gv, AddShape (sh1,m1'))))
-       
-let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (Genvar.t * grid_model) Myseq.t =
+	  insert_a_shape ~max_depth ~depth:(depth + 1) gv m1
+	  |> Myseq.map (fun (r,gv,m1') -> (r, gv, AddShape (sh1,m1'))))
+
+let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (refinement * Genvar.t * grid_model) Myseq.t =
   let common_params =
     egds |> List.map (fun (env,gd) -> gd.params) |> inter_defs in
   let env_defs = find_defs egds in
@@ -741,24 +751,26 @@ let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_
   then insert_a_shape gv m
   else (
     Myseq.cons
-      (gv, subst_grid_model defs m)
+      (RDefs defs, gv, subst_grid_model defs m)
       (insert_a_shape gv m))
 		     
 let learn_grid_model ~beam_width ~refine_degree ~env_size
 		     (egrids : (env * Grid.t) list) (gv : Genvar.t)
-    : ((Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list =
+    : ((refinement * Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list =
   Mdl.Strategy.beam
     ~beam_width
     ~refine_degree
-    ~m0:(grid_model0 gv)
-    ~data:(fun (gv,m) ->
+    ~m0:(let gv,m = grid_model0 gv in
+	 RInit, gv, m)
+    ~data:(fun (r,gv,m) ->
 	   read_grids egrids m)
-    ~code:(fun (gv,m) egds ->
+    ~code:(fun (r,gv,m) egds ->
 	   (*pp_grid_model m; print_newline ();*)
+	   pp_refinement r; print_newline ();
 	   let lm, ld, lmd = l_grid_model_data ~env_size m egds in
 	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
 	   ld) (* tentative: ignoring model cost *)
-    ~refinements:(fun (gv,m) egds ->
+    ~refinements:(fun (r,gv,m) egds ->
 		  grid_model_refinements gv m egds)
 		     
 (* naive *)

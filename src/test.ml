@@ -146,7 +146,7 @@ let print_learned_model name train : unit =
 	      egis gv in
   match lmi with
   | [] -> assert false
-  | ((gv,mi), egdis, li)::_ ->
+  | ((_,gv,mi), egdis, li)::_ ->
      let egos =
        List.map2
 	 (fun (envi,gdi) t -> gdi.params, t.output)
@@ -162,7 +162,7 @@ let print_learned_model name train : unit =
 		 egos gv in
      match lmo with
      | [] -> assert false
-     | ((gv,mo), egdos, lo)::_ ->
+     | ((_,gv,mo), egdos, lo)::_ ->
 	let m = { genvar=gv; input_pattern=mi; output_template=mo} in
 	print_endline "\nLearned model:";
 	pp_model m;
