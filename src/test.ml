@@ -170,12 +170,16 @@ let print_learned_model name train : unit =
 	print_l_gmd "input  with Mi" ~env_size:0 mi egdis;
 	print_l_gmd "output with Mo" ~env_size mo egdos;
 	print_l_md  "function    M " m egdos;
+	
 	print_endline "\nInput/output grids data";
-	List.combine egdis egdos
+	List.combine (List.combine egdis egdos) egos
 	|> List.iter
-	     (fun ((_envi,gdi),(_envo,gdo)) ->
+	     (fun (((_envi,gdi),(_envo,gdo)), (envo,go)) ->
 	      Model.pp_grid_data gdi;
 	      Model.pp_grid_data gdo;
+	      (try check_write_grid "predicted" mo envo grid_data0 go
+	       with Unbound_var _ ->
+		 print_endline "Grid predicted: unbound parameter");
 	      print_newline ())
 	
 			   
@@ -221,8 +225,9 @@ let check_task (name : string) (task : Task.task) : unit =
 		name
 		(List.length task.train)
 		(List.length task.test);
+  print_endline "\n# evaluating model0";
   print_l_task_model name task model0;  
-  print_endline "Learned grid models for train inputs and outputs";
+  print_endline "\n# learning a model for train pairs";
   print_learned_model name task.train;
   print_newline ()
     
@@ -289,13 +294,20 @@ let tsol_ba97ae07 =
 let main_solutions () =
   check_task_solution tsol_ba97ae07
 
-let main_tasks () =
-  let train_dir = "/local/ferre/data/tasks/ARC/data/training/" in
-  let train_files = Array.to_list (Sys.readdir train_dir) in
-  let tasks = List.map (fun name -> name, Task.from_file (train_dir ^ name)) train_files in
-  List.iter
-    (fun (name, task) -> check_task name task)
-    tasks
+let train_dir = "/local/ferre/data/tasks/ARC/data/training/"
+let train_names = Array.to_list (Sys.readdir train_dir)
 
-let _ = main_solutions ()
+let solved_train_names =
+  [ "ba97ae07.json";
+    "b94a9452.json";
+  ]
+				
+let task_of_name name = Task.from_file (train_dir ^ name)
+				
+let main_tasks names =
+  List.iter
+    (fun name -> check_task name (task_of_name name))
+    names
+
+let _ = main_tasks solved_train_names
 		       
