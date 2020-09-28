@@ -137,34 +137,53 @@ let print_l_task_model name task model =
 	      
 (* monitoring learning *)
 
-let print_learned_model name train : unit =
+let print_learned_model name task : unit =
   let lm = Model.learn_model
 	     ~beam_width:1 ~refine_degree:1
-	     train in
+	     task.train in
   match lm with
   | [] -> assert false
   | ((_,m), (egdis,env_size,egdos), l)::_ ->
-     print_endline "\nLearned model:";
+     print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
      print_l_gmd "input  with Mi" ~env_size:0 m.input_pattern egdis;
      print_l_gmd "output with Mo" ~env_size m.output_template egdos;
      print_l_md  "function    M " m egdos;
 	
-     print_endline "\nInput/output grids data";
+     print_endline "\n# Input/output grids data (train)";
      let egdios = List.combine egdis egdos in
      List.iter2
        (fun ((_envi,gdi),(envo,gdo)) {output} ->
 	Model.pp_grid_data gdi;
 	Model.pp_grid_data gdo;
-	check_write_grid "predicted" m.output_template envo grid_data0 output;
+	if gdo.params = []
+	then check_write_grid "predicted" m.output_template envo grid_data0 output
+	else print_endline "Grid predicted: unbound variable";
 	print_newline ())
-       egdios train
-	      
+       egdios task.train;
+     print_endline "# Checking test instances\n";
+     ignore (List.fold_left
+	       (fun i {input; output} ->
+		(*Grid.pp_grids [input; output];
+		let parts = Grid.segment_by_color input in
+		Grid.pp_parts input parts;*)
+		match apply_model m env0 input with
+		| Result.Ok derived ->
+		   print_grid_mismatch
+		     ("Grid test-" ^ string_of_int i)
+		     ~grid:output
+		     ~derived_grid:derived;
+		   i+1
+		| Result.Error msg ->
+		   Printf.printf "Grid test-%d: %s\n" i msg;
+		   i+1)
+	       1 task.test)
 			   
 (* check task *)
 			   
 let check_task_solution (tsol : task_solution) : unit =
+  print_endline "=====================================\n";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		tsol.name (List.length tsol.task.train) (List.length tsol.task.test);
   print_l_task_model tsol.name tsol.task model0;
@@ -195,11 +214,12 @@ let check_task_solution (tsol : task_solution) : unit =
     (tsol.task.train @ tsol.task.test)
     (tsol.train_data @ tsol.test_data);
   print_endline "\n# Learning a model";
-  print_learned_model tsol.name tsol.task.train
+  print_learned_model tsol.name tsol.task
   
 
 
 let check_task (name : string) (task : Task.task) : unit =
+  print_endline "=====================================";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		name
 		(List.length task.train)
@@ -207,7 +227,7 @@ let check_task (name : string) (task : Task.task) : unit =
   print_endline "\n# evaluating model0";
   print_l_task_model name task model0;  
   print_endline "\n# learning a model for train pairs";
-  print_learned_model name task.train;
+  print_learned_model name task;
   print_newline ()
     
 (* ============================================================ *)
@@ -279,8 +299,14 @@ let train_names = Array.to_list (Sys.readdir train_dir)
 let solved_train_names =
   [ "ba97ae07.json";
     "b94a9452.json";
+    "694f12f3.json";
   ]
-				
+
+let maybe_train_names =
+  [ "952a094c.json";
+    "98cf29f8.json";
+  ]
+    
 let task_of_name name = Task.from_file (train_dir ^ name)
 				
 let main_tasks names =
@@ -288,4 +314,5 @@ let main_tasks names =
     (fun name -> check_task name (task_of_name name))
     names
 
-let _ = main_tasks ["543a7ed5.json"]
+let _ = main_tasks solved_train_names
+
