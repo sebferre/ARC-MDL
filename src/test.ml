@@ -43,11 +43,6 @@ let tsol_egdos tsol : (env * grid_data) list train_test = (* train+test output e
   tsol.train_data |> List.map (fun gdi -> gdi.params, grid_data0), (* perfect output model has empty grid_data *)
   tsol.test_data |> List.map (fun gdi -> gdi.params, grid_data0)
 
-let tsol_env_size tsol : int = (* size of output envs = size of input params *)
-  match tsol.train_data with
-  | {params}::_ -> List.length params
-  | _ -> assert false
-
 
 (* == checking functions == *)
 		
@@ -93,65 +88,50 @@ let check_read_grid grid_name grid_env grid grid_model grid_data =
      Printf.printf "Grid %s: could not parse: %s\n" grid_name msg
 
 
-let print_l_gmd name ~env_size grid_model egds = (* grid model+data DL *)
-  let lm, ld, lmd = Model.l_grid_model_data ~env_size grid_model egds in
+let print_l_gmd name grid_model egds = (* grid model+data DL *)
+  let lm, ld, lmd = Model.l_grid_model_data grid_model egds in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
 
-let print_l_md name model egdos = (* model+data DL *)
-  let lm, ld, lmd = Model.l_model_data model egdos in
-  Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
+let print_l_md model egdis egdos = (* model+data DL *)
+  let (lmi,lmo,lm), (ldi,ldo,ld), (lmdi, lmdo, lmd) =
+    Model.l_model_data model egdis egdos in
+  Printf.printf "DL input  with Mi: L = %.1f + %.1f = %.1f\n" lmi ldi lmdi;
+  Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
+  Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd
 
 let print_l_tsol tsol = (* DLs for train data *)
-  let env_size = tsol_env_size tsol in
   let egdis, _ = tsol_egdis tsol in
   let egdos, _ = tsol_egdos tsol in
-  print_l_gmd "input  with Mi" ~env_size:0 tsol.model.input_pattern egdis;
-  print_l_gmd "output with Mo" ~env_size tsol.model.output_template egdos;
-  print_l_md  "function    M " tsol.model egdos
-
-let print_l_tsol_model0 tsol =
-  let env_size = 0 in
-  let egis0, _ = tsol_egis tsol in
-  let egos0, _ = tsol_egos tsol in (* envs should be empty but no impact *)
-  let egdis0 = read_grids egis0 model0.input_pattern |> Option.get in
-  let egdos0 = read_grids egos0 model0.output_template |> Option.get in
-  print_l_gmd "input  with Mi0" ~env_size model0.input_pattern egdis0;
-  print_l_gmd "output with Mo0" ~env_size model0.output_template egdos0;
-  print_l_md  "function    M0 " model0 egdos0
+  print_l_md tsol.model egdis egdos
 
 let print_l_task_model name task model =
   let egis = task.train |> List.map (fun pair -> env0, pair.input) in
   let egdis = read_grids egis model.input_pattern |> Option.get in
-  let env_size =
-    match egdis with
-    | (_,gdi)::_ -> List.length gdi.params
-    | _ -> assert false in
   let egos =
     List.map2
       (fun (envi,gdi) pair -> gdi.params, pair.output)
       egdis task.train in
   let egdos = read_grids egos model.output_template |> Option.get in
-  print_l_gmd "input  with Mi" ~env_size:0 model.input_pattern egdis;
-  print_l_gmd "output with Mo" ~env_size model.output_template egdos;
-  print_l_md  "function    M " model egdos
+  print_l_md model egdis egdos
 	      
 (* monitoring learning *)
 
 let print_learned_model name task : unit =
+  let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
+  let gos = task.train |> List.map (fun {output} -> output) in
   let lm = Model.learn_model
 	     ~beam_width:1 ~refine_degree:1
-	     task.train in
+	     gis_test gos in
   match lm with
   | [] -> assert false
-  | ((_,m), (egdis,env_size,egdos), l)::_ ->
+  | ((_,m), (egdis_test,env_size,egdos), l)::_ ->
      print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
-     print_l_gmd "input  with Mi" ~env_size:0 m.input_pattern egdis;
-     print_l_gmd "output with Mo" ~env_size m.output_template egdos;
-     print_l_md  "function    M " m egdos;
+     print_l_md m egdis_test egdos;
 	
      print_endline "\n# Input/output grids data (train)";
+     let egdis = Common.sub_list egdis_test 0 (List.length egdos) in 
      let egdios = List.combine egdis egdos in
      List.iter2
        (fun ((_envi,gdi),(envo,gdo)) {output} ->

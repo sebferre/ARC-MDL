@@ -486,6 +486,11 @@ let no_staged_code = fun env params -> 0.
 let (+!) l1 (l2,c2) = (l1+.l2, c2)
 let (+?) (l1,c1) (l2,c2) = (l1+.l2, (fun env params -> c1 env params +. c2 env params))
 
+let env_size_of_egds egds =
+  match egds with
+  | (env,_)::_ -> List.length env
+  | _ -> assert false
+			     
 let rec l_expr : type a. env_size:int -> a kind -> code:a code -> a expr -> Mdl.bits =
   fun ~env_size k ~code e ->
   match e with
@@ -595,25 +600,24 @@ let l_grid_data ~m ~(code_m : env -> params -> Mdl.bits) ~(hw : int attr * int a
   code_m env gd.params
   +. l_grid_delta ~height:h ~width:w gd.delta
 
-let l_grid_model_data ~env_size (m : grid_model) (egds : (env * grid_data) list) : Mdl.bits * Mdl.bits * Mdl.bits (* model, data, model+data *) =
+type 'a triple = 'a * 'a * 'a
+		  
+let l_grid_model_data (m : grid_model) (egds : (env * grid_data) list) : Mdl.bits triple (* model, data, model+data *) =
+  let env_size = env_size_of_egds egds in
   let (l_m, code_m), hw = l_grid_model ~env_size m in
   let l_d =
     10. (* because given training examples are only a sample from a class of grids *)
     *. Mdl.sum egds (fun (env,gd) -> l_grid_data ~m ~code_m ~hw env gd) in
   l_m, l_d, l_m +. l_d
 
-let l_model_data (m : model) (egds_out : (env * grid_data) list) : Mdl.bits * Mdl.bits * Mdl.bits =
-  let env_size =
-    match egds_out with
-    | (env,_)::_ -> List.length env
-    | _ -> assert false in
-  let (l_mi, code_mi), hwi = l_grid_model ~env_size:0 m.input_pattern in
-  let (l_mo, code_mo), hwo = l_grid_model ~env_size m.output_template in
-  let l_m = l_mi +. l_mo in
-  let l_d =
-    10. (* because given training examples are only a sample from a class of grids *)
-    *. Mdl.sum egds_out (fun (env,gdo) -> l_grid_data ~m:m.output_template ~code_m:code_mo ~hw:hwo env gdo) in
-  l_m, l_d, l_m +. l_d
+let l_model_data (m : model) (egdis : (env * grid_data) list) (egdos : (env * grid_data) list) : Mdl.bits triple triple =
+  let egdis = Common.sub_list egdis 0 (List.length egdos) in
+  (* to remove extra test inputs *)
+  let lmi, ldi, lmdi =
+    l_grid_model_data m.input_pattern egdis in
+  let lmo, ldo, lmdo =
+    l_grid_model_data m.output_template egdos in
+  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo)
 
 (* learning *)
 
@@ -783,9 +787,9 @@ let learn_grid_model ~beam_width ~refine_degree ~env_size
     ~code:(fun (r,gv,m) egds ->
 	   (*pp_grid_model m; print_newline ();*)
 	   pp_grid_refinement r; print_newline ();
-	   let lm, ld, lmd = l_grid_model_data ~env_size m egds in
+	   let lm, ld, lmd = l_grid_model_data m egds in
 	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
-	   ld) (* lmd :TODO: tentative: ignoring model cost *)
+	   lmd)
     ~refinements:(fun (r,gv,m) egds ->
 		  grid_model_refinements gv m egds)
 
@@ -817,62 +821,53 @@ let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env
     |> Myseq.map
 	 (fun (gr,gv',mo') ->
 	  (Routput gr, {m with genvar=gv'; output_template=mo'})) in
-  Myseq.concat [ref_defos; ref_shapos;
-		(*ref_defis;*) ref_shapis]
+  Myseq.concat [ref_defis; ref_shapis;
+		ref_defos; ref_shapos]
 	     
 let learn_model
       ~beam_width ~refine_degree
-      (data : Task.pair list)
+      (gis_test : Grid.t list) (* train + test inputs *)
+      (gos : Grid.t list) (* only train outputs *)
     : ((refinement * model) * ((env * grid_data) list * int * (env * grid_data) list) * Mdl.bits) list =
-  let egis = List.map (fun {input} -> env0, input) data in
+  let len_gos = List.length gos in
+  let egis_test = List.map (fun gi -> env0, gi) gis_test in
   Mdl.Strategy.beam
     ~beam_width
     ~refine_degree
     ~m0:(RInit, model0)
     ~data:(fun (r,m) ->
 	   try
-	   match read_grids egis m.input_pattern with
+	   match read_grids egis_test m.input_pattern with
 	   | None -> None
-	   | Some egdis ->
+	   | Some egdis_test ->
+	      let egdis = Common.sub_list egdis_test 0 len_gos in
 	      let egos =
 		List.map2
-		  (fun (envi,gdi) {output} -> gdi.params, output)
-		  egdis data in
+		  (fun (envi,gdi) go -> gdi.params, go)
+		  egdis gos in
 	      match read_grids egos m.output_template with
 	      | None -> None
 	      | Some egdos ->
-		 let env_size =
-		   match egdos with
-		   | (envo,gdo)::_ -> List.length envo
-		   | _ -> assert false in
-		 Some (egdis, env_size, egdos)
+		 let env_size = env_size_of_egds egdos in
+		 Some (egdis_test, env_size, egdos)
 	   with exn ->
 	     print_endline (Printexc.to_string exn);
 	     pp_model m;
 	     raise exn)
-    ~code:(fun (r,m) (egdis,env_size,egdos) ->
+    ~code:(fun (r,m) (egdis_test,env_size,egdos) ->
 	   pp_refinement r; print_newline ();
-	   let lmi, ldi, lmdi =
-	     l_grid_model_data ~env_size:0 m.input_pattern egdis in
+(*	   let lmi, ldi, lmdi =
+	     l_grid_model_data m.input_pattern egdis_test in
 	   let lmo, ldo, lmdo =
-	     l_grid_model_data ~env_size m.output_template egdos in
-	   let lm, ld, lmd = lmi+.lmo, ldi+.ldo, lmdi+.lmdo in
-	   Printf.printf "    l = %.1f + %.1f = %.1f\n" lm ld lmd;
+	     l_grid_model_data m.output_template egdos in
+	   let lm, ld, lmd = lmi+.lmo, ldi+.ldo, lmdi+.lmdo in *)
+	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
+	     l_model_data m egdis_test egdos in
+	   Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
 	   lmd)
     ~refinements:
-    (fun (r,m) (egdis,env_size,egdos) ->
-     model_refinements m egdis egdos)
-(*     Myseq.concat
-       [
-	 grid_model_refinements m.genvar m.output_template egdos
-	 |> Myseq.map
-	      (fun (gr,gv',mo') ->
-	       (Routput gr, {m with genvar=gv'; output_template=mo'}));
-	 grid_model_refinements m.genvar m.input_pattern egdis
-	 |> Myseq.map
-	      (fun (gr,gv',mi') ->
-	       (Rinput gr, {m with genvar=gv'; input_pattern=mi'}));
-       ])*)
+    (fun (r,m) (egdis_test,env_size,egdos) ->
+     model_refinements m egdis_test egdos)
     
 (* naive *)
     
