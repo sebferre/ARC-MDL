@@ -116,7 +116,7 @@ let print_l_task_model name task model =
 	      
 (* monitoring learning *)
 
-let print_learned_model name task : unit =
+let print_learned_model name task : unit = Common.prof "Test.print_learned_model" (fun () ->
   let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
   let gos = task.train |> List.map (fun {output} -> output) in
   let lm = Model.learn_model
@@ -158,7 +158,7 @@ let print_learned_model name task : unit =
 		| Result.Error msg ->
 		   Printf.printf "Grid test-%d: %s\n" i msg;
 		   i+1)
-	       1 task.test)
+	       1 task.test))
 			   
 (* check task *)
 			   
@@ -198,7 +198,7 @@ let check_task_solution (tsol : task_solution) : unit =
   
 
 
-let check_task (name : string) (task : Task.task) : unit =
+let check_task (name : string) (task : Task.task) : unit = Common.prof "Test.check_task" (fun () ->
   print_endline "=====================================";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		name
@@ -208,7 +208,7 @@ let check_task (name : string) (task : Task.task) : unit =
   print_l_task_model name task model0;  
   print_endline "\n# learning a model for train pairs";
   print_learned_model name task;
-  print_newline ()
+  print_newline ())
     
 (* ============================================================ *)
 
@@ -291,8 +291,15 @@ let task_of_name name = Task.from_file (train_dir ^ name)
 				
 let main_tasks names =
   List.iter
-    (fun name -> check_task name (task_of_name name))
-    names
+    (fun name ->
+     let res_opt =
+       Common.do_timeout 10
+         (fun () -> check_task name (task_of_name name)) in
+     if res_opt = None then
+       print_endline "TIMEOUT")
+    names;
+  Common.prerr_profiling ()
 
 let _ = main_tasks solved_train_names
+		   (*Common.sub_list train_names 0 20*)
 

@@ -1,6 +1,8 @@
 
 open Bigarray
 
+module Intset = Intset.Intmap
+       
 type color = int
 
 (* conventional colors like in web app *)
@@ -50,13 +52,13 @@ let set_pixel grid i j c =
   try grid.matrix.{i,j} <- c
   with _ -> () (* pixels out of bound are ignored *)
 
-let iter_pixels f grid =
+let iter_pixels f grid = Common.prof "Grid.iter_pixels" (fun () ->
   let mat = grid.matrix in
   for i = 0 to grid.height - 1 do
     for j = 0 to grid.width - 1 do
       f i j mat.{i,j}
     done
-  done
+  done)
 
 (* pretty-printing in terminal *)
     
@@ -110,7 +112,7 @@ type diff =
 			    tgt_height: int; tgt_width: int }
   | Grid_diff_pixels of { height: int; width: int; pixels: pixel list }
 							  
-let diff (source : t) (target : t) : diff option =
+let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun () ->
   if source.height <> target.height || source.width <> target.width
   then Some (Grid_size_mismatch
 	       { src_height = source.height;
@@ -130,7 +132,7 @@ let diff (source : t) (target : t) : diff option =
     done;
     if !res = []
     then None
-    else Some (Grid_diff_pixels {height; width; pixels=(!res)})
+    else Some (Grid_diff_pixels {height; width; pixels=(!res)}))
 
 (* grid masks *)
 
@@ -140,14 +142,29 @@ module Mask = (* to identify active pixels in a same-size grid *)
   struct
     include Intrel2
 
-    let full height width =
+    (*let full height width = Common.prof "Grid.Mask.full" (fun () ->
       let res = ref Intrel2.empty in
       for i = 0 to height - 1 do
 	for j = 0 to width - 1 do
 	  res := Intrel2.add i j !res
 	done
       done;
-      !res
+      !res)*)
+
+    let rect mini maxi minj maxj = Common.prof "Grid.Mask.rect" (fun () ->
+      let ref_dom = ref Intset.empty in
+      for i = mini to maxi do
+	ref_dom := Intset.add i !ref_dom
+      done;
+      let ref_ran = ref Intset.empty in
+      for j = minj to maxj do
+	ref_ran := Intset.add j !ref_ran
+      done;
+      Intrel2.prod !ref_dom !ref_ran)
+
+    let full height width =
+      rect 0 (height-1) 0 (width-1)
+	
   end
 
 (* segmenting grids *)
@@ -158,15 +175,15 @@ type part = { mini : int; maxi : int;
 	      nb_pixels : int;
 	      pixels : Mask.t }
 
-let part_as_grid (g : t) (p : part) : t =
+let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun () ->
   let gp = make g.height g.width no_color in
   let col = p.color in
   Intrel2.iter
     (fun i j -> set_pixel gp i j col)
     p.pixels;
-  gp
+  gp)
 
-let merge_parts (p1 : part) (p2 : part) : part =
+let merge_parts (p1 : part) (p2 : part) : part = Common.prof "Grid.merge_parts" (fun () ->
   assert (p1.color = p2.color);
   { mini = min p1.mini p2.mini;
     maxi = max p1.maxi p2.maxi;
@@ -174,7 +191,7 @@ let merge_parts (p1 : part) (p2 : part) : part =
     maxj = max p1.maxj p2.maxj;
     color = p1.color;
     nb_pixels = p1.nb_pixels + p2.nb_pixels;
-    pixels = Mask.union p1.pixels p2.pixels }
+    pixels = Mask.union p1.pixels p2.pixels })
 
 let merge_part_list (ps : part list) : part =
   match ps with
@@ -192,7 +209,7 @@ let pp_parts (g : t) (ps : part list) : unit =
   print_newline ();
   pp_grids (g :: List.map (part_as_grid g) ps)
 	      
-let segment_by_color (g : t) : part list =
+let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
   let fm : (int * int, part) Find_merge.hashtbl =
     new Find_merge.hashtbl
@@ -232,7 +249,7 @@ let segment_by_color (g : t) : part list =
   (* collecting parts *)
   fm#fold
     (fun _ part res -> part::res)
-    []
+    [])
 
 
 (* locating shapes *)
@@ -243,9 +260,19 @@ type rectangle = { height: int; width: int;
 		   mask : Mask.t; (* all pixels covered by the shape, including the delta *)
 		   delta : pixel list }
 
-let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option =
+let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option = Common.prof "Grid.rectangle_opt_of_part" (fun () ->
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let area = h * w in
+(*  let rect = Mask.rect p.mini p.maxi p.minj p.maxj in
+  let r_mask = Intrel2.inter rect mask in
+  let valid_area =
+    Intrel2.cardinal (Intrel2.inter_r [r_mask; p.pixels])
+    + Intrel2.cardinal (Intrel2.diff rect mask) in
+  let delta_mask = Intrel2.diff r_mask p.pixels in
+  let delta =
+    Intrel2.fold
+      (fun res i j -> (i, j, g.matrix.{i,j})::res)
+      [] delta_mask in *)  
   let valid_area = ref 0 in
   let r_mask = ref p.pixels in
   let delta = ref [] in
@@ -269,9 +296,9 @@ let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option 
 	      color = p.color;
 	      mask = (!r_mask);
 	      delta = (!delta) }
-  else None
+  else None)
       
-let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
+let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Common.prof "Grid.rectangles" (fun () ->
   let h_sets =
     (* grouping same-color parts spanning same rows *)
     Common.group_by
@@ -303,5 +330,5 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    | None -> res )
        | _ -> res)
       res v_sets in
-  res
+  res)
 

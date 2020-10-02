@@ -109,7 +109,7 @@ type env = def list (* variable bindings *)
 let env0 = []
 	       
 let rec eval_expr : type a. def list -> a kind -> a expr -> a (* raises a fatal exception if some var undefined *) =
-  fun env k e ->
+  fun env k e -> Common.prof "Model.eval_expr" (fun () ->
   match e with
   | Var v ->
      ( match get_var_def_opt k v env with
@@ -121,13 +121,13 @@ let rec eval_expr : type a. def list -> a kind -> a expr -> a (* raises a fatal 
   | If (cond,e1,e2) ->
      if eval_expr env Bool cond
      then eval_expr env k e1
-     else eval_expr env k e2
+     else eval_expr env k e2)
 
 let eval_var : type a. def list -> a kind -> a var -> a (* raises a fatal exception if some var undefined *) =
-  fun env k v ->
+  fun env k v -> Common.prof "Model.eval_var" (fun () ->
   match get_var_def_opt k v env with
   | Some e -> eval_expr env k e
-  | None -> invalid_arg ("Model.eval_var: undefined var: " ^ v)
+  | None -> invalid_arg ("Model.eval_var: undefined var: " ^ v))
 
 
 (* parameters *)
@@ -155,10 +155,10 @@ let subst_attr : type a. params -> a kind -> a attr -> a attr =
   | E e -> E (subst_expr params k e)
 
 let eval_attr : type a. env -> params -> a kind -> a attr -> a =
-  fun env params k a ->
+  fun env params k a -> Common.prof "Model.eval_attr" (fun () ->
   match a with
   | U u -> eval_var params k u
-  | E e -> eval_expr env k e
+  | E e -> eval_expr env k e)
 		   
 		   
 (* grid models *)
@@ -300,12 +300,12 @@ and apply_shape (sh : shape) env params g : unit =
        done;
      done
 	   
-let write_grid (m : grid_model) (env : env) (d : grid_data) : Grid.t =
+let write_grid (m : grid_model) (env : env) (d : grid_data) : Grid.t = Common.prof "Model.write_grid" (fun () ->
   let g = apply_grid_model m env d.params in
   List.iter
     (fun (i,j,c) -> Grid.set_pixel g i j c)
     d.delta;
-  g
+  g)
 
 
 (* reading grids with models *)
@@ -319,7 +319,7 @@ let parse_const : type a. a kind -> a -> a -> params -> params parse_result =
   else Result.Error "value mismatch"
      
 let parse_attr : type a. env -> a kind -> a -> a attr -> params -> params parse_result =
-  fun env k c0 a params ->
+  fun env k c0 a params -> Common.prof "Model.parse_attr" (fun () ->
   match a with
   | U u ->
      ( match get_var_def_opt k u params with
@@ -328,7 +328,7 @@ let parse_attr : type a. env -> a kind -> a -> a attr -> params -> params parse_
        | Some _ -> assert false ) (* only constants in params *)
   | E e ->
      let c = eval_expr env k e in
-     parse_const k c0 c params
+     parse_const k c0 c params)
 
 let rec parse_attr_list : type a. env -> a kind -> (a * a attr) list -> params -> params parse_result =
   fun env k lca params ->
@@ -343,7 +343,7 @@ let rec parse_attr_list : type a. env -> a kind -> (a * a attr) list -> params -
 let rec parse_grid_model
 	  (g : Grid.t) (m : grid_model) (env : env)
 	  (gd : grid_data) (mask : Grid.Mask.t) (parts : Grid.part list)
-	: (grid_data * Grid.Mask.t * Grid.part list) parse_result =
+	: (grid_data * Grid.Mask.t * Grid.part list) parse_result = Common.prof "Model.parse_grid_model" (fun () ->
   match m with
   | Background {height; width; color} ->
      Result.bind
@@ -384,15 +384,15 @@ let rec parse_grid_model
      parse_shape
        g sh env gd mask parts
        (fun (gd,mask,parts) ->
-	parse_grid_model g m1 env gd mask parts)
-and parse_shape g (sh : shape) env gd mask parts kont =
+	parse_grid_model g m1 env gd mask parts))
+and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse_shape" (fun () ->
   match sh with
   | Point {offset_i; offset_j; color} -> raise TODO
   | Rectangle {height; width;
 	       offset_i; offset_j;
 	       color; filled} ->
      let lr = Grid.rectangles g mask parts in
-     let _, res =
+     let _, res = Common.prof "Model.parse_shape/fold" (fun () -> 
        List.fold_left
 	 (fun (min_d, res) r ->
 	  let new_res =
@@ -429,28 +429,28 @@ and parse_shape g (sh : shape) env gd mask parts kont =
 	     else min_d, res
 	  | Result.Error _ -> min_d, res)
 	 (max_int, Result.Error "no matching rectangle")
-	 lr in
-     res
+	 lr) in
+     res)
 	      
-let read_grid (env : env) (g : Grid.t) (m : grid_model) : (env * grid_data) parse_result =
+let read_grid (env : env) (g : Grid.t) (m : grid_model) : (env * grid_data) parse_result = Common.prof "Model.read_grid" (fun () ->
   let gd0 = { params = []; delta = [] } in
   let mask0 = Grid.Mask.full g.height g.width in
   let parts0 = Grid.segment_by_color g in
   Result.bind
     (parse_grid_model g m env gd0 mask0 parts0)
-    (fun (gd,mask,parts) -> Result.Ok (env,gd))
+    (fun (gd,mask,parts) -> Result.Ok (env,gd)))
 
-let read_grids (egrids: (env * Grid.t) list) (m : grid_model) : (env * grid_data) list option =
+let read_grids (egrids: (env * Grid.t) list) (m : grid_model) : (env * grid_data) list option = Common.prof "Model.read_grids" (fun () ->
   let r_egds = List.map (fun (env,g) -> read_grid env g m) egrids in
   List.fold_right (* checking no errors, and aggregating *)
     (fun r_egd res ->
      match r_egd, res with
      | Result.Ok egd, Some egds -> Some (egd::egds)
      | _ -> None)
-    r_egds (Some [])
+    r_egds (Some []))
 
 
-let apply_model (m : model) (env : env) (g : Grid.t) : (Grid.t, string) Result.t =
+let apply_model (m : model) (env : env) (g : Grid.t) : (Grid.t, string) Result.t = Common.prof "Model.apply_model" (fun () ->
   match read_grid env g m.input_pattern with
   | Result.Ok (_,gdi) ->
      (try
@@ -458,7 +458,7 @@ let apply_model (m : model) (env : env) (g : Grid.t) : (Grid.t, string) Result.t
 	 Result.Ok (write_grid m.output_template envo grid_data0)
        with exn ->
 	 Result.Error ("output writing failed: " ^ Printexc.to_string exn))
-  | Result.Error msg -> Result.Error ("input reading failed: " ^ msg)
+  | Result.Error msg -> Result.Error ("input reading failed: " ^ msg))
 
       
 (* description lengths *)
@@ -602,22 +602,22 @@ let l_grid_data ~m ~(code_m : env -> params -> Mdl.bits) ~(hw : int attr * int a
 
 type 'a triple = 'a * 'a * 'a
 		  
-let l_grid_model_data (m : grid_model) (egds : (env * grid_data) list) : Mdl.bits triple (* model, data, model+data *) =
+let l_grid_model_data (m : grid_model) (egds : (env * grid_data) list) : Mdl.bits triple (* model, data, model+data *) = Common.prof "Model.l_grid_model_data" (fun () ->
   let env_size = env_size_of_egds egds in
   let (l_m, code_m), hw = l_grid_model ~env_size m in
   let l_d =
     10. (* because given training examples are only a sample from a class of grids *)
     *. Mdl.sum egds (fun (env,gd) -> l_grid_data ~m ~code_m ~hw env gd) in
-  l_m, l_d, l_m +. l_d
+  l_m, l_d, l_m +. l_d)
 
-let l_model_data (m : model) (egdis : (env * grid_data) list) (egdos : (env * grid_data) list) : Mdl.bits triple triple =
+let l_model_data (m : model) (egdis : (env * grid_data) list) (egdos : (env * grid_data) list) : Mdl.bits triple triple = Common.prof "Model.l_model_data" (fun () ->
   let egdis = Common.sub_list egdis 0 (List.length egdos) in
   (* to remove extra test inputs *)
   let lmi, ldi, lmdi =
     l_grid_model_data m.input_pattern egdis in
   let lmo, ldo, lmdo =
     l_grid_model_data m.output_template egdos in
-  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo)
+  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo))
 
 (* learning *)
 
@@ -793,7 +793,8 @@ let learn_grid_model ~beam_width ~refine_degree ~env_size
     ~refinements:(fun (r,gv,m) egds ->
 		  grid_model_refinements gv m egds)
 
-let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env * grid_data) list) : (refinement * model) Myseq.t =
+let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env * grid_data) list) : (refinement * model) Myseq.t
+  = Common.prof "Model.model_refinements" (fun () ->
   let ref_defis =
     let defis = find_defs egdis in
     if defis = []
@@ -822,13 +823,14 @@ let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env
 	 (fun (gr,gv',mo') ->
 	  (Routput gr, {m with genvar=gv'; output_template=mo'})) in
   Myseq.concat [ref_defis; ref_shapis;
-		ref_defos; ref_shapos]
+		ref_defos; ref_shapos])
 	     
 let learn_model
       ~beam_width ~refine_degree
       (gis_test : Grid.t list) (* train + test inputs *)
       (gos : Grid.t list) (* only train outputs *)
-    : ((refinement * model) * ((env * grid_data) list * int * (env * grid_data) list) * Mdl.bits) list =
+    : ((refinement * model) * ((env * grid_data) list * int * (env * grid_data) list) * Mdl.bits) list
+  = Common.prof "Model.learn_model" (fun () ->
   let len_gos = List.length gos in
   let egis_test = List.map (fun gi -> env0, gi) gis_test in
   Mdl.Strategy.beam
@@ -856,18 +858,13 @@ let learn_model
 	     raise exn)
     ~code:(fun (r,m) (egdis_test,env_size,egdos) ->
 	   pp_refinement r; print_newline ();
-(*	   let lmi, ldi, lmdi =
-	     l_grid_model_data m.input_pattern egdis_test in
-	   let lmo, ldo, lmdo =
-	     l_grid_model_data m.output_template egdos in
-	   let lm, ld, lmd = lmi+.lmo, ldi+.ldo, lmdi+.lmdo in *)
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     l_model_data m egdis_test egdos in
 	   Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
 	   lmd)
     ~refinements:
     (fun (r,m) (egdis_test,env_size,egdos) ->
-     model_refinements m egdis_test egdos)
+     model_refinements m egdis_test egdos))
     
 (* naive *)
     
