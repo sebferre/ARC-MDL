@@ -377,7 +377,7 @@ let rec parse_grid_model
 	   if g.matrix.{i,j} <> bc then
 	     new_delta := (i,j, g.matrix.{i,j})::!new_delta)
 	  mask;
-	let new_mask = Grid.Mask.empty in
+	let new_mask = Grid.Mask.empty g.height g.width in
 	let new_parts = [] in
 	Result.Ok ({ params = (!new_params); delta = (!new_delta) }, new_mask, new_parts))
   | AddShape (sh,m1) ->
