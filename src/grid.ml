@@ -136,7 +136,7 @@ let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun 
 
 (* grid masks *)
 
-module Mask = (* to identify active pixels in a same-size grid *)
+module MaskArray2 = (* to identify active pixels in a same-size grid *)
   struct
     type t = (int, int8_unsigned_elt, c_layout) Array2.t
 
@@ -199,8 +199,9 @@ module Mask = (* to identify active pixels in a same-size grid *)
     let mem i j m =
       m.{i,j} = 1
 
-    let add_in_place m i j =
-      m.{i,j} <- 1
+    let add_in_place i j m =
+      m.{i,j} <- 1;
+      m
 	       
     let union m1 m2 = Common.prof "Grid.Mask.union" (fun () ->
       let height = Array2.dim1 m1 in
@@ -269,7 +270,52 @@ module Mask = (* to identify active pixels in a same-size grid *)
       done
 	  
   end
-		   
+
+module MaskZ =
+  struct
+    type t = { height : int;
+	       width : int;
+	       bits : Z.t; }
+
+    let empty height width =
+      { height; width; bits = Z.zero }
+    let full height width =
+      { height; width; bits = Z.pred (Z.shift_left Z.one (height * width)) }
+    let singleton height width i j =
+      { height; width; bits = Z.shift_left Z.one (i * width + j) }
+
+    let copy m = m
+
+    let is_empty m =
+      Z.equal m.bits Z.zero
+    let is_subset m1 m2 =
+      Z.equal (Z.logand m1.bits (Z.lognot m2.bits)) Z.zero
+
+    let mem i j m =
+      Z.testbit m.bits (i * m.width + j)
+
+    let add_in_place i j m =
+      { m with
+	bits = Z.logor m.bits (Z.shift_left Z.one (i * m.width + j)) }
+
+    let union m1 m2 =
+      { m1 with bits = Z.logor m1.bits m2.bits }
+    let inter m1 m2 =
+      { m1 with bits = Z.logand m1.bits m2.bits }
+    let diff m1 m2 =
+      { m1 with bits = Z.logand m1.bits (Z.lognot m2.bits) }
+
+    let iter f m =
+      for i = 0 to m.height - 1 do
+	for j = 0 to m.width - 1 do
+	  if Z.testbit m.bits (i * m.width + j) then
+	    f i j
+	done
+      done
+  end
+    
+module Mask = MaskZ
+    
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;
@@ -362,11 +408,11 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
   (* collecting parts *)
   fm#fold
     (fun _ (c,ph) res ->
-     let pixels = Mask.empty h w in
+     let pixels = ref (Mask.empty h w) in
      let mini, maxi, minj, maxj, nb_pixels =
        PixelsMerge.fold
 	 (fun (mini, maxi, minj, maxj, nb_pixels) i j ->
-	  Mask.add_in_place pixels i j;
+	  pixels := Mask.add_in_place i j !pixels;
 	  min mini i, max maxi i,
 	  min minj j, max maxj j,
 	  nb_pixels + 1)
@@ -377,7 +423,7 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
 	 minj; maxj;
 	 color = c;
 	 nb_pixels;
-	 pixels } in
+	 pixels = (!pixels) } in
      part::res)
     [])
 
@@ -394,13 +440,13 @@ let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option 
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let area = h * w in
   let valid_area = ref 0 in
-  let r_mask = Mask.copy p.pixels in
+  let r_mask = ref (Mask.copy p.pixels) in
   let delta = ref [] in
   for i = p.mini to p.maxi do
     for j = p.minj to p.maxj do
       if Mask.mem i j mask
       then (
-	Mask.add_in_place r_mask i j;
+	r_mask := Mask.add_in_place i j !r_mask;
 	let c = g.matrix.{i,j} in
 	if  c = p.color
 	then incr valid_area
@@ -414,7 +460,7 @@ let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option 
 	      offset_i = p.mini;
 	      offset_j = p.minj;
 	      color = p.color;
-	      mask = r_mask;
+	      mask = (!r_mask);
 	      delta = (!delta) }
   else None)
       
