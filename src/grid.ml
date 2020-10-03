@@ -332,21 +332,23 @@ let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun (
     p.pixels;
   gp)
 
-let merge_parts (p1 : part) (p2 : part) : part = Common.prof "Grid.merge_parts" (fun () ->
-  assert (p1.color = p2.color);
-  { mini = min p1.mini p2.mini;
-    maxi = max p1.maxi p2.maxi;
-    minj = min p1.minj p2.minj;
-    maxj = max p1.maxj p2.maxj;
-    color = p1.color;
-    nb_pixels = p1.nb_pixels + p2.nb_pixels;
-    pixels = Mask.union p1.pixels p2.pixels })
-							     
-let merge_part_list (ps : part list) : part = Common.prof "Grid.merge_part_list" (fun () ->
+let merge_parts (ps : part list) : part = Common.prof "Grid.merge_part_list" (fun () ->
   match ps with
-  | [] -> invalid_arg "Grid.merge_part_list: empty list"
+  | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1
-  | p1::ps1 -> List.fold_left merge_parts p1 ps1)
+  | p1::ps1 ->
+     let pixels = ref (Mask.copy p1.pixels) in
+     let mini, maxi, minj, maxj, nb_pixels =
+       List.fold_left
+	 (fun (mini, maxi, minj, maxj, nb_pixels) p2 ->
+	  pixels := Mask.union !pixels p2.pixels;
+	  min mini p2.mini, max maxi p2.maxi,
+	  min minj p2.minj, max maxj p2.maxj,
+	  nb_pixels + p2.nb_pixels)
+	 (p1.mini, p1.maxi, p1.minj, p1.maxj, p1.nb_pixels)
+	 ps1 in
+     { mini; maxi; minj; maxj; color = p1.color;
+       nb_pixels; pixels = (!pixels) })
 			      
 let pp_parts (g : t) (ps : part list) : unit =
   List.iter
@@ -480,7 +482,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
     List.fold_left
       (fun res (_, ps) ->
        assert (ps <> []);
-       let mp = merge_part_list ps in
+       let mp = merge_parts ps in
        match rectangle_opt_of_part g mask mp with
        | Some r -> r::res
        | None -> res)
@@ -490,7 +492,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
       (fun res (_, ps) ->
        match ps with
        | _::_::_ -> (* at least two parts to avoid redundancy with h_sets *)
-	  let mp = merge_part_list ps in
+	  let mp = merge_parts ps in
 	  ( match rectangle_opt_of_part g mask mp with
 	    | Some r -> r::res
 	    | None -> res )
