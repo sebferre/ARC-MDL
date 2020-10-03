@@ -109,7 +109,7 @@ type env = def list (* variable bindings *)
 let env0 = []
 	       
 let rec eval_expr : type a. def list -> a kind -> a expr -> a (* raises a fatal exception if some var undefined *) =
-  fun env k e -> Common.prof "Model.eval_expr" (fun () ->
+  fun env k e -> (* QUICK *)
   match e with
   | Var v ->
      ( match get_var_def_opt k v env with
@@ -121,13 +121,13 @@ let rec eval_expr : type a. def list -> a kind -> a expr -> a (* raises a fatal 
   | If (cond,e1,e2) ->
      if eval_expr env Bool cond
      then eval_expr env k e1
-     else eval_expr env k e2)
+     else eval_expr env k e2
 
 let eval_var : type a. def list -> a kind -> a var -> a (* raises a fatal exception if some var undefined *) =
-  fun env k v -> Common.prof "Model.eval_var" (fun () ->
+  fun env k v -> (* QUICK *)
   match get_var_def_opt k v env with
   | Some e -> eval_expr env k e
-  | None -> invalid_arg ("Model.eval_var: undefined var: " ^ v))
+  | None -> invalid_arg ("Model.eval_var: undefined var: " ^ v)
 
 
 (* parameters *)
@@ -155,10 +155,10 @@ let subst_attr : type a. params -> a kind -> a attr -> a attr =
   | E e -> E (subst_expr params k e)
 
 let eval_attr : type a. env -> params -> a kind -> a attr -> a =
-  fun env params k a -> Common.prof "Model.eval_attr" (fun () ->
+  fun env params k a -> (* QUICK *)
   match a with
   | U u -> eval_var params k u
-  | E e -> eval_expr env k e)
+  | E e -> eval_expr env k e
 		   
 		   
 (* grid models *)
@@ -319,7 +319,7 @@ let parse_const : type a. a kind -> a -> a -> params -> params parse_result =
   else Result.Error "value mismatch"
      
 let parse_attr : type a. env -> a kind -> a -> a attr -> params -> params parse_result =
-  fun env k c0 a params -> Common.prof "Model.parse_attr" (fun () ->
+  fun env k c0 a params -> (* QUICK *)
   match a with
   | U u ->
      ( match get_var_def_opt k u params with
@@ -328,7 +328,7 @@ let parse_attr : type a. env -> a kind -> a -> a attr -> params -> params parse_
        | Some _ -> assert false ) (* only constants in params *)
   | E e ->
      let c = eval_expr env k e in
-     parse_const k c0 c params)
+     parse_const k c0 c params
 
 let rec parse_attr_list : type a. env -> a kind -> (a * a attr) list -> params -> params parse_result =
   fun env k lca params ->
@@ -391,7 +391,8 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
   | Rectangle {height; width;
 	       offset_i; offset_j;
 	       color; filled} ->
-     let lr = Grid.rectangles g mask parts in
+     let lr = Common.prof "Model.parse_shape/rectangles" (fun () ->
+       Grid.rectangles g mask parts) in
      let _, res = Common.prof "Model.parse_shape/fold" (fun () -> 
        List.fold_left
 	 (fun (min_d, res) r ->
@@ -417,8 +418,7 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
 		     let new_parts =
 		       List.filter
 			 (fun p ->
-			  Grid.Mask.is_empty
-			    (Grid.Mask.diff p.Grid.pixels mask))
+			  Grid.Mask.is_subset p.Grid.pixels mask)
 			 parts in
 		     kont (new_gd, new_mask, new_parts)))) in
 	  match new_res with

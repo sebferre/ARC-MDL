@@ -140,18 +140,18 @@ module Mask = (* to identify active pixels in a same-size grid *)
   struct
     type t = (int, int8_unsigned_elt, c_layout) Array2.t
 
-    let empty height width : t =
+    let empty height width : t = Common.prof "Grid.Mask.empty" (fun () ->
       let m = Array2.create Int8_unsigned C_layout height width in
       Array2.fill m 0;
-      m
+      m)
 
-    let singleton height width i j : t =
+    let singleton height width i j : t = Common.prof "Grid.Mask.singleton" (fun () ->
       let m = Array2.create Int8_unsigned C_layout height width in
       Array2.fill m 0;
       m.{i,j} <- 1;
-      m
+      m)
 	
-    let rect height width mini maxi minj maxj : t =
+    let rect height width mini maxi minj maxj : t = Common.prof "Grid.Mask.rect" (fun () ->
       let m = Array2.create Int8_unsigned C_layout height width in
       Array2.fill m 0;
       for i = mini to maxi do
@@ -159,20 +159,20 @@ module Mask = (* to identify active pixels in a same-size grid *)
 	  m.{i,j} <- 1
 	done
       done;
-      m
+      m)
 
-    let full height width : t =
+    let full height width : t = Common.prof "Grid.Mask.full" (fun () ->
       let m = Array2.create Int8_unsigned C_layout height width in
       Array2.fill m 1;
-      m
+      m)
 
-    let copy m : t =
+    let copy m : t = Common.prof "Grid.Mask.copy" (fun () ->
       let m2 = Array2.create Int8_unsigned C_layout
 			    (Array2.dim1 m) (Array2.dim2 m) in
       Array2.blit m m2;
-      m2
+      m2)
 
-    let is_empty m : bool =
+    let is_empty m : bool = Common.prof "Grid.Mask.is_empty" (fun () ->
       let height = Array2.dim1 m in
       let width = Array2.dim2 m in
       let res = ref 0 in
@@ -181,7 +181,20 @@ module Mask = (* to identify active pixels in a same-size grid *)
 	  res := !res lor m.{i,j}
 	done
       done;
-      !res = 0
+      !res = 0)
+
+    let is_subset m1 m2 : bool = Common.prof "Grid.Mask.is_subset" (fun () ->
+      let height = Array2.dim1 m1 in
+      let width = Array2.dim2 m2 in
+      assert (Array2.dim1 m2 = height);
+      assert (Array2.dim2 m2 = width);
+      let res = ref 1 in
+      for i = 0 to height - 1 do
+	for j = 0 to width - 1 do
+	  res := !res land (lnot m1.{i,j} lor m2.{i,j})
+	done
+      done;
+      !res = 1)
 
     let mem i j m =
       m.{i,j} = 1
@@ -189,7 +202,7 @@ module Mask = (* to identify active pixels in a same-size grid *)
     let add_in_place m i j =
       m.{i,j} <- 1
 	       
-    let union m1 m2 =
+    let union m1 m2 = Common.prof "Grid.Mask.union" (fun () ->
       let height = Array2.dim1 m1 in
       let width = Array2.dim2 m1 in
       assert (Array2.dim1 m2 = height);
@@ -200,9 +213,26 @@ module Mask = (* to identify active pixels in a same-size grid *)
 	  m.{i,j} <- m1.{i,j} lor m2.{i,j}
 	done
       done;
-      m
+      m)
 		     
-    let inter m1 m2 =
+    let union_list ms =
+      match ms with
+      | [] -> invalid_arg "Grid.Mask.union_list: empty list"
+      | m1::ms1 ->
+	 let height = Array2.dim1 m1 in
+	 let width = Array2.dim2 m1 in
+	 let m = Array2.create Int8_unsigned C_layout height width in
+	 for i = 0 to height - 1 do
+	   for j = 0 to width - 1 do
+	     m.{i,j} <-
+	       List.fold_left
+		 (fun res mk -> res lor mk.{i,j})
+		 m1.{i,j} ms1
+	   done
+	 done;
+	 m
+
+    let inter m1 m2 = Common.prof "Grid.Mask.inter" (fun () ->
       let height = Array2.dim1 m1 in
       let width = Array2.dim2 m1 in
       assert (Array2.dim1 m2 = height);
@@ -213,9 +243,9 @@ module Mask = (* to identify active pixels in a same-size grid *)
 	  m.{i,j} <- m1.{i,j} land m2.{i,j}
 	done
       done;
-      m
+      m)
 		     
-    let diff m1 m2 =
+    let diff m1 m2 = Common.prof "Grid.Mask.diff" (fun () ->
       let height = Array2.dim1 m1 in
       let width = Array2.dim2 m1 in
       assert (Array2.dim1 m2 = height);
@@ -226,7 +256,7 @@ module Mask = (* to identify active pixels in a same-size grid *)
 	  m.{i,j} <- m1.{i,j} land (lnot m2.{i,j})
 	done
       done;
-      m
+      m)
 		     
     let iter f m =
       let height = Array2.dim1 m in
@@ -265,12 +295,13 @@ let merge_parts (p1 : part) (p2 : part) : part = Common.prof "Grid.merge_parts" 
     color = p1.color;
     nb_pixels = p1.nb_pixels + p2.nb_pixels;
     pixels = Mask.union p1.pixels p2.pixels })
-
-let merge_part_list (ps : part list) : part =
+							     
+let merge_part_list (ps : part list) : part = Common.prof "Grid.merge_part_list" (fun () ->
   match ps with
   | [] -> invalid_arg "Grid.merge_part_list: empty list"
-  | p1::ps1 -> List.fold_left merge_parts p1 ps1
-    
+  | [p1] -> p1
+  | p1::ps1 -> List.fold_left merge_parts p1 ps1)
+			      
 let pp_parts (g : t) (ps : part list) : unit =
   List.iter
     (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d/%d] "
@@ -281,28 +312,37 @@ let pp_parts (g : t) (ps : part list) : unit =
     ps;
   print_newline ();
   pp_grids (g :: List.map (part_as_grid g) ps)
-	      
+
+module PixelsMerge =
+  struct
+    type t =
+      | Pixel of int * int
+      | Merge of t * t
+    let rec fold (f : 'a -> int -> int -> 'a) (acc : 'a) (pm : t) : 'a =
+      match pm with
+      | Pixel (i,j) -> f acc i j
+      | Merge (pm1,pm2) ->
+	 let acc1 = fold f acc pm1 in
+	 let acc2 = fold f acc1 pm2 in
+	 acc2
+  end
+    
 let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
-  let fm : (int * int, part) Find_merge.hashtbl =
+  let fm : (int * int, color * PixelsMerge.t) Find_merge.hashtbl =
     new Find_merge.hashtbl
-	~init_val:
-	{ mini=h-1; maxi=0;
-	  minj=w-1; maxj=0;
-	  color=0; nb_pixels=0; pixels=Mask.empty h w }
-	~merge_val:merge_parts
+	~init_val:(no_color, PixelsMerge.Pixel (-1,-1))
+	~merge_val:
+	(fun (c1,pm1) (c2,pm2) ->
+	 assert (c1 = c2);
+	 (c1, PixelsMerge.Merge (pm1,pm2)))
   in
   let mat = g.matrix in
   (* setting initial val of each pixel *)
   for i = 0 to h-1 do
     for j = 0 to w-1 do
       let coord = (i,j) in
-      fm#replace coord
-		 { mini=i; maxi=i;
-		   minj=j; maxj=j;
-		   color=mat.{i,j};
-		   nb_pixels=1;
-		   pixels=Mask.singleton h w i j }
+      fm#replace coord (mat.{i,j}, PixelsMerge.Pixel (i,j))
     done
   done;
   (* merging adjacent pixels with same color *)
@@ -321,7 +361,24 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
   done;
   (* collecting parts *)
   fm#fold
-    (fun _ part res -> part::res)
+    (fun _ (c,ph) res ->
+     let pixels = Mask.empty h w in
+     let mini, maxi, minj, maxj, nb_pixels =
+       PixelsMerge.fold
+	 (fun (mini, maxi, minj, maxj, nb_pixels) i j ->
+	  Mask.add_in_place pixels i j;
+	  min mini i, max maxi i,
+	  min minj j, max maxj j,
+	  nb_pixels + 1)
+	 (h, -1, w, -1, 0)
+	 ph in
+     let part =
+       { mini; maxi;
+	 minj; maxj;
+	 color = c;
+	 nb_pixels;
+	 pixels } in
+     part::res)
     [])
 
 
@@ -362,16 +419,16 @@ let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option 
   else None)
       
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Common.prof "Grid.rectangles" (fun () ->
-  let h_sets =
+  let h_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
     (* grouping same-color parts spanning same rows *)
     Common.group_by
       (fun part -> part.mini, part.maxi, part.color)
-      parts in
-  let v_sets =
+      parts) in
+  let v_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
     (* grouping same-color parts spanning same cols *)
     Common.group_by
       (fun part -> part.minj, part.maxj, part.color)
-      parts in
+      parts) in
   let res = [] in
   let res =
     List.fold_left
