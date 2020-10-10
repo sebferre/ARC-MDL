@@ -829,7 +829,7 @@ let learn_model
       ~beam_width ~refine_degree
       (gis_test : Grid.t list) (* train + test inputs *)
       (gos : Grid.t list) (* only train outputs *)
-    : ((refinement * model) * ((env * grid_data) list * int * (env * grid_data) list) * Mdl.bits) list
+    : ((refinement * model) * ((env * grid_data) list * (env * grid_data) list) * Mdl.bits) list
   = Common.prof "Model.learn_model" (fun () ->
   let len_gos = List.length gos in
   let egis_test = List.map (fun gi -> env0, gi) gis_test in
@@ -850,20 +850,19 @@ let learn_model
 	      match read_grids egos m.output_template with
 	      | None -> None
 	      | Some egdos ->
-		 let env_size = env_size_of_egds egdos in
-		 Some (egdis_test, env_size, egdos)
+		 Some (egdis_test, egdos)
 	   with exn ->
 	     print_endline (Printexc.to_string exn);
 	     pp_model m;
 	     raise exn)
-    ~code:(fun (r,m) (egdis_test,env_size,egdos) ->
+    ~code:(fun (r,m) (egdis_test,egdos) ->
 	   pp_refinement r; print_newline ();
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     l_model_data m egdis_test egdos in
 	   Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
 	   lmd)
     ~refinements:
-    (fun (r,m) (egdis_test,env_size,egdos) ->
+    (fun (r,m) (egdis_test,egdos) ->
      model_refinements m egdis_test egdos))
     
 (* naive *)

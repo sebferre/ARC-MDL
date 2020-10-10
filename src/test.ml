@@ -124,7 +124,7 @@ let print_learned_model name task : unit = Common.prof "Test.print_learned_model
 	     gis_test gos in
   match lm with
   | [] -> assert false
-  | ((_,m), (egdis_test,env_size,egdos), l)::_ ->
+  | ((_,m), (egdis_test, egdos), l)::_ ->
      print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
