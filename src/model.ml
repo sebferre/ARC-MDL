@@ -433,7 +433,7 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
      res)
 	      
 let read_grid (env : env) (g : Grid.t) (m : grid_model) : (env * grid_data) parse_result = Common.prof "Model.read_grid" (fun () ->
-  let gd0 = { params = []; delta = [] } in
+  let gd0 = grid_data0 in
   let mask0 = Grid.Mask.full g.height g.width in
   let parts0 = Grid.segment_by_color g in
   Result.bind

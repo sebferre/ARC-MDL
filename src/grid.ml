@@ -332,7 +332,7 @@ let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun (
     p.pixels;
   gp)
 
-let merge_parts (ps : part list) : part = Common.prof "Grid.merge_part_list" (fun () ->
+let merge_parts (ps : part list) : part = Common.prof "Grid.merge_parts" (fun () ->
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1

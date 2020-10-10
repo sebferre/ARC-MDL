@@ -148,16 +148,15 @@ let print_learned_model name task : unit = Common.prof "Test.print_learned_model
 		(*Grid.pp_grids [input; output];
 		let parts = Grid.segment_by_color input in
 		Grid.pp_parts input parts;*)
-		match apply_model m env0 input with
-		| Result.Ok derived ->
-		   print_grid_mismatch
-		     ("Grid test-" ^ string_of_int i)
-		     ~grid:output
-		     ~derived_grid:derived;
-		   i+1
-		| Result.Error msg ->
-		   Printf.printf "Grid test-%d: %s\n" i msg;
-		   i+1)
+		let score =
+		  match apply_model m env0 input with
+		  | Result.Ok derived ->
+		     ( match Grid.diff derived output with
+		       | None -> 1
+		       | Some _ -> 0 )
+		  | Result.Error msg -> 0 in
+		Printf.printf "TEST %s/%d: %d\n" name i score;
+		i+1)
 	       1 task.test))
 			   
 (* check task *)
@@ -273,8 +272,11 @@ let tsol_ba97ae07 =
 let main_solutions () =
   check_task_solution tsol_ba97ae07
 
-let train_dir = "/local/ferre/data/tasks/ARC/data/training/"
+let arc_dir = "/local/ferre/data/tasks/ARC/data/"
+let train_dir = arc_dir ^ "training/"
 let train_names = Array.to_list (Sys.readdir train_dir)
+let eval_dir = arc_dir ^ "evaluation/"
+let eval_names = Array.to_list (Sys.readdir eval_dir)
 
 let solved_train_names =
   [ "ba97ae07.json";
@@ -285,21 +287,24 @@ let solved_train_names =
 let maybe_train_names =
   [ "952a094c.json";
     "98cf29f8.json";
+    "d23f8c26.json"
   ]
     
-let task_of_name name = Task.from_file (train_dir ^ name)
+let task_of_name dir name = Task.from_file (dir ^ name)
 				
-let main_tasks names =
+let main_tasks dir names =
   List.iter
     (fun name ->
      let res_opt =
        Common.do_timeout 10
-         (fun () -> check_task name (task_of_name name)) in
+         (fun () -> check_task name (task_of_name dir name)) in
      if res_opt = None then
        print_endline "TIMEOUT")
     names;
   Common.prerr_profiling ()
 
-let _ = main_tasks solved_train_names
-		   (*Common.sub_list train_names 0 20*)
+let _ = main_tasks
+	  train_dir solved_train_names
+	  (*eval_dir eval_names*)
+	  (*Common.sub_list train_names 0 20*)
 
