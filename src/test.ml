@@ -50,12 +50,12 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
   let diff = Grid.diff derived_grid grid in
   match diff with
   | None ->
-     Printf.printf "Grid %s: OK\n" name
+     Printf.printf "%s: OK\n" name
   | Some (Grid_size_mismatch {src_height; src_width; tgt_height; tgt_width}) ->
-     Printf.printf "Grid %s: size mismatch, %dx%d instead of %dx%d\n"
+     Printf.printf "%s: size mismatch, %dx%d instead of %dx%d\n"
 		   name src_height src_width tgt_height tgt_width
   | Some (Grid_diff_pixels {height; width; pixels}) ->
-     Printf.printf "Grid %s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
+     Printf.printf "%s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
      Grid.pp_grids [derived_grid; grid]
     
 let check_write_grid grid_name grid_model grid_env grid_data grid =
@@ -97,12 +97,13 @@ let print_l_md model egdis egdos = (* model+data DL *)
     Model.l_model_data model egdis egdos in
   Printf.printf "DL input  with Mi: L = %.1f + %.1f = %.1f\n" lmi ldi lmdi;
   Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
-  Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd
+  Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd;
+  ldo
 
 let print_l_tsol tsol = (* DLs for train data *)
   let egdis, _ = tsol_egdis tsol in
   let egdos, _ = tsol_egdos tsol in
-  print_l_md tsol.model egdis egdos
+  ignore (print_l_md tsol.model egdis egdos)
 
 let print_l_task_model name task model =
   let egis = task.train |> List.map (fun pair -> env0, pair.input) in
@@ -112,11 +113,20 @@ let print_l_task_model name task model =
       (fun (envi,gdi) pair -> gdi.params, pair.output)
       egdis task.train in
   let egdos = read_grids egos model.output_template |> Option.get in
-  print_l_md model egdis egdos
+  ignore (print_l_md model egdis egdos)
 	      
 (* monitoring learning *)
 
-let print_learned_model name task : unit = Common.prof "Test.print_learned_model" (fun () ->
+type measures = (string * float) list
+
+let print_measures ms =
+  List.iter
+    (fun (a,v) ->
+     Printf.printf "%s = %.3f\n" a v)
+    ms;
+  print_newline ()
+				 
+let print_learned_model name task : measures = Common.prof "Test.print_learned_model" (fun () ->
   let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
   let gos = task.train |> List.map (fun {output} -> output) in
   let lm = Model.learn_model
@@ -128,40 +138,59 @@ let print_learned_model name task : unit = Common.prof "Test.print_learned_model
      print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
-     print_l_md m egdis_test egdos;
+     let ldo = print_l_md m egdis_test egdos in
 	
      print_endline "\n# Input/output grids data (train)";
      let egdis = Common.sub_list egdis_test 0 (List.length egdos) in 
      let egdios = List.combine egdis egdos in
-     List.iter2
-       (fun ((_envi,gdi),(envo,gdo)) {output} ->
-	Model.pp_grid_data gdi;
-	Model.pp_grid_data gdo;
-	if gdo.params = []
-	then check_write_grid "predicted" m.output_template envo grid_data0 output
-	else print_endline "Grid predicted: unbound variable";
-	print_newline ())
-       egdios task.train;
+     let _, nb_ex_train, nb_correct_train =
+       List.fold_left2
+	 (fun (i,nb_ex, nb_correct)
+	      ((_envi,gdi),(envo,gdo)) {output} ->
+	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
+	  Model.pp_grid_data gdi;
+	  Model.pp_grid_data gdo;
+	  if gdo.params = []
+	  then check_write_grid grid_name m.output_template envo grid_data0 output
+	  else Printf.printf "%s: unbound variable\n" grid_name;
+	  print_newline ();
+	  i+1,
+	  nb_ex+1,
+	  nb_correct + (if gdo = grid_data0 then 1 else 0))
+	 (1,0,0)
+	 egdios task.train in
      print_endline "# Checking test instances\n";
-     ignore (List.fold_left
-	       (fun i {input; output} ->
-		(*Grid.pp_grids [input; output];
-		let parts = Grid.segment_by_color input in
-		Grid.pp_parts input parts;*)
-		let score =
-		  match apply_model m env0 input with
-		  | Result.Ok derived ->
-		     ( match Grid.diff derived output with
-		       | None -> 1
-		       | Some _ -> 0 )
-		  | Result.Error msg -> 0 in
-		Printf.printf "TEST %s/%d: %d\n" name i score;
-		i+1)
-	       1 task.test))
-			   
+     let _, nb_ex_test, nb_correct_test =
+       List.fold_left
+	 (fun (i,nb_ex,nb_correct) {input; output} ->
+	  (*Grid.pp_grids [input; output];
+	    let parts = Grid.segment_by_color input in
+	    Grid.pp_parts input parts;*)
+	  let score, label =
+	    match apply_model m env0 input with
+	    | Result.Ok derived ->
+	       ( match Grid.diff derived output with
+		 | None -> 1, "SUCCESS"
+		 | Some _ -> 0, "FAILURE" )
+	    | Result.Error msg -> 0, "ERROR" in
+	  Printf.printf "TEST %s/%d: %d (%s)\n" name i score label;
+	  i+1, nb_ex+1, nb_correct+score)
+	 (1,0,0) task.test in
+     print_newline ();
+     let ms =
+       [ "bits-train-error", ldo;
+	 "acc-train-micro", float nb_correct_train /. float nb_ex_train;
+	 "acc-train-macro", (if nb_correct_train = nb_ex_train then 1. else 0.);
+	 "acc-test-micro", float nb_correct_test /. float nb_ex_test;
+	 "acc-test-macro", (if nb_correct_test = nb_ex_test then 1. else 0.);
+       ] in
+     print_endline "# Performance measures on task";
+     print_measures ms;
+     ms)
+     
 (* check task *)
 			   
-let check_task_solution (tsol : task_solution) : unit =
+let check_task_solution (tsol : task_solution) : measures =
   print_endline "=====================================\n";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		tsol.name (List.length tsol.task.train) (List.length tsol.task.test);
@@ -194,10 +223,8 @@ let check_task_solution (tsol : task_solution) : unit =
     (tsol.train_data @ tsol.test_data);
   print_endline "\n# Learning a model";
   print_learned_model tsol.name tsol.task
-  
 
-
-let check_task (name : string) (task : Task.task) : unit = Common.prof "Test.check_task" (fun () ->
+let check_task (name : string) (task : Task.task) : measures = Common.prof "Test.check_task" (fun () ->
   print_endline "=====================================";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		name
@@ -206,8 +233,7 @@ let check_task (name : string) (task : Task.task) : unit = Common.prof "Test.che
   print_endline "\n# evaluating model0";
   print_l_task_model name task model0;  
   print_endline "\n# learning a model for train pairs";
-  print_learned_model name task;
-  print_newline ())
+  print_learned_model name task)
     
 (* ============================================================ *)
 
@@ -293,18 +319,38 @@ let maybe_train_names =
 let task_of_name dir name = Task.from_file (dir ^ name)
 				
 let main_tasks dir names =
-  List.iter
-    (fun name ->
-     let res_opt =
-       Common.do_timeout 10
-         (fun () -> check_task name (task_of_name dir name)) in
-     if res_opt = None then
-       print_endline "TIMEOUT")
-    names;
+  let nb_tasks = List.length names in
+  let _, count, sum_ms =
+    List.fold_left
+      (fun (rank, count, sum_ms) name ->
+       Printf.printf "## task %d " rank;
+       let res_opt =
+	 Common.do_timeout 10 (fun () -> check_task name (task_of_name dir name)) in
+       match res_opt with
+       | None ->
+	  print_endline "TIMEOUT";
+	  rank-1, count, sum_ms
+       | Some ms ->
+	  rank-1,
+	  count+1,
+	  if sum_ms = []
+	  then ms
+	  else
+	    List.map2
+	      (fun (a,sum_v) (a',v) -> assert (a=a'); (a,sum_v+.v))
+	      sum_ms ms)
+      (nb_tasks,0,[]) names in
+  Printf.printf "\n## performance measures averaged over %d tasks (out of %d)\n" count nb_tasks;
+  let ms =
+    List.map
+      (fun (a,sum_v) -> (a, sum_v /. float count))
+      sum_ms in
+  print_measures ms;
+  flush stdout;
   Common.prerr_profiling ()
 
 let _ = main_tasks
 	  train_dir solved_train_names
 	  (*eval_dir eval_names*)
-	  (*Common.sub_list train_names 0 20*)
+	  (*train_dir train_names (*Common.sub_list train_names 0 20*)*)
 

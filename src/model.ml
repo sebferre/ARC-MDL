@@ -642,7 +642,7 @@ let model0 =
 type grid_refinement =
   | RGridInit
   | RDefs of def list
-  | RShape of int * shape
+  | RShape of int (* depth *) * shape
 
 let pp_grid_refinement = function
   | RGridInit -> ()
