@@ -826,6 +826,7 @@ let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env
 		ref_defos; ref_shapos])
 	     
 let learn_model
+      ?(verbose = true)
       ~beam_width ~refine_degree
       (gis_test : Grid.t list) (* train + test inputs *)
       (gos : Grid.t list) (* only train outputs *)
@@ -856,10 +857,11 @@ let learn_model
 	     pp_model m;
 	     raise exn)
     ~code:(fun (r,m) (egdis_test,egdos) ->
-	   pp_refinement r; print_newline ();
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     l_model_data m egdis_test egdos in
-	   Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
+	   if verbose then (
+	     pp_refinement r; print_newline ();
+	     Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo);
 	   lmd)
     ~refinements:
     (fun (r,m) (egdis_test,egdos) ->

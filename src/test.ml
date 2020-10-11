@@ -2,6 +2,9 @@
 open Task
 open Model
 
+let training = ref false (* should be set to false on evaluation set *)
+let task_timeout = ref 10
+       
 type task_solution =
   { name : string;
     task : task; (* the task description *)
@@ -50,13 +53,19 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
   let diff = Grid.diff derived_grid grid in
   match diff with
   | None ->
-     Printf.printf "%s: OK\n" name
+     Printf.printf "%s: SUCCESS\n" name
   | Some (Grid_size_mismatch {src_height; src_width; tgt_height; tgt_width}) ->
-     Printf.printf "%s: size mismatch, %dx%d instead of %dx%d\n"
-		   name src_height src_width tgt_height tgt_width
+     if !training
+     then Printf.printf "%s: size mismatch, %dx%d instead of %dx%d\n"
+			name src_height src_width tgt_height tgt_width
+     else Printf.printf "%s: FAILURE\n" name
   | Some (Grid_diff_pixels {height; width; pixels}) ->
-     Printf.printf "%s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
-     Grid.pp_grids [derived_grid; grid]
+     if !training
+     then (
+       Printf.printf "%s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
+       Grid.pp_grids [derived_grid; grid]
+     )
+     else Printf.printf "%s: FAILURE\n" name
     
 let check_write_grid grid_name grid_model grid_env grid_data grid =
   let derived_grid = write_grid grid_model grid_env grid_data in
@@ -130,6 +139,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
   let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
   let gos = task.train |> List.map (fun {output} -> output) in
   let lm = Model.learn_model
+	     ~verbose:(!training)
 	     ~beam_width:1 ~refine_degree:1
 	     gis_test gos in
   match lm with
@@ -148,17 +158,18 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	 (fun (i,nb_ex, nb_correct)
 	      ((_envi,gdi),(envo,gdo)) {output} ->
 	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
-	  Model.pp_grid_data gdi;
-	  Model.pp_grid_data gdo;
+	  if !training then Model.pp_grid_data gdi;
+	  if !training then Model.pp_grid_data gdo;
 	  if gdo.params = []
 	  then check_write_grid grid_name m.output_template envo grid_data0 output
-	  else Printf.printf "%s: unbound variable\n" grid_name;
+	  else Printf.printf "%s: ERROR (unbound variable)\n" grid_name;
 	  print_newline ();
 	  i+1,
 	  nb_ex+1,
 	  nb_correct + (if gdo = grid_data0 then 1 else 0))
 	 (1,0,0)
 	 egdios task.train in
+     
      print_endline "# Checking test instances\n";
      let _, nb_ex_test, nb_correct_test =
        List.fold_left
