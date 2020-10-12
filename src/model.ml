@@ -774,10 +774,11 @@ let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_
       (RDefs defs, gv, subst_grid_model defs m)
       (insert_a_shape gv m))
 		     
-let learn_grid_model ~beam_width ~refine_degree ~env_size
+let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
 		     (egrids : (env * Grid.t) list) (gv : Genvar.t)
-    : ((grid_refinement * Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list =
+    : ((grid_refinement * Genvar.t * grid_model) * (env * grid_data) list * Mdl.bits) list * bool =
   Mdl.Strategy.beam
+    ~timeout
     ~beam_width
     ~refine_degree
     ~m0:(let gv,m = grid_model0 gv in
@@ -827,14 +828,16 @@ let model_refinements (m : model) (egdis : (env * grid_data) list) (egdos : (env
 	     
 let learn_model
       ?(verbose = true)
+      ~timeout
       ~beam_width ~refine_degree
       (gis_test : Grid.t list) (* train + test inputs *)
       (gos : Grid.t list) (* only train outputs *)
-    : ((refinement * model) * ((env * grid_data) list * (env * grid_data) list) * Mdl.bits) list
+    : ((refinement * model) * ((env * grid_data) list * (env * grid_data) list) * Mdl.bits) list * bool
   = Common.prof "Model.learn_model" (fun () ->
   let len_gos = List.length gos in
   let egis_test = List.map (fun gi -> env0, gi) gis_test in
   Mdl.Strategy.beam
+    ~timeout
     ~beam_width
     ~refine_degree
     ~m0:(RInit, model0)
@@ -852,10 +855,12 @@ let learn_model
 	      | None -> None
 	      | Some egdos ->
 		 Some (egdis_test, egdos)
-	   with exn ->
-	     print_endline (Printexc.to_string exn);
-	     pp_model m;
-	     raise exn)
+	   with
+	   | Common.Timeout as exn -> raise exn
+	   | exn ->
+	      print_endline (Printexc.to_string exn);
+	      pp_model m;
+	      raise exn)
     ~code:(fun (r,m) (egdis_test,egdos) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     l_model_data m egdis_test egdos in

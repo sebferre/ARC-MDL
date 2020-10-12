@@ -2,8 +2,8 @@
 open Task
 open Model
 
-let training = ref false (* should be set to false on evaluation set *)
-let task_timeout = ref 10
+let training = ref true (* should be set to false on evaluation set *)
+let task_timeout = ref 20
        
 type task_solution =
   { name : string;
@@ -138,10 +138,13 @@ let print_measures ms =
 let print_learned_model name task : measures = Common.prof "Test.print_learned_model" (fun () ->
   let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
   let gos = task.train |> List.map (fun {output} -> output) in
-  let lm = Model.learn_model
-	     ~verbose:(!training)
-	     ~beam_width:1 ~refine_degree:1
-	     gis_test gos in
+  let lm, timed_out =
+    Model.learn_model
+      ~verbose:(!training)
+      ~timeout:(!task_timeout)
+      ~beam_width:1 ~refine_degree:1
+      gis_test gos in
+  if timed_out && !training then print_endline "TIMEOUT";
   match lm with
   | [] -> assert false
   | ((_,m), (egdis_test, egdos), l)::_ ->
@@ -330,26 +333,23 @@ let maybe_train_names =
 let task_of_name dir name = Task.from_file (dir ^ name)
 				
 let main_tasks dir names =
+  Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
+  Printf.printf "timeout = %d\n" !task_timeout;
+  print_newline ();
   let nb_tasks = List.length names in
   let _, count, sum_ms =
     List.fold_left
       (fun (rank, count, sum_ms) name ->
        Printf.printf "## task %d " rank;
-       let res_opt =
-	 Common.do_timeout 10 (fun () -> check_task name (task_of_name dir name)) in
-       match res_opt with
-       | None ->
-	  print_endline "TIMEOUT";
-	  rank-1, count, sum_ms
-       | Some ms ->
-	  rank-1,
-	  count+1,
-	  if sum_ms = []
-	  then ms
-	  else
-	    List.map2
-	      (fun (a,sum_v) (a',v) -> assert (a=a'); (a,sum_v+.v))
-	      sum_ms ms)
+       let ms = check_task name (task_of_name dir name) in
+       rank-1,
+       count+1,
+       if sum_ms = []
+       then ms
+       else
+	 List.map2
+	   (fun (a,sum_v) (a',v) -> assert (a=a'); (a,sum_v+.v))
+	   sum_ms ms)
       (nb_tasks,0,[]) names in
   Printf.printf "\n## performance measures averaged over %d tasks (out of %d)\n" count nb_tasks;
   let ms =

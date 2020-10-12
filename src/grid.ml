@@ -332,7 +332,7 @@ let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun (
     p.pixels;
   gp)
 
-let merge_parts (ps : part list) : part = Common.prof "Grid.merge_parts" (fun () ->
+let merge_parts (ps : part list) : part =
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1
@@ -348,7 +348,7 @@ let merge_parts (ps : part list) : part = Common.prof "Grid.merge_parts" (fun ()
 	 (p1.mini, p1.maxi, p1.minj, p1.maxj, p1.nb_pixels)
 	 ps1 in
      { mini; maxi; minj; maxj; color = p1.color;
-       nb_pixels; pixels = (!pixels) })
+       nb_pixels; pixels = (!pixels) }
 			      
 let pp_parts (g : t) (ps : part list) : unit =
   List.iter
