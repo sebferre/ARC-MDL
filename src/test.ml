@@ -126,12 +126,14 @@ let print_l_task_model name task model =
 	      
 (* monitoring learning *)
 
-type measures = (string * float) list
+type measures = (string * [`Tasks|`Bits] * float) list
 
-let print_measures ms =
+let print_measures count ms =
   List.iter
-    (fun (a,v) ->
-     Printf.printf "%s = %.3f\n" a v)
+    (fun (a,t,v) ->
+     match t with
+     | `Tasks -> Printf.printf "%s = %.2f tasks (%.2f%%)\n" a v (100. *. v /. float count)
+     | `Bits -> Printf.printf "%s = %.1f bits (%.1f bits/task)\n" a v (v /. float count))
     ms;
   print_newline ()
 				 
@@ -192,14 +194,14 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	 (1,0,0) task.test in
      print_newline ();
      let ms =
-       [ "bits-train-error", ldo;
-	 "acc-train-micro", float nb_correct_train /. float nb_ex_train;
-	 "acc-train-macro", (if nb_correct_train = nb_ex_train then 1. else 0.);
-	 "acc-test-micro", float nb_correct_test /. float nb_ex_test;
-	 "acc-test-macro", (if nb_correct_test = nb_ex_test then 1. else 0.);
+       [ "bits-train-error", `Bits, ldo;
+	 "acc-train-micro", `Tasks, float nb_correct_train /. float nb_ex_train;
+	 "acc-train-macro", `Tasks, (if nb_correct_train = nb_ex_train then 1. else 0.);
+	 "acc-test-micro", `Tasks, float nb_correct_test /. float nb_ex_test;
+	 "acc-test-macro", `Tasks, (if nb_correct_test = nb_ex_test then 1. else 0.);
        ] in
      print_endline "# Performance measures on task";
-     print_measures ms;
+     print_measures 1 ms;
      ms)
      
 (* check task *)
@@ -333,6 +335,8 @@ let maybe_train_names =
 let task_of_name dir name = Task.from_file (dir ^ name)
 				
 let main_tasks dir names =
+  print_endline "## options";
+  Printf.printf "alpha = %.1f\n" !alpha;
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
   Printf.printf "timeout = %d\n" !task_timeout;
   print_newline ();
@@ -348,15 +352,13 @@ let main_tasks dir names =
        then ms
        else
 	 List.map2
-	   (fun (a,sum_v) (a',v) -> assert (a=a'); (a,sum_v+.v))
+	   (fun (a,t,sum_v) (a',t',v) ->
+	    assert (a=a' && t=t');
+	    (a,t,sum_v+.v))
 	   sum_ms ms)
       (nb_tasks,0,[]) names in
   Printf.printf "\n## performance measures averaged over %d tasks (out of %d)\n" count nb_tasks;
-  let ms =
-    List.map
-      (fun (a,sum_v) -> (a, sum_v /. float count))
-      sum_ms in
-  print_measures ms;
+  print_measures count sum_ms;
   flush stdout;
   Common.prerr_profiling ()
 

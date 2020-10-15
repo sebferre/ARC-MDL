@@ -1,6 +1,8 @@
 
 open Task
 
+let alpha = ref 10.
+
 exception TODO
        
 (* vars and expressions *)
@@ -606,7 +608,7 @@ let l_grid_model_data (m : grid_model) (egds : (env * grid_data) list) : Mdl.bit
   let env_size = env_size_of_egds egds in
   let (l_m, code_m), hw = l_grid_model ~env_size m in
   let l_d =
-    10. (* because given training examples are only a sample from a class of grids *)
+    !alpha (* because given training examples are only a sample from a class of grids *)
     *. Mdl.sum egds (fun (env,gd) -> l_grid_data ~m ~code_m ~hw env gd) in
   l_m, l_d, l_m +. l_d)
 
