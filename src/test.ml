@@ -2,9 +2,13 @@
 open Task
 open Model
 
+(* === parameters === *)
+       
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 20
-       
+
+(* === hard-coded solution === *)
+		       
 type task_solution =
   { name : string;
     task : task; (* the task description *)
@@ -47,8 +51,8 @@ let tsol_egdos tsol : (env * grid_data) list train_test = (* train+test output e
   tsol.test_data |> List.map (fun gdi -> gdi.params, grid_data0)
 
 
-(* == checking functions == *)
-		
+(* === printing and checking functions === *)
+			     
 let print_grid_mismatch name ~grid ~derived_grid : unit =
   let diff = Grid.diff derived_grid grid in
   match diff with
@@ -70,8 +74,6 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
 let check_write_grid grid_name grid_model grid_env grid_data grid =
   let derived_grid = write_grid grid_model grid_env grid_data in
   print_grid_mismatch grid_name ~grid ~derived_grid
-
-
 
 let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
   let params = List.sort Stdlib.compare data.params in
@@ -123,8 +125,9 @@ let print_l_task_model name task model =
       egdis task.train in
   let egdos = read_grids egos model.output_template |> Option.get in
   ignore (print_l_md model egdis egdos)
-	      
-(* monitoring learning *)
+
+	 
+(* === monitoring learning === *)
 
 type measures = (string * [`Tasks|`Bits] * float) list
 
@@ -240,18 +243,8 @@ let check_task_solution (tsol : task_solution) : measures =
   print_endline "\n# Learning a model";
   print_learned_model tsol.name tsol.task
 
-let check_task (name : string) (task : Task.task) : measures = Common.prof "Test.check_task" (fun () ->
-  print_endline "=====================================";
-  Printf.printf "Checking task %s: %d train, %d test\n"
-		name
-		(List.length task.train)
-		(List.length task.test);
-  print_endline "\n# evaluating model0";
-  print_l_task_model name task model0;  
-  print_endline "\n# learning a model for train pairs";
-  print_learned_model name task)
-    
-(* ============================================================ *)
+   
+(* === main for task solutions === *)
 
 let file_of_name name =
   "/local/ferre/data/tasks/ARC/data/training/" ^ name ^ ".json"
@@ -314,6 +307,8 @@ let tsol_ba97ae07 =
 let main_solutions () =
   check_task_solution tsol_ba97ae07
 
+(* === main for tasks without solution === *)
+		      
 let arc_dir = "/local/ferre/data/tasks/ARC/data/"
 let train_dir = arc_dir ^ "training/"
 let train_names = Array.to_list (Sys.readdir train_dir)
@@ -333,37 +328,91 @@ let maybe_train_names =
   ]
     
 let task_of_name dir name = Task.from_file (dir ^ name)
-				
-let main_tasks dir names =
+
+class type checker =
+  object
+    method process_task : string -> task -> unit
+    method summarize_tasks : unit
+  end
+					   
+let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   print_endline "## options";
   Printf.printf "alpha = %.1f\n" !alpha;
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
   Printf.printf "timeout = %d\n" !task_timeout;
   print_newline ();
   let nb_tasks = List.length names in
-  let _, count, sum_ms =
+  let _ =
     List.fold_left
-      (fun (rank, count, sum_ms) name ->
-       Printf.printf "## task %d " rank;
-       let ms = check_task name (task_of_name dir name) in
-       rank-1,
-       count+1,
-       if sum_ms = []
-       then ms
-       else
-	 List.map2
-	   (fun (a,t,sum_v) (a',t',v) ->
-	    assert (a=a' && t=t');
-	    (a,t,sum_v+.v))
-	   sum_ms ms)
-      (nb_tasks,0,[]) names in
-  Printf.printf "\n## performance measures averaged over %d tasks (out of %d)\n" count nb_tasks;
-  print_measures count sum_ms;
-  flush stdout;
+      (fun rank name ->
+       let task = task_of_name dir name in
+       print_endline "=====================================";
+       Printf.printf "[-%d] Checking task %s: %d train, %d test\n"
+		     rank name
+		     (List.length task.train)
+		     (List.length task.test);
+       checker#process_task name task;
+       rank-1)
+      nb_tasks names in
+  checker#summarize_tasks;
   Common.prerr_profiling ()
 
-let _ = main_tasks
-	  train_dir solved_train_names
-	  (*eval_dir eval_names*)
-	  (*train_dir train_names (*Common.sub_list train_names 0 20*)*)
+let checker_learning : checker =
+  object
+    val mutable count = 0
+    val mutable sum_ms = []
+
+    method process_task name task =
+      print_endline "\n# evaluating model0";
+      print_l_task_model name task model0;
+      print_endline "\n# learning a model for train pairs";
+      let ms = print_learned_model name task in
+      count <- count+1;
+      sum_ms <-
+	if sum_ms = []
+	then ms
+	else
+	  List.map2
+	    (fun (a,t,sum_v) (a',t',v) ->
+	     assert (a=a' && t=t');
+	     (a,t,sum_v+.v))
+	    sum_ms ms
+
+    method summarize_tasks =
+      Printf.printf "\n## performance measures averaged over %d tasks\n" count;
+      print_measures count sum_ms;
+      flush stdout
+  end
+
+let checker_segmentation : checker =
+  object
+    method process_task name task =
+      List.iteri
+	(fun i pair ->
+	 Printf.printf "# example %d\n" i; 
+	 [pair.input; pair.output]
+	 |> List.iter
+	      (fun g ->
+	       Grid.pp_parts g (Grid.segment_by_color g)))
+	task.train
+    method summarize_tasks = ()
+  end												 
+let _ =
+  let dir = ref train_dir in
+  let names = ref train_names in
+  let checker = ref checker_learning in
+  Arg.parse
+    ["-train", Unit (fun () -> dir := train_dir; training := true; names := train_names), "Use training set of tasks (default)";
+     "-eval", Unit (fun () -> dir := eval_dir; training := false; names := eval_names), "Use evaluation set of tasks";
+     "-all", Unit (fun () -> names := if !dir = train_dir then train_names else eval_names), "Use all tasks in the chosen set (default)";
+     "-sample", Int (fun n -> Random.self_init (); names := Common.list_sample ~size:n (if !dir = train_dir then train_names else eval_names)), "Use the first N tasks in the chosen set";
+     "-solved", Unit (fun () -> names := solved_train_names), "Use short list of solved training tasks";
+     "-learning", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
+     "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
+     "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
+     "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
+    ]
+    (fun str -> ())
+    "test [-train|-eval] [-all|-sample N|-solved] [-learning|-segment] [-alpha N] [-timeout N]";	      		       
+  main_tasks !dir !names !checker
 
