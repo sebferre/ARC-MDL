@@ -419,9 +419,9 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
 		     let new_mask = Grid.Mask.diff mask r.mask in
 		     let new_parts =
 		       List.filter
-			 (fun p -> Grid.Mask.is_subset p.Grid.pixels mask)
-(*			  not (Grid.Mask.is_empty
-				 (Grid.Mask.inter p.Grid.pixels mask)))*)
+			 (fun p ->
+			  not (Grid.Mask.is_empty
+				 (Grid.Mask.inter p.Grid.pixels mask)))
 			 parts in
 		     kont (new_gd, new_mask, new_parts)))) in
 	  match new_res with

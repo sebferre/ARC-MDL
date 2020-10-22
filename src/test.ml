@@ -318,11 +318,11 @@ let eval_names = Array.to_list (Sys.readdir eval_dir)
 let solved_train_names =
   [ "ba97ae07.json";
     "b94a9452.json";
+    "e48d4e1a.json";
   ]
 
 let maybe_train_names =
   [ "694f12f3.json";
-    "e48d4e1a.json";
     "41e4d17e.json";
     "1bfc4729.json";
     "952a094c.json";
@@ -401,7 +401,12 @@ let checker_segmentation : checker =
 	 [pair.input; pair.output]
 	 |> List.iter
 	      (fun g ->
-	       Grid.pp_parts g (Grid.segment_by_color g)))
+	       let parts = Grid.segment_by_color g in
+	       let full_mask = Grid.(Mask.full g.height g.width) in
+	       let rects = Grid.rectangles g full_mask parts in
+	       Grid.pp_parts g parts;
+	       Grid.pp_rectangles g rects;
+	       print_newline ()))
 	task.train
     method summarize_tasks = ()
   end												 

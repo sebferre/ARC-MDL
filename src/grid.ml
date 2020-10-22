@@ -297,6 +297,10 @@ module MaskZ =
 	
     let copy m = m
 
+    let equal m1 m2 =
+      m1.height = m2.height
+      && m1.width = m2.width
+      && Z.equal m1.bits m2.bits
     let is_empty m =
       Z.equal m.bits Z.zero
     let is_subset m1 m2 =
@@ -346,14 +350,15 @@ let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun (
   gp)
 
 let pp_parts (g : t) (ps : part list) : unit =
-  List.iter
+  print_endline "PARTS:";
+(*  List.iter
     (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d/%d] "
 			    p.mini p.minj
 			    p.maxi p.maxj
 			    p.nb_pixels
 			    ((p.maxi-p.mini+1) * (p.maxj-p.minj+1)))
     ps;
-  print_newline ();
+  print_newline ();*)
   pp_grids (g :: List.map (part_as_grid g) ps)
 
 let merge_parts (ps : part list) : part =
@@ -499,59 +504,6 @@ let split_part (part : part) : part list = (*Common.prof "Grid.split_part" (fun 
 	let corners_left =
 	  Skyline.add (Skyline.min_x i corners_above) j corners_left in
 	arr.(i).(j) <- Skyline.inter corners_left corners_above
-(*				     
-	let corners_ij = Intrel2.empty in
-	let corners_ij = (* extending rectangles *)
-	  if i > part.mini && j > part.minj
-	  then
-	    let corners_above = arr.(i-1).(j) in
-	    let corners_left = arr.(i).(j-1) in
-	    Intrel2.fold
-	      (fun res a b ->
-	       let ok_b, min_b' =
-		 Intrel2.fold
-		   (fun (ok,m) a' b' -> if a' = a then true, min m b' else ok, m)
-		   (false,w) corners_left in
-	       let ok_a, min_a' =
-		 Intrel2.fold
-		   (fun (ok,m) a' b' -> if b' = b then true, min m a' else ok, m)
-		   (false,h) corners_left in
-	       let res = if ok_b then Intrel2.add a (max b min_b') res else res in
-	       let res = if ok_a then Intrel2.add (max a min_a') b res else res in
-	       res)
-	      corners_ij corners_above
-	      (* should be possible to be more efficient with sorted lists and refined algo *)
-	  else corners_ij in
-	let corners_ij = (* extending columns *)
-	  if i > part.mini && (j = part.minj || Intrel2.is_empty arr.(i).(j-1))
-	  then
-	    let corners = arr.(i-1).(j) in
-	    let ok, min_a =
-	      Intrel2.fold
-		(fun (ok,m) a b -> true, min m a)
-		(false,h) corners in
-	    if ok
-	    then Intrel2.add min_a j corners_ij
-	    else corners_ij
-	  else corners_ij in
-	let corners_ij = (* extending rows *)
-	  if j > part.minj && (i = part.mini || Intrel2.is_empty arr.(i-1).(j))
-	  then
-	    let corners = arr.(i).(j-1) in
-	    let ok, min_b =
-	      Intrel2.fold
-		(fun (ok,m) a b -> true, min m b)
-		(false,w) corners in
-	    if ok
-	    then Intrel2.add i min_b corners_ij
-	    else corners_ij
-	  else corners_ij in
-	let corners_ij = (* new corner *)
-	  if Intrel2.is_empty corners_ij
-	  then Intrel2.singleton i j
-	  else corners_ij in
-	arr.(i).(j) <- corners_ij
- *)
       else (
 	let closed_corners =
 	  if i > part.mini && j > part.minj then
@@ -652,6 +604,22 @@ type rectangle = { height: int; width: int;
 		   mask : Mask.t; (* all pixels covered by the shape, including the delta *)
 		   delta : pixel list }
 
+let rectangle_as_grid (g : t) (r : rectangle) : t =
+  let gr = make g.height g.width no_color in
+  let col = r.color in
+  for i = r.offset_i to r.offset_i + r.height - 1 do
+    for j = r.offset_j to r.offset_j + r.width - 1 do
+      if not (List.exists (fun (i',j',c') -> i=i' && j=j') r.delta) 
+      then set_pixel gr i j col
+    done
+  done;
+  gr
+		   
+let pp_rectangles (g : t) (rs : rectangle list) =
+  print_endline "RECTANGLES:";
+  pp_grids (g :: List.map (rectangle_as_grid g) rs)
+
+		   
 let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option = Common.prof "Grid.rectangle_opt_of_part" (fun () ->
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let area = h * w in
@@ -694,23 +662,40 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
   let res = [] in
   let res =
     List.fold_left
-      (fun res (_, ps) ->
-       assert (ps <> []);
-       let mp = merge_parts ps in
-       match rectangle_opt_of_part g mask mp with
+      (fun res p ->
+       match rectangle_opt_of_part g mask p with
        | Some r -> r::res
        | None -> res)
+      res parts in
+  let res =
+    List.fold_left
+      (fun res (_, ps) ->
+       match ps with
+       | [] -> assert false
+       | [_] -> res
+       | _ -> (* at least two parts *)
+	  let mp = merge_parts ps in
+	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
+	  then res
+	  else
+	    match rectangle_opt_of_part g mask mp with
+	    | Some r -> r::res
+	    | None -> res)
       res h_sets in
   let res =
     List.fold_left
       (fun res (_, ps) ->
        match ps with
-       | _::_::_ -> (* at least two parts to avoid redundancy with h_sets *)
+       | [] -> assert false
+       | [_] -> res
+       | _ -> (* at least two parts *)
 	  let mp = merge_parts ps in
-	  ( match rectangle_opt_of_part g mask mp with
+	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
+	  then res
+	  else
+	    match rectangle_opt_of_part g mask mp with
 	    | Some r -> r::res
-	    | None -> res )
-       | _ -> res)
+	    | None -> res)
       res v_sets in
   res)
 
