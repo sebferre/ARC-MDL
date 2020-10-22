@@ -2,6 +2,7 @@
 open Bigarray
 
 module Intset = Intset.Intmap
+module Intrel2 = Intrel2.Intmap
        
 type color = int
 
@@ -61,20 +62,27 @@ let iter_pixels f grid = Common.prof "Grid.iter_pixels" (fun () ->
   done)
 
 (* pretty-printing in terminal *)
-    
+
 let rec pp_grids grids =
+  let grids_per_line = 5 in
+  let nb_lines = (List.length grids - 1) / 5 + 1 in
   let max_height =
     List.fold_left (fun res g -> max res g.height) 0 grids in
-  for i = 0 to max_height - 1 do
-    List.iter
-      (fun g ->
-       for j = 0 to g.width - 1 do
-	 if i < g.height
-	 then pp_color g.matrix.{i,j}
-	 else pp_blank ()
-       done;
-       print_string "   ")
-      grids;
+  for k = 0 to nb_lines - 1 do
+    for i = 0 to max_height - 1 do
+      List.iteri
+	(fun l g ->
+	 if l / grids_per_line = k then (
+	   for j = 0 to g.width - 1 do
+	     if i < g.height
+	     then pp_color g.matrix.{i,j}
+	     else pp_blank ()
+	   done;
+	   print_string "   "
+	 ))
+	grids;
+      print_newline ()
+    done;
     print_newline ()
   done
 and pp_grid grid =
@@ -277,13 +285,16 @@ module MaskZ =
 	       width : int;
 	       bits : Z.t; }
 
+    let height m = m.height
+    let width m = m.width
+		    
     let empty height width =
       { height; width; bits = Z.zero }
     let full height width =
       { height; width; bits = Z.pred (Z.shift_left Z.one (height * width)) }
     let singleton height width i j =
       { height; width; bits = Z.shift_left Z.one (i * width + j) }
-
+	
     let copy m = m
 
     let is_empty m =
@@ -292,7 +303,9 @@ module MaskZ =
       Z.equal (Z.logand m1.bits (Z.lognot m2.bits)) Z.zero
 
     let mem i j m =
-      Z.testbit m.bits (i * m.width + j)
+      i >=0 && i < m.height
+      && j >= 0 && j < m.width
+      && Z.testbit m.bits (i * m.width + j)
 
     let add_in_place i j m =
       { m with
@@ -332,6 +345,17 @@ let part_as_grid (g : t) (p : part) : t = Common.prof "Grid.part_as_grid" (fun (
     p.pixels;
   gp)
 
+let pp_parts (g : t) (ps : part list) : unit =
+  List.iter
+    (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d/%d] "
+			    p.mini p.minj
+			    p.maxi p.maxj
+			    p.nb_pixels
+			    ((p.maxi-p.mini+1) * (p.maxj-p.minj+1)))
+    ps;
+  print_newline ();
+  pp_grids (g :: List.map (part_as_grid g) ps)
+
 let merge_parts (ps : part list) : part =
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
@@ -350,17 +374,6 @@ let merge_parts (ps : part list) : part =
      { mini; maxi; minj; maxj; color = p1.color;
        nb_pixels; pixels = (!pixels) }
 			      
-let pp_parts (g : t) (ps : part list) : unit =
-  List.iter
-    (fun p -> Printf.printf "(%d,%d)->(%d,%d) [%d/%d] "
-			    p.mini p.minj
-			    p.maxi p.maxj
-			    p.nb_pixels
-			    ((p.maxi-p.mini+1) * (p.maxj-p.minj+1)))
-    ps;
-  print_newline ();
-  pp_grids (g :: List.map (part_as_grid g) ps)
-
 module PixelsMerge =
   struct
     type t =
@@ -374,7 +387,208 @@ module PixelsMerge =
 	 let acc2 = fold f acc1 pm2 in
 	 acc2
   end
+
+module Skyline = (* min-skyline of coordinates *)
+  struct
+    type t = (int * int) list (* (x,y) list *)
+    (* invariant:
+       - sorted in increasing x, decreasing y
+       - (x,y), (x,y') => y=y'
+       - (x,y), (x',y) => x=x'
+       - (x,y), (x',y'), x'<=x, y'<=y => x=x', y=y'
+       - denotes the set of points
+         { (x',y') | some (x,y) in slyline: x'>=x, y'>=y }
+     *)
+    let print sl =
+      List.iter (fun (x,y) -> Printf.printf " (%d,%d)" x y) sl
+
+    let equals sl1 sl2 = sl1=sl2
+		
+    let empty = []
+
+    let is_empty sl = sl=[]
+
+    let rec mem x y sl =
+      match sl with
+      | [] -> false
+      | (x1,y1)::sl1 -> x >= x1 && (y >= y1 || mem x y sl1)
+			   
+    let min_x bound sl =
+      match sl with (* x of first element *)
+      | [] -> bound
+      | (x1,_)::_ -> x1
+    let rec min_y bound sl =
+      match sl with (* y of last element *)
+      | [] -> bound
+      | [(_,y1)] -> y1
+      | _::sl1 -> min_y bound sl1
+		  
+    let rec add x y sl =
+      match sl with
+      | [] -> [(x,y)]
+      | (x1,y1)::sl1 ->
+	 if x >= x1 && y >= y1 then sl (* already in *)
+	 else if x < x1 && y > y1 then (x,y)::sl
+	 else if x < x1 && y = y1 then (x,y)::sl1
+	 else if x <= x1 && y <= y1 then add x y sl1 (* (x1,y1) covered *)
+	 else (x1,y1)::add x y sl1
+
+    let rec inter sl1 sl2 =
+      match sl1, sl2 with
+      | [], _ -> []
+      | _, [] -> []
+      | (x1,y1)::sl1', (x2,y2)::sl2' -> (* (xi,yi) as pi *)
+	 if x1 < x2 && y1 > y2 then (* p1 before p2 in skyline *)
+	   match sl1' with
+	   | (x1',y1')::sl1'' when x1' < x2 && y1' > y2 ->
+	      (* next point in sl1 is also before p2 *)
+	      inter sl1' sl2 (* p1 can be skipped *)
+	   | _ ->
+	      let x, y = max x1 x2, max y1 y2 in
+	      (* adding intersection between p1 and p2 *)
+	      add x y (inter sl1' sl2)
+	 else if x2 < x1 && y2 > y1 then (* p2 before p1 in skyline*)
+	   match sl2' with
+	   | (x2',y2')::sl2'' when x2' < x1 && y2' > y1 ->
+	      (* next point in sl2 is also before p1 *)
+	      inter sl1 sl2' (* p2 can be skipped *)
+	   | _ ->
+	      let x, y = max x1 x2, max y1 y2 in
+	      (* adding intersection between p1 and p2 *)
+	      add x y (inter sl1 sl2')
+	 else (* p1 and p2 are comparable *)
+	   if x1=x2 && y1=y2 then (* p1 = p2 *)
+	     add x1 y1 (inter sl1' sl2')
+	   else if x1 <= x2 && y1 <= y2 then (* p2 in p1 *)
+	     add x2 y2 (inter sl1' sl2)
+	   else (* p1 in p2 *)
+	     add x1 y1 (inter sl1 sl2')
+
+    let rec diff sl1 sl2 =
+      match sl1, sl2 with
+      | [], _ -> []
+      | _, [] -> sl1
+      | (x1,y1)::sl1', (x2,y2)::sl2' ->
+	 if x2=x1 && y2=y1 then diff sl1' sl2'
+	 else if x2 < x1 || y2 > y1 then diff sl1 sl2'
+	 else (x1,y1)::diff sl1' sl2 
+
+    let iter = List.iter
+  end	 
     
+let split_part (part : part) : part list = (*Common.prof "Grid.split_part" (fun () ->*)
+  let mask = part.pixels in
+  let h, w = Mask.height mask, Mask.width mask in
+  let arr : Skyline.t array array = Array.make_matrix (h+1) (w+1) Skyline.empty in
+  let res = ref [] in
+  for i = part.mini to part.maxi+1 do
+    for j = part.minj to part.maxj+1 do
+      if i <= part.maxi && j <= part.maxj
+	 && Mask.mem i j mask (* cell belongs to part *)
+      then
+	let corners_above =
+	  if i = part.mini
+	  then Skyline.empty
+	  else arr.(i-1).(j) in
+	let corners_left =
+	  if j = part.minj
+	  then Skyline.empty
+	  else arr.(i).(j-1) in
+	let corners_above =
+	  Skyline.add i (Skyline.min_y j corners_left) corners_above in
+	let corners_left =
+	  Skyline.add (Skyline.min_x i corners_above) j corners_left in
+	arr.(i).(j) <- Skyline.inter corners_left corners_above
+(*				     
+	let corners_ij = Intrel2.empty in
+	let corners_ij = (* extending rectangles *)
+	  if i > part.mini && j > part.minj
+	  then
+	    let corners_above = arr.(i-1).(j) in
+	    let corners_left = arr.(i).(j-1) in
+	    Intrel2.fold
+	      (fun res a b ->
+	       let ok_b, min_b' =
+		 Intrel2.fold
+		   (fun (ok,m) a' b' -> if a' = a then true, min m b' else ok, m)
+		   (false,w) corners_left in
+	       let ok_a, min_a' =
+		 Intrel2.fold
+		   (fun (ok,m) a' b' -> if b' = b then true, min m a' else ok, m)
+		   (false,h) corners_left in
+	       let res = if ok_b then Intrel2.add a (max b min_b') res else res in
+	       let res = if ok_a then Intrel2.add (max a min_a') b res else res in
+	       res)
+	      corners_ij corners_above
+	      (* should be possible to be more efficient with sorted lists and refined algo *)
+	  else corners_ij in
+	let corners_ij = (* extending columns *)
+	  if i > part.mini && (j = part.minj || Intrel2.is_empty arr.(i).(j-1))
+	  then
+	    let corners = arr.(i-1).(j) in
+	    let ok, min_a =
+	      Intrel2.fold
+		(fun (ok,m) a b -> true, min m a)
+		(false,h) corners in
+	    if ok
+	    then Intrel2.add min_a j corners_ij
+	    else corners_ij
+	  else corners_ij in
+	let corners_ij = (* extending rows *)
+	  if j > part.minj && (i = part.mini || Intrel2.is_empty arr.(i-1).(j))
+	  then
+	    let corners = arr.(i).(j-1) in
+	    let ok, min_b =
+	      Intrel2.fold
+		(fun (ok,m) a b -> true, min m b)
+		(false,w) corners in
+	    if ok
+	    then Intrel2.add i min_b corners_ij
+	    else corners_ij
+	  else corners_ij in
+	let corners_ij = (* new corner *)
+	  if Intrel2.is_empty corners_ij
+	  then Intrel2.singleton i j
+	  else corners_ij in
+	arr.(i).(j) <- corners_ij
+ *)
+      else (
+	let closed_corners =
+	  if i > part.mini && j > part.minj then
+	    Skyline.diff
+	      (Skyline.diff
+		 arr.(i-1).(j-1)
+		 arr.(i-1).(j))
+	      arr.(i).(j-1)
+	  else Skyline.empty in
+	Skyline.iter
+	  (fun (a,b) ->
+	   let mini, maxi = a, i-1 in
+	   let minj, maxj = b, j-1 in
+	   if mini=part.mini && maxi=part.maxi
+	      && minj=part.minj && maxj=part.maxj
+	   then () (* already known as part *)
+	   else (
+	     let pixels = ref (Mask.empty h w) in
+	     for i = mini to maxi do
+	       for j = minj to maxj do
+		 pixels := Mask.add_in_place i j !pixels
+	       done
+	     done;
+	     let subpart =
+	       { mini; maxi;
+		 minj; maxj;
+		 color = part.color;
+		 nb_pixels = (maxi-mini+1) * (maxj-minj+1);
+		 pixels = (!pixels) } in
+	     res := subpart::!res
+	   ))
+	  closed_corners
+      )
+    done
+  done;
+  !res	       
+  
 let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
   let fm : (int * int, color * PixelsMerge.t) Find_merge.hashtbl =
@@ -426,7 +640,7 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
 	 color = c;
 	 nb_pixels;
 	 pixels = (!pixels) } in
-     part::res)
+     part :: split_part part @ res)
     [])
 
 
