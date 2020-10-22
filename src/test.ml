@@ -318,14 +318,14 @@ let eval_names = Array.to_list (Sys.readdir eval_dir)
 let solved_train_names =
   [ "ba97ae07.json";
     "b94a9452.json";
-    "694f12f3.json";
-    "41e4d17e.json";
-    "1bfc4729.json";
-    "e48d4e1a.json";
   ]
 
 let maybe_train_names =
-  [ "952a094c.json";
+  [ "694f12f3.json";
+    "e48d4e1a.json";
+    "41e4d17e.json";
+    "1bfc4729.json";
+    "952a094c.json";
     "98cf29f8.json";
     "d23f8c26.json";
     "b9b7f026.json";
@@ -412,16 +412,30 @@ let _ =
   Arg.parse
     ["-train", Unit (fun () -> dir := train_dir; training := true; names := train_names), "Use training set of tasks (default)";
      "-eval", Unit (fun () -> dir := eval_dir; training := false; names := eval_names), "Use evaluation set of tasks";
-     "-all", Unit (fun () -> names := if !dir = train_dir then train_names else eval_names), "Use all tasks in the 
+     "-all", Unit (fun () -> ()), "Use all tasks in the 
 chosen set (default)";
-     "-sample", Int (fun n -> Random.self_init (); names := Common.list_sample ~size:n (if !dir = train_dir then train_names else eval_names)), "Use the first N tasks in the chosen set";
+     "-sample",
+        Int (fun n -> Random.self_init (); names := Common.list_sample ~size:n !names),
+	"Use the first N tasks in the chosen set";
      "-solved", Unit (fun () -> names := solved_train_names), "Use short list of solved training tasks";
-     "-learning", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
+     "-tasks",
+     String (fun ids ->
+	     let ids = String.split_on_char ',' ids in
+	     names :=
+	       !names
+	       |> List.filter
+		    (fun name ->
+		     ids
+		     |> List.exists
+			  (fun id ->
+			   String.sub name 0 (String.length id) = id))),
+     "Use the tasks specified by their hexadecimal id prefix (comma-separated)";
+     "-learn", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved] [-learning|-segment] [-alpha N] [-timeout N]";	      		       
+    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-segment] [-alpha N] [-timeout N]";	      		       
   main_tasks !dir !names !checker
 
