@@ -598,6 +598,28 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
 
 (* locating shapes *)
 
+type point = pixel
+
+let point_as_grid (g : t) (p : point) : t =
+  let gp = make g.height g.width no_color in
+  let i, j, c = p in
+  set_pixel gp i j c;
+  gp
+
+let pp_points g ps =
+  print_endline "POINTS:";
+  pp_grids (g :: List.map (point_as_grid g) ps)
+
+let points (g : t) (mask : Mask.t) (parts : part list) : point list =
+  List.fold_left
+    (fun res part ->
+     if part.mini = part.maxi && part.minj = part.maxj
+	&& Mask.mem part.mini part.minj mask (* out-of-mask points are already covered *)
+     then (part.mini, part.minj, part.color)::res
+     else res)
+    [] parts
+    
+						       
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: color;

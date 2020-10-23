@@ -27,6 +27,13 @@ module Genvar =
       let c1 = c+1 in
       let v = prefix ^ string_of_int c1 in
       v, M.add prefix c1 gv
+    let rec add_list (l_prefix : string list) (gv : t) : string list * t =
+      match l_prefix with
+      | [] -> [], gv
+      | prefix::l1 ->
+	 let v, gv = add prefix gv in
+	 let lv1, gv = add_list l1 gv in
+	 v::lv1, gv
   end
 
 type _ kind = (* kinds of values manipulated by models *)
@@ -228,10 +235,11 @@ and subst_shape (params : params) : shape -> shape =
 		color = subst_attr params Color color;
 		filled = subst_attr params Bool filled}
 			      
-	   
+type delta = Grid.pixel list
+			
 type grid_data =
   { params: params;
-    delta: Grid.pixel list }
+    delta: delta }
 
 let grid_data0 =
   { params = [];
@@ -341,6 +349,41 @@ let rec parse_attr_list : type a. env -> a kind -> (a * a attr) list -> params -
        (parse_attr env k c a params)
        (fun params -> parse_attr_list env k lca1 params)
 
+let parse_shape_gen
+      ~(get_occs : Grid.t -> Grid.Mask.t -> Grid.part list -> 'a list)
+      ~(matcher : env -> grid_data -> Grid.Mask.t -> 'a -> (params * delta * Grid.Mask.t) parse_result)
+      g env gd mask parts
+      kont
+    : (grid_data * Grid.Mask.t * Grid.part list) parse_result =
+  let occs = get_occs g mask parts in
+  let _, res =
+    List.fold_left
+      (fun (min_d, res) occ ->
+       let new_res =
+	 Result.bind
+	   (matcher env gd mask occ)
+	   (fun (new_params, occ_delta, occ_mask) ->
+	    let new_gd = { params = new_params;
+			   delta = occ_delta @ gd.delta } in
+	    let new_mask = Grid.Mask.diff mask occ_mask in
+	    let new_parts =
+	      List.filter
+		(fun p ->
+		 not (Grid.Mask.is_empty
+			(Grid.Mask.inter p.Grid.pixels new_mask)))
+		parts in
+	    kont (new_gd, new_mask, new_parts)) in
+       match new_res with
+       | Result.Ok (new_gd,_,_) ->
+	  let d = List.length new_gd.delta in
+	  if d < min_d
+	  then d, new_res
+	  else min_d, res
+       | Result.Error _ -> min_d, res)
+      (max_int, Result.Error "no matching occurence")
+      occs in
+  res
+
        
 let rec parse_grid_model
 	  (g : Grid.t) (m : grid_model) (env : env)
@@ -389,52 +432,50 @@ let rec parse_grid_model
 	parse_grid_model g m1 env gd mask parts))
 and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse_shape" (fun () ->
   match sh with
-  | Point {offset_i; offset_j; color} -> raise TODO
+  | Point {offset_i; offset_j; color} ->
+     parse_shape_gen
+       ~get_occs:Grid.points
+       ~matcher:
+       (fun env gd mask (i,j,c) ->
+	Result.bind
+	  (parse_attr_list
+	     env Int
+	     [i, offset_i;
+	      j, offset_j]
+	     gd.params)
+	  (fun new_params ->
+	   Result.bind
+	     (parse_attr env Color c color new_params)
+	     (fun new_params ->
+	      Result.Ok (new_params, [], Grid.Mask.singleton g.height g.width i j))))
+       g env gd mask parts kont
+		       
   | Rectangle {height; width;
 	       offset_i; offset_j;
 	       color; filled} ->
-     let lr = Common.prof "Model.parse_shape/rectangles" (fun () ->
-       Grid.rectangles g mask parts) in
-     let _, res = Common.prof "Model.parse_shape/fold" (fun () -> 
-       List.fold_left
-	 (fun (min_d, res) r ->
-	  let new_res =
-	    Result.bind
-	      (parse_attr_list
-		 env Int
-		 [r.Grid.height, height;
-		  r.width, width;
-		  r.offset_i, offset_i;
-		  r.offset_j, offset_j]
-		 gd.params)
-	      (fun new_params ->
-	       Result.bind
-		 (parse_attr env Color r.color color new_params)
-		 (fun new_params ->
-		  Result.bind
-		    (parse_attr env Bool true filled new_params)
-		    (fun new_params ->
-		     let new_gd = { params = new_params;
-				    delta = r.delta @ gd.delta } in
-		     let new_mask = Grid.Mask.diff mask r.mask in
-		     let new_parts =
-		       List.filter
-			 (fun p ->
-			  not (Grid.Mask.is_empty
-				 (Grid.Mask.inter p.Grid.pixels mask)))
-			 parts in
-		     kont (new_gd, new_mask, new_parts)))) in
-	  match new_res with
-	  | Result.Ok (new_gd,_,_) ->
-	     let d = List.length new_gd.delta in
-	     if d < min_d
-	     then d, new_res
-	     else min_d, res
-	  | Result.Error _ -> min_d, res)
-	 (max_int, Result.Error "no matching rectangle")
-	 lr) in
-     res)
-	      
+     parse_shape_gen
+       ~get_occs:Grid.rectangles
+       ~matcher:
+       (fun env gd mask r ->
+	Result.bind
+	  (parse_attr_list
+	     env Int
+	     [r.Grid.height, height;
+	      r.width, width;
+	      r.offset_i, offset_i;
+	      r.offset_j, offset_j]
+	     gd.params)
+	  (fun new_params ->
+	   Result.bind
+	     (parse_attr env Color r.color color new_params)
+	     (fun new_params ->
+	      Result.bind
+		(parse_attr env Bool true filled new_params)
+		(fun new_params ->
+		 Result.Ok (new_params, r.delta, r.mask)))))
+       g env gd mask parts kont)
+								    
+       
 let read_grid (env : env) (g : Grid.t) (m : grid_model) : (env * grid_data) parse_result = Common.prof "Model.read_grid" (fun () ->
   let gd0 = grid_data0 in
   let mask0 = Grid.Mask.full g.height g.width in
@@ -577,12 +618,12 @@ and l_shape ~(env_size : int) ~(hw : int attr * int attr) : shape -> staged_code
   let h, w = hw in
   function
   | Point {offset_i; offset_j; color} ->
-     Mdl.Code.usage 0.
+     Mdl.Code.usage 0.5
      +! l_position ~env_size ~bound:h offset_i
      +? l_position ~env_size ~bound:w offset_j
      +? l_color ~env_size color
   | Rectangle {height; width; offset_i; offset_j; color; filled} ->
-     Mdl.Code.usage 1.
+     Mdl.Code.usage 0.5
      +! l_slice ~env_size ~bound:h ~size:height ~offset:offset_i
      +? l_slice ~env_size ~bound:w ~size:width ~offset:offset_j
      +? l_color ~env_size color
@@ -592,9 +633,14 @@ and l_shape ~(env_size : int) ~(hw : int attr * int attr) : shape -> staged_code
 let l_grid_delta ~(height : int) ~(width : int) (pixels : Grid.pixel list) : Mdl.bits =
   let area = height * width in
   let nb_pixels = List.length pixels in
-  Mdl.Code.universal_int_star nb_pixels -. 1. (* how many delta pixels there are, removing invariant 1 bit that codes whethere there is a delta or not  *)
+  Mdl.Code.universal_int_star nb_pixels -. 1.
+  (* how many delta pixels there are, removing invariant 1 bit that codes whethere there is a delta or not  *)
+  +. float nb_pixels
+     *. (Mdl.Code.uniform area +. Mdl.Code.uniform Grid.nb_color)
+  (* for each pixel, coding position and color *)
+(* NOT using optimized DL below for fair comparisons with model points: 
   +. Mdl.Code.comb nb_pixels area (* where they are *)
-  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *)
+  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
     
 let l_grid_data ~m ~(code_m : env -> params -> Mdl.bits) ~(hw : int attr * int attr) (env : env) (gd : grid_data) : Mdl.bits =
   let he, we = hw in
@@ -748,26 +794,33 @@ and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
   | Some (e,_next) -> Some (Def (k,u,e))
        
 let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (grid_refinement * Genvar.t * grid_model) Myseq.t =
+  let sh1, gv1 =
+    match Genvar.add_list ["H"; "W"; "I"; "J"; "C"; "F"] gv with
+    | [vH; vW; vI; vJ; vC; vF], gv ->
+       let sh = Rectangle {height=U vH; width=U vW;
+			   offset_i=U vI; offset_j=U vJ;
+			   color=U vC; filled=U vF} in
+       sh, gv
+    | _ -> assert false in
+  let sh2, gv2 =
+    match Genvar.add_list ["I"; "J"; "C"] gv with
+    | [vI; vJ; vC], gv ->
+       let sh = Point {offset_i=U vI; offset_j=U vJ; color=U vC} in
+       sh, gv
+    | _ -> assert false in
   Myseq.cons
-    (let vH, gv = Genvar.add "H" gv in
-     let vW, gv = Genvar.add "W" gv in
-     let vI, gv = Genvar.add "I" gv in
-     let vJ, gv = Genvar.add "J" gv in
-     let vC, gv = Genvar.add "C" gv in
-     let vF, gv = Genvar.add "F" gv in
-     let sh = Rectangle {height=U vH; width=U vW;
-			 offset_i=U vI; offset_j=U vJ;
-			 color=U vC; filled=U vF} in
-     RShape (depth,sh), gv, AddShape (sh,m))
-    (if depth >= max_depth
-     then Myseq.empty
-     else
-       match m with
-       | Background _ -> Myseq.empty
-       | AddShape (sh1,m1) ->
-	  insert_a_shape ~max_depth ~depth:(depth + 1) gv m1
-	  |> Myseq.map (fun (r,gv,m1') -> (r, gv, AddShape (sh1,m1'))))
-
+    (RShape (depth,sh1), gv1, AddShape (sh1,m))
+    (Myseq.cons
+       (RShape (depth,sh2), gv2, AddShape (sh2,m))
+       (if depth >= max_depth
+	then Myseq.empty
+	else
+	  match m with
+	  | Background _ -> Myseq.empty
+	  | AddShape (sh1,m1) ->
+	     insert_a_shape ~max_depth ~depth:(depth + 1) gv m1
+	     |> Myseq.map (fun (r,gv,m1') -> (r, gv, AddShape (sh1,m1')))))
+       
 let grid_model_refinements (gv : Genvar.t) (m : grid_model) (egds : (env * grid_data) list) : (grid_refinement * Genvar.t * grid_model) Myseq.t =
   let defs = find_defs egds in
   if defs = []

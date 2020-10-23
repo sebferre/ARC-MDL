@@ -322,17 +322,20 @@ let solved_train_names =
   ]
 
 let maybe_train_names =
-  [ "694f12f3.json";
-    "41e4d17e.json";
-    "1bfc4729.json";
-    "952a094c.json";
-    "98cf29f8.json";
-    "d23f8c26.json";
-    "b9b7f026.json";
-    "d6ad076f.json";
-    "67a423a3.json";
-    "b548a754.json";
-    "23581191.json";
+  [ "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity *)
+    "694f12f3.json"; (* pb: need for expression bias *)
+    "41e4d17e.json"; (* pb: need for rectangle masks => unfilled square *)
+    "952a094c.json"; (* pb: 4 points, which is which, need for nesting? *)
+    "98cf29f8.json"; (* pb: parse ambiguity *)
+    "d23f8c26.json"; (* pb: need for raster shape + crop *)
+    "b9b7f026.json"; (* pb: need for nesting *)
+    "d6ad076f.json"; (* pb: parse ambiguity, global rotation, topological relation? *)
+    "67a423a3.json"; (* pb: rectangle mask *)
+    "b548a754.json"; (* pb: global rotation, overfit with cst *)
+    "23581191.json"; (* pb: parse ambiguity *)
+    "7f4411dc.json"; (* pb: collection, overfit *)
+    "05f2a901.json"; (* pb: rectangle mask *)
+    "a79310a0.json"; (* pb: rectangle mask *)
   ]
     
 let task_of_name dir name = Task.from_file (dir ^ name)
@@ -403,8 +406,10 @@ let checker_segmentation : checker =
 	      (fun g ->
 	       let parts = Grid.segment_by_color g in
 	       let full_mask = Grid.(Mask.full g.height g.width) in
+	       let points = Grid.points g full_mask parts in
 	       let rects = Grid.rectangles g full_mask parts in
 	       Grid.pp_parts g parts;
+	       Grid.pp_points g points;
 	       Grid.pp_rectangles g rects;
 	       print_newline ()))
 	task.train
