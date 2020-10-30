@@ -40,15 +40,7 @@ type _ kind = (* kinds of values manipulated by models *)
   | Bool : bool kind (* flags *)
   | Int : int kind (* positions, lengths *)
   | Color : Grid.color kind (* colors *)
-
-type _ expr =
-  | Var: 'a var -> 'a expr
-  | Const : 'a -> 'a expr
-  | Plus : int expr * int expr -> int expr
-  | Minus : int expr * int expr -> int expr
-  | If: bool expr * 'a expr * 'a expr -> 'a expr
-							    
-exception ComplexExpr (* when neither a Var nor a Const *)
+  | Mask : Grid.Mask.t option kind (* masks *)
 
 let pp_const : type a. a kind -> a -> unit =
   fun k c ->
@@ -56,7 +48,32 @@ let pp_const : type a. a kind -> a -> unit =
   | Bool -> print_string (if c then "true" else "false")
   | Int -> print_int c
   | Color -> Grid.pp_color c
+  | Mask ->
+     (match c with
+      | None -> print_string "full"
+      | Some m -> Grid.Mask.pp m)
 	    
+let equal_const : type a. a kind -> a -> a -> bool =
+  fun k c1 c2 ->
+  match k with
+  | Bool | Int | Color -> c1 = c2
+  | Mask ->
+     (match c1, c2 with
+      | None, None -> true
+      | None, _
+      | _, None -> false
+      | Some m1, Some m2 -> Grid.Mask.equal m1 m2)
+
+type _ expr =
+  | Var: 'a var -> 'a expr
+  | Const : 'a -> 'a expr
+  | Plus : int expr * int expr -> int expr
+  | Minus : int expr * int expr -> int expr
+  | If: bool expr * 'a expr * 'a expr -> 'a expr
+(* TODO: Mask transformations: rotation, mirror, scaling *)
+							    
+exception ComplexExpr (* when neither a Var nor a Const *)
+
 let rec pp_expr : type a. a kind -> a expr -> unit =
   fun k e ->
   match e with
@@ -75,6 +92,7 @@ type def = Def : 'a kind * 'a var * 'a expr -> def
 let dbool v b = Def (Bool, v, Const b)
 let dint v i = Def (Int, v, Const i)
 let dcolor v c = Def (Color, v, Const c)
+let dmask v m = Def (Mask, v, Const m)
 
 let pp_def : def -> unit =
   function
@@ -87,6 +105,7 @@ let rec get_var_def_opt : type a. a kind -> a var -> def list -> a expr option =
   | Bool, Def (Bool,v1,e)::_ when v1 = v -> Some e
   | Int, Def (Int,v1,e)::_ when v1 = v -> Some e
   | Color, Def (Color,v1,e)::_ when v1 = v -> Some e
+  | Mask, Def (Mask,v1,e)::_ when v1 = v -> Some e
   | _, _::defs1 -> get_var_def_opt (k : a kind) v defs1
 
 let set_var_def : type a. a kind -> a var -> a expr -> def list -> def list =
@@ -187,7 +206,7 @@ and shape =
 		   offset_i: int attr;
 		   offset_j: int attr;
 		   color: Grid.color attr;
-		   filled: bool attr }
+		   rmask: Grid.Mask.t option attr }
 
 let rec pp_grid_model = function
   | Background {height; width; color} ->
@@ -204,13 +223,13 @@ and pp_shape = function
      print_string "a point at (";
      pp_attr Int offset_i; print_char ','; pp_attr Int offset_j;
      print_string ") with color "; pp_attr Color color
-  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+  | Rectangle {height; width; offset_i; offset_j; color; rmask} ->
      print_string "a rectangle ";
      pp_attr Int height; print_string " x "; pp_attr Int width;
      print_string " at ("; pp_attr Int offset_i;
      print_string ", "; pp_attr Int offset_j;
      print_string ") with color "; pp_attr Color color;
-     print_string " and filling "; pp_attr Bool filled
+     print_string " and mask "; pp_attr Mask rmask
 
 let rec subst_grid_model (params : params) : grid_model -> grid_model =
   function
@@ -227,13 +246,13 @@ and subst_shape (params : params) : shape -> shape =
      Point {offset_i = subst_attr params Int offset_i;
 	    offset_j = subst_attr params Int offset_j;
 	    color = subst_attr params Color color}
-  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+  | Rectangle {height; width; offset_i; offset_j; color; rmask} ->
      Rectangle {height = subst_attr params Int height;
 		width = subst_attr params Int width;
 		offset_i = subst_attr params Int offset_i;
 		offset_j = subst_attr params Int offset_j;
 		color = subst_attr params Color color;
-		filled = subst_attr params Bool filled}
+		rmask = subst_attr params Mask rmask}
 			      
 type delta = Grid.pixel list
 			
@@ -294,19 +313,21 @@ and apply_shape (sh : shape) env params g : unit =
      let j = eval_attr env params Int offset_j in
      let c = eval_attr env params Color color in
      Grid.set_pixel g i j c
-  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+  | Rectangle {height; width; offset_i; offset_j; color; rmask} ->
      let h = eval_attr env params Int height in
      let w = eval_attr env params Int width in
      let mini = eval_attr env params Int offset_i in
      let minj = eval_attr env params Int offset_j in
      let c = eval_attr env params Color color in
-     let f = eval_attr env params Bool filled in
+     let m_opt = eval_attr env params Mask rmask in
      let maxi = mini + h - 1 in
      let maxj = minj + w - 1 in
      for i = mini to maxi do
        for j = minj to maxj do
-	 if f || i=mini || i=maxi || j=minj || j=maxj then
-	   Grid.set_pixel g i j c
+	 if (match m_opt with
+	     | None -> true
+	     | Some m -> Grid.Mask.mem (i-mini) (j-minj) m)
+	 then Grid.set_pixel g i j c
        done;
      done
 	   
@@ -324,7 +345,7 @@ type 'a parse_result = ('a, string) Result.t
 				    
 let parse_const : type a. a kind -> a -> a -> params -> params parse_result =
   fun k c0 c params ->
-  if c = c0
+  if equal_const k c c0
   then Result.Ok params
   else Result.Error "value mismatch"
      
@@ -452,7 +473,7 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
 		       
   | Rectangle {height; width;
 	       offset_i; offset_j;
-	       color; filled} ->
+	       color; rmask} ->
      parse_shape_gen
        ~get_occs:Grid.rectangles
        ~matcher:
@@ -470,11 +491,10 @@ and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse
 	     (parse_attr env Color r.color color new_params)
 	     (fun new_params ->
 	      Result.bind
-		(parse_attr env Bool true filled new_params)
+		(parse_attr env Mask r.rmask rmask new_params)
 		(fun new_params ->
 		 Result.Ok (new_params, r.delta, r.mask)))))
        g env gd mask parts kont)
-								    
        
 let read_grid (env : env) (g : Grid.t) (m : grid_model) : (env * grid_data) parse_result = Common.prof "Model.read_grid" (fun () ->
   let gd0 = grid_data0 in
@@ -523,6 +543,12 @@ let code_background_color : Grid.color code =
      then Mdl.Code.usage 0.01
      else invalid_arg "Unexpected color"
 
+let code_mask : Grid.Mask.t option code =
+  function
+  | None -> 1.
+  | Some m ->
+     let n = Grid.Mask.height m * Grid.Mask.width m in
+     1. +. Mdl.Code.uniform (n+1) +. Mdl.Code.comb (Grid.Mask.area m) n
 
 type staged_code = Mdl.bits (* model proper *) * (env -> params -> Mdl.bits) (* env/params dependent *)
 
@@ -596,6 +622,8 @@ let l_color ~env_size (color : Grid.color attr) : staged_code =
 let l_background_color ~env_size (color : Grid.color attr) : staged_code =
   l_attr ~env_size Color color ~code:code_background_color ~u_code:(fun env params -> code_background_color)
 
+let l_mask ~env_size (mask : Grid.Mask.t option attr) : staged_code =
+  l_attr ~env_size Mask mask ~code:code_mask ~u_code:(fun env params -> code_mask)
 		   
 let rec l_grid_model ~(env_size : int) (* nb of input vars *)
 	: grid_model -> staged_code * (int attr * int attr) =
@@ -622,12 +650,12 @@ and l_shape ~(env_size : int) ~(hw : int attr * int attr) : shape -> staged_code
      +! l_position ~env_size ~bound:h offset_i
      +? l_position ~env_size ~bound:w offset_j
      +? l_color ~env_size color
-  | Rectangle {height; width; offset_i; offset_j; color; filled} ->
+  | Rectangle {height; width; offset_i; offset_j; color; rmask} ->
      Mdl.Code.usage 0.5
      +! l_slice ~env_size ~bound:h ~size:height ~offset:offset_i
      +? l_slice ~env_size ~bound:w ~size:width ~offset:offset_j
      +? l_color ~env_size color
-     +? l_bool ~env_size filled
+     +? l_mask ~env_size rmask
 	   
 	
 let l_grid_delta ~(height : int) ~(width : int) (pixels : Grid.pixel list) : Mdl.bits =
@@ -726,7 +754,7 @@ let rec find_defs (egds : (env * grid_data) list) : def list =
      match u_cs with
      | [] -> assert false
      | c0::cs1 ->
-	if List.for_all (fun c1 -> c1 = c0) cs1
+	if List.for_all (equal_const k c0) cs1
 	then Def (k, u, Const c0)::defs
 	else
 	  match find_defs_u k u u_cs es with
@@ -743,6 +771,7 @@ and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
        | Bool, Def (Bool,v,_) -> v::lv
        | Int, Def (Int,v,_) -> v::lv
        | Color, Def (Color,v,_) -> v::lv
+       | Mask, Def (Mask,v,_) -> v::lv
        | _ -> lv)
       [] (List.hd es) in
   let seq_v : a var Myseq.t = Myseq.from_list lv in
@@ -787,7 +816,7 @@ and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
     |> Myseq.find_map
 	 (fun e ->
 	  let e_cs = List.map (fun env -> eval_expr env k e) es in
-	  if e_cs = u_cs
+	  if List.for_all2 (equal_const k) e_cs u_cs
 	  then Some e
 	  else None) with
   | None -> None
@@ -795,11 +824,11 @@ and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
        
 let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (grid_refinement * Genvar.t * grid_model) Myseq.t =
   let sh1, gv1 =
-    match Genvar.add_list ["H"; "W"; "I"; "J"; "C"; "F"] gv with
-    | [vH; vW; vI; vJ; vC; vF], gv ->
+    match Genvar.add_list ["H"; "W"; "I"; "J"; "C"; "M"] gv with
+    | [vH; vW; vI; vJ; vC; vM], gv ->
        let sh = Rectangle {height=U vH; width=U vW;
 			   offset_i=U vI; offset_j=U vJ;
-			   color=U vC; filled=U vF} in
+			   color=U vC; rmask=U vM} in
        sh, gv
     | _ -> assert false in
   let sh2, gv2 =

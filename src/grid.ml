@@ -287,6 +287,9 @@ module MaskZ =
 
     let height m = m.height
     let width m = m.width
+    let area m = Z.hamdist Z.zero m.bits
+
+    let pp m = print_string (Z.format "%b" m.bits)
 		    
     let empty height width =
       { height; width; bits = Z.zero }
@@ -314,6 +317,9 @@ module MaskZ =
     let add_in_place i j m =
       { m with
 	bits = Z.logor m.bits (Z.shift_left Z.one (i * m.width + j)) }
+    let remove i j m =
+      { m with
+	bits = Z.logand m.bits (Z.lognot (Z.shift_left Z.one (i * m.width + j))) }
 
     let union m1 m2 =
       { m1 with bits = Z.logor m1.bits m2.bits }
@@ -623,7 +629,8 @@ let points (g : t) (mask : Mask.t) (parts : part list) : point list =
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: color;
-		   mask : Mask.t; (* all pixels covered by the shape, including the delta *)
+		   mask : Mask.t; (* covered pixels *)
+		   rmask : Mask.t option; (* relative mask: in rectangle box, None if full *)
 		   delta : pixel list }
 
 let rectangle_as_grid (g : t) (r : rectangle) : t =
@@ -631,8 +638,10 @@ let rectangle_as_grid (g : t) (r : rectangle) : t =
   let col = r.color in
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
-      if not (List.exists (fun (i',j',c') -> i=i' && j=j') r.delta) 
-      then set_pixel gr i j col
+      if Mask.mem i j r.mask then
+	match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
+	| Some (_,_,c) -> set_pixel gr i j c
+	| None -> set_pixel gr i j col
     done
   done;
   gr
@@ -642,33 +651,56 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
 		   
-let rectangle_opt_of_part (g : t) (mask : Mask.t) (p : part) : rectangle option = Common.prof "Grid.rectangle_opt_of_part" (fun () ->
+let rectangles_of_part (g : t) (mask : Mask.t) (p : part) : rectangle list = Common.prof "Grid.rectangles_of_part" (fun () ->
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let area = h * w in
   let valid_area = ref 0 in
-  let r_mask = ref (Mask.copy p.pixels) in
+  let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
   let delta = ref [] in
   for i = p.mini to p.maxi do
     for j = p.minj to p.maxj do
-      if Mask.mem i j mask
-      then (
+      let c = g.matrix.{i,j} in
+      if Mask.mem i j mask && c <> p.color
+      then delta := (i,j,c)::!delta
+      else (
 	r_mask := Mask.add_in_place i j !r_mask;
-	let c = g.matrix.{i,j} in
-	if  c = p.color
-	then incr valid_area
-	else delta := (i,j,c)::!delta )
-      else incr valid_area (* out-of-mask pixels are hidden behind another object *)
+	incr valid_area )
     done
   done;
-  if !valid_area >= 1 * area / 2
-  then Some { height = p.maxi-p.mini+1;
-	      width = p.maxj-p.minj+1;
-	      offset_i = p.mini;
-	      offset_j = p.minj;
-	      color = p.color;
-	      mask = (!r_mask);
-	      delta = (!delta) }
-  else None)
+  let res = [] in
+  let res = (* adding rectangle with rmask, without delta *)
+    if !valid_area >= 1 * area / 2 && !delta <> []
+    then
+      let m =
+	List.fold_left
+	  (fun m (i,j,c) ->
+	   Mask.remove (i - p.mini) (j - p.minj) m)
+	  (Mask.full h w)
+	  !delta in
+      { height = p.maxi-p.mini+1;
+	width = p.maxj-p.minj+1;
+	offset_i = p.mini;
+	offset_j = p.minj;
+	color = p.color;
+	mask = (!r_mask);
+	rmask = Some m;
+	delta = [] } :: res
+    else res in
+  let res = (* adding full rectangle with delta *)
+    let valid_area = !valid_area + List.length !delta in
+    let mask = List.fold_left (fun mask (i,j,c) -> Mask.add_in_place i j mask) (!r_mask) !delta in
+    if valid_area >= 1 * area / 2
+    then
+      { height = p.maxi-p.mini+1;
+	width = p.maxj-p.minj+1;
+	offset_i = p.mini;
+	offset_j = p.minj;
+	color = p.color;
+	mask;
+	rmask = None;
+	delta = (!delta) } :: res
+    else res in
+  res)
       
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Common.prof "Grid.rectangles" (fun () ->
   let h_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
@@ -685,9 +717,8 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
   let res =
     List.fold_left
       (fun res p ->
-       match rectangle_opt_of_part g mask p with
-       | Some r -> r::res
-       | None -> res)
+       let lr = rectangles_of_part g mask p in
+       lr @ res)
       res parts in
   let res =
     List.fold_left
@@ -700,9 +731,8 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
 	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
 	  then res
 	  else
-	    match rectangle_opt_of_part g mask mp with
-	    | Some r -> r::res
-	    | None -> res)
+	    let lr = rectangles_of_part g mask mp in
+	    lr @ res)
       res h_sets in
   let res =
     List.fold_left
@@ -715,9 +745,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
 	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
 	  then res
 	  else
-	    match rectangle_opt_of_part g mask mp with
-	    | Some r -> r::res
-	    | None -> res)
+	    let lr = rectangles_of_part g mask mp in
+	    lr @ res)
       res v_sets in
   res)
-

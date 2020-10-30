@@ -259,11 +259,11 @@ let tsol_ba97ae07 =
 	  AddShape
 	    (Rectangle { height = U "H2"; width = U "W2";
 			 offset_i = U "I2"; offset_j = U "J2";
-			 color = U "C2"; filled = E (Const true) },
+			 color = U "C2"; rmask = U "M2" },
 	     AddShape
 	       (Rectangle { height = U "H1"; width = U "W1";
 			    offset_i = U "I1"; offset_j = U "J1";
-			    color = U "C1"; filled = E (Const true) },
+			    color = U "C1"; rmask = U "M1" },
 		Background { height = U "H";
 			     width = U "W";
 			     color = E (Const Grid.black) }));
@@ -271,11 +271,11 @@ let tsol_ba97ae07 =
 	  AddShape
 	    (Rectangle { height = E (Var "H1"); width = E (Var "W1");
 			 offset_i = E (Var "I1"); offset_j = E (Var "J1");
-			 color = E (Var "C1"); filled = E (Const true) },
+			 color = E (Var "C1"); rmask = E (Var "M1") },
 	     AddShape
 	       (Rectangle { height = E (Var "H2") (* error *); width = E (Var "W2");
 			    offset_i = E (Var "I2"); offset_j = E (Var "J2");
-			    color = E (Var "C2"); filled = E (Const true) },
+			    color = E (Var "C2"); rmask = E (Var "M2") },
 		Background { height = E (Var "H");
 			     width = E (Var "W");
 			     color = E (Const Grid.black) }));
