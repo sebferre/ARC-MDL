@@ -651,7 +651,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
 		   
-let rectangles_of_part (g : t) (mask : Mask.t) (p : part) : rectangle list = Common.prof "Grid.rectangles_of_part" (fun () ->
+let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = Common.prof "Grid.rectangles_of_part" (fun () ->
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let area = h * w in
   let valid_area = ref 0 in
@@ -669,7 +669,7 @@ let rectangles_of_part (g : t) (mask : Mask.t) (p : part) : rectangle list = Com
   done;
   let res = [] in
   let res = (* adding rectangle with rmask, without delta *)
-    if !valid_area >= 1 * area / 2 && !delta <> []
+    if not multipart && !delta <> [] && !valid_area >= 1 * area / 2
     then
       let m =
 	List.fold_left
@@ -717,7 +717,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
   let res =
     List.fold_left
       (fun res p ->
-       let lr = rectangles_of_part g mask p in
+       let lr = rectangles_of_part ~multipart:false g mask p in
        lr @ res)
       res parts in
   let res =
@@ -731,7 +731,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
 	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
 	  then res
 	  else
-	    let lr = rectangles_of_part g mask mp in
+	    let lr = rectangles_of_part ~multipart:true g mask mp in
 	    lr @ res)
       res h_sets in
   let res =
@@ -745,7 +745,7 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Co
 	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
 	  then res
 	  else
-	    let lr = rectangles_of_part g mask mp in
+	    let lr = rectangles_of_part ~multipart:true g mask mp in
 	    lr @ res)
       res v_sets in
   res)
