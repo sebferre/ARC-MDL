@@ -41,14 +41,18 @@ let tsol_egos tsol : (env * Grid.t) list train_test = (* train+test output env-g
   let gos_train, gos_test = tsol_gos tsol in
   f tsol.train_data gos_train,
   f tsol.test_data gos_test
+    
+let tsol_gri tsol : grids_read train_test = (* train+test input env-gds *)
+  let env_size = 0 in
+  let l_m, code_gd = l_grid_model ~env_size tsol.model.input_pattern in
+  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> env0, gdi, code_gd env0 gdi)}, (* inputs have empty env *)
+  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> env0, gdi, code_gd env0 gdi)}
 
-let tsol_egdis tsol : (env * grid_data) list train_test = (* train+test input env-gds *)
-  tsol.train_data |> List.map (fun gdi -> env0, gdi), (* inputs have empty env *)
-  tsol.test_data |> List.map (fun gdi -> env0, gdi)
-
-let tsol_egdos tsol : (env * grid_data) list train_test = (* train+test output env-gds *)
-  tsol.train_data |> List.map (fun gdi -> gdi.params, grid_data0), (* perfect output model has empty grid_data *)
-  tsol.test_data |> List.map (fun gdi -> gdi.params, grid_data0)
+let tsol_gro tsol : grids_read train_test = (* train+test output env-gds *)
+  let env_size = List.length (List.hd tsol.train_data).params in
+  let l_m, code_gd = l_grid_model ~env_size tsol.model.input_pattern in
+  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> gdi.params, grid_data0, code_gd gdi.params grid_data0)}, (* perfect output model has empty grid_data *)
+  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> gdi.params, grid_data0, code_gd gdi.params grid_data0)}
 
 
 (* === printing and checking functions === *)
@@ -93,38 +97,37 @@ let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
 		      
 let check_read_grid grid_name grid_env grid grid_model grid_data =
   match Model.read_grid grid_env grid grid_model with
-  | Result.Ok (_env,gd) ->
+  | Result.Ok gd ->
      print_grid_data_mismatch grid_name grid ~data:grid_data ~parsed_data:gd
   | Result.Error msg ->
      Printf.printf "Grid %s: could not parse: %s\n" grid_name msg
 
-
-let print_l_gmd name grid_model egds = (* grid model+data DL *)
-  let lm, ld, lmd = Model.l_grid_model_data grid_model egds in
+let print_l_gmd name gr = (* grid model+data DL *)
+  let lm, ld, lmd = Model.l_grid_model_data gr in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
-
-let print_l_md model egdis egdos = (* model+data DL *)
+		   
+let print_l_md gri gro = (* model+data DL *)
   let (lmi,lmo,lm), (ldi,ldo,ld), (lmdi, lmdo, lmd) =
-    Model.l_model_data model egdis egdos in
+    Model.l_model_data gri gro in
   Printf.printf "DL input  with Mi: L = %.1f + %.1f = %.1f\n" lmi ldi lmdi;
   Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
   Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd;
   ldo
-
+		   
 let print_l_tsol tsol = (* DLs for train data *)
-  let egdis, _ = tsol_egdis tsol in
-  let egdos, _ = tsol_egdos tsol in
-  ignore (print_l_md tsol.model egdis egdos)
+  let gri, _ = tsol_gri tsol in
+  let gro, _ = tsol_gro tsol in
+  ignore (print_l_md gri gro)
 
 let print_l_task_model name task model =
   let egis = task.train |> List.map (fun pair -> env0, pair.input) in
-  let egdis = read_grids egis model.input_pattern |> Option.get in
+  let gri = read_grids egis model.input_pattern |> Option.get in
   let egos =
     List.map2
-      (fun (envi,gdi) pair -> gdi.params, pair.output)
-      egdis task.train in
-  let egdos = read_grids egos model.output_template |> Option.get in
-  ignore (print_l_md model egdis egdos)
+      (fun (_envi,gdi,_li) pair -> gdi.params, pair.output)
+      gri.egdls task.train in
+  let gro = read_grids egos model.output_template |> Option.get in
+  ignore (print_l_md gri gro)
 
 	 
 (* === monitoring learning === *)
@@ -152,19 +155,19 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
   if timed_out && !training then print_endline "TIMEOUT";
   match lm with
   | [] -> assert false
-  | ((_,m), (egdis_test, egdos), l)::_ ->
+  | ((_,m), (gri_test, gro), l)::_ ->
      print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
-     let ldo = print_l_md m egdis_test egdos in
-	
+     let ldo = print_l_md gri_test gro in
+     
      print_endline "\n# Input/output grids data (train)";
-     let egdis = Common.sub_list egdis_test 0 (List.length egdos) in 
-     let egdios = List.combine egdis egdos in
+     let gri = align_grids_read_with gri_test gro.egdls in
+     let egdlios = List.combine gri.egdls gro.egdls in
      let _, nb_ex_train, nb_correct_train =
        List.fold_left2
 	 (fun (i,nb_ex, nb_correct)
-	      ((_envi,gdi),(envo,gdo)) {output} ->
+	      ((_envi,gdi,li),(envo,gdo,lo)) {output} ->
 	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
 	  if !training then Model.pp_grid_data gdi;
 	  if !training then Model.pp_grid_data gdo;
@@ -176,7 +179,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	  nb_ex+1,
 	  nb_correct + (if gdo = grid_data0 then 1 else 0))
 	 (1,0,0)
-	 egdios task.train in
+	 egdlios task.train in
      
      print_endline "# Checking test instances\n";
      let _, nb_ex_test, nb_correct_test =
