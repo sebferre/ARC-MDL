@@ -398,11 +398,12 @@ let rec l_grid_model ~(env_size : int) (* nb of env vars *) (m : grid_model) : M
   let (l_m, code_m), (he, we) = l_grid_model_aux ~env_size m in
   let code_grid_data =
     fun env gd ->
-    let h = eval_attr env gd.params Int he in
-    let w = eval_attr env gd.params Int we in
-    let nb_pixels = List.length gd.delta in
+    let h, w, nb_pixels = (* QUICK *)
+      eval_attr env gd.params Int he,
+      eval_attr env gd.params Int we,
+      List.length gd.delta in
     (* encoding parameters according to model *)
-    code_m env gd.params
+    Common.prof "Model.l_grid_model/code_m" (fun () -> code_m env gd.params)
     (* encoding delta pixels *)
     +. Mdl.Code.universal_int_star nb_pixels (* number of delta pixels *)
     -. 1. (* some normalization to get 0 for empty grid data *)
@@ -551,7 +552,7 @@ let parse_shape_gen
       g env gd mask parts
       kont
     : (grid_data * Mdl.bits * Grid.Mask.t * Grid.part list) parse_result =
-  let occs = get_occs g mask parts in
+  let occs = Common.prof "Model.parse_shape_gen/get_occs" (fun () -> get_occs g mask parts) in
   let _, res =
     List.fold_left
       (fun (min_l, res) occ ->
@@ -571,8 +572,7 @@ let parse_shape_gen
 	    kont (new_gd, new_mask, new_parts)) in
        match new_res with
        | Result.Ok (new_gd,_,_,_) ->
-	  (*let d = List.length new_gd.delta in*)
-	  let l = code_grid_data env new_gd in
+	  let l = Common.prof "Model.parse_shape_gen/code_grid_data" (fun () -> code_grid_data env new_gd) in
 	  if l < min_l
 	  then l, new_res
 	  else min_l, res
@@ -903,17 +903,25 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
     ~refinements:(fun (r,gv,m) gr ->
 		  grid_model_refinements gv m gr)
 
-let model_refinements (m : model) (gri : grids_read) (gro : grids_read) : (refinement * model) Myseq.t
+let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro : grids_read) : (refinement * model) Myseq.t
   = Common.prof "Model.model_refinements" (fun () ->
+  let on_input =
+    match last_r with
+    | RInit -> true
+    | Rinput _ -> true
+    | Routput _ -> false in
   let ref_defis =
-    let defis = find_defs gri in
-    if defis = []
-    then Myseq.empty
-    else Myseq.return
-	   (Rinput (RDefs defis),
-	    {m with
-	      input_pattern = subst_grid_model defis m.input_pattern;
-	      output_template = subst_grid_model defis m.output_template}) in
+    if on_input
+    then
+      let defis = find_defs gri in
+      if defis = []
+      then Myseq.empty
+      else Myseq.return
+	     (Rinput (RDefs defis),
+	      {m with
+		input_pattern = subst_grid_model defis m.input_pattern;
+		output_template = subst_grid_model defis m.output_template})
+    else Myseq.empty in
   let ref_defos =
     let defos = find_defs gro in
     if defos = []
@@ -923,10 +931,13 @@ let model_refinements (m : model) (gri : grids_read) (gro : grids_read) : (refin
 	    {m with
 	      output_template = subst_grid_model defos m.output_template}) in
   let ref_shapis =
-    insert_a_shape m.genvar m.input_pattern
-    |> Myseq.map
-	 (fun (r,gv',mi') ->
-	  (Rinput r, {m with genvar=gv'; input_pattern=mi'})) in
+    if on_input
+    then
+      insert_a_shape m.genvar m.input_pattern
+      |> Myseq.map
+	   (fun (r,gv',mi') ->
+	    (Rinput r, {m with genvar=gv'; input_pattern=mi'}))
+    else Myseq.empty in
   let ref_shapos =
     insert_a_shape m.genvar m.output_template
     |> Myseq.map
@@ -978,7 +989,7 @@ let learn_model
 	   lmd)
     ~refinements:
     (fun (r,m) (gri_test,gro) ->
-     model_refinements m gri_test gro))
+     model_refinements r m gri_test gro))
     
 (* naive *)
     

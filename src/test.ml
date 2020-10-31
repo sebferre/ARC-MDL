@@ -327,7 +327,7 @@ let solved_train_names =
 let maybe_train_names =
   [ "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity *)
     "694f12f3.json"; (* pb: need for expression bias *)
-    "41e4d17e.json"; (* pb: need for rectangle masks => unfilled square *)
+    "41e4d17e.json"; (* pb: collection, need for rectangle masks => unfilled square *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? *)
     "98cf29f8.json"; (* pb: parse ambiguity *)
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
