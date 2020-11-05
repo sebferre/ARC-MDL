@@ -449,6 +449,11 @@ and l_shape ~(env_size : int) ~(hw : int attr * int attr) : shape -> staged_code
 type grids_read = { l_m : Mdl.bits;
 		    egdls : (env * grid_data * Mdl.bits) list }
 
+let grids_read_has_delta (gr : grids_read) : bool =
+  List.for_all
+    (fun (env,gd,l) -> gd.delta <> [])
+    gr.egdls
+		    
 let align_grids_read_with (gri : grids_read) (l : 'a list) : grids_read =
   { gri with egdls = Common.sub_list gri.egdls 0 (List.length l) }
 
@@ -546,7 +551,6 @@ let rec parse_attr_list : type a. env -> a kind -> (a * a attr) list -> params -
        (fun params -> parse_attr_list env k lca1 params)
 
 let parse_shape_gen
-      ~(code_grid_data : env -> grid_data -> Mdl.bits)
       ~(get_occs : Grid.t -> Grid.Mask.t -> Grid.part list -> 'a list)
       ~(matcher : env -> grid_data -> Grid.Mask.t -> 'a -> (params * delta * Grid.Mask.t) parse_result)
       g env gd mask parts
@@ -571,8 +575,7 @@ let parse_shape_gen
 		parts in
 	    kont (new_gd, new_mask, new_parts)) in
        match new_res with
-       | Result.Ok (new_gd,_,_,_) ->
-	  let l = Common.prof "Model.parse_shape_gen/code_grid_data" (fun () -> code_grid_data env new_gd) in
+       | Result.Ok (new_gd,l,_,_) ->
 	  if l < min_l
 	  then l, new_res
 	  else min_l, res
@@ -626,14 +629,13 @@ let rec parse_grid_model
 	Result.Ok (gd, ld, new_mask, new_parts))
   | AddShape (sh,m1) ->
      parse_shape
-       ~code_grid_data g sh env gd mask parts
+       g sh env gd mask parts
        (fun (gd,mask,parts) ->
 	parse_grid_model ~code_grid_data g m1 env gd mask parts))
-and parse_shape ~code_grid_data g (sh : shape) env gd mask parts kont = Common.prof "Model.parse_shape" (fun () ->
+and parse_shape g (sh : shape) env gd mask parts kont = Common.prof "Model.parse_shape" (fun () ->
   match sh with
   | Point {offset_i; offset_j; color} ->
      parse_shape_gen
-       ~code_grid_data
        ~get_occs:Grid.points
        ~matcher:
        (fun env gd mask (i,j,c) ->
@@ -654,7 +656,6 @@ and parse_shape ~code_grid_data g (sh : shape) env gd mask parts kont = Common.p
 	       offset_i; offset_j;
 	       color; rmask} ->
      parse_shape_gen
-       ~code_grid_data
        ~get_occs:Grid.rectangles
        ~matcher:
        (fun env gd mask r ->
@@ -846,7 +847,7 @@ and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
   | None -> None
   | Some (e,_next) -> Some (Def (k,u,e))
        
-let rec insert_a_shape ?(max_depth = 2) ?(depth = 0) gv m : (grid_refinement * Genvar.t * grid_model) Myseq.t =
+let rec insert_a_shape ?(max_depth = 1) ?(depth = 0) gv m : (grid_refinement * Genvar.t * grid_model) Myseq.t =
   let sh1, gv1 =
     match Genvar.add_list ["H"; "W"; "I"; "J"; "C"; "M"] gv with
     | [vH; vW; vI; vJ; vC; vM], gv ->
@@ -931,7 +932,7 @@ let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro 
 	    {m with
 	      output_template = subst_grid_model defos m.output_template}) in
   let ref_shapis =
-    if on_input
+    if on_input && grids_read_has_delta gri
     then
       insert_a_shape m.genvar m.input_pattern
       |> Myseq.map
@@ -939,12 +940,15 @@ let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro 
 	    (Rinput r, {m with genvar=gv'; input_pattern=mi'}))
     else Myseq.empty in
   let ref_shapos =
-    insert_a_shape m.genvar m.output_template
-    |> Myseq.map
-	 (fun (r,gv',mo') ->
-	  (Routput r, {m with genvar=gv'; output_template=mo'})) in
+    if grids_read_has_delta gro
+    then
+      insert_a_shape m.genvar m.output_template
+      |> Myseq.map
+	   (fun (r,gv',mo') ->
+	    (Routput r, {m with genvar=gv'; output_template=mo'}))
+    else Myseq.empty in
   Myseq.concat [ref_defis; ref_shapis;
-		ref_defos; ref_shapos])
+		(*ref_defos;*) ref_shapos; ref_defos])
 	     
 let learn_model
       ?(verbose = true)
@@ -985,7 +989,8 @@ let learn_model
 	     l_model_data gri_test gro in
 	   if verbose then (
 	     pp_refinement r; print_newline ();
-	     Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo);
+	     Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
+	     flush stdout);
 	   lmd)
     ~refinements:
     (fun (r,m) (gri_test,gro) ->

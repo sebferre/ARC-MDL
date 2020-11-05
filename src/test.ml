@@ -325,7 +325,10 @@ let solved_train_names =
   ]
 
 let maybe_train_names =
-  [ "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity *)
+  [
+    "a79310a0.json"; (* pb: rectangle mask *)
+    "67a423a3.json"; (* pb: rectangle mask *)
+    "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity *)
     "694f12f3.json"; (* pb: need for expression bias *)
     "41e4d17e.json"; (* pb: collection, need for rectangle masks => unfilled square *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? *)
@@ -333,12 +336,10 @@ let maybe_train_names =
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
     "b9b7f026.json"; (* pb: need for nesting *)
     "d6ad076f.json"; (* pb: parse ambiguity, global rotation, topological relation? *)
-    "67a423a3.json"; (* pb: rectangle mask *)
     "b548a754.json"; (* pb: global rotation, overfit with cst *)
     "23581191.json"; (* pb: parse ambiguity *)
     "7f4411dc.json"; (* pb: collection, overfit *)
     "05f2a901.json"; (* pb: rectangle mask *)
-    "a79310a0.json"; (* pb: rectangle mask *)
   ]
     
 let task_of_name dir name = Task.from_file (dir ^ name)
