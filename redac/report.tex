@@ -5,7 +5,7 @@
 \usepackage{graphicx}
 \usepackage{alltt}
 \usepackage{multicol}
-\usepackage[pdftex]{pstricks}
+%\usepackage[pdftex]{pstricks}
 \usepackage{verbatim}
 %\usepackage[font=small,labelfont=bf]{caption}
 \usepackage{algorithmic}
@@ -193,6 +193,7 @@ have the same size as the input grid, it can be smaller or bigger.
     training examples}, and $F$ is the set of {\em test examples}.
   The learner has access to the input and ouput grids of the training
   examples, but only to the input grids of the test examples. Its
+  % TODO: wrong, no access to test input grids
   objective is to predict the hidden output grids of all test
   examples.
 \end{definition}
@@ -257,7 +258,7 @@ algebraic data types.
 \begin{datatype}
   {\it task} \is {\bf InOut}({\it grid}, {\it grid})
   \\
-  {\it grid} \is {\bf Background}(height: {\it attr}_\nat, width: {\it attr}_\nat, color: {\it expr}_C)
+  {\it grid} \is {\bf Background}(height: {\it attr}_\nat, width: {\it attr}_\nat, color: {\it attr}_C)
   \altis {\bf AddShape}({\it shape}, {\it grid})
   \\
   {\it shape} \is {\bf Rectangle}(height: {\it attr}_\nat, width: {\it attr}_\nat,\\
@@ -283,7 +284,7 @@ width -- and a color attribute.
 The only shape at this stage is the rectangle, attributed with four
 integer attributes -- height, width, mini (with $i$ as a row index),
 and minj (with $j$ as a column index) -- and a color attribute. The
-height and width gives the size of the rectangle, while mini and minj
+height and width give the size of the rectangle, while mini and minj
 give its position on the background.
 
 An attribute is either an unknown -- with some identifier name -- or
@@ -292,7 +293,7 @@ attributes of shapes during parsing. As a consequence, the output grid
 model of a successful learned model should not contain
 unknowns. However, as we show later, unknowns are also relevant in the
 output grid models in the course of learning. We note $U(grid)$ the
-setof unknowns in a grid model.
+set of unknowns in a grid model.
 %
 The purpose of expressions is to define attribute values as constant
 over all examples, or as the result of a computation involving
@@ -440,7 +441,7 @@ rectangle is overlaped by another shape. Third, matching
 superpositions of rectangles are looked for according to the model.
 
 For instance, the test input grid in Figure~\ref{fig:task} has three
-contiguous parts: the light blue one, the green one, and the back
+contiguous parts: the light blue one, the green one, and the black
 one. Three rectangles can be identified from those parts: a small
 light blue square, a green rectangle overlaped by the blue one, and a
 black rectangle covering the whole grid and overlaped by the other
@@ -454,8 +455,8 @@ rectangle at coordinates (1,2), on top of a black background.
 % TODO: schema showing the information flow
 % involving: gi, mi, pi, di, mo, po, do
 
-Using a effective task model~$m = (m^i,m^o)$ to predict the output
-grid from the input grid simply consist into the composition of
+Using an effective task model~$m = (m^i,m^o)$ to predict the output
+grid from the input grid simply consists into the composition of
 parsing with the input grid model, and generating with the output grid
 model.
 \[ {\it predict}_m(g^i) := {\it
@@ -495,6 +496,7 @@ $L(D|M)$ is the DL of the data encoded with the model.
 
 In our case, $M$ is a task model~$m = (m^i,m^o)$, and the data is the
 part~$T^-$ of a task~$T = (E,F)$ that is accessible to the learner
+% TODO: we should have T- = E
 (training examples and test inputs). We therefore have
 \[ L(m,T^-) = L(m) + L(T^-|m). \]
 
@@ -505,8 +507,8 @@ lengths of its two grid models.
 The description length of the task data boils down to the description
 length of parameters and deltas:
 \[\begin{array}{lcl}
-L(T^-|m) & = & \alpha \sum_{e_k \in E} L_{m^i}(\pi^i_k) + L(h^i_k,w^i_k,\delta^i_k) + L_{m^o}(\pi^o_k) + L(h^o_k,w^o_k,\delta^o_k) \\
-& + & \alpha \sum_{e_k \in F} L_{m^i}(\pi^i_k) + L(h^i_k,w^i_k,\delta^i_k), \\
+L(T^-|m) & = & \alpha \sum_{e_k \in E} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k) + L_{m^o}(\pi^o_k) + L(\delta^o_k|h^o_k,w^o_k) \\
+& + & \alpha \sum_{e_k \in F} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k), \\
   \end{array} \]
 %
 where for every example~$e_k = (x_k,y_k)$,
@@ -515,8 +517,9 @@ $\pi^i_k, \delta^i_k = {\it parse}_{m^i}(\emptyset,x_k)$, and
 $\pi^o_k, \delta^o_k = {\it parse}_{m^o}(\pi^i_k,y_k)$. For test
 examples, the output terms are not included because output grids are
 not accessible to the learner. We nonetheless include test input grids
-in order to ensure that the learned model be applicable to them, and
-also because it makes sense to use all the available information.
+in order to ensure that the learned model is applicable to them, and
+% TODO: change that
+also because it makes sense to use all of the available information.
 %
 Factor~$\alpha$ equals~1 by default but can be set to a higher value
 to give more weights to the data, relative to the model, and hence
@@ -640,7 +643,7 @@ constants and variables than to addition and substraction.
 The DL of a grid model depends on the number~$N_V$ of variables in its
 environment, 0 for the input grid model, and the number of input
 unknowns for the output grid model. This number~$N_V$ is passed down
-to expression variables, which use it encode a variable according to a
+to expression variables, which use it to encode a variable according to a
 uniform distribution among the $N_V$ environment variables.
 
 The DL of attributes and expressions, as they are generic in the type
@@ -662,7 +665,7 @@ encoding for integers when bounds are known for the attribute value
 For the task in Figure~\ref{fig:task}, the following table compares
 the description lengths of the initial model and the above example
 model, for $\alpha=10$ (each example counts as 10). The split between
-the model and data according to the mode is also given.
+the model and data according to the model is also given.
 
 \begin{center}
   \begin{tabular}{|l|r|r|r|}
@@ -726,7 +729,7 @@ unknowns by an expressions in a grid model. As the only shape in this
 version is the rectangle, the first kind of refinement consists in
 inserting a new rectangle on top of the stack of rectangles, or at
 some depth up to 3. The inserted rectangle is completely unspecified
-in the sense that new unknowns are created for all its attributes
+in the sense that new unknowns are created for all of its attributes
 (size, position, and color).
 
 The second kind of refinement enables to specify those unknowns by
@@ -818,7 +821,7 @@ for each test. This enables to give the same weight to each task.
      & & & & \multicolumn{2}{c|}{training} & \multicolumn{2}{c|}{evaluation} \\
     version & $\alpha$ & timeout & avg. time & train & test & train & test \\
     \hline
-    v1 & 10 & 20s & 9s & 9/9.6 & 5/5.5 & 0/0.3 & 0/0.0 \\
+    v1 & ~10~ & 20s & 9s & ~9 / 9.6~ & ~5 / 5.5~ & ~0 / 0.3~ & ~0 / 0.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
