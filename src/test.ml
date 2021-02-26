@@ -269,19 +269,19 @@ let tsol_ba97ae07 =
 			    color = U "C1"; rmask = U "M1" },
 		Background { height = U "H";
 			     width = U "W";
-			     color = E (Const Grid.black) }));
+			     color = E ("C", Const Grid.black) }));
 	output_template = (* swapping the two rectangles *)
 	  AddShape
-	    (Rectangle { height = E (Var "H1"); width = E (Var "W1");
-			 offset_i = E (Var "I1"); offset_j = E (Var "J1");
-			 color = E (Var "C1"); rmask = E (Var "M1") },
+	    (Rectangle { height = E ("H1'", Var "H1"); width = E ("W1'", Var "W1");
+			 offset_i = E ("I1'", Var "I1"); offset_j = E ("J1'", Var "J1");
+			 color = E ("C1'", Var "C1"); rmask = E ("M1'", Var "M1") },
 	     AddShape
-	       (Rectangle { height = E (Var "H2") (* error *); width = E (Var "W2");
-			    offset_i = E (Var "I2"); offset_j = E (Var "J2");
-			    color = E (Var "C2"); rmask = E (Var "M2") },
-		Background { height = E (Var "H");
-			     width = E (Var "W");
-			     color = E (Const Grid.black) }));
+	       (Rectangle { height = E ("H2'", Var "H2") (* error *); width = E ("W2'", Var "W2");
+			    offset_i = E ("I2'", Var "I2"); offset_j = E ("J2'", Var "J2");
+			    color = E ("C2'", Var "C2"); rmask = E ("M2'", Var "M2") },
+		Background { height = E ("H'", Var "H");
+			     width = E ("W'", Var "W");
+			     color = E ("C'", Const Grid.black) }));
       };
     train_data =
       [ { params = [ dint "H" 13; dint "W" 13;
@@ -326,9 +326,9 @@ let solved_train_names =
 
 let maybe_train_names =
   [
-    "a79310a0.json"; (* pb: rectangle mask *)
-    "67a423a3.json"; (* pb: rectangle mask *)
-    "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity *)
+    "a79310a0.json"; (* pb: rectangle mask, need to generalize from examples *)
+    "67a423a3.json"; (* pb: rectangle mask, need to be transpose invariant *)
+    "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity, need for collections *)
     "694f12f3.json"; (* pb: need for expression bias *)
     "41e4d17e.json"; (* pb: collection, need for rectangle masks => unfilled square *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? *)
@@ -416,7 +416,7 @@ let checker_segmentation : checker =
 	       Grid.pp_points g points;
 	       Grid.pp_rectangles g rects;
 	       print_newline ()))
-	task.train
+	(task.train @ task.test)
     method summarize_tasks = ()
   end												 
 let _ =

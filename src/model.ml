@@ -163,7 +163,7 @@ let eval_var : type a. def list -> a kind -> a var -> a (* raises a fatal except
 
 type _ attr =
   | U : 'a var -> 'a attr (* unknown => to be matched *)
-  | E : 'a expr -> 'a attr (* expression => to be evaluated *)
+  | E : 'a var * 'a expr -> 'a attr (* expression => to be evaluated *)
 
 type params = def list (* unknown bindings *)
 		      
@@ -171,22 +171,22 @@ let pp_attr : type a. a kind -> a attr -> unit =
   fun k p ->
   match p with
   | U u -> print_char '?'; print_string u
-  | E e -> pp_expr k e
+  | E (u,e) -> print_char '?'; print_string u; print_char '='; pp_expr k e
 
 let subst_attr : type a. params -> a kind -> a attr -> a attr =
   fun params k a ->
   match a with
   | U u ->
      ( match get_var_def_opt k u params with
-       | Some e -> E e
+       | Some e -> E (u,e)
        | None -> a )
-  | E e -> E (subst_expr params k e)
+  | E (u,e) -> E (u, subst_expr params k e)
 
 let eval_attr : type a. env -> params -> a kind -> a attr -> a =
   fun env params k a -> (* QUICK *)
   match a with
   | U u -> eval_var params k u
-  | E e -> eval_expr env k e
+  | E (u,e) -> eval_expr env k e
 		   
 		   
 (* grid models *)
@@ -352,7 +352,7 @@ let l_attr : type a. env_size:int -> a kind -> a attr -> code:a code -> u_code:(
   fun ~env_size k a ~code ~u_code ->
   match a with
   | U u -> Mdl.Code.usage 0.5, (fun env params -> u_code env params (eval_var params k u))
-  | E e -> Mdl.Code.usage 0.5 +. l_expr ~env_size k ~code e, no_staged_code
+  | E (u,e) -> Mdl.Code.usage 0.5 +. l_expr ~env_size k ~code e, no_staged_code
 
 		       
 let l_bool ~env_size (bool : bool attr) : staged_code =
@@ -366,7 +366,7 @@ let l_position ~env_size ~(bound : int attr) (offset: int attr) : staged_code =
   l_attr ~env_size Int offset
 	 ~code:(fun o ->
 		match bound with
-		| E (Const b) -> Mdl.Code.uniform b
+		| E (_, Const b) -> Mdl.Code.uniform b
 		| _ -> Mdl.Code.universal_int_star o)
 	 ~u_code:(fun env params o ->
 		  let b = eval_attr env params Int bound in
@@ -378,8 +378,8 @@ let l_slice ~env_size ~(bound : int attr) ~(offset : int attr) ~(size: int attr)
   +? l_attr ~env_size Int size
 	    ~code:(fun s ->
 		   match bound, offset with
-		   | E (Const b), E (Const o) -> Mdl.Code.uniform (b - o)
-		   | E (Const b), _ -> Mdl.Code.uniform b
+		   | E (_, Const b), E (_, Const o) -> Mdl.Code.uniform (b - o)
+		   | E (_, Const b), _ -> Mdl.Code.uniform b
 		   | _, _ -> Mdl.Code.universal_int_plus s)
 	    ~u_code:(fun env params s ->
 		     let b = eval_attr env params Int bound in
@@ -537,7 +537,7 @@ let parse_attr : type a. env -> a kind -> a -> a attr -> params -> params parse_
        | None -> Result.Ok (set_var_def k u (Const c0) params)
        | Some (Const c) -> parse_const k c0 c params
        | Some _ -> assert false ) (* only constants in params *)
-  | E e ->
+  | E (u,e) ->
      let c = eval_expr env k e in
      parse_const k c0 c params
 
@@ -601,7 +601,7 @@ let rec parse_grid_model
 	let new_delta = ref gd.delta in
 	let bc = (* background color *)
 	  match color with
-	  | E e -> eval_expr env Color e
+	  | E (u,e) -> eval_expr env Color e
 	  | U u ->
 	    (* determining the majority color *)
 	     let color_counter = new Common.counter in
@@ -776,12 +776,24 @@ let rec find_defs (gr : grids_read) : def list =
     (fun defs (Def (k,u,_)) ->
      (* u-values *)
      let u_cs = List.map (fun p -> eval_var p k u) ps in
+     (* expressions first *)
+(*
+     match find_defs_u k u u_cs es with
+     | Some d -> d::defs
+     | None -> (* then constants *)
+        match u_cs with
+        | [] -> assert false
+        | c0::cs1 ->
+           if List.for_all (equal_const k c0) cs1
+           then Def (k, u, Const c0)::defs
+           else defs)
+ *)      
      match u_cs with
      | [] -> assert false
-     | c0::cs1 ->
+     | c0::cs1 -> (* constants first *)
 	if List.for_all (equal_const k c0) cs1
 	then Def (k, u, Const c0)::defs
-	else
+	else (* then expressions *)
 	  match find_defs_u k u u_cs es with
 	  | None -> defs
 	  | Some d -> d::defs)
