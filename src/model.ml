@@ -454,9 +454,6 @@ let grids_read_has_delta (gr : grids_read) : bool =
     (fun (env,gd,l) -> gd.delta <> [])
     gr.egdls
 		    
-let align_grids_read_with (gri : grids_read) (l : 'a list) : grids_read =
-  { gri with egdls = Common.sub_list gri.egdls 0 (List.length l) }
-
 
 type 'a triple = 'a * 'a * 'a
 		  
@@ -467,8 +464,6 @@ let l_grid_model_data (gr : grids_read) : Mdl.bits triple (* model, data, model+
   gr.l_m, l_d, gr.l_m +. l_d)
 
 let l_model_data (gri : grids_read) (gro : grids_read) : Mdl.bits triple triple =
-  (* to remove extra test inputs *)
-  let gri = align_grids_read_with gri gro.egdls in
   let lmi, ldi, lmdi = l_grid_model_data gri in
   let lmo, ldo, lmdo = l_grid_model_data gro in
   (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo)
@@ -966,11 +961,12 @@ let learn_model
       ?(verbose = true)
       ~timeout
       ~beam_width ~refine_degree
-      (gis_test : Grid.t list) (* train + test inputs *)
-      (gos : Grid.t list) (* only train outputs *)
+      (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * Mdl.bits) list * bool
   = Common.prof "Model.learn_model" (fun () ->
-  let egis_test = List.map (fun gi -> env0, gi) gis_test in
+  let gis = List.map (fun {input} -> input) pairs in
+  let gos = List.map (fun {output} -> output) pairs in
+  let egis = List.map (fun gi -> env0, gi) gis in
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -978,10 +974,9 @@ let learn_model
     ~m0:(RInit, model0)
     ~data:(fun (r,m) ->
 	   try
-	   match read_grids egis_test m.input_pattern with
+	   match read_grids egis m.input_pattern with
 	   | None -> None
-	   | Some gri_test ->
-	      let gri = align_grids_read_with gri_test gos in
+	   | Some gri ->
 	      let egos =
 		List.map2
 		  (fun (envi,gdi,li) go -> gdi.params, go)
@@ -989,24 +984,24 @@ let learn_model
 	      match read_grids egos m.output_template with
 	      | None -> None
 	      | Some gro ->
-		 Some (gri_test, gro)
+		 Some (gri, gro)
 	   with
 	   | Common.Timeout as exn -> raise exn
 	   | exn ->
 	      print_endline (Printexc.to_string exn);
 	      pp_model m;
 	      raise exn)
-    ~code:(fun (r,m) (gri_test,gro) ->
+    ~code:(fun (r,m) (gri,gro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     l_model_data gri_test gro in
+	     l_model_data gri gro in
 	   if verbose then (
 	     pp_refinement r; print_newline ();
 	     Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
 	     flush stdout);
 	   lmd)
     ~refinements:
-    (fun (r,m) (gri_test,gro) ->
-     model_refinements r m gri_test gro))
+    (fun (r,m) (gri,gro) ->
+     model_refinements r m gri gro))
     
 (* naive *)
     

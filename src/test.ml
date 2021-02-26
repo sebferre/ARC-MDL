@@ -144,25 +144,22 @@ let print_measures count ms =
   print_newline ()
 				 
 let print_learned_model name task : measures = Common.prof "Test.print_learned_model" (fun () ->
-  let gis_test = (task.train @ task.test) |> List.map (fun {input} -> input) in
-  let gos = task.train |> List.map (fun {output} -> output) in
   let lm, timed_out =
     Model.learn_model
       ~verbose:(!training)
       ~timeout:(!task_timeout)
       ~beam_width:1 ~refine_degree:1
-      gis_test gos in
+      task.train (*gis_test gos*) in
   if timed_out && !training then print_endline "TIMEOUT";
   match lm with
   | [] -> assert false
-  | ((_,m), (gri_test, gro), l)::_ ->
+  | ((_,m), (gri, gro), l)::_ ->
      print_endline "\n# Learned model:";
      pp_model m;
      print_newline ();
-     let ldo = print_l_md gri_test gro in
+     let ldo = print_l_md gri gro in
      
      print_endline "\n# Input/output grids data (train)";
-     let gri = align_grids_read_with gri_test gro.egdls in
      let egdlios = List.combine gri.egdls gro.egdls in
      let _, nb_ex_train, nb_correct_train =
        List.fold_left2
