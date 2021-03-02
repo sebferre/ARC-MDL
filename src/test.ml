@@ -6,54 +6,6 @@ open Task
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 20
 
-(* === hard-coded solution === *)
-		       
-type task_solution =
-  { name : string;
-    task : task; (* the task description *)
-    model : Model.model; (* expected output of learning *)
-    train_data : Model.grid_data list; (* expected output of reading train input grids *)
-    test_data : Model.grid_data list; (* expected output of reading test input grids *)
-  }
-
-(* building intermediate results for writing, parsing, and learning *)
-
-type 'a train_test = 'a * 'a
-let both f (train,test) = (f train, f test)
-    
-let tsol_gis tsol : Grid.t list train_test = (* train+test input grids *)
-  tsol.task.train |> List.map (fun pair -> pair.input),
-  tsol.task.test |> List.map (fun pair -> pair.input)
-  
-let tsol_gos tsol : Grid.t list train_test = (* train+test output grids *)
-  tsol.task.train |> List.map (fun pair -> pair.output),
-  tsol.task.test |> List.map (fun pair -> pair.output)
-
-let tsol_egis tsol : (Model.env * Grid.t) list train_test = (* train+test input env-grids *)
-  tsol_gis tsol |> both (List.map (fun g -> (Model.env0,g))) (* inputs have empty env *)
-
-let tsol_egos tsol : (Model.env * Grid.t) list train_test = (* train+test output env-grids *)
-  let f gdis gos =
-    List.map2
-      (fun gdi go -> (gdi.Model.params, go)) (* outputs have input params as env *)
-      gdis gos in
-  let gos_train, gos_test = tsol_gos tsol in
-  f tsol.train_data gos_train,
-  f tsol.test_data gos_test
-    
-let tsol_gri tsol : Model.grids_read train_test = (* train+test input env-gds *)
-  let env_size = 0 in
-  let l_m, code_gd = Model.l_grid_model ~env_size tsol.model.input_pattern in
-  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> Model.env0, gdi, code_gd Model.env0 gdi)}, (* inputs have empty env *)
-  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> Model.env0, gdi, code_gd Model.env0 gdi)}
-
-let tsol_gro tsol : Model.grids_read train_test = (* train+test output env-gds *)
-  let env_size = List.length (List.hd tsol.train_data).params in
-  let l_m, code_gd = Model.l_grid_model ~env_size tsol.model.input_pattern in
-  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> gdi.Model.params, Model.grid_data0, code_gd gdi.Model.params Model.grid_data0)}, (* perfect output model has empty grid_data *)
-  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> gdi.Model.params, Model.grid_data0, code_gd gdi.Model.params Model.grid_data0)}
-
-
 (* === printing and checking functions === *)
 			     
 let print_grid_mismatch name ~grid ~derived_grid : unit =
@@ -112,11 +64,6 @@ let print_l_md gri gro = (* model+data DL *)
   Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
   Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd;
   ldo
-		   
-let print_l_tsol tsol = (* DLs for train data *)
-  let gri, _ = tsol_gri tsol in
-  let gro, _ = tsol_gro tsol in
-  ignore (print_l_md gri gro)
 
 let print_l_task_model name task model =
   let egis = task.train |> List.map (fun pair -> Model.env0, pair.input) in
@@ -206,108 +153,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
      print_measures 1 ms;
      ms)
      
-(* check task *)
-			   
-let check_task_solution (tsol : task_solution) : measures =
-  print_endline "=====================================\n";
-  Printf.printf "Checking task %s: %d train, %d test\n"
-		tsol.name (List.length tsol.task.train) (List.length tsol.task.test);
-  print_l_task_model tsol.name tsol.task Model.model0;
-  print_endline "\n# Expected model:";
-  Model.pp_model tsol.model; print_newline ();
-  print_l_tsol tsol;
-  print_endline "\n# Checking reading and writing input/output grids";
-  let cpt = ref 0 in
-  List.iter2
-    (fun {input; output} gd ->
-     incr cpt;
-     (* displaying input grid parts *)
-     (*Grid.pp_parts input (Grid.segment_by_color input);*)
-     (* checking parsing *)
-     check_read_grid
-       (tsol.name ^ "-read--input--" ^ string_of_int !cpt)
-       Model.env0 input tsol.model.input_pattern gd;
-     check_read_grid
-       (tsol.name ^ "-read--output-" ^ string_of_int !cpt)
-       gd.params output tsol.model.output_template Model.grid_data0;
-     (* checking writing *)
-     check_write_grid
-       (tsol.name ^ "-write-input--" ^ string_of_int !cpt)
-       tsol.model.input_pattern [] gd input;
-     check_write_grid
-       (tsol.name ^ "-write-output-" ^ string_of_int !cpt)
-       tsol.model.output_template gd.params Model.grid_data0 output)
-    (tsol.task.train @ tsol.task.test)
-    (tsol.train_data @ tsol.test_data);
-  print_endline "\n# Learning a model";
-  print_learned_model tsol.name tsol.task
-
-   
-(* === main for task solutions === *)
-
-let file_of_name name =
-  "/local/ferre/data/tasks/ARC/data/training/" ^ name ^ ".json"
-    
-let tsol_ba97ae07 =
-  let open Model in
-  let name = "ba97ae07" in
-  { name;
-    task = from_file (file_of_name name);
-    model =
-      { genvar = Genvar.empty;
-	input_pattern =
-	  AddShape
-	    (Rectangle { height = U "H2"; width = U "W2";
-			 offset_i = U "I2"; offset_j = U "J2";
-			 color = U "C2"; rmask = U "M2" },
-	     AddShape
-	       (Rectangle { height = U "H1"; width = U "W1";
-			    offset_i = U "I1"; offset_j = U "J1";
-			    color = U "C1"; rmask = U "M1" },
-		Background { height = U "H";
-			     width = U "W";
-			     color = E ("C", Const Grid.black) }));
-	output_template = (* swapping the two rectangles *)
-	  AddShape
-	    (Rectangle { height = E ("H1'", Var "H1"); width = E ("W1'", Var "W1");
-			 offset_i = E ("I1'", Var "I1"); offset_j = E ("J1'", Var "J1");
-			 color = E ("C1'", Var "C1"); rmask = E ("M1'", Var "M1") },
-	     AddShape
-	       (Rectangle { height = E ("H2'", Var "H2") (* error *); width = E ("W2'", Var "W2");
-			    offset_i = E ("I2'", Var "I2"); offset_j = E ("J2'", Var "J2");
-			    color = E ("C2'", Var "C2"); rmask = E ("M2'", Var "M2") },
-		Background { height = E ("H'", Var "H");
-			     width = E ("W'", Var "W");
-			     color = E ("C'", Const Grid.black) }));
-      };
-    train_data =
-      [ { params = [ dint "H" 13; dint "W" 13;
-		     dint "H1" 3; dint "W1" 13; dint "I1" 3; dint "J1" 0; dcolor "C1" Grid.green;
-		     dint "H2" 13; dint "W2" 2; dint "I2" 0; dint "J2" 3; dcolor "C2" Grid.cyan ];
-	  delta = [] };
-	{ params = [ dint "H" 7; dint "W" 9;
-		     dint "H1" 7; dint "W1" 2; dint "I1" 0; dint "J1" 2; dcolor "C1" Grid.pink;
-		     dint "H2" 1; dint "W2" 9; dint "I2" 3; dint "J2" 0; dcolor "C2" Grid.blue ];
-	  delta = [] };
-	{ params = [ dint "H" 8; dint "W" 7;
-		     dint "H1" 8; dint "W1" 1; dint "I1" 0; dint "J1" 2; dcolor "C1" Grid.blue;
-		     dint "H2" 1; dint "W2" 7; dint "I2" 3; dint "J2" 0; dcolor "C2" Grid.orange ];
-	  delta = [] };
-	{ params = [ dint "H" 8; dint "W" 6;
-		     dint "H1" 1; dint "W1" 6; dint "I1" 4; dint "J1" 0; dcolor "C1" Grid.red;
-		     dint "H2" 8; dint "W2" 1; dint "I2" 0; dint "J2" 1; dcolor "C2" Grid.green ];
-	  delta = [] } ];
-    test_data =
-      [ { params = [ dint "H" 11; dint "W" 6;
-		     dint "H1" 2; dint "W1" 6; dint "I1" 2; dint "J1" 0; dcolor "C1" Grid.grey;
-		     dint "H2" 11; dint "W2" 2; dint "I2" 0; dint "J2" 2; dcolor "C2" Grid.yellow ];
-	  delta = [] } ];
-  }
-
-let main_solutions () =
-  check_task_solution tsol_ba97ae07
-
-(* === main for tasks without solution === *)
+(* === solved/candidate training tasks === *)
 		      
 let arc_dir = "/local/ferre/data/tasks/ARC/data/"
 let train_dir = arc_dir ^ "training/"
@@ -347,7 +193,10 @@ let maybe_train_names =
     "05f2a901.json"; (* pb: rectangle mask *)
     "1fad071e.json"; (* pb: collection, cardinal *)
   ]
-    
+
+  
+(* === main === *)
+  
 let task_of_name dir name = Task.from_file (dir ^ name)
 
 class type checker =
@@ -458,4 +307,3 @@ chosen set (default)";
     (fun str -> ())
     "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-segment] [-alpha N] [-timeout N]";	      		       
   main_tasks !dir !names !checker
-

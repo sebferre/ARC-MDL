@@ -4,7 +4,7 @@ SRC=grid.cmo task.cmo model.cmo
 
 FLAGS= -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
 
-all: main test
+all: test
 
 test: $(SRC) test.cmo
 	ocamlfind ocamlc $(FLAGS) -linkpkg -o test $(OBJ) $(SRC) test.cmo
