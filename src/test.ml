@@ -1,6 +1,5 @@
 
 open Task
-open Model
 
 (* === parameters === *)
        
@@ -12,9 +11,9 @@ let task_timeout = ref 20
 type task_solution =
   { name : string;
     task : task; (* the task description *)
-    model : model; (* expected output of learning *)
-    train_data : grid_data list; (* expected output of reading train input grids *)
-    test_data : grid_data list; (* expected output of reading test input grids *)
+    model : Model.model; (* expected output of learning *)
+    train_data : Model.grid_data list; (* expected output of reading train input grids *)
+    test_data : Model.grid_data list; (* expected output of reading test input grids *)
   }
 
 (* building intermediate results for writing, parsing, and learning *)
@@ -30,29 +29,29 @@ let tsol_gos tsol : Grid.t list train_test = (* train+test output grids *)
   tsol.task.train |> List.map (fun pair -> pair.output),
   tsol.task.test |> List.map (fun pair -> pair.output)
 
-let tsol_egis tsol : (env * Grid.t) list train_test = (* train+test input env-grids *)
-  tsol_gis tsol |> both (List.map (fun g -> (env0,g))) (* inputs have empty env *)
+let tsol_egis tsol : (Model.env * Grid.t) list train_test = (* train+test input env-grids *)
+  tsol_gis tsol |> both (List.map (fun g -> (Model.env0,g))) (* inputs have empty env *)
 
-let tsol_egos tsol : (env * Grid.t) list train_test = (* train+test output env-grids *)
+let tsol_egos tsol : (Model.env * Grid.t) list train_test = (* train+test output env-grids *)
   let f gdis gos =
     List.map2
-      (fun gdi go -> (gdi.params, go)) (* outputs have input params as env *)
+      (fun gdi go -> (gdi.Model.params, go)) (* outputs have input params as env *)
       gdis gos in
   let gos_train, gos_test = tsol_gos tsol in
   f tsol.train_data gos_train,
   f tsol.test_data gos_test
     
-let tsol_gri tsol : grids_read train_test = (* train+test input env-gds *)
+let tsol_gri tsol : Model.grids_read train_test = (* train+test input env-gds *)
   let env_size = 0 in
-  let l_m, code_gd = l_grid_model ~env_size tsol.model.input_pattern in
-  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> env0, gdi, code_gd env0 gdi)}, (* inputs have empty env *)
-  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> env0, gdi, code_gd env0 gdi)}
+  let l_m, code_gd = Model.l_grid_model ~env_size tsol.model.input_pattern in
+  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> Model.env0, gdi, code_gd Model.env0 gdi)}, (* inputs have empty env *)
+  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> Model.env0, gdi, code_gd Model.env0 gdi)}
 
-let tsol_gro tsol : grids_read train_test = (* train+test output env-gds *)
+let tsol_gro tsol : Model.grids_read train_test = (* train+test output env-gds *)
   let env_size = List.length (List.hd tsol.train_data).params in
-  let l_m, code_gd = l_grid_model ~env_size tsol.model.input_pattern in
-  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> gdi.params, grid_data0, code_gd gdi.params grid_data0)}, (* perfect output model has empty grid_data *)
-  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> gdi.params, grid_data0, code_gd gdi.params grid_data0)}
+  let l_m, code_gd = Model.l_grid_model ~env_size tsol.model.input_pattern in
+  {l_m; egdls = tsol.train_data |> List.map (fun gdi -> gdi.Model.params, Model.grid_data0, code_gd gdi.Model.params Model.grid_data0)}, (* perfect output model has empty grid_data *)
+  {l_m; egdls = tsol.test_data |> List.map (fun gdi -> gdi.Model.params, Model.grid_data0, code_gd gdi.Model.params Model.grid_data0)}
 
 
 (* === printing and checking functions === *)
@@ -76,12 +75,12 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
      else Printf.printf "%s: FAILURE\n" name
     
 let check_write_grid grid_name grid_model grid_env grid_data grid =
-  let derived_grid = write_grid grid_model grid_env grid_data in
+  let derived_grid = Model.write_grid grid_model grid_env grid_data in
   print_grid_mismatch grid_name ~grid ~derived_grid
 
 let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
-  let params = List.sort Stdlib.compare data.params in
-  let parsed_params = List.sort Stdlib.compare parsed_data.params in
+  let params = List.sort Stdlib.compare data.Model.params in
+  let parsed_params = List.sort Stdlib.compare parsed_data.Model.params in
   let delta = List.sort Stdlib.compare data.delta in
   let parsed_delta = List.sort Stdlib.compare parsed_data.delta in
   if params = parsed_params && delta = parsed_delta
@@ -120,13 +119,13 @@ let print_l_tsol tsol = (* DLs for train data *)
   ignore (print_l_md gri gro)
 
 let print_l_task_model name task model =
-  let egis = task.train |> List.map (fun pair -> env0, pair.input) in
-  let gri = read_grids egis model.input_pattern |> Option.get in
+  let egis = task.train |> List.map (fun pair -> Model.env0, pair.input) in
+  let gri = Model.read_grids egis model.Model.input_pattern |> Option.get in
   let egos =
     List.map2
-      (fun (_envi,gdi,_li) pair -> gdi.params, pair.output)
+      (fun (_envi,gdi,_li) pair -> gdi.Model.params, pair.output)
       gri.egdls task.train in
-  let gro = read_grids egos model.output_template |> Option.get in
+  let gro = Model.read_grids egos model.Model.output_template |> Option.get in
   ignore (print_l_md gri gro)
 
 	 
@@ -155,7 +154,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
   | [] -> assert false
   | ((_,m), (gri, gro), l)::_ ->
      print_endline "\n# Learned model:";
-     pp_model m;
+     Model.pp_model m;
      print_newline ();
      let ldo = print_l_md gri gro in
      
@@ -169,12 +168,12 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	  if !training then Model.pp_grid_data gdi;
 	  if !training then Model.pp_grid_data gdo;
 	  if gdo.params = []
-	  then check_write_grid grid_name m.output_template envo grid_data0 output
+	  then check_write_grid grid_name m.output_template envo Model.grid_data0 output
 	  else Printf.printf "%s: ERROR (unbound variable)\n" grid_name;
 	  print_newline ();
 	  i+1,
 	  nb_ex+1,
-	  nb_correct + (if gdo = grid_data0 then 1 else 0))
+	  nb_correct + (if gdo = Model.grid_data0 then 1 else 0))
 	 (1,0,0)
 	 egdlios task.train in
      
@@ -186,7 +185,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	    let parts = Grid.segment_by_color input in
 	    Grid.pp_parts input parts;*)
 	  let score, label =
-	    match apply_model m env0 input with
+	    match Model.apply_model m Model.env0 input with
 	    | Result.Ok derived ->
 	       ( match Grid.diff derived output with
 		 | None -> 1, "SUCCESS"
@@ -213,9 +212,9 @@ let check_task_solution (tsol : task_solution) : measures =
   print_endline "=====================================\n";
   Printf.printf "Checking task %s: %d train, %d test\n"
 		tsol.name (List.length tsol.task.train) (List.length tsol.task.test);
-  print_l_task_model tsol.name tsol.task model0;
+  print_l_task_model tsol.name tsol.task Model.model0;
   print_endline "\n# Expected model:";
-  pp_model tsol.model; print_newline ();
+  Model.pp_model tsol.model; print_newline ();
   print_l_tsol tsol;
   print_endline "\n# Checking reading and writing input/output grids";
   let cpt = ref 0 in
@@ -227,17 +226,17 @@ let check_task_solution (tsol : task_solution) : measures =
      (* checking parsing *)
      check_read_grid
        (tsol.name ^ "-read--input--" ^ string_of_int !cpt)
-       env0 input tsol.model.input_pattern gd;
+       Model.env0 input tsol.model.input_pattern gd;
      check_read_grid
        (tsol.name ^ "-read--output-" ^ string_of_int !cpt)
-       gd.params output tsol.model.output_template grid_data0;
+       gd.params output tsol.model.output_template Model.grid_data0;
      (* checking writing *)
      check_write_grid
        (tsol.name ^ "-write-input--" ^ string_of_int !cpt)
        tsol.model.input_pattern [] gd input;
      check_write_grid
        (tsol.name ^ "-write-output-" ^ string_of_int !cpt)
-       tsol.model.output_template gd.params grid_data0 output)
+       tsol.model.output_template gd.params Model.grid_data0 output)
     (tsol.task.train @ tsol.task.test)
     (tsol.train_data @ tsol.test_data);
   print_endline "\n# Learning a model";
@@ -250,6 +249,7 @@ let file_of_name name =
   "/local/ferre/data/tasks/ARC/data/training/" ^ name ^ ".json"
     
 let tsol_ba97ae07 =
+  let open Model in
   let name = "ba97ae07" in
   { name;
     task = from_file (file_of_name name);
@@ -358,7 +358,7 @@ class type checker =
 					   
 let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   print_endline "## options";
-  Printf.printf "alpha = %.1f\n" !alpha;
+  Printf.printf "alpha = %.1f\n" !Model.alpha;
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
   Printf.printf "timeout = %d\n" !task_timeout;
   print_newline ();
@@ -385,7 +385,7 @@ let checker_learning : checker =
 
     method process_task name task =
       print_endline "\n# evaluating model0";
-      print_l_task_model name task model0;
+      print_l_task_model name task Model.model0;
       print_endline "\n# learning a model for train pairs";
       let ms = print_learned_model name task in
       count <- count+1;
