@@ -317,7 +317,7 @@ let code_mask : Grid.Mask.t option code =
   | None -> 1.
   | Some m ->
      let n = Grid.Mask.height m * Grid.Mask.width m in
-     1. +. Mdl.Code.uniform (n+1) +. Mdl.Code.comb (Grid.Mask.area m) n
+     1. +. Mdl.Code.uniform n +. Mdl.Code.comb (Grid.Mask.area m) n
 
 type staged_code = Mdl.bits (* model proper *) * (env -> params -> Mdl.bits) (* env/params dependent *)
 
@@ -771,18 +771,6 @@ let rec find_defs (gr : grids_read) : def list =
     (fun defs (Def (k,u,_)) ->
      (* u-values *)
      let u_cs = List.map (fun p -> eval_var p k u) ps in
-     (* expressions first *)
-(*
-     match find_defs_u k u u_cs es with
-     | Some d -> d::defs
-     | None -> (* then constants *)
-        match u_cs with
-        | [] -> assert false
-        | c0::cs1 ->
-           if List.for_all (equal_const k c0) cs1
-           then Def (k, u, Const c0)::defs
-           else defs)
- *)      
      match u_cs with
      | [] -> assert false
      | c0::cs1 -> (* constants first *)
@@ -792,6 +780,7 @@ let rec find_defs (gr : grids_read) : def list =
 	  match find_defs_u k u u_cs es with
 	  | None -> defs
 	  | Some d -> d::defs)
+
     [] (List.hd ps)
 and find_defs_u : type a. a kind -> a var -> a list -> env list -> def option =
   fun k u u_cs es ->
@@ -954,8 +943,9 @@ let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro 
 	   (fun (r,gv',mo') ->
 	    (Routput r, {m with genvar=gv'; output_template=mo'}))
     else Myseq.empty in
-  Myseq.concat [ref_defis; ref_shapis;
-		(*ref_defos;*) ref_shapos; ref_defos])
+  Myseq.concat
+    [ref_defis; ref_shapis; ref_defos; ref_shapos] (* v1 *)
+      )
 	     
 let learn_model
       ?(verbose = true)

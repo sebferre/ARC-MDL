@@ -315,19 +315,27 @@ let train_names = Array.to_list (Sys.readdir train_dir)
 let eval_dir = arc_dir ^ "evaluation/"
 let eval_names = Array.to_list (Sys.readdir eval_dir)
 
-let solved_train_names =
+let solved_train_names = (* Version 1.1 *)
   [ "ba97ae07.json";
-    "b94a9452.json";
+    "bda2d7a6.json";
+    "6f8cd79b.json";
     "e48d4e1a.json";
+    "25ff71a9.json";
   ]
 
 let maybe_train_names =
   [
-    "a79310a0.json"; (* pb: rectangle mask, need to generalize from examples *)
-    "67a423a3.json"; (* pb: rectangle mask, need to be transpose invariant *)
-    "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity, need for collections *)
-    "694f12f3.json"; (* pb: need for expression bias *)
-    "41e4d17e.json"; (* pb: collection, need for rectangle masks => unfilled square *)
+    "1cf80156.json"; (* pb: shape in test instance too sparse (mask size = 11/24) *)
+    "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
+    "b94a9452.json"; (* pb: test input breaks train invariant (grid size) *)
+    "a79310a0.json"; (* pb: test input breaks train invariant (mask) *)
+    "aabf363d.json"; (* pb: test input breaks train invariant (shape size) *)
+    "bdad9b1f.json"; (* pb: parsing ambiguity *)
+    "e48d4e1a.json"; (* pb: parsing ambiguity, 3 rectangles, should be OK with color and position *)
+    "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
+    "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity, need for collections, should be OK with position *)
+    "694f12f3.json"; (* pb: need for expression bias, and ordering by size *)
+    "41e4d17e.json"; (* pb: collection, map *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? *)
     "98cf29f8.json"; (* pb: parse ambiguity *)
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
@@ -337,6 +345,7 @@ let maybe_train_names =
     "23581191.json"; (* pb: parse ambiguity *)
     "7f4411dc.json"; (* pb: collection, overfit *)
     "05f2a901.json"; (* pb: rectangle mask *)
+    "1fad071e.json"; (* pb: collection, cardinal *)
   ]
     
 let task_of_name dir name = Task.from_file (dir ^ name)

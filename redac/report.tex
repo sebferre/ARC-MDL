@@ -331,7 +331,33 @@ following (color~0 is black).
 \quad \quad \quad {\bf Background}(?H_0,?W_0,0))), \\
 \quad {\bf AddShape}({\bf Rectangle}(H_2,W_2,I_2-I_1,J_2-J_1,C_1), \\
 \quad \quad  {\bf Background}(H_1,W_1,C_2))) \\
-\end{array}\]
+  \end{array}\]
+
+\paragraph{Version 1.1.} We define a minor refinement of Version~1 of
+our model. The changes only concern shapes whose new definition is the
+following.
+
+\begin{center}
+\begin{datatype}
+  {\it shape} \is {\bf Point}(i: {\it attr}_\nat, j: {\it attr}_\nat, color: {\it attr}_C)
+  \altis {\bf Rectangle}(height: {\it attr}_\nat, width: {\it attr}_\nat, mini: {\it attr}_\nat, minj: {\it attr}_\nat,\\
+  & & \hspace*{1cm} color: {\it attr}_C, mask: {\it attr}_M)
+\end{datatype}
+\end{center}
+
+We introduce a new simple shape, {\em points}, which are described
+their coordinate and color. To account for irregular shapes, we extend
+rectangles with a new attribute, {\em mask}, whose values are 2D
+bitmaps, to indicate which pixels in the rectangle actually belong to
+the shape. We define the code length of a bitmap~$m \in M$ as follows,
+assuming that the grid dimensions $h \times w$ are known from the
+shape, and given that there are $k$ activated pixels in the bitmap.
+\[ L(m) = \left\{
+  \begin{array}{l@{\quad}l}
+    1 & \textrm{when the bitmap is full} \\
+    1 + log\ hw + log(C_{hw}^k) & \textrm{otherwise} \\
+  \end{array}\right. \]
+
 
 \subsection{Data According to a Model}
 \label{data}
@@ -339,7 +365,7 @@ following (color~0 is black).
 A model captures regularities in data but is generally not enough to
 capture all the information in data. In MDL-based approaches to model
 selection it is essential to have a lossless encoding of data in order
-to have a fair comparisons of different models.
+to have a fair comparison of different models.
 
 Given a task and a task model, the question is: What minimum data
 needs to be added to the task model in order to recover the task,
@@ -449,6 +475,14 @@ rectangles. According to the above model, this input grid is parsed as
 a 2x2 light blue rectangle at coordinates (3,4), on top of a 6x6 green
 rectangle at coordinates (1,2), on top of a black background.
 
+\paragraph{Version 1.1.} The first and second stages of Version~1 have
+been extended to account for points and rectangle masks. This results
+in more candidate shapes, hence more ways to understand a grid, and
+hence more chances to find a good model. The third stage has also been
+improved by taking into account description lengths to guide parsing
+towards the most plausible reading.
+
+
 \subsection{Predicting Output from Input with a Task Model}
 \label{predicting}
 
@@ -495,10 +529,14 @@ decomposed in two parts according to the equation
 $L(D|M)$ is the DL of the data encoded with the model.
 
 In our case, $M$ is a task model~$m = (m^i,m^o)$, and the data is the
-part~$T^-$ of a task~$T = (E,F)$ that is accessible to the learner
-% TODO: we should have T- = E
-(training examples and test inputs). We therefore have
-\[ L(m,T^-) = L(m) + L(T^-|m). \]
+part~$T^-$ of a task~$T = (E,F)$ that is accessible to the learner.
+As the objective is to learn a model that generalizes to new
+instances, only the training examples are accessible, so
+$T^- = E$\footnote{In Version~1, test input grids were wrongly
+  considered as part of~$T^-$. In the following, we only use $T^-$
+  relative to Version~1.}.
+We therefore have
+\[ L(m,E) = L(m) + L(E|m). \]
 
 The description length of the task model is the sum of the description
 lengths of its two grid models.
@@ -506,20 +544,22 @@ lengths of its two grid models.
 %
 The description length of the task data boils down to the description
 length of parameters and deltas:
-\[\begin{array}{lcl}
-L(T^-|m) & = & \alpha \sum_{e_k \in E} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k) + L_{m^o}(\pi^o_k) + L(\delta^o_k|h^o_k,w^o_k) \\
-& + & \alpha \sum_{e_k \in F} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k), \\
-  \end{array} \]
+\[
+  %\begin{array}{lcl}
+L(E|m) = \alpha \sum_{e_k \in E} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k) + L_{m^o}(\pi^o_k) + L(\delta^o_k|h^o_k,w^o_k)
+%& + & \alpha \sum_{e_k \in F} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k), \\
+     %    \end{array}
+\]
 %
 where for every example~$e_k = (x_k,y_k)$,
 $x_k \in C^{h^i_k \times w^i_k}$, $y_k \in C^{h^o_k \times w^o_k}$,
 $\pi^i_k, \delta^i_k = {\it parse}_{m^i}(\emptyset,x_k)$, and
-$\pi^o_k, \delta^o_k = {\it parse}_{m^o}(\pi^i_k,y_k)$. For test
-examples, the output terms are not included because output grids are
-not accessible to the learner. We nonetheless include test input grids
-in order to ensure that the learned model is applicable to them, and
-% TODO: change that
-also because it makes sense to use all of the available information.
+$\pi^o_k, \delta^o_k = {\it parse}_{m^o}(\pi^i_k,y_k)$.
+%For test
+%examples, the output terms are not included because output grids are
+%not accessible to the learner. We nonetheless include test input grids
+%in order to ensure that the learned model is applicable to them, and
+%also because it makes sense to use all of the available information.
 %
 Factor~$\alpha$ equals~1 by default but can be set to a higher value
 to give more weights to the data, relative to the model, and hence
@@ -553,7 +593,9 @@ The description length of deltas is parametrized by the height~$h$ and
 width~$w$ of the encoded grid. This is valid because knowing the grid
 model and the parameters, the size of the grid is known, and it only
 remains to specify which of the grid cells need to be given a
-different color. This leads to the following definition.
+different color.
+
+\paragraph{Version~1 } uses the following definition.
 \[ L(h,w,\delta) = L_\nat(|\delta|) + log(C_{hw}^{|\delta|}) + |\delta|log(|C|-1) \]
 %
 The first term encodes the number of cells in the delta. The second
@@ -562,6 +604,11 @@ delta, using a combination. The third term encodes the colors of those
 delta cells, choosing for each among the $|C|-1$ other colors, other
 than the color generated with the model and parameters.
 
+\paragraph{Version~1.1} introduces a more naive encoding to make it
+more comparable to models made of point shapes.
+\[ L(h,w,\delta) = |\delta|(log\ h + log\ w + log\ |C|) \]
+
+\paragraph{}
 In the following we assume a few basic description lengths for
 elementary types:
 \begin{itemize}
@@ -632,7 +679,7 @@ elementary types:
 \paragraph{Version 1.} Table~\ref{tab:l:v1} defines the description
 length (DL) of models (version~1), and of their
 parameters. Function~$L$ is defined for all types, and for each type
-variants. Depending on each type, it may take additional
+variant. Depending on each type, it may take additional
 parameters. The DL of a model is essentially the sum of the DLs of its
 components. When there are several variants in a type, bits are added
 to encode which variant applies. For types $grid$ and $attr$, 1 bit is
@@ -679,6 +726,33 @@ the model and data according to the model is also given.
 \end{center}
 
 The increase in the model DL is largely compensated by the data DL.
+
+\paragraph{Version 1.1.} The description length for shapes is extended
+in the obvious way, giving the same weight to points and rectangles.
+
+\begin{datatype}
+  {\it shape} \is {\bf Point}(i: {\it attr}_\nat, j: {\it attr}_\nat, color: {\it attr}_C)
+  \baction
+  L(shape,N_V) \defby 1 + L(i,N_V,L_\nat) + L(j,N_V,L_\nat) + L(color,N_V,L_C) \\
+  \eaction
+  \altis {\bf Rectangle}(height: {\it attr}_\nat, width: {\it attr}_\nat, mini: {\it attr}_\nat, minj: {\it attr}_\nat,\\
+  & & \hspace*{1cm} color: {\it attr}_C, mask: {\it attr}_M)
+  \baction
+  L(shape,N_V) \defby 1 + L(height,N_V,L_\nat) + L(width,N_V,L_\nat) \\
+  & + & L(mini,N_V,L_\nat) + L(minj,N_V,L_\nat) + L(color,N_V,L_C) + L(mask,N_V,L_M)
+  \eaction
+\end{datatype}
+
+\begin{center}
+  \begin{tabular}{|l|r|r|r|}
+    \hline
+    model & $L(m)$ & $L(E|m)$ & $L(m,E)$ \\
+    \hline
+    initial & 8.0 & 23315.5 & 23323.5 \\
+    example & 114.1 & 1788.4 & 1902.6 \\
+    \hline
+  \end{tabular}
+\end{center}
 
 
 \subsection{Learning Strategy}
@@ -775,6 +849,9 @@ into a single step.
 \end{center}
 
 
+\paragraph{Version 1.1.} A new refinement is the insertion of points
+as shapes.
+
 %%%
 \section{Evaluation}
 \label{eval}
@@ -822,6 +899,7 @@ for each test. This enables to give the same weight to each task.
     version & $\alpha$ & timeout & avg. time & train & test & train & test \\
     \hline
     v1 & ~10~ & 20s & 9s & ~9 / 9.6~ & ~5 / 5.5~ & ~0 / 0.3~ & ~0 / 0.0~ \\
+    v1.1 & ~10~ & 2s & 1.53s & ~16 / 17.3~ & ~5 / 5.0~ & ~4 / 4.3~ & ~4 / 4.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -860,6 +938,53 @@ Despite those encouraging result on training tasks, no evaluation task
 could be solved with this version. We wonder whether this is a
 statistical fluke or the fact that evaluation tasks are harder than
 the training tasks.
+
+%% training v1.1
+\begin{table}[t]
+  \centering
+  \caption{Performance on training tasks as the number of tasks solved, for different strategies, in Version~1.1 with timeout 2s, and $\alpha=10$. C = constants first, V = variables first, Ei = input expressions, Si = input shapes, Eo = output expressions, So = output shapes.}
+  \begin{tabular}{|c|c|c|c|}
+    \hline
+    strategy & train & test \\
+    \hline
+    V/Si-Ei-So-Eo & ~11 / 11.7~ & ~4 / 4.0~ \\
+    V/Ei-Si-So-Eo & ~14 / 15.0~ & ~5 / 5.0~ \\
+    V/Ei-Si-Eo-So & ~16 / 17.3~ & ~5 / 5.0~ \\
+    C/Ei-Si-Eo-So & ~16 / 17.3~ & ~5 / 5.0~ \\
+    \hline
+  \end{tabular}
+  \label{tab:v11:strategies}
+\end{table}
+
+\paragraph{Version 1.1.}  Table~\ref{tab:v11:strategies} compare
+results with Version~1.1 for different strategies concerning model
+refinements. For example, the first line consider expressions with
+variables before constants, and consider refinements in this order:
+input shapes, input expressions, output shapes, output expressions.
+The best strategy among those tested is Ei-Si-Eo-So. Refining the
+input model first provides useful parameters when refining the output
+model. Inserting expressions before inserting new shapes helps to
+disambiguate the parsing process, which often happens when a model
+contains several unspecific shapes.
+
+The successful training tasks are {\tt ba97ae07}, {\tt bda2d7a6}, {\tt
+  6f8cd79b}, {\tt e48d4e1a}, {\tt 25ff71a9}. Compared to Version~1, we
+improve on {\tt bda2d7a6} by succeeding on the the two test instances,
+and gain {\tt e48d4e1a}. The former is explained by the use of masks,
+and the latter is explained by the improved extraction of rectangles
+from grids.
+%
+However, we loose on {\tt b94a9452} and {\tt
+  5582e5ca}. In Version~1, the latter was successful by chance, and
+the former because test inputs were considered for training.
+%
+Finally, 17.3 training instances are successful compared to 9.6 in the
+previous version. Hence, all in all, we consider this new version as a
+valuable improvement.
+
+This is confirmed by Table~\ref{tab:eval} that shows that this new
+version succeeds in 4 evaluation tasks, instead of none for the
+previous version.
 
 %%%
 \section{Conclusion and Perspectives}
