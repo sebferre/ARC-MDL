@@ -8,3 +8,9 @@
 old/
 main
 test
+redac/*.aux
+redac/*.bbl
+redac/*.blg
+redac/*.log
+redac/*.pdf
+redac/*.bst
