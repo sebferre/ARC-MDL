@@ -30,9 +30,10 @@ let check_write_grid grid_name grid_model grid_env grid_data grid =
   let derived_grid = Model.write_grid grid_model grid_env grid_data in
   print_grid_mismatch grid_name ~grid ~derived_grid
 
+(*
 let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
-  let params = List.sort Stdlib.compare data.Model.params in
-  let parsed_params = List.sort Stdlib.compare parsed_data.Model.params in
+  let params = (*List.sort Stdlib.compare*) data.Model.params in
+  let parsed_params = (*List.sort Stdlib.compare*) parsed_data.Model.params in
   let delta = List.sort Stdlib.compare data.delta in
   let parsed_delta = List.sort Stdlib.compare parsed_data.delta in
   if params = parsed_params && delta = parsed_delta
@@ -48,11 +49,12 @@ let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
 		      
 let check_read_grid grid_name grid_env grid grid_model grid_data =
   match Model.read_grid grid_env grid grid_model with
-  | Result.Ok gd ->
+  | Some gd ->
      print_grid_data_mismatch grid_name grid ~data:grid_data ~parsed_data:gd
-  | Result.Error msg ->
-     Printf.printf "Grid %s: could not parse: %s\n" grid_name msg
-
+  | None ->
+     Printf.printf "Grid %s: could not parse\n" grid_name
+ *)
+  
 let print_l_gmd name gr = (* grid model+data DL *)
   let lm, ld, lmd = Model.l_grid_model_data gr in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
@@ -114,9 +116,13 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
 	  if !training then Model.pp_grid_data gdi;
 	  if !training then Model.pp_grid_data gdo;
-	  if gdo.params = []
-	  then check_write_grid grid_name m.output_template envo Model.grid_data0 output
-	  else Printf.printf "%s: ERROR (unbound variable)\n" grid_name;
+	  (try
+             check_write_grid
+               grid_name m.output_template
+               envo Model.grid_data0 output
+           with
+           | Model.Unbound_U p -> Printf.printf "%s: ERROR (unbound unknown: %s)\n" grid_name (Model.string_of_path p);
+           | Model.Unbound_Var p -> Printf.printf "%s: ERROR (unbound variable: %s)\n" grid_name (Model.string_of_path p));
 	  print_newline ();
 	  i+1,
 	  nb_ex+1,
@@ -275,6 +281,7 @@ let checker_segmentation : checker =
     method summarize_tasks = ()
   end												 
 let _ =
+  let () = Printexc.record_backtrace true in
   let dir = ref train_dir in
   let names = ref train_names in
   let checker = ref checker_learning in
