@@ -1,6 +1,8 @@
 
 open Task
 
+module Model = Model2
+
 (* === parameters === *)
        
 let training = ref true (* should be set to false on evaluation set *)
@@ -26,8 +28,11 @@ let print_grid_mismatch name ~grid ~derived_grid : unit =
      )
      else Printf.printf "%s: FAILURE\n" name
     
-let check_write_grid grid_name grid_model grid_env grid_data grid =
-  let derived_grid = Model.write_grid grid_model grid_env grid_data in
+let check_write_grid grid_name grid_model grid_env grid =
+  let derived_grid =
+    match Model.write_grid ~env:grid_env grid_model with
+    | Result.Ok g -> g
+    | Result.Error exn -> raise exn in
   print_grid_mismatch grid_name ~grid ~derived_grid
 
 (*
@@ -56,25 +61,31 @@ let check_read_grid grid_name grid_env grid grid_model grid_data =
  *)
   
 let print_l_gmd name gr = (* grid model+data DL *)
-  let lm, ld, lmd = Model.l_grid_model_data gr in
+  let lm, ld, lmd = Model.dl_template_data gr in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
 		   
 let print_l_md gri gro = (* model+data DL *)
   let (lmi,lmo,lm), (ldi,ldo,ld), (lmdi, lmdo, lmd) =
-    Model.l_model_data gri gro in
+    Model.dl_model_data gri gro in
   Printf.printf "DL input  with Mi: L = %.1f + %.1f = %.1f\n" lmi ldi lmdi;
   Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
   Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd;
   ldo
 
 let print_l_task_model name task model =
-  let egis = task.train |> List.map (fun pair -> Model.env0, pair.input) in
-  let gri = Model.read_grids egis model.Model.input_pattern |> Option.get in
+  let egis = task.train |> List.map (fun pair -> Model.data0, pair.input) in
+  let gri =
+    match Model.read_grids model.Model.input_pattern egis with
+    | Result.Ok gri -> gri
+    | Result.Error exn -> raise exn in
   let egos =
     List.map2
-      (fun (_envi,gdi,_li) pair -> gdi.Model.params, pair.output)
+      (fun (_envi,gdi,_li) pair -> gdi.Model.data, pair.output)
       gri.egdls task.train in
-  let gro = Model.read_grids egos model.Model.output_template |> Option.get in
+  let gro =
+    match Model.read_grids model.Model.output_template egos with
+    | Result.Ok gro -> gro
+    | Result.Error exn -> raise exn in
   ignore (print_l_md gri gro)
 
 	 
@@ -116,17 +127,19 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
 	  if !training then Model.pp_grid_data gdi;
 	  if !training then Model.pp_grid_data gdo;
-	  (try
-             check_write_grid
-               grid_name m.output_template
-               envo Model.grid_data0 output
-           with
-           | Model.Unbound_U p -> Printf.printf "%s: ERROR (unbound unknown: %s)\n" grid_name (Model.string_of_path p);
-           | Model.Unbound_Var p -> Printf.printf "%s: ERROR (unbound variable: %s)\n" grid_name (Model.string_of_path p));
+          let valid_output =
+	    try
+              check_write_grid
+                grid_name m.output_template
+                envo output;
+              true
+            with
+            | Model.Unbound_U -> Printf.printf "%s: ERROR (unbound unknown)\n" grid_name; false
+            | Model.Unbound_Var p -> Printf.printf "%s: ERROR (unbound variable: %s)\n" grid_name (Model.string_of_path p); false in
 	  print_newline ();
 	  i+1,
 	  nb_ex+1,
-	  nb_correct + (if gdo = Model.grid_data0 then 1 else 0))
+	  nb_correct + (if valid_output && gdo.Model.delta = Model.delta0 then 1 else 0))
 	 (1,0,0)
 	 egdlios task.train in
      
@@ -138,7 +151,7 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
 	    let parts = Grid.segment_by_color input in
 	    Grid.pp_parts input parts;*)
 	  let score, label =
-	    match Model.apply_model m Model.env0 input with
+	    match Model.apply_model ~env:Model.data0 m input with
 	    | Result.Ok derived ->
 	       ( match Grid.diff derived output with
 		 | None -> 1, "SUCCESS"

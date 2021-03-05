@@ -289,7 +289,8 @@ module MaskZ =
     let width m = m.width
     let area m = Z.hamdist Z.zero m.bits
 
-    let pp m = print_string (Z.format "%b" m.bits)
+    let to_string m = Z.format "%b" m.bits
+    let pp m = print_string (to_string m)
 		    
     let empty height width =
       { height; width; bits = Z.zero }

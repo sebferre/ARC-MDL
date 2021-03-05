@@ -4,7 +4,7 @@ open Task
 let alpha = ref 10.
 
 exception TODO
-        
+             
 (* data and paths *)
 
 type field = string
@@ -530,7 +530,7 @@ let l_grid_model_data (gr : grids_read) : Mdl.bits triple (* model, data, model+
     !alpha (* because given training examples are only a sample from a class of grids *)
     *. Mdl.sum gr.egdls (fun (env,gd,l) -> l) in
   gr.l_m, l_d, gr.l_m +. l_d)
-
+ 
 let l_model_data (gri : grids_read) (gro : grids_read) : Mdl.bits triple triple =
   let lmi, ldi, lmdi = l_grid_model_data gri in
   let lmo, ldo, lmdo = l_grid_model_data gro in
