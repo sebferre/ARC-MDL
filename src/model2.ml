@@ -5,6 +5,8 @@ let alpha = ref 10.
 
 exception TODO
 
+let ( let* ) seq f = seq |> Myseq.flat_map f
+
 (** Part 1: grids *)
         
 (* type definitions for data, expressions, templates *)
@@ -512,13 +514,9 @@ let parse_vec ~env t (vi, vj : int * int) state =
     ~parse_u:(Myseq.return (`Vec (`Int vi, `Int vj), state))
     ~parse_patt:(function
       | `Vec (i,j) ->
-         parse_int ~env i vi state
-         |> Myseq.flat_map
-              (fun (di,state) ->
-                parse_int ~env j vj state
-                |> Myseq.flat_map
-                     (fun (dj,state) ->
-                       Myseq.return (`Vec (di,dj), state)))
+         let* di, state = parse_int ~env i vi state in
+         let* dj, state = parse_int ~env j vj state in
+         Myseq.return (`Vec (di,dj), state)
       | _ -> Myseq.empty)
     ~env t (vi,vj) state
   
@@ -575,36 +573,18 @@ let parse_shape =
                state) ])
     ~parse_patt:(function
       | `Point (pos,color) ->
-         parse_points ~env parts state
-         |> Myseq.flat_map
-              (fun ((i,j,c),state) ->
-                parse_vec ~env pos (i,j) state
-                |> Myseq.flat_map
-                     (fun (data_pos,state) ->
-                       parse_color ~env color c state
-                       |> Myseq.flat_map
-                            (fun (data_color,state) ->
-                              Myseq.return (`Point (data_pos,data_color), state))))
+         let* (i,j,c), state = parse_points ~env parts state in
+         let* dpos, state = parse_vec ~env pos (i,j) state in
+         let* dcolor, state = parse_color ~env color c state in
+         Myseq.return (`Point (dpos,dcolor), state)
       | `Rectangle (pos,size,color,mask) ->
-         parse_rectangles ~env parts state
-         |> Myseq.flat_map
-              (fun (r,state) ->
-                let open Grid in
-                parse_vec ~env pos (r.offset_i,r.offset_j) state
-                |> Myseq.flat_map
-                     (fun (dpos,state) ->
-                       parse_vec ~env size (r.height,r.width) state
-                       |> Myseq.flat_map
-                            (fun (dsize,state) ->
-                              parse_color ~env color r.color state
-                              |> Myseq.flat_map
-                                   (fun (dcolor,state) ->
-                                     parse_mask ~env mask r.rmask state
-                                     |> Myseq.flat_map
-                                          (fun (dmask,state) ->
-                                            Myseq.return
-                                              (`Rectangle (dpos,dsize,dcolor,dmask),
-                                               state))))))
+         let* r, state = parse_rectangles ~env parts state in
+         let open Grid in
+         let* dpos, state = parse_vec ~env pos (r.offset_i,r.offset_j) state in
+         let* dsize, state = parse_vec ~env size (r.height,r.width) state in
+         let* dcolor, state = parse_color ~env color r.color state in
+         let* dmask, state = parse_mask ~env mask r.rmask state in
+         Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
       | _ -> Myseq.empty)
     ~env t parts state
       
@@ -615,52 +595,45 @@ let rec parse_grid ~env t (g : Grid.t) state =
     ~parse_patt:
     (function
      | `Background (size,color) ->
-        parse_vec ~env size (g.height,g.width) state
-        |> Myseq.flat_map
-             (fun (dsize,state) ->
-               let bc = (* background color *)
-                 match color with
-                 | `Color c -> c
-                 | `E e ->
-                    (match eval_expr ~env e with
-                     | `Color c -> c
-                     | _ -> assert false)
-                 | `U ->
-                    (* determining the majority color *)
-	            let color_counter = new Common.counter in
-	            Grid.Mask.iter
-	              (fun i j -> color_counter#add g.matrix.{i,j})
-	              state.mask;
-	            (match color_counter#most_frequents with
-	             | _, bc::_ -> bc
-	             | _ -> Grid.black)
-                 | _ -> assert false in
-               let data = `Background (dsize, `Color bc) in
-	       (* adding mask pixels with other color than background to delta *)
-               let new_delta = ref state.delta in
-	       Grid.Mask.iter
-	         (fun i j ->
-	           if g.matrix.{i,j} <> bc then
-	             new_delta := (i,j, g.matrix.{i,j})::!new_delta)
-	         state.mask;
-               let new_state =
-                 { delta = (!new_delta);
-	           mask = Grid.Mask.empty g.height g.width;
-	           parts = [];
-                   grid = state.grid } in
-	       Myseq.return (data, new_state))
+        let* dsize, state = parse_vec ~env size (g.height,g.width) state in
+        let bc = (* background color *)
+          match color with
+          | `Color c -> c
+          | `E e ->
+             (match eval_expr ~env e with
+              | `Color c -> c
+              | _ -> assert false)
+          | `U ->
+             (* determining the majority color *)
+	     let color_counter = new Common.counter in
+	     Grid.Mask.iter
+	       (fun i j -> color_counter#add g.matrix.{i,j})
+	       state.mask;
+	     (match color_counter#most_frequents with
+	      | _, bc::_ -> bc
+	      | _ -> Grid.black)
+          | _ -> assert false in
+        let data = `Background (dsize, `Color bc) in
+	(* adding mask pixels with other color than background to delta *)
+        let new_delta = ref state.delta in
+	Grid.Mask.iter
+	  (fun i j ->
+	    if g.matrix.{i,j} <> bc then
+	      new_delta := (i,j, g.matrix.{i,j})::!new_delta)
+	  state.mask;
+        let new_state =
+          { delta = (!new_delta);
+	    mask = Grid.Mask.empty g.height g.width;
+	    parts = [];
+            grid = state.grid } in
+	Myseq.return (data, new_state)
      | `AddShape (first,rest) ->
-        parse_shape ~env first state.parts state
-        |> Myseq.flat_map
-             (fun (dfirst, state) ->
-               parse_grid ~env rest g state
-               |> Myseq.flat_map
-                    (fun (drest,state) ->
-                      let data = `AddShape (dfirst, drest) in
-                      Myseq.return (data, state)))
+        let* dfirst, state = parse_shape ~env first state.parts state in
+        let* drest, state = parse_grid ~env rest g state in
+        let data = `AddShape (dfirst, drest) in
+        Myseq.return (data, state)
      | _ -> Myseq.empty)
     ~env t g state
-
   
 exception Parse_failure
 let _ = Printexc.register_printer
@@ -875,50 +848,40 @@ and find_defs_p : kind -> data list -> data list -> expr option =
   let seq_v : path Myseq.t = Myseq.from_list lv in
   (* lists of candidate expressions *)
   let le1 : expr Myseq.t =    
-    seq_v
-    |> Myseq.filter_map
-         (fun v ->
-           if path_kind v = k
-           then Some (`Var v)
-           else None) in
+    let* v = seq_v in
+    if path_kind v = k
+    then Myseq.return (`Var v)
+    else Myseq.empty in
   let le2 : expr Myseq.t =
     match k with
     | `Int ->
-       seq_v
-       |> Myseq.flat_map
-	    (fun v ->
-              if path_kind v = `Int
-              then
-	        Myseq.range 1 3
-	        |> Myseq.flat_map
-		     (fun c ->
-		       Myseq.cons
-		         (`Plus (`Var v, `Int c))
-		         (Myseq.cons
-			    (`Minus (`Var v, `Int c))
-			    Myseq.empty))
-              else Myseq.empty)
+       let* v = seq_v in
+       if path_kind v = `Int
+       then
+	 let* c = Myseq.range 1 3 in
+	 Myseq.cons
+	   (`Plus (`Var v, `Int c))
+	   (Myseq.cons
+	      (`Minus (`Var v, `Int c))
+	      Myseq.empty)
+       else Myseq.empty
     | _ -> Myseq.empty in
   let le3 : expr Myseq.t =
     match k with
     | `Int ->
-       seq_v
-       |> Myseq.flat_map
-	    (fun v1 ->
-              if path_kind v1 = `Int
-              then
-	        seq_v
-	        |> Myseq.flat_map
-		     (fun v2 ->
-                       if path_kind v2 = `Int
-                       then
-		         Myseq.cons
-		           (`Minus (`Var v1, `Var v2))
-		           (Myseq.cons
-			      (`Plus (`Var v1, `Var v2))
-			      Myseq.empty)
-                       else Myseq.empty)
-              else Myseq.empty)
+       let* v1 = seq_v in
+       if path_kind v1 = `Int
+       then
+	 let* v2 = seq_v in
+         if path_kind v2 = `Int
+         then
+	   Myseq.cons
+	     (`Minus (`Var v1, `Var v2))
+	     (Myseq.cons
+		(`Plus (`Var v1, `Var v2))
+		Myseq.empty)
+         else Myseq.empty
+       else Myseq.empty
     | _ -> Myseq.empty in
   let le = Myseq.concat [le1; le2; le3] in
   (* finding the first expression defining 'u' *)
