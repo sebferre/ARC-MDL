@@ -47,7 +47,6 @@ type template =
   [ `U
   | template patt
   | `E of expr ]
-let template0 = `Background (`Vec (`U, `U), `U)
 
 type delta = Grid.pixel list
 let delta0 = []
@@ -458,154 +457,211 @@ let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Re
 
 (* parsing grids with templates *)
 
-type parse_state = { delta: delta; mask: Grid.Mask.t; parts: Grid.part list }
+type parse_state =
+  { delta: delta;
+    mask: Grid.Mask.t;
+    parts: Grid.part list;
+    grid: Grid.t }
 
-let parse_const (d : data) (v : data) : data Myseq.t =
-  if d = v
-  then Myseq.return v
-  else Myseq.empty
-  
-  
-let parse_int ~env (t : template) (i : int) : data Myseq.t =
-  match t with
-  | `U -> Myseq.return (`Int i)
-  | `E e -> parse_const (eval_expr ~env e) (`Int i)
-  | `Int _ as d -> parse_const d (`Int i)
-  | _ -> Myseq.empty
-  
-let parse_color ~env (t : template) (c : Grid.color) : data Myseq.t =
-  match t with
-  | `U -> Myseq.return (`Color c)
-  | `E e -> parse_const (eval_expr ~env e) (`Color c)
-  | `Color _ as d -> parse_const d (`Color c)
-  | _ -> Myseq.empty
-  
-let parse_mask ~env (t : template) (m : Grid.Mask.t option) : data Myseq.t =
-  match t with
-  | `U -> Myseq.return (`Mask m)
-  | `E e -> parse_const (eval_expr ~env e) (`Mask m)
-  | `Mask _ as d -> parse_const d (`Mask m)
-  | _ -> Myseq.empty
-  
-let parse_vec ~env (t : template) (vi,vj : int * int) : data Myseq.t =
-  let d = `Vec (`Int vi, `Int vj) in
-  match t with
-  | `U -> Myseq.return d
-  | `E e -> parse_const (eval_expr ~env e) d
-  | `Vec (i,j) ->
-     Myseq.product
-       [parse_int ~env i vi;
-        parse_int ~env j vj]
-     |> Myseq.flat_map
-          (function
-           | [res_i; res_j] ->
-              Myseq.return (`Vec (res_i,res_j))
-           | _ -> Myseq.empty)
-  | _ -> Myseq.empty
-
-    
-let parse_shape_gen g state
-      ~(get_occs : Grid.t -> Grid.Mask.t -> Grid.part list -> 'a list)
-      ~(matcher : 'a -> (data * delta * Grid.Mask.t) Myseq.t)
-    : (data * parse_state) Myseq.t =
-  let occs = Common.prof "Model.parse_shape_gen/get_occs" (fun () -> get_occs g state.mask state.parts) in
-  Myseq.from_list occs
-  |> Myseq.flat_map
-       (fun occ ->
-	 matcher occ
-         |> Myseq.flat_map
-	      (fun (res_shape, occ_delta, occ_mask) ->
-                let new_mask = Grid.Mask.diff state.mask occ_mask in
-                let new_state =
-                  { delta = occ_delta @ state.delta;
-	            mask = new_mask;
-	            parts =
-	              List.filter
-		        (fun p ->
-		          not (Grid.Mask.is_empty
-			         (Grid.Mask.inter p.Grid.pixels new_mask)))
-		        state.parts } in
-	        Myseq.return (res_shape, new_state)))
-
-                
-let rec parse_grid ~(env : data) (t : template) (g : Grid.t) (state : parse_state)
+let rec parse_template
+      ~(parse_u : (data * parse_state) Myseq.t)
+      ~(parse_patt : template patt -> (data * parse_state) Myseq.t)
+      ~(env : data) (t : template) (x : 'a) (state : parse_state)
         : (data * parse_state) Myseq.t =
   match t with
-  | `Background (size,color) ->
-     parse_vec ~env size (g.height,g.width)
-     |> Myseq.flat_map
-          (fun res_size ->
-            let bc = (* background color *)
-              match color with
-              | `Color c -> c
-              | `E e ->
-                 (match eval_expr ~env e with
-                  | `Color c -> c
-                  | _ -> assert false)
-              | `U ->
-                 (* determining the majority color *)
-	         let color_counter = new Common.counter in
-	         Grid.Mask.iter
-	           (fun i j -> color_counter#add g.matrix.{i,j})
-	           state.mask;
-	         (match color_counter#most_frequents with
-	         | _, bc::_ -> bc
-	         | _ -> Grid.black)
-              | _ -> assert false in
-            let res = `Background (res_size, `Color bc) in
-	    (* adding mask pixels with other color than background to delta *)
-            let new_delta = ref state.delta in
-	    Grid.Mask.iter
-	      (fun i j ->
-	        if g.matrix.{i,j} <> bc then
-	          new_delta := (i,j, g.matrix.{i,j})::!new_delta)
-	      state.mask;
-            let new_state = { delta = (!new_delta);
-	                      mask = Grid.Mask.empty g.height g.width;
-	                      parts = [] } in
-	    Myseq.return (res, new_state))
-  | `AddShape (first,rest) ->
-     parse_shape ~env first g state
-     |> Myseq.flat_map
-          (fun (res_first, state) ->
-            parse_grid ~env rest g state
-            |> Myseq.flat_map
-                 (fun (res_rest,state) ->
-                   let res = `AddShape (res_first, res_rest) in
-                   Myseq.return (res, state)))
-  | _ -> Myseq.empty
-and parse_shape ~(env : data) (t : template) (g : Grid.t) (state : parse_state) : (data * parse_state) Myseq.t =
-  match t with
-  | `Point (pos,color) ->
-     parse_shape_gen g state
-       ~get_occs:Grid.points
-       ~matcher:(fun (i,j,c) ->
-         Myseq.product
-           [parse_vec ~env pos (i,j);
-            parse_color ~env color c]
-         |> Myseq.flat_map
-              (function
-               | [res_pos; res_color] ->
-                  let res = `Point (res_pos, res_color) in
-                  Myseq.return (res, [], Grid.Mask.singleton g.height g.width i j)
-               | _ -> assert false))
-  | `Rectangle (pos,size,color,mask) ->
-     parse_shape_gen g state
-       ~get_occs:Grid.rectangles
-       ~matcher:(fun r ->
-         Myseq.product
-           [parse_vec ~env pos (r.offset_i, r.offset_j);
-            parse_vec ~env size (r.Grid.height, r.width);
-            parse_color ~env color r.color;
-            parse_mask ~env mask r.rmask]
-         |> Myseq.flat_map
-              (function
-               | [res_pos; res_size; res_color; res_mask] ->
-                  let res = `Rectangle (res_pos, res_size, res_color, res_mask) in
-                  Myseq.return (res, r.delta, r.mask)
-               | _ -> assert false))
-  | _ -> Myseq.empty
+  | `U -> parse_u
+  | `E e ->
+     let d0 = eval_expr ~env e in
+     parse_template ~parse_u ~parse_patt ~env (d0 :> template) x state
+  | #patt as patt -> parse_patt patt
 
+let parse_bool ~env t (b : bool) state =
+  parse_template
+    ~parse_u:(Myseq.return (`Bool b, state))
+    ~parse_patt:(function
+      | `Bool b0 when b=b0 -> Myseq.return (`Bool b, state)
+      | _ -> Myseq.empty)
+    ~env t b state
+
+let parse_int ~env t (i : int) state =
+  parse_template
+    ~parse_u:(Myseq.return (`Int i, state))
+    ~parse_patt:(function
+      | `Int i0 when i=i0 -> Myseq.return (`Int i, state)
+      | _ -> Myseq.empty)
+    ~env t i state
+
+let parse_color ~env t (c : Grid.color) state =
+  parse_template
+    ~parse_u:(Myseq.return (`Color c, state))
+    ~parse_patt:(function
+      | `Color c0 when c=c0 -> Myseq.return (`Color c, state)
+      | _ -> Myseq.empty)
+    ~env t c state
+  
+let parse_mask ~env t (m : Grid.Mask.t option) state =
+  parse_template
+    ~parse_u:(Myseq.return (`Mask m, state))
+    ~parse_patt:(function
+      | `Mask m0 when m=m0 -> Myseq.return (`Mask m, state)
+      | _ -> Myseq.empty)
+    ~env t m state
+
+let parse_vec ~env t (vi, vj : int * int) state =
+  parse_template
+    ~parse_u:(Myseq.return (`Vec (`Int vi, `Int vj), state))
+    ~parse_patt:(function
+      | `Vec (i,j) ->
+         parse_int ~env i vi state
+         |> Myseq.flat_map
+              (fun (di,state) ->
+                parse_int ~env j vj state
+                |> Myseq.flat_map
+                     (fun (dj,state) ->
+                       Myseq.return (`Vec (di,dj), state)))
+      | _ -> Myseq.empty)
+    ~env t (vi,vj) state
+  
+let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t =
+  seq_shapes
+  |> Myseq.map
+       (fun (shape, occ_delta, occ_mask) ->
+         let new_mask = Grid.Mask.diff state.mask occ_mask in
+         let new_state =
+           { delta = occ_delta @ state.delta;
+	     mask = new_mask;
+	     parts =
+	       List.filter
+		 (fun p ->
+		   not (Grid.Mask.is_empty
+			  (Grid.Mask.inter p.Grid.pixels new_mask)))
+		 state.parts;
+             grid = state.grid } in
+	 (shape, new_state))
+    
+let parse_shape =
+  let parse_points ~env parts state =
+    Grid.points state.grid state.mask parts
+    |> Myseq.from_list
+    |> Myseq.map (fun (i,j,c) ->
+           let occ_delta = [] in
+           let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
+           (i,j,c), occ_delta, occ_mask)
+    |> shape_postprocess state in
+  let parse_rectangles ~env parts state =
+    Grid.rectangles state.grid state.mask parts
+    |> Myseq.from_list
+    |> Myseq.map (fun (rect : Grid.rectangle) ->
+           rect, rect.delta, rect.mask)
+    |> shape_postprocess state in
+  fun ~env t (parts : Grid.part list) state ->
+  parse_template
+    ~parse_u:
+    (Myseq.concat
+       [parse_points ~env parts state
+        |> Myseq.map
+             (fun ((i,j,c), state) ->
+               `Point (`Vec (`Int i, `Int j),
+                                `Color c),
+               state);
+        parse_rectangles ~env parts state
+        |> Myseq.map
+             (fun (r,state) ->
+               let open Grid in
+               `Rectangle (`Vec (`Int r.offset_i, `Int r.offset_j),
+                           `Vec (`Int r.height, `Int r.width),
+                           `Color r.color,
+                           `Mask r.rmask),
+               state) ])
+    ~parse_patt:(function
+      | `Point (pos,color) ->
+         parse_points ~env parts state
+         |> Myseq.flat_map
+              (fun ((i,j,c),state) ->
+                parse_vec ~env pos (i,j) state
+                |> Myseq.flat_map
+                     (fun (data_pos,state) ->
+                       parse_color ~env color c state
+                       |> Myseq.flat_map
+                            (fun (data_color,state) ->
+                              Myseq.return (`Point (data_pos,data_color), state))))
+      | `Rectangle (pos,size,color,mask) ->
+         parse_rectangles ~env parts state
+         |> Myseq.flat_map
+              (fun (r,state) ->
+                let open Grid in
+                parse_vec ~env pos (r.offset_i,r.offset_j) state
+                |> Myseq.flat_map
+                     (fun (dpos,state) ->
+                       parse_vec ~env size (r.height,r.width) state
+                       |> Myseq.flat_map
+                            (fun (dsize,state) ->
+                              parse_color ~env color r.color state
+                              |> Myseq.flat_map
+                                   (fun (dcolor,state) ->
+                                     parse_mask ~env mask r.rmask state
+                                     |> Myseq.flat_map
+                                          (fun (dmask,state) ->
+                                            Myseq.return
+                                              (`Rectangle (dpos,dsize,dcolor,dmask),
+                                               state))))))
+      | _ -> Myseq.empty)
+    ~env t parts state
+      
+
+let rec parse_grid ~env t (g : Grid.t) state =
+  parse_template
+    ~parse_u:(Myseq.empty)
+    ~parse_patt:
+    (function
+     | `Background (size,color) ->
+        parse_vec ~env size (g.height,g.width) state
+        |> Myseq.flat_map
+             (fun (dsize,state) ->
+               let bc = (* background color *)
+                 match color with
+                 | `Color c -> c
+                 | `E e ->
+                    (match eval_expr ~env e with
+                     | `Color c -> c
+                     | _ -> assert false)
+                 | `U ->
+                    (* determining the majority color *)
+	            let color_counter = new Common.counter in
+	            Grid.Mask.iter
+	              (fun i j -> color_counter#add g.matrix.{i,j})
+	              state.mask;
+	            (match color_counter#most_frequents with
+	             | _, bc::_ -> bc
+	             | _ -> Grid.black)
+                 | _ -> assert false in
+               let data = `Background (dsize, `Color bc) in
+	       (* adding mask pixels with other color than background to delta *)
+               let new_delta = ref state.delta in
+	       Grid.Mask.iter
+	         (fun i j ->
+	           if g.matrix.{i,j} <> bc then
+	             new_delta := (i,j, g.matrix.{i,j})::!new_delta)
+	         state.mask;
+               let new_state =
+                 { delta = (!new_delta);
+	           mask = Grid.Mask.empty g.height g.width;
+	           parts = [];
+                   grid = state.grid } in
+	       Myseq.return (data, new_state))
+     | `AddShape (first,rest) ->
+        parse_shape ~env first state.parts state
+        |> Myseq.flat_map
+             (fun (dfirst, state) ->
+               parse_grid ~env rest g state
+               |> Myseq.flat_map
+                    (fun (drest,state) ->
+                      let data = `AddShape (dfirst, drest) in
+                      Myseq.return (data, state)))
+     | _ -> Myseq.empty)
+    ~env t g state
+
+  
 exception Parse_failure
 let _ = Printexc.register_printer
           (function
@@ -617,7 +673,8 @@ let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
     : (data * grid_data * dl, exn) Result.t = Common.prof "Model.read_grid_aux" (fun () ->
   let state = { delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
-                parts = Grid.segment_by_color g } in
+                parts = Grid.segment_by_color g;
+                grid = g } in
   let _, res =
     parse_grid ~env t g state
     |> Myseq.fold_left
@@ -685,9 +742,12 @@ type model = (* input->output models *)
   { input_pattern : template; (* only consts and unknowns allowed *)
     output_template : template (* complex expressions allowed *)
   }
-let model0 =
-  { input_pattern = template0;
-    output_template = template0 }
+
+let init_template =
+  `Background (`Vec (`U, `U), `U)
+let init_model =
+  { input_pattern = init_template;
+    output_template = init_template }
 
 let pp_model m =
   print_endline "CONSTRUCT (Mo)";
@@ -782,8 +842,8 @@ let rec find_defs (t : template) (gr : grids_read) : (path * expr) list =
   let atomic_unknowns =
     fold_template
       (fun res p1 t1 ->
-        match List.rev p1, t1 with
-        | (`I | `J | `Color | `Mask)::_, `U -> p1::res
+        match t1 with
+        | `U -> p1::res
         | _ -> res)
       [] path0 t in
   atomic_unknowns
@@ -901,7 +961,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
     ~timeout
     ~beam_width
     ~refine_degree
-    ~m0:(RGridInit, template0)
+    ~m0:(RGridInit, init_template)
     ~data:(fun (r,m) ->
 	   Result.to_option (read_grids m egrids))
     ~code:(fun (r,m) gr ->
@@ -987,7 +1047,7 @@ let learn_model
     ~timeout
     ~beam_width
     ~refine_degree
-    ~m0:(RInit, model0)
+    ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
 	   try
 	   match read_grids m.input_pattern egis with

@@ -252,8 +252,8 @@ let checker_learning : checker =
     val mutable sum_ms = []
 
     method process_task name task =
-      print_endline "\n# evaluating model0";
-      print_l_task_model name task Model.model0;
+      print_endline "\n# evaluating init_model";
+      print_l_task_model name task Model.init_model;
       print_endline "\n# learning a model for train pairs";
       let ms = print_learned_model name task in
       count <- count+1;

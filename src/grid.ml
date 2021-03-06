@@ -617,15 +617,20 @@ let pp_points g ps =
   print_endline "POINTS:";
   pp_grids (g :: List.map (point_as_grid g) ps)
 
+let point_of_part mask (part : part) : point option =
+  if part.mini = part.maxi && part.minj = part.maxj
+     && Mask.mem part.mini part.minj mask (* out-of-mask points are already covered *)
+  then Some (part.mini, part.minj, part.color)
+  else None
+  
 let points (g : t) (mask : Mask.t) (parts : part list) : point list =
   List.fold_left
     (fun res part ->
-     if part.mini = part.maxi && part.minj = part.maxj
-	&& Mask.mem part.mini part.minj mask (* out-of-mask points are already covered *)
-     then (part.mini, part.minj, part.color)::res
-     else res)
+      match point_of_part mask part with
+      | Some point -> point::res
+      | None -> res)
     [] parts
-    
+  
 						       
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
