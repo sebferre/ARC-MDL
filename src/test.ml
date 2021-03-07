@@ -123,10 +123,10 @@ let print_learned_model name task : measures = Common.prof "Test.print_learned_m
      let _, nb_ex_train, nb_correct_train =
        List.fold_left2
 	 (fun (i,nb_ex, nb_correct)
-	      ((_envi,gdi,li),(envo,gdo,lo)) {output} ->
+	      ((_envi,gdi,dli),(envo,gdo,dlo)) {output} ->
 	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
-	  if !training then Model.pp_grid_data gdi;
-	  if !training then Model.pp_grid_data gdo;
+	  if !training then (Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli);
+	  if !training then (Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo);
           let valid_output =
 	    try
               check_write_grid
@@ -183,6 +183,7 @@ let eval_names = Array.to_list (Sys.readdir eval_dir)
 let solved_train_names = (* Version 1.1 *)
   [ "ba97ae07.json";
     "bda2d7a6.json";
+    "5582e5ca.json";
     "6f8cd79b.json";
     "e48d4e1a.json";
     "25ff71a9.json";

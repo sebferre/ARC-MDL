@@ -164,11 +164,6 @@ let rec find_data (p : path) (d : data) : data option =
   | [] -> Some d
   | _ -> find_patt find_data p d
 
-let find_data_unsafe p d =
-  match find_data p d with
-  | Some d1 -> d1
-  | None -> assert false
-
 let rec find_template (p : path) (t : template) : template option =
   match p, t with
   | [], _ -> Some t
@@ -216,13 +211,13 @@ let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (
 let size_of_data (d : data) : int =
   fold_data (fun res _ _ -> res+1) 0 path0 d
 
-let fold_unknowns (f : 'a -> path -> 'a) (init : 'a) (t : template) : 'a =
+let fold_unknowns (f : 'a -> path -> 'a) (init : 'a) (p : path) (t : template) : 'a =
   fold_template
-    (fun res p ->
+    (fun res p1 ->
       function
-      | `U -> f res p
+      | `U -> f res p1
       | _ -> res)
-    init path0 t
+    init p t
 
 let path_kind (p : path) : kind =
   match List.rev p with
@@ -234,6 +229,36 @@ let path_kind (p : path) : kind =
   | `Rest::_ -> `Grid
   | [] -> `Grid
 
+
+let unify (ld : data list) : template (* without expression *) =
+  let rec aux t d =
+    match t, d with
+    | `U, _ -> t
+    | `E _, _ -> assert false
+    | `Nil, `Nil -> t
+    | `Bool b1, `Bool b2 when b1=b2 -> t
+    | `Int i1, `Int i2 when i1=i2 -> t
+    | `Color c1, `Color c2 when c1=c2 -> t
+    | `Mask m1, `Mask m2 when m1=m2 -> t
+                                     
+    | `Vec (i1,j1), `Vec (i2,j2) -> `Vec (`U, `U)
+      
+    | `Point _, `Point _ ->
+       `Point (`U, `U)
+    | (`Point _ | `Rectangle _), (`Point _ | `Rectangle _) ->
+       `Rectangle (`U, `U, `U, `U)
+      
+    | `Background (size1,color1), `Background (size2,color2) ->
+       `Background (`U, `U)
+    | `AddShape (first1,rest1), `AddShape (first2,rest2) ->
+       `AddShape (`U, `U)
+      
+    | _ -> `U
+  in
+  match ld with
+  | [] -> assert false
+  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1
+        
 (* description lengths *)
 
 type dl = Mdl.bits
@@ -316,13 +341,13 @@ let dl_data (d : data) (p : path) : dl =
 let rec sdl_expr ~(env_size : int) (e : expr) (p : path) : staged_dl =
   match e with
   | `Var x ->
-     Mdl.Code.usage 0.3 +. Mdl.Code.uniform env_size, (* identifying one env var *)
+     Mdl.Code.usage 0.5 +. Mdl.Code.uniform env_size, (* identifying one env var *)
      staged0
   | #patt as patt ->
-     Mdl.Code.usage 0.5
+     Mdl.Code.usage 0.25
      +! sdl_patt (sdl_expr ~env_size) ~env_size patt p
   | _ ->
-     Mdl.Code.usage 0.2
+     Mdl.Code.usage 0.25
      +! (match List.rev p, e with
          | (`I | `J)::_, (`Plus (e1,e2) | `Minus (e1,e2)) ->
             Mdl.Code.usage 0.5
@@ -559,8 +584,7 @@ let parse_shape =
        [parse_points ~env parts state
         |> Myseq.map
              (fun ((i,j,c), state) ->
-               `Point (`Vec (`Int i, `Int j),
-                                `Color c),
+               `Point (`Vec (`Int i, `Int j), `Color c),
                state);
         parse_rectangles ~env parts state
         |> Myseq.map
@@ -587,7 +611,6 @@ let parse_shape =
          Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
       | _ -> Myseq.empty)
     ~env t parts state
-      
 
 let rec parse_grid ~env t (g : Grid.t) state =
   parse_template
@@ -717,7 +740,7 @@ type model = (* input->output models *)
   }
 
 let init_template =
-  `Background (`Vec (`U, `U), `U)
+  `Background (`U, `U)
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -768,7 +791,7 @@ let rec map_template (f : path -> template -> template) (p : path) (t : template
 
 type grid_refinement =
   | RGridInit
-  | RDefs of (path * expr) list
+  | RDefs of (path * template) list
   | RShape of int (* depth *) * template (* shape *)
 
 let pp_grid_refinement = function
@@ -776,9 +799,9 @@ let pp_grid_refinement = function
   | RDefs defs ->
      print_string "DEFS:";
      List.iter
-       (fun (p,e) ->
+       (fun (p,t) ->
          print_string "  "; pp_path p;
-         print_string "="; pp_expr e)
+         print_string "="; pp_template t)
        defs
   | RShape (depth,sh) ->
      Printf.printf "SHAPE (depth=%d): " depth;
@@ -793,7 +816,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          match t1 with
          | `U ->
             (match List.assoc_opt p1 defs with
-             | Some e1 -> `E e1
+             | Some t1' -> t1'
              | None -> t1)
          | _ -> t1)
        path0 t
@@ -806,42 +829,35 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          else t1)
        path0 t
      
-let rec find_defs (t : template) (gr : grids_read) : (path * expr) list =
+let rec find_defs (t : template) (gr : grids_read) : (path * template) list =
   (* find if some gd param unknowns can be replaced
      by some expression over env vars *)
   assert (gr.egdls <> []);
   let envs = List.map (fun (env,_,_) -> env) gr.egdls in
   let datas = List.map (fun (_,gd,_) -> gd.data) gr.egdls in
-  let atomic_unknowns =
-    fold_template
-      (fun res p1 t1 ->
-        match t1 with
-        | `U -> p1::res
-        | _ -> res)
-      [] path0 t in
-  atomic_unknowns
-  |> List.fold_left
-       (fun defs p ->
-         (* u-values *)
-         let p_ds =
-           List.map
-             (fun data -> find_data_unsafe p data)
-             datas in
-         match p_ds with
-         | [] -> assert false
-         | d0::ds1 -> (* constants first *)
-	    if List.for_all ((=) d0) ds1
-	    then (p, (d0 :> expr))::defs
-	    else (* then expressions *)
-	      match find_defs_p (path_kind p) p_ds envs with
-	      | None -> defs
-	      | Some e -> (p,e)::defs)
-       []
-and find_defs_p : kind -> data list -> data list -> expr option =
+  fold_unknowns
+    (fun defs p ->
+      (* u-values *)
+      let p_ds =
+        List.map
+          (fun data ->
+            match find_data p data with
+            | Some d -> d
+            | None -> assert false)
+          datas in
+      let t_p_ds = unify p_ds in
+      let e_opt = find_p_expr (path_kind p) p_ds envs in
+      match t_p_ds, e_opt with
+      | _, Some (`Var _ as e) -> (p, `E e)::defs
+      | `U, Some e -> (p, `E e)::defs
+      | `U, None -> defs
+      | _ -> (p, t_p_ds)::defs)
+    [] path0 t
+and find_p_expr : kind -> data list -> data list -> expr option =
   fun k p_ds envs ->
   (* env variables *)
   let env0 = List.hd envs in
-  let lv =
+  let lv = (* should be only paths from template defining envs *)
     fold_data
       (fun res v d -> v::res)
       [] path0 env0 in
@@ -889,10 +905,13 @@ and find_defs_p : kind -> data list -> data list -> expr option =
     le
     |> Myseq.find_map
 	 (fun e ->
-	  let e_ds = List.map (fun env -> eval_expr ~env e) envs in
-	  if e_ds = p_ds
-	  then Some e
-	  else None) with
+           try
+	     let e_ds = List.map (fun env -> eval_expr ~env e) envs in
+	     if e_ds = p_ds
+	     then Some e
+	     else None
+           with Unbound_Var _ -> (* variable in env0 not defined through all instances *)
+             None) with
   | None -> None
   | Some (e,_next) -> Some e
 
@@ -902,8 +921,9 @@ let defs_refinements (t : template) (gr : grids_read) : grid_refinement Myseq.t 
   | defs -> Myseq.return (RDefs defs)
                     
 let rec shape_refinements ?(depth = 0) (t : template) : grid_refinement Myseq.t =
-  Myseq.cons (RShape (depth, `Point (`Vec (`U, `U), `U)))
-    (Myseq.cons (RShape (depth, `Rectangle (`Vec (`U, `U), `Vec (`U, `U), `U, `U)))
+  (*Myseq.cons (RShape (depth, `U))*)
+  Myseq.cons (RShape (depth, `Point (`U, `U)))
+    (Myseq.cons (RShape (depth, `Rectangle (`U, `U, `U, `U)))
        (match t with
         | `Background _ -> Myseq.empty
         | `AddShape (_,rest) ->
@@ -1042,6 +1062,4 @@ let learn_model
     (fun (r,m) (gri,gro) ->
      model_refinements r m gri gro))
 
-  
-let x = 1
           
