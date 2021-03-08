@@ -630,7 +630,9 @@ let rec parse_grid ~env t (g : Grid.t) state =
              (* determining the majority color *)
 	     let color_counter = new Common.counter in
 	     Grid.Mask.iter
-	       (fun i j -> color_counter#add g.matrix.{i,j})
+	       (fun i j ->
+                 if Grid.Mask.mem i j state.mask
+                 then color_counter#add g.matrix.{i,j})
 	       state.mask;
 	     (match color_counter#most_frequents with
 	      | _, bc::_ -> bc

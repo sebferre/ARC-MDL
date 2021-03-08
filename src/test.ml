@@ -180,7 +180,7 @@ let train_names = Array.to_list (Sys.readdir train_dir)
 let eval_dir = arc_dir ^ "evaluation/"
 let eval_names = Array.to_list (Sys.readdir eval_dir)
 
-let solved_train_names = (* Version 1.1 *)
+let solved_train_names =
   [ "ba97ae07.json";
     "bda2d7a6.json";
     "5582e5ca.json";
