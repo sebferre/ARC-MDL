@@ -282,9 +282,10 @@ let dl_mask : Grid.Mask.t option -> dl =
   | None -> Mdl.Code.usage 0.5
   | Some m ->
      let n = Grid.Mask.height m * Grid.Mask.width m in
+     let area = Grid.Mask.area m in
      Mdl.Code.usage 0.5
      +. Mdl.Code.uniform n
-     +. Mdl.Code.comb (Grid.Mask.area m) n
+     +. Mdl.Code.comb (n - area) n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *)
 
         
 type staged_dl (* sdl *) = Mdl.bits * (data -> Mdl.bits)

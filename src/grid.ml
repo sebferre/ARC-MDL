@@ -577,7 +577,10 @@ let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (
 	ignore (fm#merge [(i,j); (i+1,j)]);
       (* pixel right and down, diagonally *)
       if i+1 < h && j+1 < w && mat.{i,j} = mat.{i+1,j+1} then
-	ignore (fm#merge [(i,j); (i+1,j+1)])
+	ignore (fm#merge [(i,j); (i+1,j+1)]);
+      (* pixel left and down, diagonally *)
+      if i+1 < h && j-1 >= 0 && mat.{i,j} = mat.{i+1,j-1} then
+        ignore (fm#merge [(i,j); (i+1,j-1)])
     done
   done;
   (* collecting parts *)
