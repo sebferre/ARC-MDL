@@ -102,12 +102,13 @@ let print_measures count ms =
     ms;
   print_newline ()
 				 
-let print_learned_model name task : measures = Common.prof "Test.print_learned_model" (fun () ->
+let print_learned_model ~init_model ~refine_degree name task : measures = Common.prof "Test.print_learned_model" (fun () ->
   let lm, timed_out =
     Model.learn_model
       ~verbose:(!training)
       ~timeout:(!task_timeout)
-      ~beam_width:1 ~refine_degree:1
+      ~init_model
+      ~beam_width:1 ~refine_degree
       task.train (*gis_test gos*) in
   if timed_out && !training then print_endline "TIMEOUT";
   match lm with
@@ -214,6 +215,21 @@ let maybe_train_names =
     "1fad071e.json"; (* pb: collection, cardinal *)
   ]
 
+let task_model =
+  let open Model2 in
+  [ "ba97ae07.json",
+    {input_pattern = `AddShape (`Rectangle (`U,`U,`U,`U),
+                                `AddShape (`Rectangle (`U,`U,`U,`U),
+                                           `Background (`U, `Color Grid.black)));
+     output_template = `AddShape (`E (`Var [`Rest; `First]),
+                                  `AddShape (`E (`Var [`First]),
+                                             `E (`Var [`Rest; `Rest]))) };
+    "1cf80156.json",
+    {input_pattern = `AddShape (`Rectangle (`U,`U,`U,`U),
+                                `Background (`U, `Color Grid.black));
+     output_template = `AddShape (`Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`First; `Size]), `E (`Var [`First; `Color]), `E (`Var [`First; `Mask])),
+                                  `Background (`E (`Var [`First; `Size]), `E (`Var [`Rest; `Color])))}; 
+  ]
   
 (* === main === *)
   
@@ -247,16 +263,21 @@ let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   checker#summarize_tasks;
   Common.prerr_profiling ()
 
-let checker_learning : checker =
+class checker_model ~(get_init_model : string -> Model.model) ~refine_degree : checker =
   object
     val mutable count = 0
     val mutable sum_ms = []
 
     method process_task name task =
-      print_endline "\n# evaluating init_model";
-      print_l_task_model name task Model.init_model;
-      print_endline "\n# learning a model for train pairs";
-      let ms = print_learned_model name task in
+      let init_model =
+        try get_init_model name
+        with Not_found -> Model.init_model in
+      if refine_degree <> 0 then ( (* only for learning, redundant for analyzing *)
+        print_endline "\n# evaluating init_model";
+        print_l_task_model name task init_model;
+        print_endline "\n# learning a model for train pairs"
+      );
+      let ms = print_learned_model ~init_model ~refine_degree name task in
       count <- count+1;
       sum_ms <-
 	if sum_ms = []
@@ -274,6 +295,14 @@ let checker_learning : checker =
       flush stdout
   end
 
+let checker_learning = new checker_model
+                         ~get_init_model:(fun _ -> Model.init_model)
+                         ~refine_degree:1
+
+let checker_apply = new checker_model
+                         ~get_init_model:(fun name -> List.assoc name task_model)
+                         ~refine_degree:0
+  
 let checker_segmentation : checker =
   object
     method process_task name task =
@@ -321,10 +350,11 @@ chosen set (default)";
 			   String.sub name 0 (String.length id) = id))),
      "Use the tasks specified by their hexadecimal id prefix (comma-separated)";
      "-learn", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
+     "-apply", Unit (fun () -> checker := checker_apply), "Apply pre-defined models to the chosen tasks (Model.init_model by default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-segment] [-alpha N] [-timeout N]";	      		       
+    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-apply|-segment] [-alpha N] [-timeout N]";	      		       
   main_tasks !dir !names !checker

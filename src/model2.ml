@@ -1022,6 +1022,7 @@ let dl_model_data (gri : grids_read) (gro : grids_read) : dl triple triple =
 let learn_model
       ?(verbose = true)
       ~timeout
+      ~init_model
       ~beam_width ~refine_degree
       (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
