@@ -216,17 +216,25 @@ let maybe_train_names =
 let task_model =
   let open Model2 in
   [ "ba97ae07.json",
-    {input_pattern = `AddShape (`Rectangle (`U,`U,`U,`U),
-                                `AddShape (`Rectangle (`U,`U,`U,`U),
-                                           `Background (`U, `Color Grid.black)));
-     output_template = `AddShape (`E (`Var [`Rest; `First]),
-                                  `AddShape (`E (`Var [`First]),
-                                             `E (`Var [`Rest; `Rest]))) };
+    {input_pattern =
+       `Background (`U, `Color Grid.black,
+                    `Cons (`Rectangle (`U,`U,`U,`U),
+                           `Cons (`Rectangle (`U,`U,`U,`U),
+                                  `Nil)));
+     output_template =
+       `Background (`E (`Var [`Size]), `E (`Var [`Color]),
+                    `Cons (`E (`Var [`Rest; `First]),
+                           `Cons (`E (`Var [`First]),
+                                  `Nil))) };
     "1cf80156.json",
-    {input_pattern = `AddShape (`Rectangle (`U,`U,`U,`U),
-                                `Background (`U, `Color Grid.black));
-     output_template = `AddShape (`Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`First; `Size]), `E (`Var [`First; `Color]), `E (`Var [`First; `Mask])),
-                                  `Background (`E (`Var [`First; `Size]), `E (`Var [`Rest; `Color])))}; 
+    {input_pattern =
+       `Background (`U, `Color Grid.black,
+                    `Cons (`Rectangle (`U,`U,`U,`U),
+                           `Nil));
+     output_template =
+       `Background (`E (`Var [`First; `Size]), `E (`Var [`Rest; `Color]),
+                    `Cons (`Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`First; `Size]), `E (`Var [`First; `Color]), `E (`Var [`First; `Mask])),
+                           `Nil))}; 
   ]
   
 (* === main === *)

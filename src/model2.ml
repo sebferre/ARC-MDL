@@ -14,22 +14,22 @@ let ( let* ) seq f = seq |> Myseq.flat_map f
 type 'a triple = 'a * 'a * 'a
                 
 type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Grid ]
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Layers | `Grid ]
         
 type 'a patt =
-  [ `Nil
-  | `Bool of bool
+  [ `Bool of bool
   | `Int of int
   | `Color of Grid.color
   | `Mask of Grid.Mask.t option
   | `Vec of 'a * 'a (* i, j *)
   | `Point of 'a * 'a (* pos, color *)
   | `Rectangle of 'a * 'a * 'a * 'a (* pos, size, color, mask *)
-  | `Background of 'a * 'a (* size, color *)
-  | `AddShape of 'a * 'a (* first layer, rest of layers *)
+  | `Background of 'a * 'a * 'a (* size, color, layers (top first) *)
+  | `Nil
+  | `Cons of 'a * 'a (* first layer, rest of layers *)
   ]
 
-type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `First | `Rest ]
+type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `Layers | `First | `Rest ]
 type path = field list
 let path0 = []
 let (++) p f = p @ [f]
@@ -75,6 +75,7 @@ let string_of_field : field -> string = function
   | `Color -> "color"
   | `Size -> "size"
   | `Mask -> "mask"
+  | `Layers -> "layers"
   | `First -> "first"
   | `Rest -> "rest"
 
@@ -84,7 +85,6 @@ let string_of_path : path -> string =
 let pp_path p = print_string (string_of_path p)
 
 let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
-  | `Nil -> "nil"
   | `Bool b -> if b then "true" else "false"
   | `Int i -> string_of_int i
   | `Color c -> Grid.name_of_color c
@@ -102,11 +102,13 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
      ^ " with size " ^ string size
      ^ " and color " ^ string color
      ^ " and mask " ^ string mask
-  | `Background (size,color) ->
+  | `Nil -> "nil"
+  | `Cons (shape,layers) ->
+     "\n  " ^ string shape ^ "on top of " ^ string layers
+  | `Background (size,color,layers) ->
      "a background with size " ^ string size
      ^ " and color " ^ string color
-  | `AddShape (shape,grid) ->
-     string shape ^ "\non top of " ^ string grid
+     ^ " and layers: " ^ string layers
 
 let rec string_of_data : data -> string = function
   | #patt as patt -> string_of_patt string_of_data patt
@@ -162,10 +164,11 @@ let find_patt (find : path -> 'a -> 'a option)
   | `Size::p, `Rectangle (pos,size,color,mask) -> find p size
   | `Color::p, `Rectangle (pos,size,color,mask) -> find p color
   | `Mask::p, `Rectangle (pos,size,color,mask) -> find p mask
-  | `Size::p, `Background (size,color) -> find p size
-  | `Color::p, `Background (size,color) -> find p color
-  | `First::p, `AddShape (first,rest) -> find p first
-  | `Rest::p, `AddShape (first,rest) -> find p rest
+  | `Size::p, `Background (size,color,layers) -> find p size
+  | `Color::p, `Background (size,color,layers) -> find p color
+  | `Layers::p, `Background (size,color,layers) -> find p layers
+  | `First::p, `Cons (first,rest) -> find p first
+  | `Rest::p, `Cons (first,rest) -> find p rest
   | _ -> None
 
 let rec find_data (p : path) (d : data) : data option =
@@ -182,7 +185,7 @@ let rec find_template (p : path) (t : template) : template option =
        
 let fold_patt (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (patt : 'a patt) : 'b =
   match patt with
-  | `Nil | `Bool _ | `Int _ | `Color _ | `Mask _ -> acc
+  | `Bool _ | `Int _ | `Color _ | `Mask _ -> acc
   | `Vec (i,j) ->
      let acc = fold acc (p ++ `I) i in
      let acc = fold acc (p ++ `J) j in
@@ -197,13 +200,15 @@ let fold_patt (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (patt : 'a p
      let acc = fold acc (p ++ `Color) color in
      let acc = fold acc (p ++ `Mask) mask in
      acc
-  | `Background (size,color) ->
-     let acc = fold acc (p ++ `Size) size in
-     let acc = fold acc (p ++ `Color) color in
-     acc
-  | `AddShape (first,rest) ->
+  | `Nil -> acc
+  | `Cons (first,rest) ->
      let acc = fold acc (p ++ `First) first in
      let acc = fold acc (p ++ `Rest) rest in
+     acc
+  | `Background (size,color,layers) ->
+     let acc = fold acc (p ++ `Size) size in
+     let acc = fold acc (p ++ `Color) color in
+     let acc = fold acc (p ++ `Layers) layers in
      acc
 
 let rec fold_data (f : 'b -> path -> data -> 'b) (acc : 'b) (p : path) (d : data) : 'b =
@@ -234,8 +239,9 @@ let path_kind (p : path) : kind =
   | `Color::_ -> `Color
   | `Mask::_ -> `Mask
   | (`Pos | `Size)::_ -> `Vec
+  | `Layers::_ -> `Layers
   | `First::_ -> `Shape
-  | `Rest::_ -> `Grid
+  | `Rest::_ -> `Layers
   | [] -> `Grid
 
 
@@ -244,7 +250,6 @@ let unify (ld : data list) : template (* without expression *) =
     match t, d with
     | `U, _ -> t
     | `E _, _ -> assert false
-    | `Nil, `Nil -> t
     | `Bool b1, `Bool b2 when b1=b2 -> t
     | `Int i1, `Int i2 when i1=i2 -> t
     | `Color c1, `Color c2 when c1=c2 -> t
@@ -257,11 +262,13 @@ let unify (ld : data list) : template (* without expression *) =
     | (`Point _ | `Rectangle _), (`Point _ | `Rectangle _) ->
        `Rectangle (`U, `U, `U, `U)
       
-    | `Background (size1,color1), `Background (size2,color2) ->
-       `Background (`U, `U)
-    | `AddShape (first1,rest1), `AddShape (first2,rest2) ->
-       `AddShape (`U, `U)
+    | `Nil, `Nil -> t
+    | `Cons (first1,rest1), `Cons (first2,rest2) ->
+       `Cons (`U, `U)
       
+    | `Background (size1,color1,layers1), `Background (size2,color2,layers2) ->
+       `Background (`U, `U, `U)
+
     | _ -> `U
   in
   match ld with
@@ -336,16 +343,18 @@ let sdl_patt (sdl : 'a -> path -> staged_dl) ~(env_size : int) (patt : 'a patt) 
      +? sdl color (p ++ `Color)
      +? sdl mask (p ++ `Mask)
 
-  | [], `Nil -> infinity, staged0
-  | ([] | `Rest::_), `Background (size,color) ->
-     Mdl.Code.usage 0.5
-     +! sdl size (p ++ `Size)
-     +? sdl color (p ++ `Color)
-  | ([] | `Rest::_), `AddShape (first,rest) ->
+  | (`Layers | `Rest)::_, `Nil ->
+     Mdl.Code.usage 0.5, staged0
+  | (`Layers | `Rest)::_, `Cons (first,rest) ->
      Mdl.Code.usage 0.5
      +! sdl first (p ++ `First)
      +? sdl rest (p ++ `Rest)
 
+  | [], `Background (size,color,layers) ->
+     sdl size (p ++ `Size)
+     +? sdl color (p ++ `Color)
+     +? sdl layers (p ++ `Layers)
+    
   | _ ->
      pp_path p; print_string ": ";
      print_string (string_of_patt (fun _ -> "_") patt);
@@ -427,12 +436,13 @@ let _ =
      | _ -> None)
 
 let eval_patt (eval : 'a -> data) : 'a patt -> data = function
-  | (`Nil | `Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
+  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
   | `Vec (i,j) -> `Vec (eval i, eval j)
   | `Point (pos,color) -> `Point (eval pos, eval color)
   | `Rectangle (pos,size,color,mask) -> `Rectangle (eval pos, eval size, eval color, eval mask)
-  | `Background (size,color) -> `Background (eval size, eval color)
-  | `AddShape (first,rest) -> `AddShape (eval first, eval rest)
+  | `Nil -> `Nil
+  | `Cons (first,rest) -> `Cons (eval first, eval rest)
+  | `Background (size,color,layers) -> `Background (eval size, eval color, eval layers)
                        
 let rec eval_expr ~(env : data) (e : expr) : data =
   match e with
@@ -479,12 +489,15 @@ let _ = Printexc.register_printer
            | _ -> None)
           
 let rec grid_of_data : data -> Grid.t = function
-  | `Background (`Vec (`Int h, `Int w), `Color c) ->
-     Grid.make h w c
-  | `AddShape (first, rest) ->
-     let g = grid_of_data rest in
-     draw_shape g first;
+  | `Background (`Vec (`Int h, `Int w), `Color c, l) ->
+     let g = Grid.make h w c in
+     draw_layers g l;
      g
+and draw_layers g = function
+  | `Nil -> ()
+  | `Cons (first, rest) ->
+     draw_layers g rest;
+     draw_shape g first
   | _ -> raise Invalid_data_as_grid
 and draw_shape g = function
   | `Point (`Vec (`Int i, `Int j), `Color c) ->
@@ -655,12 +668,28 @@ let parse_shape =
       | _ -> Myseq.empty)
     ~env t p parts state
 
-let rec parse_grid ~env t p (g : Grid.t) state =
+let rec parse_layers ~env t p (g : Grid.t) state =
   parse_template
     ~parse_u:(Myseq.empty)
     ~parse_patt:
     (function
-     | `Background (size,color) ->
+     | `Nil ->
+        Myseq.return (`Nil, state)
+     | `Cons (first,rest) ->
+        let* dfirst, state = parse_shape ~env first (p ++ `First) state.parts state in
+        let* drest, state = parse_layers ~env rest (p ++ `Rest) g state in
+        let data = `Cons (dfirst, drest) in
+        Myseq.return (data, state)
+     | _ -> Myseq.empty)
+    ~env t p g state
+  
+let parse_grid ~env t p (g : Grid.t) state =
+  parse_template
+    ~parse_u:(Myseq.empty)
+    ~parse_patt:
+    (function
+     | `Background (size,color,layers) ->
+        let* dlayers, state = parse_layers ~env layers (p ++ `Layers) g state in
         let* dsize, state = parse_vec ~env size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
           (* determining the majority color *)
@@ -674,7 +703,7 @@ let rec parse_grid ~env t p (g : Grid.t) state =
 	   | _, bc::_ -> bc
 	   | _ -> Grid.black) in
         let* dcolor, state = parse_color ~env color (p ++ `Color) bc state in
-        let data = `Background (dsize,dcolor) in
+        let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
         let new_delta = ref state.delta in
 	Grid.Mask.iter
@@ -689,11 +718,6 @@ let rec parse_grid ~env t p (g : Grid.t) state =
 	    parts = [];
             grid = state.grid } in
 	Myseq.return (data, new_state)
-     | `AddShape (first,rest) ->
-        let* dfirst, state = parse_shape ~env first (p ++ `First) state.parts state in
-        let* drest, state = parse_grid ~env rest (p ++ `Rest) g state in
-        let data = `AddShape (dfirst, drest) in
-        Myseq.return (data, state)
      | _ -> Myseq.empty)
     ~env t p g state
   
@@ -783,7 +807,7 @@ type model = (* input->output models *)
   }
 
 let init_template =
-  `Background (`U, `U)
+  `Background (`U, `U, `Nil)
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -809,7 +833,7 @@ let rec map_template (f : path -> template -> template) (p : path) (t : template
   match t with
   | `U -> f p t
   | `E e -> f p t
-  | `Nil | `Bool _ | `Int _ | `Color _ | `Mask _ -> f p t
+  | `Bool _ | `Int _ | `Color _ | `Mask _ -> f p t
   | `Vec (i,j) ->
      let i = map_template f (p ++ `I) i in
      let j = map_template f (p ++ `J) j in
@@ -824,14 +848,16 @@ let rec map_template (f : path -> template -> template) (p : path) (t : template
      let color = map_template f (p ++ `Color) color in
      let mask = map_template f (p ++ `Mask) mask in
      f p (`Rectangle (pos,size,color,mask))
-  | `Background (size,color) ->
-     let size = map_template f (p ++ `Size) size in
-     let color = map_template f (p ++ `Color) color in
-     f p (`Background (size,color))
-  | `AddShape (first,rest) ->
+  | `Nil -> f p t
+  | `Cons (first,rest) ->
      let first = map_template f (p ++ `First) first in
      let rest = map_template f (p ++ `Rest) rest in
-     f p (`AddShape (first,rest))
+     f p (`Cons (first,rest))
+  | `Background (size,color,layers) ->
+     let size = map_template f (p ++ `Size) size in
+     let color = map_template f (p ++ `Color) color in
+     let layers = map_template f (p ++ `Layers) layers in
+     f p (`Background (size,color,layers))
                                                                                
 (* model refinements and learning *)
 
@@ -867,16 +893,16 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          | _ -> t1)
        path0 t
   | RShape (depth, shape) ->
-     let p = List.init depth (fun _ -> `Rest) in
+     let p = `Layers :: List.init depth (fun _ -> `Rest) in
      map_template
        (fun p1 t1 ->
          let t1 =
            match t1 with
-           | `Background (size,_color) ->
-              `Background (size,`U) (* because background color is defined as remaining color after covering shapes *)
+           | `Background (size,_color,layers) ->
+              `Background (size,`U,layers) (* because background color is defined as remaining color after covering shapes *)
            | _ -> t1 in
          if p1 = p
-         then `AddShape (shape, t1)
+         then `Cons (shape, t1)
          else t1)
        path0 t
      
@@ -971,15 +997,19 @@ let defs_refinements (t : template) (gr : grids_read) : grid_refinement Myseq.t 
   | [] -> Myseq.empty
   | defs -> Myseq.return (RDefs defs)
                     
-let rec shape_refinements ?(depth = 0) (t : template) : grid_refinement Myseq.t =
+let shape_refinements (t : template) : grid_refinement Myseq.t =
+  let rec aux depth layers =
   (*Myseq.cons (RShape (depth, `U))*)
-  Myseq.cons (RShape (depth, `Point (`U, `U)))
-    (Myseq.cons (RShape (depth, `Rectangle (`U, `U, `U, `U)))
-       (match t with
-        | `Background _ -> Myseq.empty
-        | `AddShape (_,rest) ->
-           shape_refinements ~depth:(depth+1) rest
-        | _ -> assert false))
+    Myseq.cons (RShape (depth, `Point (`U, `U)))
+      (Myseq.cons (RShape (depth, `Rectangle (`U, `U, `U, `U)))
+         (match layers with
+          | `Nil -> Myseq.empty
+          | `Cons (_,rest) -> aux (depth+1) rest
+          | _ -> assert false))
+  in
+  match t with
+  | `Background (_,_,layers) -> aux 0 layers
+  | _ -> assert false
                     
 let grid_refinements (t : template) (gr : grids_read) : (grid_refinement * template) Myseq.t =
   Myseq.concat
