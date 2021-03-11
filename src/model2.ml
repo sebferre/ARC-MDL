@@ -277,6 +277,10 @@ let dl_bool : bool -> dl =
   fun b -> 1.
 let dl_nat : int -> dl =
   fun i -> Mdl.Code.universal_int_star i
+let dl_index : int -> dl = (* all positions are alike *)
+  fun i -> Mdl.Code.uniform Grid.max_size
+let dl_length : int -> dl = (* longer lengths cover more pixels *)
+  fun i -> Mdl.Code.universal_int_plus i
 let dl_color : Grid.color -> dl =
   fun c -> Mdl.Code.uniform Grid.nb_color
 let dl_background_color : Grid.color -> dl =
@@ -291,12 +295,13 @@ let dl_mask : Grid.Mask.t option -> dl =
   | None -> Mdl.Code.usage 0.5
   | Some m ->
      let n = Grid.Mask.height m * Grid.Mask.width m in
-     let area = Grid.Mask.area m in
+     Mdl.Code.usage 0.5 +. float n (* basic bitmap *)
+     (* let missing = n - Grid.Mask.area m in
      Mdl.Code.usage 0.5
-     +. Mdl.Code.uniform n
-     +. Mdl.Code.comb (n - area) n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *)
+     +. Mdl.Code.universal_int_plus missing
+     +. Mdl.Code.comb missing n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *) *)
 
-        
+     
 type staged_dl (* sdl *) = Mdl.bits * (data -> Mdl.bits)
 (* template DL, variable data DL (for U bindings) *)
 let (+!) dl1 (dl2,f2) = (dl1+.dl2, f2)
@@ -306,9 +311,13 @@ let sdl0 = 0., staged0
 
 let sdl_patt (sdl : 'a -> path -> staged_dl) ~(env_size : int) (patt : 'a patt) (p : path) : staged_dl =
   match List.rev p, patt with
-  | (`I | `J)::(`Size | `Pos)::_, `Int i -> dl_nat i, staged0
+  | (`I | `J)::`Pos::_, `Int i -> dl_index i, staged0
 
-  | `Color::_, `Color c -> dl_color c, staged0
+  | (`I | `J)::`Size::_, `Int i -> dl_length i, staged0
+
+  | `Color::`First::_, `Color c -> dl_color c, staged0
+
+  | `Color::_, `Color c -> dl_background_color c, staged0
 
   | `Mask::_, `Mask m -> dl_mask m, staged0
 
@@ -371,16 +380,16 @@ let dl_expr ~env_size e p =
 let rec sdl_template ~(env_size : int) (t : template) (p : path) : staged_dl =
   match t with
   | `U ->
-     Mdl.Code.usage 0.25,
+     Mdl.Code.usage 0.1,
      (fun d ->
        match find_data p d with
        | Some d1 -> dl_data d1 p
        | None -> assert false)
   | `E e ->
-     Mdl.Code.usage 0.25 +. dl_expr ~env_size e p,
+     Mdl.Code.usage 0.3 +. dl_expr ~env_size e p,
      staged0
   | #patt as patt ->
-     Mdl.Code.usage 0.5
+     Mdl.Code.usage 0.6
      +! sdl_patt (sdl_template ~env_size) ~env_size patt p
 
 let dl_diff (diff : diff) (data : data) : dl =
@@ -710,6 +719,8 @@ let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
            let dl_diff = dl_diff state.diff data in
            let dl_delta = dl_delta ~height:g.height ~width:g.width state.delta in
            let dl = dl_data +. dl_diff +. dl_delta in
+           (*Printf.printf "grid data: %.1f (%.1f + %.1f + %.1f)\n" dl dl_data dl_diff dl_delta; (* TEST *)
+           pp_data data; print_newline (); (* TEST *) *)
            if dl < dl_min
            then dl, Result.Ok (env, {data; diff=state.diff; delta=state.delta}, dl)
            else dl_min, res)
@@ -859,6 +870,11 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
      let p = List.init depth (fun _ -> `Rest) in
      map_template
        (fun p1 t1 ->
+         let t1 =
+           match t1 with
+           | `Background (size,_color) ->
+              `Background (size,`U) (* because background color is defined as remaining color after covering shapes *)
+           | _ -> t1 in
          if p1 = p
          then `AddShape (shape, t1)
          else t1)

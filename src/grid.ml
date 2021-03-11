@@ -44,6 +44,8 @@ type t = { height : int; (* equals Array2.dim1 matrix *)
 	   matrix : matrix }
 type pixel = int * int * color (* x, y, col *)
 
+let max_size = 30
+           
 let make height width col =
   let matrix = Array2.create Int8_unsigned C_layout height width in
   Array2.fill matrix col;
@@ -662,7 +664,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
 		   
 let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = Common.prof "Grid.rectangles_of_part" (fun () ->
   let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
-  let area = h * w in
+  let _area = h * w in
   let valid_area = ref 0 in
   let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
   let delta = ref [] in
@@ -678,7 +680,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
   done;
   let res = [] in
   let res = (* adding rectangle with rmask, without delta *)
-    if not multipart && !delta <> [] && !valid_area >= 1 * area / 2
+    if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
     then
       let m =
 	List.fold_left
@@ -696,9 +698,9 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
 	delta = [] } :: res
     else res in
   let res = (* adding full rectangle with delta *)
-    let valid_area = !valid_area + List.length !delta in
+    let _valid_area = !valid_area + List.length !delta in
     let mask = List.fold_left (fun mask (i,j,c) -> Mask.add_in_place i j mask) (!r_mask) !delta in
-    if valid_area >= 1 * area / 2
+    if true (* valid_area >= 1 * area / 2 *)
     then
       { height = p.maxi-p.mini+1;
 	width = p.maxj-p.minj+1;

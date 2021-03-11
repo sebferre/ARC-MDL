@@ -186,15 +186,15 @@ let solved_train_names =
     "6f8cd79b.json";
     "e48d4e1a.json";
     "25ff71a9.json";
+    "1cf80156.json"; (* crop on shape *)
   ]
 
 let maybe_train_names =
   [
-    "1cf80156.json"; (* pb: shape in test instance too sparse (mask size = 11/24) *)
     "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
-    "b94a9452.json"; (* pb: test input breaks train invariant (grid size) *)
-    "a79310a0.json"; (* pb: test input breaks train invariant (mask) *)
-    "aabf363d.json"; (* pb: test input breaks train invariant (shape size) *)
+    "b94a9452.json"; (* pb: inner rectangle not compressive, test input breaks train invariant (grid size) *)
+    "a79310a0.json"; (* pb: need to consider 2nd best parsing, test input breaks train invariant (mask) *)
+    "aabf363d.json"; (* pb: miss point not compressive enough, test input breaks train invariant (shape size) *)
     "bdad9b1f.json"; (* pb: parsing ambiguity *)
     "e48d4e1a.json"; (* pb: parsing ambiguity, 3 rectangles, should be OK with color and position *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
