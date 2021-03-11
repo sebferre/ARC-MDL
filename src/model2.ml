@@ -50,14 +50,19 @@ type template =
   | template patt
   | `E of expr ]
 
-type delta = Grid.pixel list
+type diff = path list (* paths to data parts differing from a template *)
+let diff0 = []
+          
+type delta = Grid.pixel list (* pixels not explained by a template *)
 let delta0 = []
 
 type grid_data =
   { data: data;
+    diff: diff;
     delta: delta }
 let grid_data0 =
   { data = data0;
+    diff = diff0;
     delta = delta0 }
            
 
@@ -129,7 +134,10 @@ let rec string_of_template : template -> string = function
 
 let pp_template t = print_string (string_of_template t)
                                          
-
+let pp_diff diff =
+  diff
+  |> List.iter (fun p1 -> print_string "  "; pp_path p1)
+                  
 let pp_delta delta =
   delta
   |> List.sort Stdlib.compare
@@ -137,6 +145,7 @@ let pp_delta delta =
     
 let pp_grid_data gd =
   print_string "data: "; pp_data gd.data; print_newline ();
+  print_string "diff: "; pp_diff gd.diff; print_newline ();
   print_string "delta:"; pp_delta gd.delta; print_newline ()
 
 
@@ -374,6 +383,19 @@ let rec sdl_template ~(env_size : int) (t : template) (p : path) : staged_dl =
      Mdl.Code.usage 0.5
      +! sdl_patt (sdl_template ~env_size) ~env_size patt p
 
+let dl_diff (diff : diff) (data : data) : dl =
+  let data_size = size_of_data data in
+  Mdl.Code.universal_int_star (List.length diff)
+  -. 1. (* some normalization to get 0 for empty grid data *)
+  +. Mdl.sum diff
+       (fun p1 ->
+         let d1 =
+           match find_data p1 data with
+           | Some d1 -> d1
+           | None -> assert false in
+         Mdl.Code.uniform data_size
+         +. dl_data d1 p1)
+    
 let dl_delta ~(height : int) ~(width : int) (delta : delta) : dl =
   let nb_pixels = List.length delta in
   Mdl.Code.universal_int_star nb_pixels (* number of delta pixels *)
@@ -486,65 +508,75 @@ let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Re
 (* parsing grids with templates *)
 
 type parse_state =
-  { delta: delta;
-    mask: Grid.Mask.t;
-    parts: Grid.part list;
-    grid: Grid.t }
+  { diff: diff; (* paths to data that differ from template patterns *)
+    delta: delta; (* pixels that are not explained by the template *)
+    mask: Grid.Mask.t; (* remaining part of the grid to be explained *)
+    parts: Grid.part list; (* remaining parts that can be used *)
+    grid: Grid.t; (* the grid to parse *)
+  }
 
 let rec parse_template
       ~(parse_u : (data * parse_state) Myseq.t)
       ~(parse_patt : template patt -> (data * parse_state) Myseq.t)
-      ~(env : data) (t : template) (x : 'a) (state : parse_state)
+      ~(env : data) (t : template) (p : path) (x : 'a) (state : parse_state)
         : (data * parse_state) Myseq.t =
   match t with
   | `U -> parse_u
   | `E e ->
      let d0 = eval_expr ~env e in
-     parse_template ~parse_u ~parse_patt ~env (d0 :> template) x state
+     parse_template ~parse_u ~parse_patt ~env (d0 :> template) p x state
   | #patt as patt -> parse_patt patt
 
-let parse_bool ~env t (b : bool) state =
+let parse_bool ~env t p (b : bool) state =
   parse_template
     ~parse_u:(Myseq.return (`Bool b, state))
     ~parse_patt:(function
-      | `Bool b0 when b=b0 -> Myseq.return (`Bool b, state)
+      | `Bool b0 ->
+         if b=b0 then Myseq.return (`Bool b, state)
+         else Myseq.return (`Bool b, {state with diff = p::state.diff})
       | _ -> Myseq.empty)
-    ~env t b state
+    ~env t p b state
 
-let parse_int ~env t (i : int) state =
+let parse_int ~env t p (i : int) state =
   parse_template
     ~parse_u:(Myseq.return (`Int i, state))
     ~parse_patt:(function
-      | `Int i0 when i=i0 -> Myseq.return (`Int i, state)
+      | `Int i0 ->
+         if i=i0 then Myseq.return (`Int i, state)
+         else Myseq.return (`Int i, {state with diff = p::state.diff})
       | _ -> Myseq.empty)
-    ~env t i state
+    ~env t p i state
 
-let parse_color ~env t (c : Grid.color) state =
+let parse_color ~env t p (c : Grid.color) state =
   parse_template
     ~parse_u:(Myseq.return (`Color c, state))
     ~parse_patt:(function
-      | `Color c0 when c=c0 -> Myseq.return (`Color c, state)
+      | `Color c0 ->
+         if c=c0 then Myseq.return (`Color c, state)
+         else Myseq.return (`Color c, {state with diff = p::state.diff})
       | _ -> Myseq.empty)
-    ~env t c state
+    ~env t p c state
   
-let parse_mask ~env t (m : Grid.Mask.t option) state =
+let parse_mask ~env t p (m : Grid.Mask.t option) state =
   parse_template
     ~parse_u:(Myseq.return (`Mask m, state))
     ~parse_patt:(function
-      | `Mask m0 when m=m0 -> Myseq.return (`Mask m, state)
+      | `Mask m0 ->
+         if m=m0 then Myseq.return (`Mask m, state)
+         else Myseq.return (`Mask m, {state with diff = p::state.diff})
       | _ -> Myseq.empty)
-    ~env t m state
+    ~env t p m state
 
-let parse_vec ~env t (vi, vj : int * int) state =
+let parse_vec ~env t p (vi, vj : int * int) state =
   parse_template
     ~parse_u:(Myseq.return (`Vec (`Int vi, `Int vj), state))
     ~parse_patt:(function
       | `Vec (i,j) ->
-         let* di, state = parse_int ~env i vi state in
-         let* dj, state = parse_int ~env j vj state in
+         let* di, state = parse_int ~env i (p ++ `I) vi state in
+         let* dj, state = parse_int ~env j (p ++ `J) vj state in
          Myseq.return (`Vec (di,dj), state)
       | _ -> Myseq.empty)
-    ~env t (vi,vj) state
+    ~env t p (vi,vj) state
   
 let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t =
   seq_shapes
@@ -552,7 +584,8 @@ let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mas
        (fun (shape, occ_delta, occ_mask) ->
          let new_mask = Grid.Mask.diff state.mask occ_mask in
          let new_state =
-           { delta = occ_delta @ state.delta;
+           { diff = state.diff;
+             delta = occ_delta @ state.delta;
 	     mask = new_mask;
 	     parts =
 	       List.filter
@@ -578,7 +611,7 @@ let parse_shape =
     |> Myseq.map (fun (rect : Grid.rectangle) ->
            rect, rect.delta, rect.mask)
     |> shape_postprocess state in
-  fun ~env t (parts : Grid.part list) state ->
+  fun ~env t p (parts : Grid.part list) state ->
   parse_template
     ~parse_u:
     (Myseq.concat
@@ -599,47 +632,40 @@ let parse_shape =
     ~parse_patt:(function
       | `Point (pos,color) ->
          let* (i,j,c), state = parse_points ~env parts state in
-         let* dpos, state = parse_vec ~env pos (i,j) state in
-         let* dcolor, state = parse_color ~env color c state in
+         let* dpos, state = parse_vec ~env pos (p ++ `Pos) (i,j) state in
+         let* dcolor, state = parse_color ~env color (p ++ `Color) c state in
          Myseq.return (`Point (dpos,dcolor), state)
       | `Rectangle (pos,size,color,mask) ->
          let* r, state = parse_rectangles ~env parts state in
          let open Grid in
-         let* dpos, state = parse_vec ~env pos (r.offset_i,r.offset_j) state in
-         let* dsize, state = parse_vec ~env size (r.height,r.width) state in
-         let* dcolor, state = parse_color ~env color r.color state in
-         let* dmask, state = parse_mask ~env mask r.rmask state in
+         let* dpos, state = parse_vec ~env pos (p ++ `Pos) (r.offset_i,r.offset_j) state in
+         let* dsize, state = parse_vec ~env size (p ++ `Size) (r.height,r.width) state in
+         let* dcolor, state = parse_color ~env color (p ++ `Color) r.color state in
+         let* dmask, state = parse_mask ~env mask (p ++ `Mask) r.rmask state in
          Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
       | _ -> Myseq.empty)
-    ~env t parts state
+    ~env t p parts state
 
-let rec parse_grid ~env t (g : Grid.t) state =
+let rec parse_grid ~env t p (g : Grid.t) state =
   parse_template
     ~parse_u:(Myseq.empty)
     ~parse_patt:
     (function
      | `Background (size,color) ->
-        let* dsize, state = parse_vec ~env size (g.height,g.width) state in
+        let* dsize, state = parse_vec ~env size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
-          match color with
-          | `Color c -> c
-          | `E e ->
-             (match eval_expr ~env e with
-              | `Color c -> c
-              | _ -> assert false)
-          | `U ->
-             (* determining the majority color *)
-	     let color_counter = new Common.counter in
-	     Grid.Mask.iter
-	       (fun i j ->
-                 if Grid.Mask.mem i j state.mask
-                 then color_counter#add g.matrix.{i,j})
-	       state.mask;
-	     (match color_counter#most_frequents with
-	      | _, bc::_ -> bc
-	      | _ -> Grid.black)
-          | _ -> assert false in
-        let data = `Background (dsize, `Color bc) in
+          (* determining the majority color *)
+	  let color_counter = new Common.counter in
+	  Grid.Mask.iter
+	    (fun i j ->
+              if Grid.Mask.mem i j state.mask
+              then color_counter#add g.matrix.{i,j})
+	    state.mask;
+	  (match color_counter#most_frequents with
+	   | _, bc::_ -> bc
+	   | _ -> Grid.black) in
+        let* dcolor, state = parse_color ~env color (p ++ `Color) bc state in
+        let data = `Background (dsize,dcolor) in
 	(* adding mask pixels with other color than background to delta *)
         let new_delta = ref state.delta in
 	Grid.Mask.iter
@@ -648,18 +674,19 @@ let rec parse_grid ~env t (g : Grid.t) state =
 	      new_delta := (i,j, g.matrix.{i,j})::!new_delta)
 	  state.mask;
         let new_state =
-          { delta = (!new_delta);
+          { diff = state.diff;
+            delta = (!new_delta);
 	    mask = Grid.Mask.empty g.height g.width;
 	    parts = [];
             grid = state.grid } in
 	Myseq.return (data, new_state)
      | `AddShape (first,rest) ->
-        let* dfirst, state = parse_shape ~env first state.parts state in
-        let* drest, state = parse_grid ~env rest g state in
+        let* dfirst, state = parse_shape ~env first (p ++ `First) state.parts state in
+        let* drest, state = parse_grid ~env rest (p ++ `Rest) g state in
         let data = `AddShape (dfirst, drest) in
         Myseq.return (data, state)
      | _ -> Myseq.empty)
-    ~env t g state
+    ~env t p g state
   
 exception Parse_failure
 let _ = Printexc.register_printer
@@ -670,19 +697,21 @@ let _ = Printexc.register_printer
 let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
       ~(dl_grid_data : data -> dl)
     : (data * grid_data * dl, exn) Result.t = Common.prof "Model.read_grid_aux" (fun () ->
-  let state = { delta = delta0;
+  let state = { diff = diff0;
+                delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
                 parts = Grid.segment_by_color g;
                 grid = g } in
   let _, res =
-    parse_grid ~env t g state
+    parse_grid ~env t path0 g state
     |> Myseq.fold_left
          (fun (dl_min,res) (data,state) ->
            let dl_data = dl_grid_data data in
+           let dl_diff = dl_diff state.diff data in
            let dl_delta = dl_delta ~height:g.height ~width:g.width state.delta in
-           let dl = dl_data +. dl_delta in
+           let dl = dl_data +. dl_diff +. dl_delta in
            if dl < dl_min
-           then dl, Result.Ok (env, {data; delta=state.delta}, dl)
+           then dl, Result.Ok (env, {data; diff=state.diff; delta=state.delta}, dl)
            else dl_min, res)
          (infinity, Result.Error Parse_failure) in
   res)
@@ -754,11 +783,14 @@ let pp_model m =
   print_endline "WHERE (Mi)";
   pp_template m.input_pattern; print_newline ()
 
-let apply_model ?(env = data0) (m : model) (g : Grid.t) : (Grid.t, exn) Result.t = Common.prof "Model.apply_model" (fun () ->
+let apply_model ?(env = data0) (m : model) (g : Grid.t) : (grid_data * Grid.t, exn) Result.t = Common.prof "Model.apply_model" (fun () ->
   Result.bind
     (read_grid ~env m.input_pattern g)
     (fun gdi ->
-      write_grid ~env:gdi.data m.output_template))
+      Result.bind
+        (write_grid ~env:gdi.data m.output_template)
+        (fun grid ->
+          Result.Ok (gdi, grid))))
 
 (* template transformations *)
                                                                     
