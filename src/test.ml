@@ -9,32 +9,17 @@ let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 20
 
 (* === printing and checking functions === *)
-			     
-let print_grid_mismatch name ~grid ~derived_grid : unit =
-  let diff = Grid.diff derived_grid grid in
-  match diff with
-  | None ->
-     Printf.printf "%s: SUCCESS\n" name
-  | Some (Grid_size_mismatch {src_height; src_width; tgt_height; tgt_width}) ->
-     if !training
-     then Printf.printf "%s: size mismatch, %dx%d instead of %dx%d\n"
-			name src_height src_width tgt_height tgt_width
-     else Printf.printf "%s: FAILURE\n" name
-  | Some (Grid_diff_pixels {height; width; pixels}) ->
-     if !training
-     then (
-       Printf.printf "%s: %d wrong pixels (generated / expected)\n" name (List.length pixels);
-       Grid.pp_grids [derived_grid; grid]
-     )
-     else Printf.printf "%s: FAILURE\n" name
-    
-let check_write_grid grid_name grid_model grid_env grid =
-  let derived_grid =
-    match Model.write_grid ~env:grid_env grid_model with
-    | Result.Ok g -> g
-    | Result.Error exn -> raise exn in
-  print_grid_mismatch grid_name ~grid ~derived_grid
 
+let print_grid_diff ~grid ~derived_grid (diff : Grid.diff) : unit =
+  match diff with
+  | Grid_size_mismatch {src_height; src_width; tgt_height; tgt_width} ->
+     Printf.printf "! size mismatch, %dx%d instead of %dx%d\n"
+       src_height src_width tgt_height tgt_width
+  | Grid_diff_pixels {height; width; pixels} ->
+     Printf.printf "! %d wrong pixels (generated / expected)\n"
+       (List.length pixels);
+     Grid.pp_grids [derived_grid; grid]
+                 
 (*
 let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
   let params = (*List.sort Stdlib.compare*) data.Model.params in
@@ -125,22 +110,29 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
        List.fold_left2
 	 (fun (i,nb_ex, nb_correct)
 	      ((_envi,gdi,dli),(envo,gdo,dlo)) {output} ->
-	  let grid_name = "TRAIN " ^ name ^ "/" ^ string_of_int i in
 	  if !training then (Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli);
 	  if !training then (Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo);
-          let valid_output =
-	    try
-              check_write_grid
-                grid_name m.output_template
-                envo output;
-              true
-            with
-            | Model.Unbound_U -> Printf.printf "%s: ERROR (unbound unknown)\n" grid_name; false
-            | Model.Unbound_Var p -> Printf.printf "%s: ERROR (unbound variable: %s)\n" grid_name (Model.string_of_path p); false in
-	  print_newline ();
+          let score, label =
+            Model.write_grid ~env:envo m.output_template
+            |> Result.fold
+                 ~ok:(fun derived_grid ->
+                   match Grid.diff derived_grid output with
+                   | None -> 1, "SUCCESS"
+                   | Some diff ->
+                      if !training then print_grid_diff ~grid:output ~derived_grid diff;
+                      0, "FAILURE")
+                 ~error:(function
+                   | Model.Unbound_U ->
+                      if !training then print_endline "! unbound unknown";
+                      0, "ERROR"
+                   | Model.Unbound_Var p ->
+                      if !training then Printf.printf "! unbound variable %s" (Model.string_of_path p);
+                      0, Printf.sprintf "ERROR"
+                   | exn -> raise exn) in
+          Printf.printf "TRAIN %s/%d: %d (%s)\n\n" name i score label;
 	  i+1,
 	  nb_ex+1,
-	  nb_correct + (if valid_output && gdo.Model.delta = Model.delta0 then 1 else 0))
+	  nb_correct + score)
 	 (1,0,0)
 	 egdlios task.train in
      
@@ -153,10 +145,13 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
 	    Grid.pp_parts input parts;*)
 	  let score, label =
 	    match Model.apply_model ~env:Model.data0 m input with
-	    | Result.Ok derived ->
+	    | Result.Ok (gdi, derived) ->
+               if !training then Model.pp_grid_data gdi;
 	       ( match Grid.diff derived output with
 		 | None -> 1, "SUCCESS"
-		 | Some _ -> 0, "FAILURE" )
+		 | Some diff ->
+                    if !training then print_grid_diff ~grid:output ~derived_grid:derived diff;
+                    0, "FAILURE" )
 	    | Result.Error msg -> 0, "ERROR" in
 	  Printf.printf "TEST %s/%d: %d (%s)\n" name i score label;
 	  i+1, nb_ex+1, nb_correct+score)
@@ -180,11 +175,14 @@ let train_dir = arc_dir ^ "training/"
 let train_names = Array.to_list (Sys.readdir train_dir)
 let eval_dir = arc_dir ^ "evaluation/"
 let eval_names = Array.to_list (Sys.readdir eval_dir)
+let sferre_dir = arc_dir ^ "sferre/"
+let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
 let solved_train_names =
   [ "ba97ae07.json";
     "bda2d7a6.json";
     "5582e5ca.json";
+    "e9afcf9a.json";
     "6f8cd79b.json";
     "e48d4e1a.json";
     "25ff71a9.json";
@@ -331,6 +329,7 @@ let _ =
   Arg.parse
     ["-train", Unit (fun () -> dir := train_dir; training := true; names := train_names), "Use training set of tasks (default)";
      "-eval", Unit (fun () -> dir := eval_dir; training := false; names := eval_names), "Use evaluation set of tasks";
+     "-sferre", Unit (fun () -> dir := sferre_dir; training := true; names := sferre_names), "Use sferre's set of tasks";
      "-all", Unit (fun () -> ()), "Use all tasks in the 
 chosen set (default)";
      "-sample",
@@ -344,10 +343,11 @@ chosen set (default)";
 	       !names
 	       |> List.filter
 		    (fun name ->
-		     ids
-		     |> List.exists
-			  (fun id ->
-			   String.sub name 0 (String.length id) = id))),
+                      Filename.check_suffix name ".json"
+		      && ids
+		         |> List.exists
+			      (fun id ->
+			        String.sub name 0 (String.length id) = id))),
      "Use the tasks specified by their hexadecimal id prefix (comma-separated)";
      "-learn", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
      "-apply", Unit (fun () -> checker := checker_apply), "Apply pre-defined models to the chosen tasks (Model.init_model by default)";
