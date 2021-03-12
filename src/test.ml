@@ -58,21 +58,16 @@ let print_l_md gri gro = (* model+data DL *)
   ldo
 
 let print_l_task_model name task model =
-  let egis = task.train |> List.map (fun pair -> Model.data0, pair.input) in
-  let gri =
-    match Model.read_grids model.Model.input_pattern egis with
-    | Result.Ok gri -> gri
-    | Result.Error exn -> raise exn in
-  let egos =
-    List.map2
-      (fun (_envi,gdi,_li) pair -> gdi.Model.data, pair.output)
-      gri.egdls task.train in
-  let gro =
-    match Model.read_grids model.Model.output_template egos with
-    | Result.Ok gro -> gro
-    | Result.Error exn -> raise exn in
-  ignore (print_l_md gri gro)
-
+  let egis =
+    task.train
+    |> List.map (fun pair -> Model.data0, pair.input) in
+  let gos =
+    task.train
+    |> List.map (fun pair -> pair.output) in
+  Model.read_grid_pairs model egis gos
+  |> Result.fold
+       ~ok:(fun (gri,gro) -> ignore (print_l_md gri gro))
+       ~error:(fun exn -> raise exn)
 	 
 (* === monitoring learning === *)
 
@@ -179,7 +174,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
 let solved_train_names =
-  [ "ba97ae07.json";
+  [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above *)
     "bda2d7a6.json";
     "5582e5ca.json";
     "e9afcf9a.json";
@@ -187,10 +182,13 @@ let solved_train_names =
     "e48d4e1a.json";
     "25ff71a9.json";
     "1cf80156.json"; (* crop on shape *)
+    "aabf363d.json";
+    "b1948b0a.json";
   ]
 
 let maybe_train_names =
   [
+    "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? *)
     "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
     "b94a9452.json"; (* pb: inner rectangle not compressive, test input breaks train invariant (grid size) *)
     "a79310a0.json"; (* pb: need to consider 2nd best parsing, test input breaks train invariant (mask) *)

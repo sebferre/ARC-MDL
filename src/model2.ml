@@ -104,7 +104,7 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
      ^ " and mask " ^ string mask
   | `Nil -> "nil"
   | `Cons (shape,layers) ->
-     "\n  " ^ string shape ^ "on top of " ^ string layers
+     "\n  " ^ string shape ^ " on top of " ^ string layers
   | `Background (size,color,layers) ->
      "a background with size " ^ string size
      ^ " and color " ^ string color
@@ -172,15 +172,17 @@ let find_patt (find : path -> 'a -> 'a option)
   | _ -> None
 
 let rec find_data (p : path) (d : data) : data option =
+  Common.prof "Model2.find_data" (fun () ->
   match p with
   | [] -> Some d
-  | _ -> find_patt find_data p d
+  | _ -> find_patt find_data p d)
 
 let rec find_template (p : path) (t : template) : template option =
+  Common.prof "Model2.find_template" (fun () ->
   match p, t with
   | [], _ -> Some t
   | _, (#patt as patt) -> find_patt find_template p patt
-  | _ -> None
+  | _ -> None)
 
        
 let fold_patt (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (patt : 'a patt) : 'b =
@@ -224,6 +226,8 @@ let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (
        
 let size_of_data (d : data) : int =
   fold_data (fun res _ _ -> res+1) 0 path0 d
+let size_of_template (t : template) : int =
+  fold_template (fun res _ _ -> res+1) 0 path0 t
 
 let fold_unknowns (f : 'a -> path -> 'a) (init : 'a) (p : path) (t : template) : 'a =
   fold_template
@@ -271,9 +275,10 @@ let unify (ld : data list) : template (* without expression *) =
 
     | _ -> `U
   in
+  Common.prof "Model2.unify" (fun () ->
   match ld with
   | [] -> assert false
-  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1
+  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1)
         
 (* description lengths *)
 
@@ -284,8 +289,8 @@ let dl_bool : bool -> dl =
   fun b -> 1.
 let dl_nat : int -> dl =
   fun i -> Mdl.Code.universal_int_star i
-let dl_index : int -> dl = (* all positions are alike *)
-  fun i -> Mdl.Code.uniform Grid.max_size
+let dl_index ~bound : int -> dl = (* all positions are alike *)
+  fun i -> Mdl.Code.uniform bound
 let dl_length : int -> dl = (* longer lengths cover more pixels *)
   fun i -> Mdl.Code.universal_int_plus i
 let dl_color : Grid.color -> dl =
@@ -309,16 +314,41 @@ let dl_mask : Grid.Mask.t option -> dl =
      +. Mdl.Code.comb missing n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *) *)
 
      
-type staged_dl (* sdl *) = Mdl.bits * (data -> Mdl.bits)
+type sdl_ctx =
+  { env_size : int;
+    box_height : int;
+    box_width : int }
+let sdl_ctx0 =
+  { env_size = 0;
+    box_height = Grid.max_size;
+    box_width = Grid.max_size }
+  
+let sdl_ctx_of_data (d : data) : sdl_ctx =
+  (* retrieving grid size: make assumption on paths *)
+  let box_height =
+    match find_data [`Size; `I] d with
+    | Some (`Int i) -> i
+    | _ -> Grid.max_size in
+  let box_width =
+    match find_data [`Size; `J] d with
+    | Some (`Int j) -> j
+    | _ -> Grid.max_size in
+  { env_size = 0; box_height; box_width }
+      
+
+type staged_dl (* sdl *) = Mdl.bits * (ctx:sdl_ctx -> data -> Mdl.bits)
 (* template DL, variable data DL (for U bindings) *)
 let (+!) dl1 (dl2,f2) = (dl1+.dl2, f2)
-let (+?) (dl1,f1) (dl2,f2) = (dl1+.dl2, (fun data -> f1 data +. f2 data))
-let staged0 = (fun d -> 0.)
+let (+?) (dl1,f1) (dl2,f2) = (dl1+.dl2, (fun ~ctx data -> f1 ~ctx data +. f2 ~ctx data))
+let staged0 = (fun ~ctx d -> 0.)
 let sdl0 = 0., staged0
 
-let sdl_patt (sdl : 'a -> path -> staged_dl) ~(env_size : int) (patt : 'a patt) (p : path) : staged_dl =
+let sdl_patt
+      (sdl : ctx:sdl_ctx -> 'a -> path -> staged_dl)
+      ~(ctx : sdl_ctx) (patt : 'a patt) (p : path) : staged_dl =
   match List.rev p, patt with
-  | (`I | `J)::`Pos::_, `Int i -> dl_index i, staged0
+  | `I::`Pos::_, `Int i -> dl_index ~bound:ctx.box_height i, staged0
+  | `J::`Pos::_, `Int j -> dl_index ~bound:ctx.box_width j, staged0
 
   | (`I | `J)::`Size::_, `Int i -> dl_length i, staged0
 
@@ -329,31 +359,40 @@ let sdl_patt (sdl : 'a -> path -> staged_dl) ~(env_size : int) (patt : 'a patt) 
   | `Mask::_, `Mask m -> dl_mask m, staged0
 
   | (`Size | `Pos)::_, `Vec (i,j) ->
-     sdl i (p ++ `I)
-     +? sdl j (p ++ `J)
+     sdl ~ctx i (p ++ `I)
+     +? sdl ~ctx j (p ++ `J)
 
   | `First::_, `Point (pos,color) ->
      Mdl.Code.usage 0.5
-     +! sdl pos (p ++ `Pos)
-     +? sdl color (p ++ `Color)
+     +! sdl ~ctx pos (p ++ `Pos)
+     +? sdl ~ctx color (p ++ `Color)
   | `First::_, `Rectangle (pos,size,color,mask) ->
      Mdl.Code.usage 0.5
-     +! sdl pos (p ++ `Pos)
-     +? sdl size (p ++ `Size)
-     +? sdl color (p ++ `Color)
-     +? sdl mask (p ++ `Mask)
+     +! sdl ~ctx pos (p ++ `Pos)
+     +? sdl ~ctx size (p ++ `Size)
+     +? sdl ~ctx color (p ++ `Color)
+     +? sdl ~ctx mask (p ++ `Mask)
 
   | (`Layers | `Rest)::_, `Nil ->
      Mdl.Code.usage 0.5, staged0
   | (`Layers | `Rest)::_, `Cons (first,rest) ->
      Mdl.Code.usage 0.5
-     +! sdl first (p ++ `First)
-     +? sdl rest (p ++ `Rest)
+     +! sdl ~ctx first (p ++ `First)
+     +? sdl ~ctx rest (p ++ `Rest)
 
   | [], `Background (size,color,layers) ->
-     sdl size (p ++ `Size)
-     +? sdl color (p ++ `Color)
-     +? sdl layers (p ++ `Layers)
+     let box_height =
+       match size with
+       | `Vec (`Int i, _) -> i
+       | _ -> ctx.box_height in
+     let box_width =
+       match size with
+       | `Vec (_, `Int j) -> j
+       | _ -> ctx.box_width in
+     let ctx_layers = { ctx with box_height; box_width } in
+     sdl ~ctx size (p ++ `Size)
+     +? sdl ~ctx color (p ++ `Color)
+     +? sdl ~ctx:ctx_layers layers (p ++ `Layers)
     
   | _ ->
      pp_path p; print_string ": ";
@@ -361,47 +400,47 @@ let sdl_patt (sdl : 'a -> path -> staged_dl) ~(env_size : int) (patt : 'a patt) 
      print_newline ();
      assert false
 
-let rec sdl_data ~(env_size : int) (d : data) (p : path) : staged_dl =
-  sdl_patt (sdl_data ~env_size) ~env_size d p
-let dl_data (d : data) (p : path) : dl =
-  fst (sdl_data ~env_size:0 d p)
+let rec sdl_data ~(ctx : sdl_ctx) (d : data) (p : path) : staged_dl =
+  sdl_patt sdl_data ~ctx d p
+let dl_data ~ctx (d : data) (p : path) : dl =
+  fst (sdl_data ~ctx d p)
 
-let rec sdl_expr ~(env_size : int) (e : expr) (p : path) : staged_dl =
+let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
   match e with
   | `Var x ->
-     Mdl.Code.usage 0.5 +. Mdl.Code.uniform env_size, (* identifying one env var *)
+     Mdl.Code.usage 0.5 +. Mdl.Code.uniform ctx.env_size, (* identifying one env var *)
      staged0
   | #patt as patt ->
      Mdl.Code.usage 0.25
-     +! sdl_patt (sdl_expr ~env_size) ~env_size patt p
+     +! sdl_patt sdl_expr ~ctx patt p
   | _ ->
      Mdl.Code.usage 0.25
      +! (match List.rev p, e with
          | (`I | `J)::_, (`Plus (e1,e2) | `Minus (e1,e2)) ->
             Mdl.Code.usage 0.5
-            +! sdl_expr ~env_size e1 p
-            +? sdl_expr ~env_size e2 p
+            +! sdl_expr ~ctx e1 p
+            +? sdl_expr ~ctx e2 p
          | _ -> assert false)
 
-let dl_expr ~env_size e p =
-  fst (sdl_expr ~env_size e p)
+let dl_expr ~ctx e p =
+  fst (sdl_expr ~ctx e p)
          
-let rec sdl_template ~(env_size : int) (t : template) (p : path) : staged_dl =
+let rec sdl_template ~(ctx : sdl_ctx) (t : template) (p : path) : staged_dl =
   match t with
   | `U ->
      Mdl.Code.usage 0.1,
-     (fun d ->
+     (fun ~ctx d ->
        match find_data p d with
-       | Some d1 -> dl_data d1 p
+       | Some d1 -> dl_data ~ctx d1 p
        | None -> assert false)
   | `E e ->
-     Mdl.Code.usage 0.3 +. dl_expr ~env_size e p,
+     Mdl.Code.usage 0.3 +. dl_expr ~ctx e p,
      staged0
   | #patt as patt ->
      Mdl.Code.usage 0.6
-     +! sdl_patt (sdl_template ~env_size) ~env_size patt p
+     +! sdl_patt sdl_template ~ctx patt p
 
-let dl_diff (diff : diff) (data : data) : dl =
+let dl_diff ~(ctx : sdl_ctx) (diff : diff) (data : data) : dl =
   let data_size = size_of_data data in
   Mdl.Code.universal_int_star (List.length diff)
   -. 1. (* some normalization to get 0 for empty grid data *)
@@ -412,14 +451,14 @@ let dl_diff (diff : diff) (data : data) : dl =
            | Some d1 -> d1
            | None -> assert false in
          Mdl.Code.uniform data_size
-         +. dl_data d1 p1)
+         +. dl_data ~ctx d1 p1)
     
-let dl_delta ~(height : int) ~(width : int) (delta : delta) : dl =
+let dl_delta ~(ctx : sdl_ctx) (delta : delta) : dl =
   let nb_pixels = List.length delta in
   Mdl.Code.universal_int_star nb_pixels (* number of delta pixels *)
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. float nb_pixels
-     *. (Mdl.Code.uniform height +. Mdl.Code.uniform width +. Mdl.Code.uniform Grid.nb_color)
+     *. (Mdl.Code.uniform ctx.box_height +. Mdl.Code.uniform ctx.box_width +. Mdl.Code.uniform Grid.nb_color)
 (* NOT using optimized DL below for fair comparisons with model points: 
   +. Mdl.Code.comb nb_pixels area (* where they are *)
   +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
@@ -474,10 +513,11 @@ let _ = Printexc.register_printer
            | _ -> None)
                      
 let rec eval_template ~(env : data) (t : template) : data =
+  Common.prof "Model2.eval_template" (fun () ->
   match t with
   | `U -> raise Unbound_U
   | #patt as p -> eval_patt (eval_template ~env) p
-  | `E e -> eval_expr ~env e
+  | `E e -> eval_expr ~env e)
 
 
 (* grid generation from data and template *)
@@ -493,6 +533,7 @@ let rec grid_of_data : data -> Grid.t = function
      let g = Grid.make h w c in
      draw_layers g l;
      g
+  | _ -> raise Invalid_data_as_grid
 and draw_layers g = function
   | `Nil -> ()
   | `Cons (first, rest) ->
@@ -516,7 +557,7 @@ and draw_shape g = function
   | _ -> raise Invalid_data_as_grid
 
 
-let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model.write_grid" (fun () ->
+let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
   try
     let d = eval_template ~env t in
     let g = grid_of_data d in
@@ -728,8 +769,8 @@ let _ = Printexc.register_printer
            | _ -> None)
 
 let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
-      ~(dl_grid_data : data -> dl)
-    : (data * grid_data * dl, exn) Result.t = Common.prof "Model.read_grid_aux" (fun () ->
+      ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
+    : (data * grid_data * dl, exn) Result.t = Common.prof "Model2.read_grid_aux" (fun () ->
   let state = { diff = diff0;
                 delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
@@ -739,9 +780,10 @@ let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
     parse_grid ~env t path0 g state
     |> Myseq.fold_left
          (fun (dl_min,res) (data,state) ->
-           let dl_data = dl_grid_data data in
-           let dl_diff = dl_diff state.diff data in
-           let dl_delta = dl_delta ~height:g.height ~width:g.width state.delta in
+           let ctx = sdl_ctx_of_data data in
+           let dl_data = dl_grid_data ~ctx data in
+           let dl_diff = dl_diff ~ctx state.diff data in
+           let dl_delta = dl_delta ~ctx state.delta in
            let dl = dl_data +. dl_diff +. dl_delta in
            (*Printf.printf "grid data: %.1f (%.1f + %.1f + %.1f)\n" dl dl_data dl_diff dl_delta; (* TEST *)
            pp_data data; print_newline (); (* TEST *) *)
@@ -751,9 +793,12 @@ let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
          (infinity, Result.Error Parse_failure) in
   res)
 
-let read_grid ~(env : data) (t : template) (g : Grid.t) : (grid_data, exn) Result.t =
-  let env_size = size_of_data env in
-  let dl_m, dl_grid_data = sdl_template ~env_size t path0 in
+let read_grid ~(env_size : int) ~(env : data) (t : template) (g : Grid.t) : (grid_data, exn) Result.t =
+  let ctx =
+    { env_size;
+      box_height = Grid.max_size;
+      box_width = Grid.max_size } in
+  let dl_m, dl_grid_data = sdl_template ~ctx t path0 in
   Result.bind
     (read_grid_aux ~env t g ~dl_grid_data)
     (fun (_env,gd,_l) -> Result.Ok gd)
@@ -775,12 +820,12 @@ let dl_template_data (gr : grids_read) : dl triple (* model, data, model+data *)
     *. Mdl.sum gr.egdls (fun (env,gd,dl) -> dl) in
   gr.dl_m, dl_data, gr.dl_m +. dl_data)
 		    
-let read_grids (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
-  let env_size =
-    match egrids with
-    | (env,_)::_ -> size_of_data env
-    | _ -> assert false in
-  let dl_m, dl_grid_data = sdl_template ~env_size t path0 in
+let read_grids ~env_size (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
+  let ctx =
+    { env_size;
+      box_height = Grid.max_size;
+      box_width = Grid.max_size } in
+  let dl_m, dl_grid_data = sdl_template ~ctx t path0 in
   let rec aux = function
     | [] -> Result.Ok []
     | (env,g)::rest ->
@@ -818,14 +863,40 @@ let pp_model m =
   print_endline "WHERE (Mi)";
   pp_template m.input_pattern; print_newline ()
 
-let apply_model ?(env = data0) (m : model) (g : Grid.t) : (grid_data * Grid.t, exn) Result.t = Common.prof "Model.apply_model" (fun () ->
+let apply_model ?(env = data0) (m : model) (g : Grid.t) : (grid_data * Grid.t, exn) Result.t = Common.prof "Model2.apply_model" (fun () ->
   Result.bind
-    (read_grid ~env m.input_pattern g)
+    (read_grid ~env_size:0 ~env m.input_pattern g)
     (fun gdi ->
       Result.bind
         (write_grid ~env:gdi.data m.output_template)
         (fun grid ->
           Result.Ok (gdi, grid))))
+
+
+let read_grid_pair ~(env : data) (m : model) (gi : Grid.t) (go : Grid.t) : (grid_data * grid_data, exn) Result.t =
+  Result.bind
+    (read_grid ~env_size:0 ~env m.input_pattern gi)
+    (fun gdi ->
+      let env_size = size_of_template m.input_pattern in
+      Result.bind
+        (read_grid ~env_size ~env:gdi.data m.output_template go)
+        (fun gdo -> Result.Ok (gdi,gdo)))
+     
+let read_grid_pairs (m : model) (egis : (data * Grid.t) list) (gos : Grid.t list) : (grids_read * grids_read, exn) Result.t =
+  Common.prof "Model2.read_grid_pairs" (fun () ->
+  (* takes model, input env+grid, output grids *)
+  Result.bind
+    (read_grids ~env_size:0 m.input_pattern egis)
+    (fun gri ->
+      let env_size =
+        size_of_template m.input_pattern in
+      let egos =
+        List.map2
+	  (fun (envi,gdi,li) go -> gdi.data, go)
+	  gri.egdls gos in
+      Result.bind
+        (read_grids ~env_size m.output_template egos)
+        (fun gro -> Result.Ok (gri, gro))))
 
 (* template transformations *)
                                                                     
@@ -880,6 +951,7 @@ let pp_grid_refinement = function
      pp_template sh
 
 let apply_grid_refinement (r : grid_refinement) (t : template) : template =
+  Common.prof "Model2.apply_grid_refinement" (fun () ->
   match r with
   | RGridInit -> t
   | RDefs defs ->
@@ -904,9 +976,10 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          if p1 = p
          then `Cons (shape, t1)
          else t1)
-       path0 t
+       path0 t)
      
 let rec find_defs (t : template) (gr : grids_read) : (path * template) list =
+  Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some expression over env vars *)
   assert (gr.egdls <> []);
@@ -929,7 +1002,7 @@ let rec find_defs (t : template) (gr : grids_read) : (path * template) list =
       | `U, Some e -> (p, `E e)::defs
       | `U, None -> defs
       | _ -> (p, t_p_ds)::defs)
-    [] path0 t
+    [] path0 t)
 and find_p_expr : kind -> data list -> data list -> expr option =
   fun k p_ds envs ->
   (* env variables *)
@@ -1027,7 +1100,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
     ~refine_degree
     ~m0:(RGridInit, init_template)
     ~data:(fun (r,m) ->
-	   Result.to_option (read_grids m egrids))
+	   Result.to_option (read_grids ~env_size m egrids))
     ~code:(fun (r,m) gr ->
 	   (*pp_grid_model m; print_newline ();*)
 	   pp_grid_refinement r; print_newline ();
@@ -1049,7 +1122,7 @@ let pp_refinement = function
   | Routput r -> print_string "OUT "; pp_grid_refinement r
 
 let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro : grids_read) : (refinement * model) Myseq.t
-  = Common.prof "Model.model_refinements" (fun () ->
+  = Common.prof "Model2.model_refinements" (fun () ->
   let on_input =
     match last_r with
     | RInit -> true
@@ -1104,7 +1177,7 @@ let learn_model
       ~beam_width ~refine_degree
       (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
-  = Common.prof "Model.learn_model" (fun () ->
+  = Common.prof "Model2.learn_model" (fun () ->
   let gis = List.map (fun {input} -> input) pairs in
   let gos = List.map (fun {output} -> output) pairs in
   let egis = List.map (fun gi -> data0, gi) gis in
@@ -1114,24 +1187,17 @@ let learn_model
     ~refine_degree
     ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
-	   try
-	   match read_grids m.input_pattern egis with
-	   | Result.Error _ -> None
-	   | Result.Ok gri ->
-	      let egos =
-		List.map2
-		  (fun (envi,gdi,li) go -> gdi.data, go)
-		  gri.egdls gos in
-	      match read_grids m.output_template egos with
-	      | Result.Error _ -> None
-	      | Result.Ok gro ->
-		 Some (gri, gro)
-	   with
-	   | Common.Timeout as exn -> raise exn
-	   | exn ->
-	      print_endline (Printexc.to_string exn);
-	      pp_model m;
-	      raise exn)
+      try
+        read_grid_pairs m egis gos
+        |> Result.fold
+             ~ok:(fun gri_gro -> Some gri_gro)
+             ~error:(fun exn -> None)
+      with
+      | Common.Timeout as exn -> raise exn
+      | exn ->
+	 print_endline (Printexc.to_string exn);
+	 pp_model m;
+	 raise exn)
     ~code:(fun (r,m) (gri,gro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     dl_model_data gri gro in
@@ -1142,6 +1208,4 @@ let learn_model
 	   lmd)
     ~refinements:
     (fun (r,m) (gri,gro) ->
-     model_refinements r m gri gro))
-
-          
+      model_refinements r m gri gro))
