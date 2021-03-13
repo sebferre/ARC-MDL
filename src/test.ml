@@ -175,20 +175,21 @@ let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
 let solved_train_names =
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above *)
-    "bda2d7a6.json";
-    "5582e5ca.json";
-    "e9afcf9a.json";
-    "6f8cd79b.json";
-    "e48d4e1a.json";
-    "25ff71a9.json";
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise *)
+    "5582e5ca.json"; (* 3x3 grid, keep only majority color *)
+    "e9afcf9a.json"; (* two one-color rows, interleaving them *)
+    "6f8cd79b.json"; (* black grid => add cyan border *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9) *)
+    "25ff71a9.json"; (* shaped moving 1 pixel down *)
     "1cf80156.json"; (* crop on shape *)
-    "aabf363d.json";
-    "b1948b0a.json";
+    "aabf363d.json"; (* shape and point => same shape but with point color *)
+    "b1948b0a.json"; (* any bitmap, changing background color *)
   ]
 
 let maybe_train_names =
   [
-    "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? *)
+    "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
+    "5521c0d9.json"; (* pb: need bias on defs, local is better, collection/map would help too [three rectangles moving up by their height] *)
     "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
     "b94a9452.json"; (* pb: inner rectangle not compressive, test input breaks train invariant (grid size) *)
     "a79310a0.json"; (* pb: need to consider 2nd best parsing, test input breaks train invariant (mask) *)
@@ -209,6 +210,9 @@ let maybe_train_names =
     "7f4411dc.json"; (* pb: collection, overfit *)
     "05f2a901.json"; (* pb: rectangle mask *)
     "1fad071e.json"; (* pb: collection, cardinal *)
+    "d5d6de2d.json"; (* pb: collection, map *)
+    "4522001f.json"; (* pb: invariance par rotation *)
+    "28bf18c6.json"; (* pb: size = 2*size1, consider input shape as output refinement *)
   ]
 
 let task_model =
