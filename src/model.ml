@@ -948,8 +948,8 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
 	   let lm, ld, lmd = l_grid_model_data gr in
 	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
 	   lmd)
-    ~refinements:(fun (r,m) gr ->
-		  grid_model_refinements m gr)
+    ~refinements:(fun (r,m) gr dl ->
+      grid_model_refinements m gr)
 
 let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro : grids_read) : (refinement * model) Myseq.t
   = Common.prof "Model.model_refinements" (fun () ->
@@ -1040,6 +1040,6 @@ let learn_model
 	     flush stdout);
 	   lmd)
     ~refinements:
-    (fun (r,m) (gri,gro) ->
+    (fun (r,m) (gri,gro) dl ->
      model_refinements r m gri gro))
 

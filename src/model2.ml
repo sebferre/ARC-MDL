@@ -2,11 +2,38 @@
 open Task
 
 let alpha = ref 10.
+let max_nb_parse = ref 1
 
 exception TODO
 
+let ( let| ) res f = Result.bind res f
 let ( let* ) seq f = seq |> Myseq.flat_map f
 
+let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
+  match lx with
+  | [] -> Result.Ok []
+  | x::lx1 ->
+     let| y = f x in
+     let| ly1 = result_list_bind lx1 f in
+     Result.Ok (y::ly1)
+let ( let+| ) = result_list_bind
+                   
+let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'c) Result.t) : ('b list, 'c) Result.t =
+  let rec aux = function
+  | [] -> invalid_arg "Model2.bind_map_ok: empty list"
+  | [x] -> f x
+  | x::lx1 ->
+     let open Result in
+     match f x, aux lx1 with
+     | Ok ly0, Ok ly1 -> Ok (ly0 @ ly1)
+     | Ok ly0, Error _ -> Ok ly0
+     | Error _, Ok ly1 -> Ok ly1
+     | Error e1, Error _ -> Error e1
+  in
+  let| lx = lx_res in
+  aux lx
+let ( let+|+ ) = result_list_bind_some
+                   
 (** Part 1: grids *)
         
 (* type definitions for data, expressions, templates *)
@@ -761,85 +788,76 @@ let parse_grid ~env t p (g : Grid.t) state =
 	Myseq.return (data, new_state)
      | _ -> Myseq.empty)
     ~env t p g state
-  
+
 exception Parse_failure
 let _ = Printexc.register_printer
           (function
            | Parse_failure -> Some "the grid could not be parsed with the given template"
            | _ -> None)
 
-let read_grid_aux ~(env : data) (t : template) (g : Grid.t)
+type grid_read = data * grid_data * dl
+      
+let read_grid
       ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
-    : (data * grid_data * dl, exn) Result.t = Common.prof "Model2.read_grid_aux" (fun () ->
+      ~(env : data) (t : template) (g : Grid.t)
+    : (grid_read list, exn) Result.t =
+  Common.prof "Model2.read_grid_aux" (fun () ->
   let state = { diff = diff0;
                 delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
                 parts = Grid.segment_by_color g;
                 grid = g } in
-  let _, res =
-    parse_grid ~env t path0 g state
-    |> Myseq.fold_left
-         (fun (dl_min,res) (data,state) ->
-           let ctx = sdl_ctx_of_data data in
-           let dl_data = dl_grid_data ~ctx data in
-           let dl_diff = dl_diff ~ctx state.diff data in
-           let dl_delta = dl_delta ~ctx state.delta in
-           let dl = dl_data +. dl_diff +. dl_delta in
-           (*Printf.printf "grid data: %.1f (%.1f + %.1f + %.1f)\n" dl dl_data dl_diff dl_delta; (* TEST *)
-           pp_data data; print_newline (); (* TEST *) *)
-           if dl < dl_min
-           then dl, Result.Ok (env, {data; diff=state.diff; delta=state.delta}, dl)
-           else dl_min, res)
-         (infinity, Result.Error Parse_failure) in
-  res)
-
-let read_grid ~(env_size : int) ~(env : data) (t : template) (g : Grid.t) : (grid_data, exn) Result.t =
-  let ctx =
-    { env_size;
-      box_height = Grid.max_size;
-      box_width = Grid.max_size } in
-  let dl_m, dl_grid_data = sdl_template ~ctx t path0 in
-  Result.bind
-    (read_grid_aux ~env t g ~dl_grid_data)
-    (fun (_env,gd,_l) -> Result.Ok gd)
+  let parses =
+    let* data, state = parse_grid ~env t path0 g state in
+    let ctx = sdl_ctx_of_data data in
+    let dl_data = dl_grid_data ~ctx data in
+    let dl_diff = dl_diff ~ctx state.diff data in
+    let dl_delta = dl_delta ~ctx state.delta in
+    let dl = dl_data +. dl_diff +. dl_delta in
+    Myseq.return (env, {data; diff=state.diff; delta=state.delta}, dl) in
+  let sorted_parses =
+    parses
+    |> Myseq.to_list
+    |> List.sort
+         (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) in
+  if sorted_parses = []
+  then Result.Error Parse_failure
+  else Result.Ok (Common.sub_list sorted_parses 0 !max_nb_parse))
 							      
 (* result of reading a grid: grid data and description lengths *)
 type grids_read =
   { dl_m : dl;
-    egdls : (data * grid_data * dl) list; (* env, {data, delta}, dl *)
+    reads : grid_read list list; (* outer list over grids, inner list over parses, sorted in increasing DL *)
   }
 
-let grids_read_has_delta (gr : grids_read) : bool =
-  List.for_all
-    (fun (_env, (gd : grid_data), _dl) -> gd.delta <> [])
-    gr.egdls
+let grids_read_has_delta (gsr : grids_read) : bool =
+  gsr.reads
+  |> List.for_all
+       (fun egdls ->
+         egdls
+         |> List.exists
+              (fun (_env, (gd : grid_data), _dl) ->
+                gd.delta <> []))
 
-let dl_template_data (gr : grids_read) : dl triple (* model, data, model+data *) = Common.prof "Model.l_grid_model_data" (fun () ->
+let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *) = Common.prof "Model.l_grid_model_data" (fun () ->
   let dl_data =
     !alpha (* because given training examples are only a sample from a class of grids *)
-    *. Mdl.sum gr.egdls (fun (env,gd,dl) -> dl) in
-  gr.dl_m, dl_data, gr.dl_m +. dl_data)
+    *. Mdl.sum gsr.reads
+         (function
+          | [] -> assert false
+          | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
+  gsr.dl_m, dl_data, gsr.dl_m +. dl_data)
 		    
 let read_grids ~env_size (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
-  let ctx =
-    { env_size;
-      box_height = Grid.max_size;
-      box_width = Grid.max_size } in
-  let dl_m, dl_grid_data = sdl_template ~ctx t path0 in
-  let rec aux = function
-    | [] -> Result.Ok []
-    | (env,g)::rest ->
-       Result.bind
-         (read_grid_aux ~env t g ~dl_grid_data)
-         (fun egdl ->
-           Result.bind
-             (aux rest)
-             (fun egdls ->
-               Result.Ok (egdl::egdls)))
-  in
-  Result.bind
-    (aux egrids)
-    (fun egdls -> Result.Ok {dl_m; egdls})
+  let dl_m, dl_grid_data =
+    sdl_template
+      ~ctx:{env_size; box_height=Grid.max_size; box_width=Grid.max_size}
+      t path0 in
+  let grss_res =
+    let+| env, g = egrids in
+    read_grid ~dl_grid_data ~env t g in
+  let| reads = grss_res in
+  Result.Ok {dl_m; reads}
 
   
 (** TASKS *)
@@ -863,41 +881,48 @@ let pp_model m =
   print_endline "WHERE (Mi)";
   pp_template m.input_pattern; print_newline ()
 
-let apply_model ?(env = data0) (m : model) (g : Grid.t) : (grid_data * Grid.t, exn) Result.t = Common.prof "Model2.apply_model" (fun () ->
-  Result.bind
-    (read_grid ~env_size:0 ~env m.input_pattern g)
-    (fun gdi ->
-      Result.bind
-        (write_grid ~env:gdi.data m.output_template)
-        (fun grid ->
-          Result.Ok (gdi, grid))))
+let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) list, exn) Result.t =
+  Common.prof "Model2.apply_model" (fun () ->
+  let _dl_mi, dl_grid_data =
+    sdl_template
+      ~ctx:{env_size=0; box_height=Grid.max_size; box_width=Grid.max_size}
+      m.input_pattern path0 in    
+  let+|+ _, gdi, _ = read_grid ~dl_grid_data ~env m.input_pattern g in
+  let| grid = write_grid ~env:gdi.data m.output_template in
+  Result.Ok [(gdi, grid)])
 
+let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go : Grid.t) : (grid_read list * grid_read list, exn) Result.t =
+  let| gris = read_grid ~dl_grid_data:dl_gdi ~env m.input_pattern gi in
+  let| gros =
+    let+|+ _, gdi, _ = Result.Ok gris in
+    read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
+  Result.Ok (gris,gros)
 
-let read_grid_pair ~(env : data) (m : model) (gi : Grid.t) (go : Grid.t) : (grid_data * grid_data, exn) Result.t =
-  Result.bind
-    (read_grid ~env_size:0 ~env m.input_pattern gi)
-    (fun gdi ->
-      let env_size = size_of_template m.input_pattern in
-      Result.bind
-        (read_grid ~env_size ~env:gdi.data m.output_template go)
-        (fun gdo -> Result.Ok (gdi,gdo)))
-     
-let read_grid_pairs (m : model) (egis : (data * Grid.t) list) (gos : Grid.t list) : (grids_read * grids_read, exn) Result.t =
+let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids_read * grids_read, exn) Result.t =
   Common.prof "Model2.read_grid_pairs" (fun () ->
   (* takes model, input env+grid, output grids *)
-  Result.bind
-    (read_grids ~env_size:0 m.input_pattern egis)
-    (fun gri ->
-      let env_size =
-        size_of_template m.input_pattern in
-      let egos =
-        List.map2
-	  (fun (envi,gdi,li) go -> gdi.data, go)
-	  gri.egdls gos in
-      Result.bind
-        (read_grids ~env_size m.output_template egos)
-        (fun gro -> Result.Ok (gri, gro))))
+  let dl_mi, dl_gdi =
+    sdl_template
+      ~ctx:{env_size=0; box_height=Grid.max_size; box_width=Grid.max_size}
+      m.input_pattern path0 in    
+  let env_size =
+    size_of_template m.input_pattern in
+  let dl_mo, dl_gdo =
+    sdl_template
+      ~ctx:{env_size; box_height=Grid.max_size; box_width=Grid.max_size}
+      m.output_template path0 in
+  let| griss =
+    let+| {input} = pairs in
+    read_grid ~dl_grid_data:dl_gdi ~env m.input_pattern input in
+  let| gross =
+    let+| gris, {output} = List.combine griss pairs in
+    let+|+ _, gdi, _ = Result.Ok gris in
+    read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
+  let gsri = {dl_m = dl_mi; reads = griss } in
+  let gsro = {dl_m = dl_mo; reads = gross } in
+  Result.Ok (gsri,gsro))
 
+  
 (* template transformations *)
                                                                     
 let rec map_template (f : path -> template -> template) (p : path) (t : template) : template =
@@ -977,14 +1002,14 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          then `Cons (shape, t1)
          else t1)
        path0 t)
-     
-let rec find_defs (t : template) (gr : grids_read) : (path * template) list =
+
+let rec find_defs (t : template) (egdls : grid_read list) : (path * template) list =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some expression over env vars *)
-  assert (gr.egdls <> []);
-  let envs = List.map (fun (env,_,_) -> env) gr.egdls in
-  let datas = List.map (fun (_,gd,_) -> gd.data) gr.egdls in
+  assert (egdls <> []);
+  let envs = List.map (fun (env,_,_) -> env) egdls in
+  let datas = List.map (fun (_,gd,_) -> gd.data) egdls in
   fold_unknowns
     (fun defs p ->
       (* u-values *)
@@ -1065,10 +1090,22 @@ and find_p_expr : kind -> data list -> data list -> expr option =
   | None -> None
   | Some (e,_next) -> Some e
 
-let defs_refinements (t : template) (gr : grids_read) : grid_refinement Myseq.t =
-  match find_defs t gr with
-  | [] -> Myseq.empty
-  | defs -> Myseq.return (RDefs defs)
+let defs_refinements (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
+  grss
+  |> List.map Myseq.from_list
+  |> Myseq.product
+  |> Myseq.filter_map
+       (fun grs ->
+         match find_defs t grs with
+         | [] -> None
+         | defs ->
+            let dl =
+              List.fold_left
+                (fun res (_,_,dl) -> res +. dl)
+                0. grs in
+            Some (dl, RDefs defs))
+  |> Myseq.sort Stdlib.compare
+  |> Myseq.map snd
                     
 let shape_refinements (t : template) : grid_refinement Myseq.t =
   let rec aux depth layers =
@@ -1084,9 +1121,9 @@ let shape_refinements (t : template) : grid_refinement Myseq.t =
   | `Background (_,_,layers) -> aux 0 layers
   | _ -> assert false
                     
-let grid_refinements (t : template) (gr : grids_read) : (grid_refinement * template) Myseq.t =
+let grid_refinements (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.concat
-    [defs_refinements t gr;
+    [defs_refinements t grss;
      shape_refinements t]
   |> Myseq.map
        (fun r -> r, apply_grid_refinement r t)
@@ -1100,15 +1137,16 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
     ~refine_degree
     ~m0:(RGridInit, init_template)
     ~data:(fun (r,m) ->
-	   Result.to_option (read_grids ~env_size m egrids))
-    ~code:(fun (r,m) gr ->
-	   (*pp_grid_model m; print_newline ();*)
-	   pp_grid_refinement r; print_newline ();
-	   let lm, ld, lmd = dl_template_data gr in
-	   Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;
-	   lmd)
-    ~refinements:(fun (r,m) gr ->
-		  grid_refinements m gr)
+      Result.to_option (read_grids ~env_size m egrids))
+    ~code:(fun (r,m) gsr ->
+      let lm, ld, lmd = dl_template_data gsr in
+      lmd)
+    ~refinements:(fun (r,m) gsr dl ->
+      (*pp_grid_model m; print_newline ();*)
+      Printf.printf "%.1f\t" dl;
+      pp_grid_refinement r; print_newline ();
+      (*Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;*)
+      grid_refinements m gsr.reads)
 		     
 
 type refinement =
@@ -1121,30 +1159,34 @@ let pp_refinement = function
   | Rinput r -> print_string "IN  "; pp_grid_refinement r
   | Routput r -> print_string "OUT "; pp_grid_refinement r
 
-let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro : grids_read) : (refinement * model) Myseq.t
+let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   = Common.prof "Model2.model_refinements" (fun () ->
   let on_input =
     match last_r with
     | RInit -> true
     | Rinput _ -> true
     | Routput _ -> false in
+  let on_output = true in
   let ref_defis =
     if on_input
     then
-      defs_refinements m.input_pattern gri
+      defs_refinements m.input_pattern gsri.reads
       |> Myseq.map
            (fun r ->
              Rinput r,
              {m with input_pattern = apply_grid_refinement r m.input_pattern})
     else Myseq.empty in
   let ref_defos =
-    defs_refinements m.output_template gro
-    |> Myseq.map
-         (fun r ->
-           Routput r,
-           {m with output_template = apply_grid_refinement r m.output_template}) in
+    if on_output
+    then
+      defs_refinements m.output_template gsro.reads
+      |> Myseq.map
+           (fun r ->
+             Routput r,
+             {m with output_template = apply_grid_refinement r m.output_template})
+    else Myseq.empty in
   let ref_shapis =
-    if on_input && grids_read_has_delta gri
+    if on_input && grids_read_has_delta gsri
     then
       shape_refinements m.input_pattern
       |> Myseq.map
@@ -1153,7 +1195,7 @@ let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro 
              {m with input_pattern = apply_grid_refinement r m.input_pattern})
     else Myseq.empty in
   let ref_shapos =
-    if grids_read_has_delta gro
+    if on_output && grids_read_has_delta gsro
     then
       shape_refinements m.output_template
       |> Myseq.map
@@ -1165,9 +1207,9 @@ let model_refinements (last_r : refinement) (m : model) (gri : grids_read) (gro 
     [ref_defis; ref_shapis; ref_defos; ref_shapos]
       )
 
-let dl_model_data (gri : grids_read) (gro : grids_read) : dl triple triple =
-  let lmi, ldi, lmdi = dl_template_data gri in
-  let lmo, ldo, lmdo = dl_template_data gro in
+let dl_model_data (gsri : grids_read) (gsro : grids_read) : dl triple triple =
+  let lmi, ldi, lmdi = dl_template_data gsri in
+  let lmo, ldo, lmdo = dl_template_data gsro in
   (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo)
   
 let learn_model
@@ -1178,9 +1220,6 @@ let learn_model
       (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
-  let gis = List.map (fun {input} -> input) pairs in
-  let gos = List.map (fun {output} -> output) pairs in
-  let egis = List.map (fun gi -> data0, gi) gis in
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -1188,24 +1227,26 @@ let learn_model
     ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
       try
-        read_grid_pairs m egis gos
-        |> Result.fold
-             ~ok:(fun gri_gro -> Some gri_gro)
-             ~error:(fun exn -> None)
+        (*print_string "\t\t=> "; pp_refinement r; print_newline ();*)
+        read_grid_pairs m pairs
+        |> Result.to_option
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
 	 print_endline (Printexc.to_string exn);
 	 pp_model m;
 	 raise exn)
-    ~code:(fun (r,m) (gri,gro) ->
+    ~code:(fun (r,m) (gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     dl_model_data gri gro in
-	   if verbose then (
-	     pp_refinement r; print_newline ();
-	     Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
-	     flush stdout);
-	   lmd)
+	     dl_model_data gsri gsro in
+           Printf.printf "\t?? %.1f\t" lmd; pp_refinement r; print_newline ();
+	   (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
+	   flush stdout;
+           lmd)
     ~refinements:
-    (fun (r,m) (gri,gro) ->
-      model_refinements r m gri gro))
+    (fun (r,m) (gsri,gsro) dl ->
+      if verbose then (
+        Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
+	(*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
+	flush stdout);
+      model_refinements r m gsri gsro))

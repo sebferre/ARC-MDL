@@ -7,6 +7,8 @@ module Model = Model2
        
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 20
+let beam_width = ref 1
+let refine_degree = ref 1
 
 (* === printing and checking functions === *)
 
@@ -49,22 +51,16 @@ let print_l_gmd name gr = (* grid model+data DL *)
   let lm, ld, lmd = Model.dl_template_data gr in
   Printf.printf "DL %s: L = %.1f + %.1f = %.1f\n" name lm ld lmd
 		   
-let print_l_md gri gro = (* model+data DL *)
+let print_l_md gsri gsro = (* model+data DL *)
   let (lmi,lmo,lm), (ldi,ldo,ld), (lmdi, lmdo, lmd) =
-    Model.dl_model_data gri gro in
+    Model.dl_model_data gsri gsro in
   Printf.printf "DL input  with Mi: L = %.1f + %.1f = %.1f\n" lmi ldi lmdi;
   Printf.printf "DL output with Mo: L = %.1f + %.1f = %.1f\n" lmo ldo lmdo;
   Printf.printf "DL input+output M: L = %.1f + %.1f = %.1f\n" lm ld lmd;
   ldo
 
 let print_l_task_model name task model =
-  let egis =
-    task.train
-    |> List.map (fun pair -> Model.data0, pair.input) in
-  let gos =
-    task.train
-    |> List.map (fun pair -> pair.output) in
-  Model.read_grid_pairs model egis gos
+  Model.read_grid_pairs model task.train
   |> Result.fold
        ~ok:(fun (gri,gro) -> ignore (print_l_md gri gro))
        ~error:(fun exn -> raise exn)
@@ -88,23 +84,24 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
       ~verbose:(!training)
       ~timeout:(!task_timeout)
       ~init_model
-      ~beam_width:1 ~refine_degree
+      ~beam_width:(!beam_width) ~refine_degree
       task.train (*gis_test gos*) in
   if timed_out && !training then print_endline "TIMEOUT";
   match lm with
   | [] -> assert false
-  | ((_,m), (gri, gro), l)::_ ->
+  | ((_,m), (gsri, gsro), l)::_ ->
      print_endline "\n# Learned model:";
      Model.pp_model m;
      print_newline ();
-     let ldo = print_l_md gri gro in
+     let ldo = print_l_md gsri gsro in
      
      print_endline "\n# Input/output grids data (train)";
-     let egdlios = List.combine gri.egdls gro.egdls in
+     let grioss = List.combine gsri.reads gsro.reads in
      let _, nb_ex_train, nb_correct_train =
        List.fold_left2
-	 (fun (i,nb_ex, nb_correct)
-	      ((_envi,gdi,dli),(envo,gdo,dlo)) {output} ->
+	 (fun (i,nb_ex, nb_correct) (gris,gros) {output} ->
+           let envi, gdi, dli = List.hd gris in
+           let envo, gdo, dlo = List.hd gros in
 	  if !training then (Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli);
 	  if !training then (Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo);
           let score, label =
@@ -129,7 +126,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
 	  nb_ex+1,
 	  nb_correct + score)
 	 (1,0,0)
-	 egdlios task.train in
+	 grioss task.train in
      
      print_endline "# Checking test instances\n";
      let _, nb_ex_test, nb_correct_test =
@@ -140,13 +137,19 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
 	    Grid.pp_parts input parts;*)
 	  let score, label =
 	    match Model.apply_model ~env:Model.data0 m input with
-	    | Result.Ok (gdi, derived) ->
-               if !training then Model.pp_grid_data gdi;
-	       ( match Grid.diff derived output with
-		 | None -> 1, "SUCCESS"
-		 | Some diff ->
-                    if !training then print_grid_diff ~grid:output ~derived_grid:derived diff;
-                    0, "FAILURE" )
+	    | Result.Ok gdi_derived_s ->
+               List.fold_left
+                 (fun (score,label) (gdi, derived) ->
+                   if score=1 then score, label
+                   else (
+                     if !training then Model.pp_grid_data gdi;
+	             ( match Grid.diff derived output with
+		       | None -> 1, "SUCCESS"
+		       | Some diff ->
+                          if !training then print_grid_diff ~grid:output ~derived_grid:derived diff;
+                          0, "FAILURE" )
+                 ))
+                 (0,"FAILURE") gdi_derived_s
 	    | Result.Error msg -> 0, "ERROR" in
 	  Printf.printf "TEST %s/%d: %d (%s)\n" name i score label;
 	  i+1, nb_ex+1, nb_correct+score)
@@ -193,9 +196,7 @@ let maybe_train_names =
     "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
     "b94a9452.json"; (* pb: inner rectangle not compressive, test input breaks train invariant (grid size) *)
     "a79310a0.json"; (* pb: need to consider 2nd best parsing, test input breaks train invariant (mask) *)
-    "aabf363d.json"; (* pb: miss point not compressive enough, test input breaks train invariant (shape size) *)
     "bdad9b1f.json"; (* pb: parsing ambiguity *)
-    "e48d4e1a.json"; (* pb: parsing ambiguity, 3 rectangles, should be OK with color and position *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
     "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity, need for collections, should be OK with position *)
     "694f12f3.json"; (* pb: need for expression bias, and ordering by size *)
@@ -305,7 +306,7 @@ class checker_model ~(get_init_model : string -> Model.model) ~refine_degree : c
 
 let checker_learning = new checker_model
                          ~get_init_model:(fun _ -> Model.init_model)
-                         ~refine_degree:1
+                         ~refine_degree:(!refine_degree)
 
 let checker_apply = new checker_model
                          ~get_init_model:(fun name -> List.assoc name task_model)
