@@ -221,23 +221,29 @@ let task_model =
   [ "ba97ae07.json",
     {input_pattern =
        `Background (`U, `Color Grid.black,
-                    `Cons (`Rectangle (`U,`U,`U,`U),
-                           `Cons (`Rectangle (`U,`U,`U,`U),
-                                  `Nil)));
+                    `Insert (`Nil,
+                             `Rectangle (`U,`U,`U,`U),
+                             `Insert (`Nil,
+                                      `Rectangle (`U,`U,`U,`U),
+                                      `Nil)));
      output_template =
        `Background (`E (`Var [`Size]), `E (`Var [`Color]),
-                    `Cons (`E (`Var [`Rest; `First]),
-                           `Cons (`E (`Var [`First]),
-                                  `Nil))) };
+                    `Insert (`Nil,
+                             `E (`Var [`Layers; `Below; `Shape]),
+                             `Insert (`Nil,
+                                      `E (`Var [`Layers; `Shape]),
+                                      `Nil))) };
     "1cf80156.json",
     {input_pattern =
        `Background (`U, `Color Grid.black,
-                    `Cons (`Rectangle (`U,`U,`U,`U),
-                           `Nil));
+                    `Insert (`Nil,
+                             `Rectangle (`U,`U,`U,`U),
+                             `Nil));
      output_template =
-       `Background (`E (`Var [`First; `Size]), `E (`Var [`Rest; `Color]),
-                    `Cons (`Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`First; `Size]), `E (`Var [`First; `Color]), `E (`Var [`First; `Mask])),
-                           `Nil))}; 
+       `Background (`E (`Var [`Layers; `Shape; `Size]), `E (`Var [`Layers; `Below; `Color]),
+                    `Insert (`Nil,
+                             `Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`Layers; `Shape; `Size]), `E (`Var [`Layers; `Shape; `Color]), `E (`Var [`Layers; `Shape; `Mask])),
+                             `Nil))}; 
   ]
   
 (* === main === *)
