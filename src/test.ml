@@ -8,7 +8,7 @@ module Model = Model2
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 20
 let beam_width = ref 1
-let refine_degree = ref 1
+let refine_degree = ref 10
 
 (* === printing and checking functions === *)
 
@@ -183,7 +183,7 @@ let solved_train_names =
     "e9afcf9a.json"; (* two one-color rows, interleaving them *)
     "6f8cd79b.json"; (* black grid => add cyan border *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9) *)
-    "25ff71a9.json"; (* shaped moving 1 pixel down *)
+    "25ff71a9.json"; (* shape moving 1 pixel down *)
     "1cf80156.json"; (* crop on shape *)
     "aabf363d.json"; (* shape and point => same shape but with point color *)
     "b1948b0a.json"; (* any bitmap, changing background color *)

@@ -2,7 +2,7 @@
 open Task
 
 let alpha = ref 10.
-let max_nb_parse = ref 1
+let max_nb_parse = ref 3
 
 exception TODO
 
@@ -204,11 +204,10 @@ let find_patt (find : path -> 'a -> 'a option)
   | `Below::p, `Insert (above,shape,below) -> find p below
   | _ -> None
 
-let rec find_data (p : path) (d : data) : data option =
-  Common.prof "Model2.find_data" (fun () ->
+let rec find_data (p : path) (d : data) : data option = (* QUICK *)
   match p with
   | [] -> Some d
-  | _ -> find_patt find_data p d)
+  | _ -> find_patt find_data p d
 
 let rec find_template (p : path) (t : template) : template option =
   Common.prof "Model2.find_template" (fun () ->
@@ -284,7 +283,7 @@ let path_kind (p : path) : kind =
   | [] -> `Grid
 
 
-let unify (ld : data list) : template (* without expression *) =
+let unify (ld : data list) : template (* without expression *) = (* QUICK *)
   let rec aux t d =
     match t, d with
     | `U, _ -> t
@@ -310,10 +309,9 @@ let unify (ld : data list) : template (* without expression *) =
 
     | _ -> `U
   in
-  Common.prof "Model2.unify" (fun () ->
   match ld with
   | [] -> assert false
-  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1)
+  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1
         
 (* description lengths *)
 
@@ -510,7 +508,7 @@ let _ =
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr e)
      | _ -> None)
 
-let eval_patt (eval : 'a -> data) : 'a patt -> data = function
+let eval_patt (eval : 'a -> 'b) : 'a patt -> 'b patt = function
   | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
   | `Vec (i,j) -> `Vec (eval i, eval j)
   | `Point (pos,color) -> `Point (eval pos, eval color)
@@ -519,28 +517,33 @@ let eval_patt (eval : 'a -> data) : 'a patt -> data = function
   | `Insert (above,shape,below) -> `Insert (eval above, eval shape, eval below)
   | `Background (size,color,layers) -> `Background (eval size, eval color, eval layers)
                        
-let rec eval_expr ~(env : data) (e : expr) : data =
+let rec eval_expr_gen ~(lookup : path -> data option) (e : expr) : data = (* QUICK *)
   match e with
   | `Var p ->
-     (match find_data p env with
+     (match lookup p with
       | Some d -> d
       | None -> raise (Unbound_Var p))
-  | #patt as p -> eval_patt (eval_expr ~env) p
+  | #patt as p -> eval_patt (eval_expr_gen ~lookup) p
   | `Plus (e1,e2) ->
-     (match eval_expr ~env e1, eval_expr ~env e2 with
+     (match eval_expr_gen ~lookup e1, eval_expr_gen ~lookup e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
       | _ -> raise (Invalid_expr e))
   | `Minus (e1,e2) ->
-     (match eval_expr ~env e1, eval_expr ~env e2 with
+     (match eval_expr_gen ~lookup e1, eval_expr_gen ~lookup e2 with
       | `Int i1, `Int i2 -> `Int (i1 - i2)
       | _ -> raise (Invalid_expr e))
   | `If (e0,e1,e2) ->
-     (match eval_expr ~env e0 with
+     (match eval_expr_gen ~lookup e0 with
       | `Bool b ->
          if b
-         then eval_expr ~env e1
-         else eval_expr ~env e2
+         then eval_expr_gen ~lookup e1
+         else eval_expr_gen ~lookup e2
       | _ -> raise (Invalid_expr e0))
+
+let rec eval_expr ~(env : data) (e : expr) : data =
+  eval_expr_gen
+    ~lookup:(fun p -> find_data p env)
+    e
 
 exception Unbound_U
 let _ = Printexc.register_printer
@@ -850,14 +853,14 @@ let grids_read_has_delta (gsr : grids_read) : bool =
               (fun (_env, (gd : grid_data), _dl) ->
                 gd.delta <> []))
 
-let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *) = Common.prof "Model.l_grid_model_data" (fun () ->
+let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *) =
   let dl_data =
     !alpha (* because given training examples are only a sample from a class of grids *)
     *. Mdl.sum gsr.reads
          (function
           | [] -> assert false
           | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
-  gsr.dl_m, dl_data, gsr.dl_m +. dl_data)
+  gsr.dl_m, dl_data, gsr.dl_m +. dl_data
 		    
 let read_grids ~env_size (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m, dl_grid_data =
@@ -907,6 +910,8 @@ let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go 
   let| gros =
     let+|+ _, gdi, _ = Result.Ok gris in
     read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
+  let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
+  let gros = Common.sub_list gros 0 !max_nb_parse in
   Result.Ok (gris,gros)
 
 let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids_read * grids_read, exn) Result.t =
@@ -929,6 +934,12 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
     let+| gris, {output} = List.combine griss pairs in
     let+|+ _, gdi, _ = Result.Ok gris in
     read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
+  let gross = (* keeping only max_nb_parse best parses to avoid combinatorial *)
+    List.map
+      (fun gros ->
+        let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
+        Common.sub_list gros 0 !max_nb_parse)
+      gross in
   let gsri = {dl_m = dl_mi; reads = griss } in
   let gsro = {dl_m = dl_mo; reads = gross } in
   Result.Ok (gsri,gsro))
@@ -1016,42 +1027,99 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          else t1)
        path0 t)
 
-let rec find_defs (t : template) (egdls : grid_read list) : (path * template) list =
+
+let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
+  Common.prof "Model2.defs_refinements" (fun () ->
+  assert (grss <> []);
+  let u_vars =
+    fold_unknowns (fun res p -> p::res) [] path0 t in
+  let val_matrix =
+    List.map
+      (fun grs ->
+        List.map
+          (fun (env,gd,dl) ->
+            let env_val =
+              List.map (fun p ->
+                  match find_data p env with
+                  | Some d -> p, d
+                  | None -> assert false)
+                env_vars in
+            let u_val =
+              List.map (fun p ->
+                  match find_data p gd.data with
+                  | Some d -> p, d
+                  | None -> assert false)
+                u_vars in
+            env_val, u_val, dl)
+          grs)
+      grss in
+  val_matrix
+  |> List.map Myseq.from_list
+  |> Myseq.product
+  |> Myseq.filter_map
+       (fun alignment ->
+         match find_defs ~env_vars ~u_vars alignment with
+         | [] -> None
+         | defs ->
+            let dl =
+              List.fold_left
+                (fun res (_,_,dl) -> res +. dl)
+                0. alignment in
+            Some (dl, RDefs defs))
+  |> Myseq.sort Stdlib.compare
+  |> Myseq.map snd)
+and find_defs_transpose ~env_vars ~u_vars alignment =
+  Common.prof "Model2.find_defs_transpose" (fun () ->
+(* assuming env_val and u_val have variables in same order *)
+(* true  by construction above *)
+  match alignment with
+  | [] ->
+     List.map (fun p -> p, []) env_vars,
+     List.map (fun p -> p, []) u_vars
+  | (env_val,u_val,dl)::l1 ->
+     let env_vals1, u_vals1 =
+       find_defs_transpose ~env_vars ~u_vars l1 in
+     let env_vals =
+       List.map2
+         (fun (p,v) (p1,lv1) ->
+           assert (p = p1);
+           (p, v::lv1))
+         env_val env_vals1 in
+     let u_vals =
+       List.map2
+         (fun (p,v) (p1,lv1) ->
+           assert (p = p1);
+           (p, v::lv1))
+         u_val u_vals1 in
+     env_vals, u_vals)
+and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) list =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
-     by some expression over env vars *)
-  assert (egdls <> []);
-  let envs = List.map (fun (env,_,_) -> env) egdls in
-  let datas = List.map (fun (_,gd,_) -> gd.data) egdls in
-  fold_unknowns
-    (fun defs p ->
-      (* u-values *)
-      let p_ds =
+     by some pattern or expression over env vars *)
+  (*let map_env_vals, map_u_vals =
+    find_defs_transpose ~env_vars ~u_vars alignment in*)
+  List.fold_left
+    (fun defs u ->
+      (*let u_vals = try List.assoc u map_u_vals with _ -> assert false in *)
+      let u_vals =
         List.map
-          (fun data ->
-            match find_data p data with
-            | Some d -> d
-            | None -> pp_path p; assert false)
-          datas in
-      let t_p_ds = unify p_ds in
-      let e_opt = find_p_expr (path_kind p) p_ds envs in
-      match t_p_ds, e_opt with
-      | _, Some (`Var _ as e) -> (p, `E e)::defs
-      | `U, Some e -> (p, `E e)::defs
+          (fun (_,u_val,_) -> try List.assoc u u_val with _ -> assert false)
+          alignment in
+      let t_vals = unify u_vals in
+      let e_opt =
+        find_u_expr ~env_vars (path_kind u) u_vals alignment in
+      match t_vals, e_opt with
+      | _, Some (`Var _ as e) -> (u, `E e)::defs
+      | `U, Some e -> (u, `E e)::defs
       | `U, None -> defs
-      | _ -> (p, t_p_ds)::defs)
-    [] path0 t)
-and find_p_expr : kind -> data list -> data list -> expr option =
-  fun k p_ds envs ->
-  (* env variables *)
-  let env0 = List.hd envs in
-  let lv = (* should be only paths from template defining envs *)
-    fold_data
-      (fun res v d -> v::res)
-      [] path0 env0 in
-  let seq_v : path Myseq.t = Myseq.from_list lv in
-  (* lists of candidate expressions *)
-  let le1 : expr Myseq.t =    
+      | _ -> (u, t_vals)::defs)
+    [] u_vars)
+and find_u_expr ~env_vars k u_vals alignment =
+  Common.prof "Model2.find_u_expr" (fun () ->
+  (* TODO: rather use map_env_vals rather than alignment *)
+  (* requires to define eval_expr on lists of env *)
+  let seq_v = Myseq.from_list env_vars in
+  let le1 : expr Myseq.t =
     let* v = seq_v in
     if path_kind v = k
     then Myseq.return (`Var v)
@@ -1062,12 +1130,12 @@ and find_p_expr : kind -> data list -> data list -> expr option =
        let* v = seq_v in
        if path_kind v = `Int
        then
-	 let* c = Myseq.range 1 3 in
-	 Myseq.cons
-	   (`Plus (`Var v, `Int c))
+         let* i = Myseq.range 1 3 in
+         Myseq.cons
+	   (`Plus (`Var v, `Int i))
 	   (Myseq.cons
-	      (`Minus (`Var v, `Int c))
-	      Myseq.empty)
+	      (`Minus (`Var v, `Int i))
+              Myseq.empty)
        else Myseq.empty
     | _ -> Myseq.empty in
   let le3 : expr Myseq.t =
@@ -1090,37 +1158,28 @@ and find_p_expr : kind -> data list -> data list -> expr option =
   let le = Myseq.concat [le1; le2; le3] in
   (* finding the first expression defining 'u' *)
   match
+    Common.prof "Model2.find_p_expr/eval_expr" (fun () ->
     le
     |> Myseq.find_map
 	 (fun e ->
            try
-	     let e_ds = List.map (fun env -> eval_expr ~env e) envs in
-	     if e_ds = p_ds
+	     let e_vals =
+               List.map
+                 (fun (env_val,_,_) ->
+                   eval_expr_gen
+                     ~lookup:(fun v -> List.assoc_opt v env_val)
+                     e)
+                 alignment in
+	     if e_vals = u_vals
 	     then Some e
 	     else None
-           with Unbound_Var _ -> (* variable in env0 not defined through all instances *)
-             None) with
+           with Unbound_Var _ -> assert false)) with
   | None -> None
-  | Some (e,_next) -> Some e
+  | Some (e,_next) -> Some e)
 
-let defs_refinements (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
-  grss
-  |> List.map Myseq.from_list
-  |> Myseq.product
-  |> Myseq.filter_map
-       (fun grs ->
-         match find_defs t grs with
-         | [] -> None
-         | defs ->
-            let dl =
-              List.fold_left
-                (fun res (_,_,dl) -> res +. dl)
-                0. grs in
-            Some (dl, RDefs defs))
-  |> Myseq.sort Stdlib.compare
-  |> Myseq.map snd
-                    
+
 let shape_refinements (t : template) : grid_refinement Myseq.t =
+  Common.prof "Model2.shape_refinements" (fun () ->
   let rec aux p = function
     | `Nil ->
        Myseq.cons (RShape (p, `Point (`U, `U)))
@@ -1134,18 +1193,19 @@ let shape_refinements (t : template) : grid_refinement Myseq.t =
   in
   match t with
   | `Background (_,_,layers) -> aux [`Layers] layers
-  | _ -> assert false
+  | _ -> assert false)
                     
-let grid_refinements (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
+let grid_refinements ~(env_vars : path list) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.concat
-    [defs_refinements t grss;
+    [defs_refinements ~env_vars t grss;
      shape_refinements t]
   |> Myseq.map
        (fun r -> r, apply_grid_refinement r t)
 
-let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
+let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_vars
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
+  let env_size = List.length env_vars in
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -1161,7 +1221,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_size
       Printf.printf "%.1f\t" dl;
       pp_grid_refinement r; print_newline ();
       (*Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;*)
-      grid_refinements m gsr.reads)
+      grid_refinements ~env_vars m gsr.reads)
 		     
 
 type refinement =
@@ -1176,16 +1236,20 @@ let pp_refinement = function
 
 let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   = Common.prof "Model2.model_refinements" (fun () ->
-  let on_input =
-    match last_r with
+  let on_input = true
+    (*match last_r with
     | RInit -> true
     | Rinput _ -> true
-    | Routput _ -> false in
+    | Routput _ -> false*) in
   let on_output = true in
+  let envo_vars =
+    fold_template
+      (fun res p _ -> p::res)
+      [] path0 m.input_pattern in
   let ref_defis =
     if on_input
     then
-      defs_refinements m.input_pattern gsri.reads
+      defs_refinements ~env_vars:[] m.input_pattern gsri.reads
       |> Myseq.map
            (fun r ->
              Rinput r,
@@ -1194,7 +1258,7 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
   let ref_defos =
     if on_output
     then
-      defs_refinements m.output_template gsro.reads
+      defs_refinements ~env_vars:envo_vars m.output_template gsro.reads
       |> Myseq.map
            (fun r ->
              Routput r,
@@ -1223,9 +1287,10 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
       )
 
 let dl_model_data (gsri : grids_read) (gsro : grids_read) : dl triple triple =
+  Common.prof "Model2.dl_model_data" (fun () ->
   let lmi, ldi, lmdi = dl_template_data gsri in
   let lmo, ldo, lmdo = dl_template_data gsro in
-  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo)
+  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo))
   
 let learn_model
       ?(verbose = true)
