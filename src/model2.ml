@@ -435,7 +435,8 @@ let sdl_patt
      assert false
 
 let rec sdl_data ~(ctx : sdl_ctx) (d : data) (p : path) : staged_dl =
-  sdl_patt sdl_data ~ctx d p
+  Mdl.Code.usage 0.6 (* NOTE: to align with sdl_template on patterns *)
+  +! sdl_patt sdl_data ~ctx d p
 let dl_data ~ctx (d : data) (p : path) : dl =
   fst (sdl_data ~ctx d p)
 
@@ -911,6 +912,7 @@ let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go 
     let+|+ _, gdi, _ = Result.Ok gris in
     read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
   let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
+  (* TODO: should probably sort by dli + dlo rather than dlo only (joint DL) *)
   let gros = Common.sub_list gros 0 !max_nb_parse in
   Result.Ok (gris,gros)
 
@@ -982,18 +984,14 @@ let rec map_template (f : path -> template -> template) (p : path) (t : template
 
 type grid_refinement =
   | RGridInit
-  | RDefs of (path * template) list
+  | RDef of path * template
   | RShape of path * template (* shape *)
 
 let pp_grid_refinement = function
   | RGridInit -> ()
-  | RDefs defs ->
-     print_string "DEFS:";
-     List.iter
-       (fun (p,t) ->
-         print_string "  "; pp_path p;
-         print_string "="; pp_template t)
-       defs
+  | RDef (p,t) ->
+     print_string "DEF: "; pp_path p;
+     print_string "="; pp_template t
   | RShape (path,sh) ->
      print_string "SHAPE at ";
      pp_path path;
@@ -1004,15 +1002,12 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
   Common.prof "Model2.apply_grid_refinement" (fun () ->
   match r with
   | RGridInit -> t
-  | RDefs defs ->
+  | RDef (modified_p,new_t) ->
      map_template
        (fun p1 t1 ->
-         match t1 with
-         | `U ->
-            (match List.assoc_opt p1 defs with
-             | Some t1' -> t1'
-             | None -> t1)
-         | _ -> t1)
+         if p1 = modified_p && t1 = `U
+         then new_t
+         else t1)
        path0 t
   | RShape (path,shape) ->
      map_template
@@ -1056,18 +1051,14 @@ let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_rea
   val_matrix
   |> List.map Myseq.from_list
   |> Myseq.product
-  |> Myseq.filter_map
-       (fun alignment ->
-         match find_defs ~env_vars ~u_vars alignment with
-         | [] -> None
-         | defs ->
-            let dl =
-              List.fold_left
-                (fun res (_,_,dl) -> res +. dl)
-                0. alignment in
-            Some (dl, RDefs defs))
-  |> Myseq.sort Stdlib.compare
-  |> Myseq.map snd)
+  |> Myseq.fold_left
+       (fun defs alignment ->
+         Bintree.union defs (find_defs ~env_vars ~u_vars alignment))
+       Bintree.empty
+  |> Bintree.elements
+  |> Myseq.from_list
+  (* TODO: find appropriate sorting of defs: syntactic criteria, type criteria, DL criteria *)
+  |> Myseq.map (fun (p,t) -> RDef (p,t)))
 and find_defs_transpose ~env_vars ~u_vars alignment =
   Common.prof "Model2.find_defs_transpose" (fun () ->
 (* assuming env_val and u_val have variables in same order *)
@@ -1092,7 +1083,7 @@ and find_defs_transpose ~env_vars ~u_vars alignment =
            (p, v::lv1))
          u_val u_vals1 in
      env_vals, u_vals)
-and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) list =
+and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) Bintree.t =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some pattern or expression over env vars *)
@@ -1100,83 +1091,80 @@ and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (pat
     find_defs_transpose ~env_vars ~u_vars alignment in*)
   List.fold_left
     (fun defs u ->
-      (*let u_vals = try List.assoc u map_u_vals with _ -> assert false in *)
       let u_vals =
         List.map
           (fun (_,u_val,_) -> try List.assoc u u_val with _ -> assert false)
           alignment in
-      let t_vals = unify u_vals in
-      let e_opt =
-        find_u_expr ~env_vars (path_kind u) u_vals alignment in
-      match t_vals, e_opt with
-      | _, Some (`Var _ as e) -> (u, `E e)::defs
-      | `U, Some e -> (u, `E e)::defs
-      | `U, None -> defs
-      | _ -> (u, t_vals)::defs)
-    [] u_vars)
-and find_u_expr ~env_vars k u_vals alignment =
+      let defs =
+        let t_vals = unify u_vals in
+        if t_vals = `U
+        then defs
+        else Bintree.add (u, t_vals) defs in
+      let defs =
+        let exprs = find_u_expr ~env_vars (path_kind u) u_vals alignment in
+        List.fold_left
+          (fun defs e -> Bintree.add (u, `E e) defs)
+          defs exprs in
+      defs)
+    Bintree.empty u_vars)
+and find_u_expr ~env_vars k u_vals alignment : expr list =
   Common.prof "Model2.find_u_expr" (fun () ->
   (* TODO: rather use map_env_vals rather than alignment *)
   (* requires to define eval_expr on lists of env *)
-  let seq_v = Myseq.from_list env_vars in
-  let le1 : expr Myseq.t =
-    let* v = seq_v in
-    if path_kind v = k
-    then Myseq.return (`Var v)
-    else Myseq.empty in
-  let le2 : expr Myseq.t =
+  let le = [] in
+  let le =
+    List.fold_left
+      (fun le v ->
+        if path_kind v = k
+        then `Var v :: le
+        else le)
+      le env_vars in
+  let le =
     match k with
     | `Int ->
-       let* v = seq_v in
-       if path_kind v = `Int
-       then
-         let* i = Myseq.range 1 3 in
-         Myseq.cons
-	   (`Plus (`Var v, `Int i))
-	   (Myseq.cons
-	      (`Minus (`Var v, `Int i))
-              Myseq.empty)
-       else Myseq.empty
-    | _ -> Myseq.empty in
-  let le3 : expr Myseq.t =
+       List.fold_left
+         (fun le v ->
+           if path_kind v = `Int
+           then
+             Common.fold_for
+               (fun i le ->
+	         `Plus (`Var v, `Int i)
+                 :: `Minus (`Var v, `Int i)
+                 :: le)
+               1 3 le
+           else le)
+         le env_vars
+    | _ -> le in
+  let le =
     match k with
     | `Int ->
-       let* v1 = seq_v in
-       if path_kind v1 = `Int
-       then
-	 let* v2 = seq_v in
-         if path_kind v2 = `Int
-         then
-	   Myseq.cons
-	     (`Minus (`Var v1, `Var v2))
-	     (Myseq.cons
-		(`Plus (`Var v1, `Var v2))
-		Myseq.empty)
-         else Myseq.empty
-       else Myseq.empty
-    | _ -> Myseq.empty in
-  let le = Myseq.concat [le1; le2; le3] in
-  (* finding the first expression defining 'u' *)
-  match
-    Common.prof "Model2.find_p_expr/eval_expr" (fun () ->
-    le
-    |> Myseq.find_map
-	 (fun e ->
-           try
-	     let e_vals =
-               List.map
-                 (fun (env_val,_,_) ->
-                   eval_expr_gen
-                     ~lookup:(fun v -> List.assoc_opt v env_val)
-                     e)
-                 alignment in
-	     if e_vals = u_vals
-	     then Some e
-	     else None
-           with Unbound_Var _ -> assert false)) with
-  | None -> None
-  | Some (e,_next) -> Some e)
-
+       List.fold_left
+         (fun le v1 ->
+           if path_kind v1 = `Int
+           then
+             List.fold_left
+               (fun le v2 ->
+                 if path_kind v2 = `Int
+                 then
+	           `Minus (`Var v1, `Var v2)
+		   :: `Plus (`Var v1, `Var v2)
+                   :: le
+                 else le)
+               le env_vars
+           else le)
+         le env_vars
+    | _ -> le in
+  List.filter
+    (fun e ->
+      let e_vals =
+        List.map
+          (fun (env_val,_,_) ->
+            eval_expr_gen
+              ~lookup:(fun v -> List.assoc_opt v env_val)
+              e)
+          alignment in
+      e_vals = u_vals)
+    le)
 
 let shape_refinements (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->
@@ -1319,7 +1307,7 @@ let learn_model
     ~code:(fun (r,m) (gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     dl_model_data gsri gsro in
-           Printf.printf "\t?? %.1f\t" lmd; pp_refinement r; print_newline ();
+           (*Printf.printf "\t?? %.1f\t" lmd; pp_refinement r; print_newline ();*)
 	   (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
 	   flush stdout;
            lmd)
