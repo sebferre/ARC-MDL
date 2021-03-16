@@ -2,7 +2,8 @@
 open Task
 
 let alpha = ref 10.
-let max_nb_parse = ref 3
+let max_nb_parse = ref 3 (* max nb of selected grid parses *)
+let max_nb_diff = ref 2 (* max nb of allowed diffs in grid parse *)
 
 exception TODO
 
@@ -23,12 +24,13 @@ let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'
   | [] -> invalid_arg "Model2.bind_map_ok: empty list"
   | [x] -> f x
   | x::lx1 ->
+     Common.prof "Model2.result_list_bind_some/merge" (fun () ->
      let open Result in
      match f x, aux lx1 with
      | Ok ly0, Ok ly1 -> Ok (ly0 @ ly1)
      | Ok ly0, Error _ -> Ok ly0
      | Error _, Ok ly1 -> Ok ly1
-     | Error e1, Error _ -> Error e1
+     | Error e1, Error _ -> Error e1)
   in
   let| lx = lx_res in
   aux lx
@@ -612,12 +614,17 @@ let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Re
 (* parsing grids with templates *)
 
 type parse_state =
-  { diff: diff; (* paths to data that differ from template patterns *)
+  { nb_diff: int; (* list length of diff *)
+    diff: diff; (* paths to data that differ from template patterns *)
     delta: delta; (* pixels that are not explained by the template *)
     mask: Grid.Mask.t; (* remaining part of the grid to be explained *)
     parts: Grid.part list; (* remaining parts that can be used *)
     grid: Grid.t; (* the grid to parse *)
   }
+
+let add_diff path state =
+  { state with nb_diff = 1 + state.nb_diff;
+               diff = path::state.diff }
 
 let rec parse_template
       ~(parse_u : (data * parse_state) Myseq.t)
@@ -637,7 +644,9 @@ let parse_bool ~env t p (b : bool) state =
     ~parse_patt:(function
       | `Bool b0 ->
          if b=b0 then Myseq.return (`Bool b, state)
-         else Myseq.return (`Bool b, {state with diff = p::state.diff})
+         else if state.nb_diff < !max_nb_diff then
+           Myseq.return (`Bool b, add_diff p state)
+         else Myseq.empty
       | _ -> Myseq.empty)
     ~env t p b state
 
@@ -647,7 +656,9 @@ let parse_int ~env t p (i : int) state =
     ~parse_patt:(function
       | `Int i0 ->
          if i=i0 then Myseq.return (`Int i, state)
-         else Myseq.return (`Int i, {state with diff = p::state.diff})
+         else if state.nb_diff < !max_nb_diff then
+           Myseq.return (`Int i, add_diff p state)
+         else Myseq.empty
       | _ -> Myseq.empty)
     ~env t p i state
 
@@ -657,7 +668,9 @@ let parse_color ~env t p (c : Grid.color) state =
     ~parse_patt:(function
       | `Color c0 ->
          if c=c0 then Myseq.return (`Color c, state)
-         else Myseq.return (`Color c, {state with diff = p::state.diff})
+         else if state.nb_diff < !max_nb_diff then
+           Myseq.return (`Color c, add_diff p state)
+         else Myseq.empty
       | _ -> Myseq.empty)
     ~env t p c state
   
@@ -667,7 +680,9 @@ let parse_mask ~env t p (m : Grid.Mask.t option) state =
     ~parse_patt:(function
       | `Mask m0 ->
          if m=m0 then Myseq.return (`Mask m, state)
-         else Myseq.return (`Mask m, {state with diff = p::state.diff})
+         else if state.nb_diff < !max_nb_diff then
+           Myseq.return (`Mask m, add_diff p state)
+         else Myseq.empty
       | _ -> Myseq.empty)
     ~env t p m state
 
@@ -682,13 +697,13 @@ let parse_vec ~env t p (vi, vj : int * int) state =
       | _ -> Myseq.empty)
     ~env t p (vi,vj) state
   
-let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t =
+let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t = (* QUICK *)
   seq_shapes
   |> Myseq.map
        (fun (shape, occ_delta, occ_mask) ->
          let new_mask = Grid.Mask.diff state.mask occ_mask in
          let new_state =
-           { diff = state.diff;
+           { state with
              delta = occ_delta @ state.delta;
 	     mask = new_mask;
 	     parts =
@@ -696,8 +711,7 @@ let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mas
 		 (fun p ->
 		   not (Grid.Mask.is_empty
 			  (Grid.Mask.inter p.Grid.pixels new_mask)))
-		 state.parts;
-             grid = state.grid } in
+		 state.parts } in
 	 (shape, new_state))
     
 let parse_shape =
@@ -716,6 +730,7 @@ let parse_shape =
            rect, rect.delta, rect.mask)
     |> shape_postprocess state in
   fun ~env t p (parts : Grid.part list) state ->
+  Common.prof "Model2.parse_shape" (fun () ->
   parse_template
     ~parse_u:
     (Myseq.concat
@@ -748,7 +763,7 @@ let parse_shape =
          let* dmask, state = parse_mask ~env mask (p ++ `Mask) r.rmask state in
          Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
       | _ -> Myseq.empty)
-    ~env t p parts state
+    ~env t p parts state)
 
 let rec parse_layers ~env t p (g : Grid.t) state =
   parse_template
@@ -767,6 +782,7 @@ let rec parse_layers ~env t p (g : Grid.t) state =
     ~env t p g state
   
 let parse_grid ~env t p (g : Grid.t) state =
+  Common.prof "Model2.parse_grid" (fun () ->
   parse_template
     ~parse_u:(Myseq.empty)
     ~parse_patt:
@@ -795,14 +811,13 @@ let parse_grid ~env t p (g : Grid.t) state =
 	      new_delta := (i,j, g.matrix.{i,j})::!new_delta)
 	  state.mask;
         let new_state =
-          { diff = state.diff;
+          { state with
             delta = (!new_delta);
 	    mask = Grid.Mask.empty g.height g.width;
-	    parts = [];
-            grid = state.grid } in
+	    parts = [] } in
 	Myseq.return (data, new_state)
      | _ -> Myseq.empty)
-    ~env t p g state
+    ~env t p g state)
 
 exception Parse_failure
 let _ = Printexc.register_printer
@@ -816,8 +831,9 @@ let read_grid
       ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
       ~(env : data) (t : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
-  Common.prof "Model2.read_grid_aux" (fun () ->
-  let state = { diff = diff0;
+  Common.prof "Model2.read_grid" (fun () ->
+  let state = { nb_diff = 0;
+                diff = diff0;
                 delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
                 parts = Grid.segment_by_color g;
@@ -830,14 +846,15 @@ let read_grid
     let dl_delta = dl_delta ~ctx state.delta in
     let dl = dl_data +. dl_diff +. dl_delta in
     Myseq.return (env, {data; diff=state.diff; delta=state.delta}, dl) in
-  let sorted_parses =
+  let l_sorted_parses =
     parses
-    |> Myseq.to_list
+    |> Myseq.to_rev_list
     |> List.sort
          (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) in
-  if sorted_parses = []
+  (*Printf.printf "### %d ###\n" (List.length l_sorted_parses);*)
+  if l_sorted_parses = []
   then Result.Error Parse_failure
-  else Result.Ok (Common.sub_list sorted_parses 0 !max_nb_parse))
+  else Result.Ok (Common.sub_list l_sorted_parses 0 !max_nb_parse))
 							      
 (* result of reading a grid: grid data and description lengths *)
 type grids_read =
@@ -937,11 +954,12 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
     let+|+ _, gdi, _ = Result.Ok gris in
     read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
   let gross = (* keeping only max_nb_parse best parses to avoid combinatorial *)
+    Common.prof "Model2.read_grid_pairs/sort_limit" (fun () ->
     List.map
       (fun gros ->
         let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
         Common.sub_list gros 0 !max_nb_parse)
-      gross in
+      gross) in
   let gsri = {dl_m = dl_mi; reads = griss } in
   let gsro = {dl_m = dl_mo; reads = gross } in
   Result.Ok (gsri,gsro))

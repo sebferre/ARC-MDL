@@ -371,6 +371,7 @@ let pp_parts (g : t) (ps : part list) : unit =
   pp_grids (g :: List.map (part_as_grid g) ps)
 
 let merge_parts (ps : part list) : part =
+  Common.prof "Grid.merge_parts" (fun () ->
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1
@@ -386,7 +387,7 @@ let merge_parts (ps : part list) : part =
 	 (p1.mini, p1.maxi, p1.minj, p1.maxj, p1.nb_pixels)
 	 ps1 in
      { mini; maxi; minj; maxj; color = p1.color;
-       nb_pixels; pixels = (!pixels) }
+       nb_pixels; pixels = (!pixels) })
 			      
 module PixelsMerge =
   struct
@@ -490,7 +491,8 @@ module Skyline = (* min-skyline of coordinates *)
     let iter = List.iter
   end	 
     
-let split_part (part : part) : part list = (*Common.prof "Grid.split_part" (fun () ->*)
+let split_part (part : part) : part list =
+  Common.prof "Grid.split_part" (fun () ->
   let mask = part.pixels in
   let h, w = Mask.height mask, Mask.width mask in
   let arr : Skyline.t array array = Array.make_matrix (h+1) (w+1) Skyline.empty in
@@ -548,9 +550,10 @@ let split_part (part : part) : part list = (*Common.prof "Grid.split_part" (fun 
       )
     done
   done;
-  !res	       
+  !res)
   
-let segment_by_color (g : t) : part list = Common.prof "Grid.segment_by_color" (fun () ->
+let segment_by_color (g : t) : part list =
+  Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
   let fm : (int * int, color * PixelsMerge.t) Find_merge.hashtbl =
     new Find_merge.hashtbl
@@ -661,59 +664,74 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   print_endline "RECTANGLES:";
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
-		   
-let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = Common.prof "Grid.rectangles_of_part" (fun () ->
-  let h, w = p.maxi-p.mini+1, p.maxj-p.minj+1 in
-  let _area = h * w in
-  let valid_area = ref 0 in
-  let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
-  let delta = ref [] in
-  for i = p.mini to p.maxi do
-    for j = p.minj to p.maxj do
-      let c = g.matrix.{i,j} in
-      if Mask.mem i j mask && c <> p.color
-      then delta := (i,j,c)::!delta
-      else (
-	r_mask := Mask.add_in_place i j !r_mask;
-	incr valid_area )
-    done
-  done;
-  let res = [] in
-  let res = (* adding rectangle with rmask, without delta *)
-    if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
-    then
-      let m =
-	List.fold_left
-	  (fun m (i,j,c) ->
-	   Mask.remove (i - p.mini) (j - p.minj) m)
-	  (Mask.full h w)
-	  !delta in
-      { height = p.maxi-p.mini+1;
-	width = p.maxj-p.minj+1;
-	offset_i = p.mini;
-	offset_j = p.minj;
-	color = p.color;
-	mask = (!r_mask);
-	rmask = Some m;
-	delta = [] } :: res
-    else res in
-  let res = (* adding full rectangle with delta *)
-    let _valid_area = !valid_area + List.length !delta in
-    let mask = List.fold_left (fun mask (i,j,c) -> Mask.add_in_place i j mask) (!r_mask) !delta in
-    if true (* valid_area >= 1 * area / 2 *)
-    then
-      { height = p.maxi-p.mini+1;
-	width = p.maxj-p.minj+1;
-	offset_i = p.mini;
-	offset_j = p.minj;
-	color = p.color;
-	mask;
-	rmask = None;
-	delta = (!delta) } :: res
-    else res in
-  res)
+let rectangles_of_part =
+ let ht : ('a, rectangle list) Hashtbl.t = Hashtbl.create 103 in
+ let aux (multipart, g, mask, p) : rectangle list =
+   Common.prof "Grid.rectangles_of_part" (fun () ->
+   let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
+   let _area = h * w in
+   let valid_area = ref 0 in
+   let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
+   let delta = ref [] in
+   for i = p.mini to p.maxi do
+     for j = p.minj to p.maxj do
+       let c = g.matrix.{i,j} in
+       if Mask.mem i j mask && c <> p_color
+       then delta := (i,j,c)::!delta
+       else (
+	 r_mask := Mask.add_in_place i j !r_mask;
+	 incr valid_area )
+     done
+   done;
+   let res = [] in
+   let res = (* adding rectangle with rmask, without delta *)
+     if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
+     then
+       let m =
+	 List.fold_left
+	   (fun m (i,j,c) ->
+	     Mask.remove (i - p.mini) (j - p.minj) m)
+	   (Mask.full h w)
+	   !delta in
+       { height = p.maxi-p.mini+1;
+	 width = p.maxj-p.minj+1;
+	 offset_i = p.mini;
+	 offset_j = p.minj;
+	 color = p.color;
+	 mask = (!r_mask);
+	 rmask = Some m;
+	 delta = [] } :: res
+     else res in
+   let res = (* adding full rectangle with delta *)
+     let _valid_area = !valid_area + List.length !delta in
+     let mask =
+       List.fold_left
+         (fun mask (i,j,c) -> Mask.add_in_place i j mask)
+         (!r_mask) !delta in
+     if true (* valid_area >= 1 * area / 2 *)
+     then
+       { height = p.maxi-p.mini+1;
+	 width = p.maxj-p.minj+1;
+	 offset_i = p.mini;
+	 offset_j = p.minj;
+	 color = p.color;
+	 mask;
+	 rmask = None;
+	 delta = (!delta) } :: res
+     else res in
+   res)
+ in
+ fun ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) ->
+ let key = (multipart, g, mask,p) in
+ match Hashtbl.find_opt ht key with
+ | Some res -> res
+ | None ->
+    let res = aux key in
+    Hashtbl.add ht key res;
+    res
       
-let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list = Common.prof "Grid.rectangles" (fun () ->
+let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
+  Common.prof "Grid.rectangles" (fun () ->
   let h_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
     (* grouping same-color parts spanning same rows *)
     Common.group_by
