@@ -6,9 +6,9 @@ module Model = Model2
 (* === parameters === *)
        
 let training = ref true (* should be set to false on evaluation set *)
-let task_timeout = ref 20
+let task_timeout = ref 60
 let beam_width = ref 1
-let refine_degree = ref 10
+let refine_degree = ref 20
 
 (* === printing and checking functions === *)
 
@@ -191,11 +191,11 @@ let solved_train_names =
 
 let maybe_train_names =
   [
+    "a79310a0.json"; (* pb: should prefer vars to csts, [need to consider 2nd best parsing, test input breaks train invariant (mask)] *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
     "5521c0d9.json"; (* pb: need bias on defs, local is better, collection/map would help too [three rectangles moving up by their height] *)
     "496994bd.json"; (* pb: keeping integrity of objects, breaking train invariant *)
     "b94a9452.json"; (* pb: inner rectangle not compressive, test input breaks train invariant (grid size) *)
-    "a79310a0.json"; (* pb: need to consider 2nd best parsing, test input breaks train invariant (mask) *)
     "bdad9b1f.json"; (* pb: parsing ambiguity *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
     "1bfc4729.json"; (* pb: two points, which is which, parse ambiguity, need for collections, should be OK with position *)
@@ -214,6 +214,7 @@ let maybe_train_names =
     "d5d6de2d.json"; (* pb: collection, map *)
     "4522001f.json"; (* pb: invariance par rotation *)
     "28bf18c6.json"; (* pb: size = 2*size1, consider input shape as output refinement *)
+    "25d8a9c8.json"; (* pb: collection *)
   ]
 
 let task_model =

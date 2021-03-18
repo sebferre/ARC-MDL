@@ -370,8 +370,7 @@ let pp_parts (g : t) (ps : part list) : unit =
   print_newline ();*)
   pp_grids (g :: List.map (part_as_grid g) ps)
 
-let merge_parts (ps : part list) : part =
-  Common.prof "Grid.merge_parts" (fun () ->
+let merge_parts (ps : part list) : part = (* QUICK *)
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1
@@ -387,7 +386,7 @@ let merge_parts (ps : part list) : part =
 	 (p1.mini, p1.maxi, p1.minj, p1.maxj, p1.nb_pixels)
 	 ps1 in
      { mini; maxi; minj; maxj; color = p1.color;
-       nb_pixels; pixels = (!pixels) })
+       nb_pixels; pixels = (!pixels) }
 			      
 module PixelsMerge =
   struct
@@ -732,16 +731,16 @@ let rectangles_of_part =
       
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
   Common.prof "Grid.rectangles" (fun () ->
-  let h_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
+  let h_sets =
     (* grouping same-color parts spanning same rows *)
     Common.group_by
       (fun part -> part.mini, part.maxi, part.color)
-      parts) in
-  let v_sets = Common.prof "Grid.rectangles/group_by" (fun () ->
+      parts in
+  let v_sets =
     (* grouping same-color parts spanning same cols *)
     Common.group_by
       (fun part -> part.minj, part.maxj, part.color)
-      parts) in
+      parts in
   let res = [] in
   let res =
     List.fold_left
