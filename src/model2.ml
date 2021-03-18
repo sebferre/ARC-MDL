@@ -6,8 +6,8 @@ let def_param name v to_str =
   ref v
    
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = ref 3 (* max nb of selected grid parses *)
-let max_nb_diff = ref 2 (* max nb of allowed diffs in grid parse *)
+let max_nb_parse = def_param "max_nb_parse" 3 string_of_int (* max nb of selected grid parses *)
+let max_nb_diff = def_param "max_nb_diff" 2 string_of_int (* max nb of allowed diffs in grid parse *)
 
 exception TODO
 
@@ -837,6 +837,14 @@ let _ = Printexc.register_printer
 
 type grid_read = data * grid_data * dl
 
+let compare_grid_read =
+  fun (_,gd1,dl1) (_,gd2,dl2) ->
+  Stdlib.compare (dl1,gd1) (dl2,gd2)
+let sort_grid_reads : grid_read list -> grid_read list =
+  fun grs ->
+  Common.prof "Model2.sort_grid_reads" (fun () ->
+  List.sort_uniq compare_grid_read grs)
+               
 let read_grid
       ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
       ~(env : data) (t : template) (g : Grid.t)
@@ -859,8 +867,7 @@ let read_grid
   let l_sorted_parses =
     parses
     |> Myseq.to_rev_list
-    |> List.sort
-         (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) in
+    |> sort_grid_reads in
   (*Printf.printf "### %d ###\n" (List.length l_sorted_parses);*)
   if l_sorted_parses = []
   then Result.Error Parse_failure
@@ -954,7 +961,7 @@ let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go 
   let| gros =
     let+|+ _, gdi, _ = Result.Ok gris in
     read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
-  let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
+  let gros = sort_grid_reads gros in
   (* TODO: should probably sort by dli + dlo rather than dlo only (joint DL) *)
   let gros = Common.sub_list gros 0 !max_nb_parse in
   Result.Ok (gris,gros)
@@ -983,7 +990,7 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
     Common.prof "Model2.read_grid_pairs/sort_limit" (fun () ->
     List.map
       (fun gros ->
-        let gros = List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2) gros in
+        let gros = sort_grid_reads gros in
         Common.sub_list gros 0 !max_nb_parse)
       gross) in
   let gsri = {dl_m = dl_mi; reads = griss } in

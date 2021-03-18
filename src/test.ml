@@ -4,9 +4,11 @@ open Task
 module Model = Model2
 
 (* === parameters === *)
-       
+(* TODO: ensure that used param values are output in log *)
+             
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 60
+                 
 let beam_width = ref 1
 let refine_degree = ref 20
 
