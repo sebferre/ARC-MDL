@@ -180,14 +180,14 @@ let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
 let solved_train_names =
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above *)
-    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise *)
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them *)
     "6f8cd79b.json"; (* black grid => add cyan border *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9) *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), pb: long runtime *)
     "25ff71a9.json"; (* shape moving 1 pixel down *)
     "1cf80156.json"; (* crop on shape *)
-    "aabf363d.json"; (* shape and point => same shape but with point color *)
+    "aabf363d.json"; (* shape and point => same shape but with point color, pb: overlooking point *)
     "b1948b0a.json"; (* any bitmap, changing background color *)
   ]
 

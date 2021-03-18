@@ -448,6 +448,7 @@ let dl_data ~ctx (d : data) (p : path) : dl =
   fst (sdl_data ~ctx d p)
 
 let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
+  (* TODO: make it kind-dependent, including coding vars *)
   match e with
   | `Var x ->
      Mdl.Code.usage 0.5
@@ -1056,7 +1057,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
   | RDef (modified_p,new_t) ->
      map_template
        (fun p1 t1 ->
-         if p1 = modified_p && t1 = `U
+         if p1 = modified_p (* not only `U *)
          then new_t
          else t1)
        path0 t
@@ -1073,12 +1074,18 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
          else t1)
        path0 t)
 
+let definable_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape]
 
 let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
   let u_vars =
-    fold_unknowns (fun res p -> p::res) [] path0 t in
+    fold_template
+      (fun res p _ ->
+        if List.mem (path_kind p) definable_kinds
+        then p::res
+        else res)
+      [] path0 t in
   let val_matrix =
     List.map
       (fun grs ->
