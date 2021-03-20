@@ -8,6 +8,8 @@ module Model = Model2
              
 let training = ref true (* should be set to false on evaluation set *)
 let task_timeout = ref 60
+let learning_verbose = ref false
+let grid_viz = ref false
                  
 let beam_width = ref 1
 let refine_degree = ref 20
@@ -22,7 +24,7 @@ let print_grid_diff ~grid ~derived_grid (diff : Grid.diff) : unit =
   | Grid_diff_pixels {height; width; pixels} ->
      Printf.printf "! %d wrong pixels (generated / expected)\n"
        (List.length pixels);
-     Grid.pp_grids [derived_grid; grid]
+     if !grid_viz then Grid.pp_grids [derived_grid; grid]
                  
 (*
 let print_grid_data_mismatch grid_name grid ~data ~parsed_data : unit =
@@ -80,10 +82,12 @@ let print_measures count ms =
     ms;
   print_newline ()
 				 
-let print_learned_model ~init_model ~refine_degree name task : measures = Common.prof "Test.print_learned_model" (fun () ->
+let print_learned_model ~init_model ~refine_degree name task : measures =
+  Common.prof "Test.print_learned_model" (fun () ->
   let lm, timed_out =
     Model.learn_model
-      ~verbose:(!training)
+      ~verbose:(!training && !learning_verbose)
+      ~grid_viz:(!grid_viz)
       ~timeout:(!task_timeout)
       ~init_model
       ~beam_width:(!beam_width) ~refine_degree
@@ -101,17 +105,22 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
      let grioss = List.combine gsri.reads gsro.reads in
      let _, nb_ex_train, nb_correct_train =
        List.fold_left2
-	 (fun (i,nb_ex, nb_correct) (gris,gros) {output} ->
+	 (fun (i,nb_ex, nb_correct) (gris,gros) {input; output} ->
            let envi, gdi, dli = List.hd gris in
            let envo, gdo, dlo = List.hd gros in
-	  if !training then (Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli);
+	   if !training then (
+             Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
+             if !grid_viz then Grid.pp_grids [Model.grid_of_data gdi.data]
+           );
 	  if !training then (Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo);
           let score, label =
             Model.write_grid ~env:envo m.output_template
             |> Result.fold
                  ~ok:(fun derived_grid ->
                    match Grid.diff derived_grid output with
-                   | None -> 1, "SUCCESS"
+                   | None ->
+                      if !grid_viz then Grid.pp_grids [derived_grid];
+                      1, "SUCCESS"
                    | Some diff ->
                       if !training then print_grid_diff ~grid:output ~derived_grid diff;
                       0, "FAILURE")
@@ -134,9 +143,6 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
      let _, nb_ex_test, nb_correct_test =
        List.fold_left
 	 (fun (i,nb_ex,nb_correct) {input; output} ->
-	  (*Grid.pp_grids [input; output];
-	    let parts = Grid.segment_by_color input in
-	    Grid.pp_parts input parts;*)
 	  let score, label =
 	    match Model.apply_model ~env:Model.data0 m input with
 	    | Result.Ok gdi_derived_s ->
@@ -144,9 +150,16 @@ let print_learned_model ~init_model ~refine_degree name task : measures = Common
                  (fun (score,label) (gdi, derived) ->
                    if score=1 then score, label
                    else (
-                     if !training then Model.pp_grid_data gdi;
+                     if !training then (
+                       Model.pp_grid_data gdi;
+                       if !grid_viz then Grid.pp_grids [Model2.grid_of_data gdi.data]
+                     );
 	             ( match Grid.diff derived output with
-		       | None -> 1, "SUCCESS"
+		       | None ->
+                          if !training && !grid_viz then (
+                            print_endline "output grid";
+                            Grid.pp_grids [derived]);
+                          1, "SUCCESS"
 		       | Some diff ->
                           if !training then print_grid_diff ~grid:output ~derived_grid:derived diff;
                           0, "FAILURE" )
@@ -189,7 +202,7 @@ let solved_train_names = (* 11 tasks *)
     "1cf80156.json"; (* crop on shape, runtime=3.6s *)
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=6.8s *)
     "b1948b0a.json"; (* any bitmap, changing background color, runtime=1.4s *)
-    "bdad9b1f.json"; (* runtime=70s *)
+    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=70s *)
   ]
 
 let maybe_train_names =
@@ -287,6 +300,11 @@ class checker_model ~(get_init_model : string -> Model.model) ~refine_degree : c
     val mutable sum_ms = []
 
     method process_task name task =
+      if !grid_viz then (
+        print_endline "\n# train grid pairs";
+        List.iter
+          (fun {input; output} -> Grid.pp_grids [input; output])
+          task.train );
       let init_model =
         try get_init_model name
         with Not_found -> Model.init_model in
@@ -374,7 +392,9 @@ chosen set (default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
+     "-viz", Set grid_viz, "Show train grids, as understood by the model";
+     "-v", Set learning_verbose, "Verbose output for the learning phase";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-apply|-segment] [-alpha N] [-timeout N]";	      		       
+    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz] [-v]";	      		       
   main_tasks !dir !names !checker

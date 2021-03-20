@@ -147,9 +147,9 @@ let pp_path p = print_string (string_of_path p)
 let rec string_of_ilist (string : 'a -> string) : 'a ilist -> string = function
   | `Nil -> ""
   | `Insert (left,elt,right) ->
-     "[ " ^ string_of_ilist string left
+     " [ " ^ string_of_ilist string left
      ^ "\n  " ^ string elt
-     ^ string_of_ilist string right ^ " ]"
+     ^ string_of_ilist string right ^ " ] "
               
 let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
   | `Bool b -> if b then "true" else "false"
@@ -172,7 +172,7 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
   | `Background (size,color,layers) ->
      "a background with size " ^ string size
      ^ " and color " ^ string color
-     ^ " and layers " ^ string_of_ilist string layers
+     ^ " and layers" ^ string_of_ilist string layers
 
 let rec string_of_data : data -> string = function
   | #patt as patt -> string_of_patt string_of_data patt
@@ -317,6 +317,19 @@ let rec path_kind (p : path) : kind option =
   | (`Pos | `Size)::_ -> Some `Vec
   | `Layers _::_ -> Some `Shape
   | [] -> Some `Grid
+
+let rec default_data_of_path (p : path) : data =
+  match List.rev p with
+  | (`I | `J)::`Pos::_ -> `Int 0
+  | (`I | `J)::`Size::_ -> `Int 2
+  | `Color::[] -> `Color Grid.black
+  | `Color::`Layers _::_ -> `Color Grid.blue
+  | `Mask::_ -> `Mask None
+  | `Pos::_ -> `Vec (`Int 0, `Int 0)
+  | `Size::_ -> `Vec (`Int 2, `Int 2)
+  | `Layers _::_ -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.blue, `Mask None)
+  | [] -> `Background (`Vec (`Int Grid.max_size, `Int Grid.max_size), `Color Grid.black, `Nil)
+  | _ -> assert false
 
 let unify (ld : data list) : template (* without expression *) = (* QUICK *)
   let rec aux t d =
@@ -542,40 +555,53 @@ let _ =
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr e)
      | _ -> None)
 
-let eval_patt (eval : 'a -> 'b) : 'a patt -> 'b patt = function
+let eval_patt (eval : path -> 'a -> 'b) (p : path) : 'a patt -> 'b patt = function
   | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
-  | `Vec (i,j) -> `Vec (eval i, eval j)
-  | `Point (pos,color) -> `Point (eval pos, eval color)
-  | `Rectangle (pos,size,color,mask) -> `Rectangle (eval pos, eval size, eval color, eval mask)
-  | `Background (size,color,layers) -> `Background (eval size, eval color, map_ilist (fun _ e -> eval e) [] layers)
+  | `Vec (i,j) ->
+     `Vec (eval (p ++ `I) i,
+           eval (p ++ `J) j)
+  | `Point (pos,color) ->
+     `Point (eval (p ++ `Pos) pos,
+             eval (p ++ `Color) color)
+  | `Rectangle (pos,size,color,mask) ->
+     `Rectangle (eval (p ++ `Pos) pos,
+                 eval (p ++ `Size) size,
+                 eval (p ++ `Color) color,
+                 eval (p ++ `Mask) mask)
+  | `Background (size,color,layers) ->
+     `Background (eval (p ++ `Size) size,
+                  eval (p ++ `Color) color,
+                  map_ilist
+                    (fun lp shape -> eval (p ++ `Layers lp) shape)
+                    [] layers)
                        
-let rec eval_expr_gen ~(lookup : path -> data option) (e : expr) : data = (* QUICK *)
+let rec eval_expr_gen ~(lookup : path -> data option) (p : path) (e : expr) : data = (* QUICK *)
   match e with
-  | `Var p ->
-     (match lookup p with
+  | `Var v ->
+     (match lookup v with
       | Some d -> d
-      | None -> raise (Unbound_Var p))
-  | #patt as p -> eval_patt (eval_expr_gen ~lookup) p
+      | None -> raise (Unbound_Var v))
+  | #patt as patt -> eval_patt (eval_expr_gen ~lookup) p patt
   | `Plus (e1,e2) ->
-     (match eval_expr_gen ~lookup e1, eval_expr_gen ~lookup e2 with
+     (match eval_expr_gen ~lookup p e1, eval_expr_gen ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
       | _ -> raise (Invalid_expr e))
   | `Minus (e1,e2) ->
-     (match eval_expr_gen ~lookup e1, eval_expr_gen ~lookup e2 with
+     (match eval_expr_gen ~lookup p e1, eval_expr_gen ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 - i2)
       | _ -> raise (Invalid_expr e))
   | `If (e0,e1,e2) ->
-     (match eval_expr_gen ~lookup e0 with
+     (match eval_expr_gen ~lookup [] e0 with
       | `Bool b ->
          if b
-         then eval_expr_gen ~lookup e1
-         else eval_expr_gen ~lookup e2
+         then eval_expr_gen ~lookup p e1
+         else eval_expr_gen ~lookup p e2
       | _ -> raise (Invalid_expr e0))
 
-let rec eval_expr ~(env : data) (e : expr) : data =
+let rec eval_expr ~(env : data) (p : path) (e : expr) : data =
   eval_expr_gen
     ~lookup:(fun p -> find_data p env)
-    e
+    p e
 
 exception Unbound_U
 let _ = Printexc.register_printer
@@ -583,20 +609,27 @@ let _ = Printexc.register_printer
            | Unbound_U -> Some "unexpected unknown when evaluating template"
            | _ -> None)
                      
-let rec eval_template ~(env : data) (t : template) : data =
+let rec eval_template ?(tentative = false) ~(env : data) (p : path) (t : template) : data =
   Common.prof "Model2.eval_template" (fun () ->
   match t with
-  | `U -> raise Unbound_U
-  | #patt as p -> eval_patt (eval_template ~env) p
-  | `E e -> eval_expr ~env e)
+  | `U ->
+     if tentative
+     then
+       match find_data p env with (* tentative copy from env *)
+       | Some d -> d
+       | None -> default_data_of_path p (* default data *)
+     else raise Unbound_U
+  | #patt as patt -> eval_patt (eval_template ~tentative ~env) p patt
+  | `E e -> eval_expr ~env p e)
 
 
 (* grid generation from data and template *)
 
-exception Invalid_data_as_grid
+exception Invalid_data_as_grid of data
 let _ = Printexc.register_printer
           (function
-           | Invalid_data_as_grid -> Some "the data does not represent a valid grid specification"
+           | Invalid_data_as_grid d ->
+              Some ("the data does not represent a valid grid specification:\n" ^ string_of_data d)
            | _ -> None)
           
 let rec grid_of_data : data -> Grid.t = function
@@ -604,7 +637,7 @@ let rec grid_of_data : data -> Grid.t = function
      let g = Grid.make h w c in
      draw_layers g l;
      g
-  | _ -> raise Invalid_data_as_grid
+  | d -> raise (Invalid_data_as_grid d)
 and draw_layers g = function
   | `Nil -> ()
   | `Insert (above, shape, below) ->
@@ -625,12 +658,12 @@ and draw_shape g = function
 	 then Grid.set_pixel g i j c
        done;
      done
-  | _ -> raise Invalid_data_as_grid
+  | d -> raise (Invalid_data_as_grid d)
 
 
 let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
   try
-    let d = eval_template ~env t in
+    let d = eval_template ~tentative:true ~env [] t in
     let g = grid_of_data d in
     List.iter
       (fun (i,j,c) -> Grid.set_pixel g i j c)
@@ -677,7 +710,7 @@ let rec parse_template
   match t with
   | `U -> parse_u
   | `E e ->
-     let d0 = eval_expr ~env e in
+     let d0 = eval_expr ~env p e in
      parse_template ~parse_u ~parse_patt ~env (d0 :> template) p x state
   | #patt as patt -> parse_patt patt
 
@@ -1196,13 +1229,13 @@ and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (pat
         then defs
         else Bintree.add (u, t_vals) defs in
       let defs =
-        let exprs = find_u_expr ~env_vars k u_vals alignment in
+        let exprs = find_u_expr ~env_vars u k u_vals alignment in
         List.fold_left
           (fun defs e -> Bintree.add (u, `E e) defs)
           defs exprs in
       defs)
     Bintree.empty u_vars)
-and find_u_expr ~env_vars k u_vals alignment : expr list =
+and find_u_expr ~env_vars u_path u_kind u_vals alignment : expr list =
   Common.prof "Model2.find_u_expr" (fun () ->
   (* TODO: rather use map_env_vals rather than alignment *)
   (* requires to define eval_expr on lists of env *)
@@ -1210,12 +1243,12 @@ and find_u_expr ~env_vars k u_vals alignment : expr list =
   let le =
     List.fold_left
       (fun le v ->
-        if path_kind v = Some k
+        if path_kind v = Some u_kind
         then `Var v :: le
         else le)
       le env_vars in
   let le =
-    match k with
+    match u_kind with
     | `Int ->
        List.fold_left
          (fun le v ->
@@ -1231,7 +1264,7 @@ and find_u_expr ~env_vars k u_vals alignment : expr list =
          le env_vars
     | _ -> le in
   let le =
-    match k with
+    match u_kind with
     | `Int ->
        List.fold_left
          (fun le v1 ->
@@ -1256,7 +1289,7 @@ and find_u_expr ~env_vars k u_vals alignment : expr list =
           (fun (env_val,_,_) ->
             eval_expr_gen
               ~lookup:(fun v -> List.assoc_opt v env_val)
-              e)
+              u_path e)
           alignment in
       e_vals = u_vals)
     le)
@@ -1376,7 +1409,8 @@ let dl_model_data (gsri : grids_read) (gsro : grids_read) : dl triple triple =
   (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo))
   
 let learn_model
-      ?(verbose = true)
+      ?(verbose = false)
+      ?(grid_viz = false)
       ~timeout
       ~init_model
       ~beam_width ~refine_degree
@@ -1402,15 +1436,35 @@ let learn_model
     ~code:(fun (r,m) (gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     dl_model_data gsri gsro in
-           (*Printf.printf "\t?? %.1f\t" lmd; pp_refinement r; print_newline ();*)
+           if verbose then (
+             Printf.printf "\t?? %.1f\t" lmd;
+             pp_refinement r; print_newline ()
+           );
 	   (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
 	   flush stdout;
            lmd)
     ~refinements:
     (fun (r,m) (gsri,gsro) dl ->
-      if verbose then (
-        Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
+      Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
+      if grid_viz then (
+        let input_grids =
+          List.map
+            (function
+             | (_,gdi,_)::_ -> grid_of_data gdi.data
+             | _ -> assert false)
+            gsri.reads in
+        let output_grids =
+          List.map
+            (function
+             | (envo,_,_)::_ ->
+                Result.get_ok (write_grid ~env:envo m.output_template)
+             | _ -> assert false)
+            gsro.reads in
+        print_newline ();
+        List.iter2
+          (fun gi go -> Grid.pp_grids [gi; go])
+          input_grids output_grids;
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
 	(*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
-	flush stdout);
+        flush stdout);
       model_refinements r m gsri gsro))
