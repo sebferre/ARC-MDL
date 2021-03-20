@@ -232,9 +232,9 @@ let task_model =
      output_template =
        `Background (`E (`Var [`Size]), `E (`Var [`Color]),
                     `Insert (`Nil,
-                             `E (`Var [`Layers; `Right; `Elt]),
+                             `E (`Var [`Layers [`Right]]),
                              `Insert (`Nil,
-                                      `E (`Var [`Layers; `Elt]),
+                                      `E (`Var [`Layers []]),
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
@@ -243,9 +243,9 @@ let task_model =
                              `Rectangle (`U,`U,`U,`U),
                              `Nil));
      output_template =
-       `Background (`E (`Var [`Layers; `Elt; `Size]), `E (`Var [`Layers; `Right; `Color]),
+       `Background (`E (`Var [`Layers []; `Size]), `E (`Var [`Layers[`Right]; `Color]),
                     `Insert (`Nil,
-                             `Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`Layers; `Elt; `Size]), `E (`Var [`Layers; `Elt; `Color]), `E (`Var [`Layers; `Elt; `Mask])),
+                             `Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`Layers []; `Size]), `E (`Var [`Layers []; `Color]), `E (`Var [`Layers []; `Mask])),
                              `Nil))}; 
   ]
   
