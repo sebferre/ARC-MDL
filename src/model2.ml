@@ -105,6 +105,9 @@ type template =
   | template patt
   | `E of expr ]
 
+type signature = (kind * path list) list (* map from kinds to path lists *)
+let signature0 = []
+  
 type diff = path list (* paths to data parts differing from a template *)
 let diff0 = []
           
@@ -130,6 +133,15 @@ let string_of_ilist_field : ilist_field -> string = function
 let string_of_ilist_path : ilist_path -> string =
   fun lp -> "0" ^ String.concat "" (List.map string_of_ilist_field lp)
 
+let string_of_kind : kind -> string = function
+  | `Bool -> "bool"
+  | `Int -> "int"
+  | `Color -> "color"
+  | `Mask -> "mask"
+  | `Vec -> "vector"
+  | `Shape -> "shape"
+  | `Grid -> "grid"
+          
 let string_of_field : field -> string = function
   | `I -> "i"
   | `J -> "j"
@@ -199,7 +211,16 @@ let rec string_of_template : template -> string = function
   | `E e -> "{" ^ string_of_expr e ^ "}"
 
 let pp_template t = print_string (string_of_template t)
-                                         
+
+let string_of_signature (sg : signature) : string =
+  String.concat "\n"
+    (List.map
+       (fun (k,ps) ->
+         string_of_kind k ^ ": "
+         ^ String.concat ", "
+             (List.map string_of_path ps))
+       sg)
+                  
 let pp_diff diff =
   diff
   |> List.iter (fun p1 -> print_string "  "; pp_path p1)
@@ -309,15 +330,36 @@ let size_of_data (d : data) : int =
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ -> res+1) 0 path0 t
 
-let rec path_kind (p : path) : kind option =
+let rec path_kind (p : path) : kind =
   match List.rev p with
-  | (`I | `J)::_ -> Some `Int
-  | `Color::_ -> Some `Color
-  | `Mask::_ -> Some `Mask
-  | (`Pos | `Size)::_ -> Some `Vec
-  | `Layers _::_ -> Some `Shape
-  | [] -> Some `Grid
+  | (`I | `J)::_ -> `Int
+  | `Color::_ -> `Color
+  | `Mask::_ -> `Mask
+  | (`Pos | `Size)::_ -> `Vec
+  | `Layers _::_ -> `Shape
+  | [] -> `Grid
 
+let signature_of_template (t : template) : signature =
+  let ht = Hashtbl.create 13 in
+  let () =
+    fold_template
+      (fun () p _ ->
+        let k = path_kind p in
+        let ps0 =
+          match Hashtbl.find_opt ht k with
+          | None -> []
+          | Some ps -> ps in
+        Hashtbl.replace ht k (p::ps0))
+      () path0 t in
+  Hashtbl.fold
+    (fun k ps res -> (k,ps)::res)
+    ht []
+
+let signature_of_kind (sg : signature) (k : kind) : path list =
+  match List.assoc_opt k sg with
+  | Some ps -> ps
+  | None -> []
+  
 let rec default_data_of_path (p : path) : data =
   match List.rev p with
   | (`I | `J)::`Pos::_ -> `Int 0
@@ -389,11 +431,11 @@ let dl_mask : Grid.Mask.t option -> dl =
 
      
 type sdl_ctx =
-  { env_size : int;
+  { env_sig : signature;
     box_height : int;
     box_width : int }
 let sdl_ctx0 =
-  { env_size = 0;
+  { env_sig = signature0;
     box_height = Grid.max_size;
     box_width = Grid.max_size }
   
@@ -407,7 +449,7 @@ let sdl_ctx_of_data (d : data) : sdl_ctx =
     match find_data [`Size; `J] d with
     | Some (`Int j) -> j
     | _ -> Grid.max_size in
-  { env_size = 0; box_height; box_width }
+  { env_sig = signature0; box_height; box_width }
       
 
 type staged_dl (* sdl *) = Mdl.bits * (ctx:sdl_ctx -> data -> Mdl.bits)
@@ -484,8 +526,13 @@ let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
   (* TODO: make it kind-dependent, including coding vars *)
   match e with
   | `Var x ->
+     let env_size =
+       let k = path_kind x in
+       match List.assoc_opt k ctx.env_sig with
+       | Some ps -> List.length ps
+       | None -> 0 in (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
      Mdl.Code.usage 0.5
-     +. Mdl.Code.uniform ctx.env_size, (* identifying one env var *)
+     +. (if env_size = 0 then Stdlib.infinity else Mdl.Code.uniform env_size), (* identifying one env var *)
      staged0
   | #patt as patt ->
      Mdl.Code.usage 0.25
@@ -505,13 +552,13 @@ let dl_expr ~ctx e p =
 let rec sdl_template ~(ctx : sdl_ctx) (t : template) (p : path) : staged_dl =
   match t with
   | `U ->
-     Mdl.Code.usage 0.2,
+     Mdl.Code.usage 0.1,
      (fun ~ctx d ->
        match find_data p d with
        | Some d1 -> dl_data ~ctx d1 p
        | None -> assert false)
   | `E e ->
-     Mdl.Code.usage 0.4 +. dl_expr ~ctx e p,
+     Mdl.Code.usage 0.5 +. dl_expr ~ctx e p,
      staged0
   | #patt as patt ->
      dl_patt_as_template
@@ -967,10 +1014,10 @@ let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *
           | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
   gsr.dl_m, dl_data, gsr.dl_m +. dl_data
 		    
-let read_grids ~env_size (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
+let read_grids ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m, dl_grid_data =
     sdl_template
-      ~ctx:{env_size; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       t path0 in
   let grss_res =
     let+| env, g = egrids in
@@ -1004,7 +1051,7 @@ let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) 
   Common.prof "Model2.apply_model" (fun () ->
   let _dl_mi, dl_grid_data =
     sdl_template
-      ~ctx:{env_size=0; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~ctx:{env_sig=signature0; box_height=Grid.max_size; box_width=Grid.max_size}
       m.input_pattern path0 in    
   let+|+ _, gdi, _ = read_grid ~dl_grid_data ~env m.input_pattern g in
   let| grid = write_grid ~env:gdi.data m.output_template in
@@ -1025,13 +1072,13 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
   (* takes model, input env+grid, output grids *)
   let dl_mi, dl_gdi =
     sdl_template
-      ~ctx:{env_size=0; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~ctx:{env_sig=signature0; box_height=Grid.max_size; box_width=Grid.max_size}
       m.input_pattern path0 in    
-  let env_size =
-    size_of_template m.input_pattern in
+  let env_sig =
+    signature_of_template m.input_pattern in
   let dl_mo, dl_gdo =
     sdl_template
-      ~ctx:{env_size; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       m.output_template path0 in
   let| griss =
     let+| {input} = pairs in
@@ -1144,17 +1191,16 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template =
      |> insert_template path shape
      |> insert_template [`Color] `U) (* because background color is defined as remaining color after covering shapes *)
     
-let definable_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape]
-
-let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
+let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
   let u_vars =
     fold_template
       (fun res p _ ->
-        match path_kind p with
-        | Some k when List.mem k definable_kinds -> (p,k)::res
-        | _ -> res)
+        let k = path_kind p in
+        if k <> `Grid
+        then (p,k)::res
+        else res)
       [] path0 t in
   let val_matrix =
     List.map
@@ -1162,11 +1208,17 @@ let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_rea
         List.map
           (fun (env,gd,dl) ->
             let env_val =
-              List.map (fun p ->
-                  match find_data p env with
-                  | Some d -> p, d
-                  | None -> assert false)
-                env_vars in
+              List.map
+                (fun (k,ps) -> (* for each kind *)
+                  let vals =
+                    List.fold_right
+                      (fun p res -> (* for each path *)
+                        match find_data p env with
+                        | Some d -> (p,d)::res
+                        | None -> assert false)
+                      ps [] in
+                  k, vals)
+                env_sig in
             let u_val =
               List.map (fun (p,k) ->
                   match find_data p gd.data with
@@ -1181,13 +1233,13 @@ let rec defs_refinements ~(env_vars : path list) (t : template) (grss : grid_rea
   |> Myseq.product
   |> Myseq.fold_left
        (fun defs alignment ->
-         Bintree.union defs (find_defs ~env_vars ~u_vars alignment))
+         Bintree.union defs (find_defs ~env_sig ~u_vars alignment))
        Bintree.empty
   |> Bintree.elements
   |> Myseq.from_list
   (* TODO: find appropriate sorting of defs: syntactic criteria, type criteria, DL criteria *)
   |> Myseq.map (fun (p,t) -> RDef (p,t)))
-and find_defs_transpose ~env_vars ~u_vars alignment =
+(*and find_defs_transpose ~env_vars ~u_vars alignment =
   Common.prof "Model2.find_defs_transpose" (fun () ->
 (* assuming env_val and u_val have variables in same order *)
 (* true  by construction above *)
@@ -1210,8 +1262,8 @@ and find_defs_transpose ~env_vars ~u_vars alignment =
            assert (p = p1);
            (p, v::lv1))
          u_val u_vals1 in
-     env_vals, u_vals)
-and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) Bintree.t =
+     env_vals, u_vals) *)
+and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) Bintree.t =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some pattern or expression over env vars *)
@@ -1229,58 +1281,45 @@ and find_defs ~env_vars ~u_vars alignment (* (env_val, u_val, dl) list *) : (pat
         then defs
         else Bintree.add (u, t_vals) defs in
       let defs =
-        let exprs = find_u_expr ~env_vars u k u_vals alignment in
+        let exprs = find_u_expr ~env_sig u k u_vals alignment in
         List.fold_left
           (fun defs e -> Bintree.add (u, `E e) defs)
           defs exprs in
       defs)
     Bintree.empty u_vars)
-and find_u_expr ~env_vars u_path u_kind u_vals alignment : expr list =
+and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list =
   Common.prof "Model2.find_u_expr" (fun () ->
   (* TODO: rather use map_env_vals rather than alignment *)
   (* requires to define eval_expr on lists of env *)
+  let int_vars = signature_of_kind env_sig `Int in
   let le = [] in
   let le =
     List.fold_left
-      (fun le v ->
-        if path_kind v = Some u_kind
-        then `Var v :: le
-        else le)
-      le env_vars in
+      (fun le v -> `Var v::le) (* order does not matter *)
+      le (signature_of_kind env_sig u_kind) in
   let le =
     match u_kind with
     | `Int ->
        List.fold_left
          (fun le v ->
-           if path_kind v = Some `Int
-           then
-             Common.fold_for
-               (fun i le ->
-	         `Plus (`Var v, `Int i)
-                 :: `Minus (`Var v, `Int i)
-                 :: le)
-               1 3 le
-           else le)
-         le env_vars
+           Common.fold_for
+             (fun i le ->
+	       `Plus (`Var v, `Int i)
+               :: `Minus (`Var v, `Int i)
+               :: le)
+             1 3 le)
+         le int_vars
     | _ -> le in
   let le =
     match u_kind with
     | `Int ->
-       List.fold_left
-         (fun le v1 ->
-           if path_kind v1 = Some `Int
-           then
-             List.fold_left
-               (fun le v2 ->
-                 if path_kind v2 = Some `Int
-                 then
-	           `Minus (`Var v1, `Var v2)
-		   :: `Plus (`Var v1, `Var v2)
-                   :: le
-                 else le)
-               le env_vars
-           else le)
-         le env_vars
+       List.fold_left (fun le v1 ->
+           List.fold_left (fun le v2 ->
+	       `Minus (`Var v1, `Var v2)
+	       :: `Plus (`Var v1, `Var v2)
+               :: le)
+             le int_vars)
+         le int_vars
     | _ -> le in
   List.filter
     (fun e ->
@@ -1288,7 +1327,11 @@ and find_u_expr ~env_vars u_path u_kind u_vals alignment : expr list =
         List.map
           (fun (env_val,_,_) ->
             eval_expr_gen
-              ~lookup:(fun v -> List.assoc_opt v env_val)
+              ~lookup:(fun v ->
+                Option.bind
+                  (List.assoc_opt (path_kind v) env_val)
+                  (fun env_val_k ->
+                    List.assoc_opt v env_val_k))
               u_path e)
           alignment in
       e_vals = u_vals)
@@ -1311,24 +1354,23 @@ let shape_refinements (t : template) : grid_refinement Myseq.t =
   | `Background (_,_,layers) -> aux [] layers
   | _ -> assert false)
                     
-let grid_refinements ~(env_vars : path list) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
+let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.concat
-    [defs_refinements ~env_vars t grss;
+    [defs_refinements ~env_sig t grss;
      shape_refinements t]
   |> Myseq.map
        (fun r -> r, apply_grid_refinement r t)
 
-let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_vars
+let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
-  let env_size = List.length env_vars in
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
     ~refine_degree
     ~m0:(RGridInit, init_template)
     ~data:(fun (r,m) ->
-      Result.to_option (read_grids ~env_size m egrids))
+      Result.to_option (read_grids ~env_sig m egrids))
     ~code:(fun (r,m) gsr ->
       let lm, ld, lmd = dl_template_data gsr in
       lmd)
@@ -1337,7 +1379,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_vars
       Printf.printf "%.1f\t" dl;
       pp_grid_refinement r; print_newline ();
       (*Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;*)
-      grid_refinements ~env_vars m gsr.reads)
+      grid_refinements ~env_sig m gsr.reads)
 		     
 
 type refinement =
@@ -1358,14 +1400,11 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
     | Rinput _ -> true
     | Routput _ -> false*) in
   let on_output = true in
-  let envo_vars =
-    fold_template
-      (fun res p _ -> p::res)
-      [] path0 m.input_pattern in
+  let envo_sig = signature_of_template m.input_pattern in
   let ref_defis =
     if on_input
     then
-      defs_refinements ~env_vars:[] m.input_pattern gsri.reads
+      defs_refinements ~env_sig:signature0 m.input_pattern gsri.reads
       |> Myseq.map
            (fun r ->
              Rinput r,
@@ -1374,7 +1413,7 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
   let ref_defos =
     if on_output
     then
-      defs_refinements ~env_vars:envo_vars m.output_template gsro.reads
+      defs_refinements ~env_sig:envo_sig m.output_template gsro.reads
       |> Myseq.map
            (fun r ->
              Routput r,
@@ -1431,7 +1470,8 @@ let learn_model
       | Common.Timeout as exn -> raise exn
       | exn ->
 	 print_endline (Printexc.to_string exn);
-	 pp_model m;
+	 pp_refinement r; print_newline ();
+         pp_model m; print_newline ();
 	 raise exn)
     ~code:(fun (r,m) (gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
@@ -1456,13 +1496,14 @@ let learn_model
         let output_grids =
           List.map
             (function
-             | (envo,_,_)::_ ->
-                Result.get_ok (write_grid ~env:envo m.output_template)
+             | (envo,gdo,_)::_ ->
+                [grid_of_data gdo.data;
+                 Result.get_ok (write_grid ~env:envo m.output_template)]
              | _ -> assert false)
             gsro.reads in
         print_newline ();
         List.iter2
-          (fun gi go -> Grid.pp_grids [gi; go])
+          (fun gi gos -> Grid.pp_grids (gi :: gos))
           input_grids output_grids;
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
 	(*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
