@@ -1112,26 +1112,26 @@ let rec insert_ilist (lp : ilist_path) (f : 'a option -> 'a) (l : 'a ilist) : 'a
   | `Right::lp1, `Insert (left, elt, right) -> `Insert (left, elt, insert_ilist lp1 f right)
   | _ -> assert false
 
-let rec insert_template (p : path) (x : template) (t : template) : template =
+let rec insert_template (p : path) (f : template option -> template) (t : template) : template =
   match p, t with
-  | [], _ -> x
-  | `I::p1, `Vec (i,j) -> `Vec (insert_template p1 x i, j)
-  | `J::p1, `Vec (i,j) -> `Vec (i, insert_template p1 x j)
-  | `Pos::p1, `Point (pos,color) -> `Point (insert_template p1 x pos, color)
-  | `Color::p1, `Point (pos,color) -> `Point (pos, insert_template p1 x color)
-  | `Pos::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (insert_template p1 x pos, size,color,mask)
-  | `Size::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos, insert_template p1 x size, color,mask)
-  | `Color::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size, insert_template p1 x color, mask)
-  | `Mask::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size,color, insert_template p1 x mask)
-  | `Size::p1, `Background (size,color,layers) -> `Background (insert_template p1 x size, color,layers)
-  | `Color::p1, `Background (size,color,layers) -> `Background (size, insert_template p1 x color,layers)
+  | [], _ -> f (Some t)
+  | `I::p1, `Vec (i,j) -> `Vec (insert_template p1 f i, j)
+  | `J::p1, `Vec (i,j) -> `Vec (i, insert_template p1 f j)
+  | `Pos::p1, `Point (pos,color) -> `Point (insert_template p1 f pos, color)
+  | `Color::p1, `Point (pos,color) -> `Point (pos, insert_template p1 f color)
+  | `Pos::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (insert_template p1 f pos, size,color,mask)
+  | `Size::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos, insert_template p1 f size, color,mask)
+  | `Color::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size, insert_template p1 f color, mask)
+  | `Mask::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size,color, insert_template p1 f mask)
+  | `Size::p1, `Background (size,color,layers) -> `Background (insert_template p1 f size, color,layers)
+  | `Color::p1, `Background (size,color,layers) -> `Background (size, insert_template p1 f color,layers)
   | `Layers lp :: p1, `Background (size,color,layers) ->
      let layers =
        insert_ilist
          lp
          (function
-          | None -> if p1=[] then x else assert false
-          | Some shape -> insert_template p1 x shape)
+          | None -> if p1=[] then f None else assert false
+          | Some shape -> insert_template p1 f shape)
          layers in
      `Background (size,color,layers)
   | _ -> assert false
@@ -1183,17 +1183,29 @@ let pp_grid_refinement = function
      print_string ": ";
      pp_template sh
 
-let apply_grid_refinement (r : grid_refinement) (t : template) : template =
+exception Refinement_no_change
+let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) =
   Common.prof "Model2.apply_grid_refinement" (fun () ->
-  match r with
-  | RGridInit -> t
-  | RDef (modified_p,new_t) ->
-     insert_template modified_p new_t t
-  | RShape (path,shape) ->
-     t
-     |> insert_template path shape
-     |> insert_template [`Color] `U) (* because background color is defined as remaining color after covering shapes *)
-    
+  try
+    Some
+      (r,
+       match r with
+       | RGridInit -> raise Refinement_no_change
+       | RDef (modified_p,new_t) ->
+          t
+          |> insert_template modified_p
+               (function
+                | Some x when x = new_t -> raise Refinement_no_change
+                | _ -> new_t)
+       | RShape (path,shape) ->
+          t
+          |> insert_template path
+               (function
+                | Some x when x = shape -> raise Refinement_no_change
+                | _ -> shape)
+          |> insert_template [`Color] (fun _ -> `U)) (* because background color is defined as remaining color after covering shapes *)
+  with Refinement_no_change -> None)
+
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
@@ -1361,8 +1373,8 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
   Myseq.concat
     [defs_refinements ~env_sig t grss;
      shape_refinements t]
-  |> Myseq.map
-       (fun r -> r, apply_grid_refinement r t)
+  |> Myseq.filter_map
+       (fun r -> apply_grid_refinement r t)
 
 let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
@@ -1395,6 +1407,16 @@ let pp_refinement = function
   | Rinput r -> print_string "IN  "; pp_grid_refinement r
   | Routput r -> print_string "OUT "; pp_grid_refinement r
 
+let apply_refinement (r : refinement) (m : model) : (refinement * model) option =
+  match r with
+  | RInit -> None
+  | Rinput gr ->
+     apply_grid_refinement gr m.input_pattern
+     |> Option.map (fun (_,t) -> r, {m with input_pattern = t})
+  | Routput gr ->
+     apply_grid_refinement gr m.output_template
+     |> Option.map (fun (_,t) -> r, {m with output_template = t})
+                 
 let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   = Common.prof "Model2.model_refinements" (fun () ->
   let on_input = true
@@ -1408,37 +1430,27 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
     if on_input
     then
       defs_refinements ~env_sig:signature0 m.input_pattern gsri.reads
-      |> Myseq.map
-           (fun r ->
-             Rinput r,
-             {m with input_pattern = apply_grid_refinement r m.input_pattern})
+      |> Myseq.filter_map (fun r -> apply_refinement (Rinput r) m)
     else Myseq.empty in
   let ref_defos =
     if on_output
     then
       defs_refinements ~env_sig:envo_sig m.output_template gsro.reads
-      |> Myseq.map
-           (fun r ->
-             Routput r,
-             {m with output_template = apply_grid_refinement r m.output_template})
+      |> Myseq.filter_map (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
   let ref_shapis =
     if on_input && grids_read_has_delta gsri
     then
       shape_refinements m.input_pattern
-      |> Myseq.map
-	   (fun r ->
-	     Rinput r,
-             {m with input_pattern = apply_grid_refinement r m.input_pattern})
+      |> Myseq.filter_map
+	   (fun r -> apply_refinement (Rinput r) m)
     else Myseq.empty in
   let ref_shapos =
     if on_output && grids_read_has_delta gsro
     then
       shape_refinements m.output_template
-      |> Myseq.map
-	   (fun r ->
-	     Routput r,
-             {m with output_template = apply_grid_refinement r m.output_template})
+      |> Myseq.filter_map
+	   (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
   Myseq.concat
     [ref_defis; ref_shapis; ref_defos; ref_shapos]
