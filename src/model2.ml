@@ -7,7 +7,7 @@ let def_param name v to_str =
    
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 3 string_of_int (* max nb of selected grid parses *)
-let max_nb_diff = def_param "max_nb_diff" 2 string_of_int (* max nb of allowed diffs in grid parse *)
+let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 
 exception TODO
 
@@ -122,7 +122,7 @@ let grid_data0 =
   { data = data0;
     diff = diff0;
     delta = delta0 }
-           
+
 
 (* stringifiers and pretty-printing *)
 
@@ -722,7 +722,7 @@ let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Re
 (* parsing grids with templates *)
 
 type parse_state =
-  { nb_diff: int; (* list length of diff *)
+  { quota_diff: int; (* nb of allowed additional diffs *)
     diff: diff; (* paths to data that differ from template patterns *)
     delta: delta; (* pixels that are not explained by the template *)
     mask: Grid.Mask.t; (* remaining part of the grid to be explained *)
@@ -731,7 +731,7 @@ type parse_state =
   }
 
 let add_diff path state =
-  { state with nb_diff = 1 + state.nb_diff;
+  { state with quota_diff = state.quota_diff - 1;
                diff = path::state.diff }
 
 let rec parse_ilist
@@ -767,7 +767,7 @@ let parse_bool ~env t p (b : bool) state =
     ~parse_patt:(function
       | `Bool b0 ->
          if b=b0 then Myseq.return (`Bool b, state)
-         else if state.nb_diff < !max_nb_diff then
+         else if state.quota_diff > 0 then
            Myseq.return (`Bool b, add_diff p state)
          else Myseq.empty
       | _ -> Myseq.empty)
@@ -779,7 +779,7 @@ let parse_int ~env t p (i : int) state =
     ~parse_patt:(function
       | `Int i0 ->
          if i=i0 then Myseq.return (`Int i, state)
-         else if state.nb_diff < !max_nb_diff then
+         else if state.quota_diff > 0 then
            Myseq.return (`Int i, add_diff p state)
          else Myseq.empty
       | _ -> Myseq.empty)
@@ -791,7 +791,7 @@ let parse_color ~env t p (c : Grid.color) state =
     ~parse_patt:(function
       | `Color c0 ->
          if c=c0 then Myseq.return (`Color c, state)
-         else if state.nb_diff < !max_nb_diff then
+         else if state.quota_diff > 0 then
            Myseq.return (`Color c, add_diff p state)
          else Myseq.empty
       | _ -> Myseq.empty)
@@ -803,7 +803,7 @@ let parse_mask ~env t p (m : Grid.Mask.t option) state =
     ~parse_patt:(function
       | `Mask m0 ->
          if m=m0 then Myseq.return (`Mask m, state)
-         else if state.nb_diff < !max_nb_diff then
+         else if state.quota_diff > 0 then
            Myseq.return (`Mask m, add_diff p state)
          else Myseq.empty
       | _ -> Myseq.empty)
@@ -938,7 +938,7 @@ let _ = Printexc.register_printer
 
 type grid_read = data * grid_data * dl
 
-let compare_grid_read =
+let compare_grid_read : grid_read -> grid_read -> int =
   fun (_,gd1,dl1) (_,gd2,dl2) ->
   Stdlib.compare (dl1,gd1) (dl2,gd2)
 let sort_grid_reads : grid_read list -> grid_read list =
@@ -947,11 +947,12 @@ let sort_grid_reads : grid_read list -> grid_read list =
   List.sort_uniq compare_grid_read grs)
                
 let read_grid
+      ~(quota_diff : int)
       ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
       ~(env : data) (t : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
   Common.prof "Model2.read_grid" (fun () ->
-  let state = { nb_diff = 0;
+  let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
                 mask = Grid.Mask.full g.height g.width;
@@ -964,7 +965,8 @@ let read_grid
     let dl_diff = dl_diff ~ctx state.diff data in
     let dl_delta = dl_delta ~ctx state.delta in
     let dl = dl_data +. dl_diff +. dl_delta in
-    Myseq.return (env, {data; diff=state.diff; delta=state.delta}, dl) in
+    let gd = {data; diff=state.diff; delta=state.delta} in
+    Myseq.return (env, gd, dl) in
   let l_sorted_parses =
     parses
     |> Myseq.to_rev_list
@@ -1014,14 +1016,14 @@ let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *
           | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
   gsr.dl_m, dl_data, gsr.dl_m +. dl_data
 		    
-let read_grids ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
+let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m, dl_grid_data =
     sdl_template
       ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       t path0 in
   let grss_res =
     let+| env, g = egrids in
-    read_grid ~dl_grid_data ~env t g in
+    read_grid ~quota_diff ~dl_grid_data ~env t g in
   let| reads = grss_res in
   Result.Ok {dl_m; reads}
 
@@ -1053,15 +1055,16 @@ let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) 
     sdl_template
       ~ctx:{env_sig=signature0; box_height=Grid.max_size; box_width=Grid.max_size}
       m.input_pattern path0 in    
-  let+|+ _, gdi, _ = read_grid ~dl_grid_data ~env m.input_pattern g in
+  let+|+ _, gdi, _ = read_grid ~quota_diff:(!max_nb_diff) ~dl_grid_data ~env m.input_pattern g in
   let| grid = write_grid ~env:gdi.data m.output_template in
   Result.Ok [(gdi, grid)])
 
 let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go : Grid.t) : (grid_read list * grid_read list, exn) Result.t =
-  let| gris = read_grid ~dl_grid_data:dl_gdi ~env m.input_pattern gi in
+  let| gris =
+    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern gi in (* no diff allowed for training *)
   let| gros =
     let+|+ _, gdi, _ = Result.Ok gris in
-    read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
+    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
   let gros = sort_grid_reads gros in
   (* TODO: should probably sort by dli + dlo rather than dlo only (joint DL) *)
   let gros = Common.sub_list gros 0 !max_nb_parse in
@@ -1082,11 +1085,11 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
       m.output_template path0 in
   let| griss =
     let+| {input} = pairs in
-    read_grid ~dl_grid_data:dl_gdi ~env m.input_pattern input in
+    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern input in (* no diff allowed during training *)
   let| gross =
     let+| gris, {output} = List.combine griss pairs in
     let+|+ _, gdi, _ = Result.Ok gris in
-    read_grid ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
+    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
   let gross = (* keeping only max_nb_parse best parses to avoid combinatorial *)
     Common.prof "Model2.read_grid_pairs/sort_limit" (fun () ->
     List.map
@@ -1370,7 +1373,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
     ~refine_degree
     ~m0:(RGridInit, init_template)
     ~data:(fun (r,m) ->
-      Result.to_option (read_grids ~env_sig m egrids))
+      Result.to_option (read_grids ~quota_diff:0 ~env_sig m egrids))
     ~code:(fun (r,m) gsr ->
       let lm, ld, lmd = dl_template_data gsr in
       lmd)
