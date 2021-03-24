@@ -822,21 +822,24 @@ let parse_vec ~env t p (vi, vj : int * int) state =
   
 let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t = (* QUICK *)
   seq_shapes
-  |> Myseq.map
+  |> Myseq.filter_map
        (fun (shape, occ_delta, occ_mask) ->
          let new_mask = Grid.Mask.diff state.mask occ_mask in
-         let new_state =
-           { state with
-             delta = occ_delta @ state.delta;
-	     mask = new_mask;
-	     parts =
-	       List.filter
-		 (fun p ->
-		   not (Grid.Mask.is_empty
-			  (Grid.Mask.inter p.Grid.pixels new_mask)))
-		 state.parts } in
-	 (shape, new_state))
-    
+         if Grid.Mask.equal new_mask state.mask
+         then None (* the shape is fully hidden, explains nothing new *)
+         else
+           let new_state =
+             { state with
+               delta = occ_delta @ state.delta;
+	       mask = new_mask;
+	       parts =
+	         List.filter
+		   (fun p ->
+		     not (Grid.Mask.is_empty
+			    (Grid.Mask.inter p.Grid.pixels new_mask)))
+		   state.parts } in
+	   Some (shape, new_state))
+  
 let parse_shape =
   let parse_points ~env parts state =
     Grid.points state.grid state.mask parts
