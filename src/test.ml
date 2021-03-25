@@ -191,7 +191,7 @@ let eval_names = Array.to_list (Sys.readdir eval_dir)
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
-let solved_train_names = (* 12 tasks *)
+let solved_train_names = (* 16 tasks *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=17s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=16s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=3s *)
@@ -204,20 +204,23 @@ let solved_train_names = (* 12 tasks *)
     "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.8s *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=8.2s *)
     "a79310a0.json"; (* cyan shape, moving 1 pixel down, 0.4s *)
+    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=13.4s *)
+    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=3.8s *)
+    "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.5s *)
+    "91714a58.json"; (* keep rectangle, ignore many points, pb: succeeds while failing on 2/3 train pairs, runtime>60 but succeeds earlier *)
   ]
 
 let maybe_train_names =
   [
+    "928ad970.json"; (* pb: position next to borders on all sides, need more expressions *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
     "5521c0d9.json"; (* pb: need bias on defs, local is better, collection/map would help too [three rectangles moving up by their height] *)
     "496994bd.json"; (* pb: moving objects up to some obstacle *)
-    "b94a9452.json"; (* pb: inner rectangle not compressive, nested objects, expression "this object with color=X..." *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
-    "1bfc4729.json"; (* pb: two points not compressive enough *)
     "694f12f3.json"; (* pb: need for expression bias, and ordering by size *)
     "41e4d17e.json"; (* pb: collection, map *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? explicit bottom right position of rectangles *)
-    "98cf29f8.json"; (* pb: too slow, unsufficient expressions on pos/size *)
+    "98cf29f8.json"; (* pb: too slow, insufficient expressions on pos/size *)
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
     "b9b7f026.json"; (* pb: need for nesting *)
     "d6ad076f.json"; (* pb: min/max operator, transpose, topological relation? *)
@@ -230,6 +233,7 @@ let maybe_train_names =
     "4522001f.json"; (* pb: invariance par rotation *)
     "28bf18c6.json"; (* pb: size = 2*size1, consider input shape as output refinement *)
     "25d8a9c8.json"; (* pb: collection *)
+    "29c11459.json"; (* pb: 1 instance in train, 2 instances in test *)
   ]
 
 let task_model =
