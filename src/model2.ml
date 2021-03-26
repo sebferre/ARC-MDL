@@ -950,15 +950,9 @@ let parse_grid ~env t p (g : Grid.t) state =
             layers [] state.parts state in
         let* dsize, state = parse_vec ~env size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
-          Common.prof "Model2.parse_grid/bc" (fun () ->
-          (* determining the majority color *)
-	  let color_counter = new Common.counter in
-	  Grid.Mask.iter
-	    (fun i j -> color_counter#add g.matrix.{i,j})
-	    state.mask;
-	  (match color_counter#most_frequents with
-	   | _, bc::_ -> bc (* TODO: return sequence of colors *)
-	   | _ -> Grid.black)) in
+	  match Grid.majority_colors state.mask g with
+	  | bc::_ -> bc (* TODO: return sequence of colors *)
+	  | [] -> Grid.black in
         let* dcolor, state = parse_color ~env color (p ++ `Color) bc state in
         let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
@@ -967,8 +961,9 @@ let parse_grid ~env t p (g : Grid.t) state =
           let new_delta = ref state.delta in
 	  Grid.Mask.iter
 	    (fun i j ->
-	      if g.matrix.{i,j} <> bc then
-	        new_delta := (i,j, g.matrix.{i,j})::!new_delta)
+              let c = g.matrix.{i,j} in
+	      if c <> bc then
+	        new_delta := (i,j,c)::!new_delta)
 	    state.mask;
           { state with
             delta = (!new_delta);

@@ -333,15 +333,41 @@ module MaskZ =
 
     let iter f m =
       for i = 0 to m.height - 1 do
+        let i_w = i * m.width in
 	for j = 0 to m.width - 1 do
-	  if Z.testbit m.bits (i * m.width + j) then
+	  if Z.testbit m.bits (i_w + j) then
 	    f i j
 	done
       done
+
   end
     
 module Mask = MaskZ
-    
+
+
+(* mask-based computations on grids *)
+
+let majority_colors (mask : Mask.t) (g : t) : color list =
+  Common.prof "Grid.majority_colors" (fun () ->
+  let color_counter = Array.make nb_color 0 in
+  Mask.iter
+    (fun i j ->
+      let c = g.matrix.{i,j} in
+      color_counter.(c) <- color_counter.(c) + 1
+    )
+    mask;
+  let max_count = ref 0 in
+  let bcs = ref [] in
+  for c = 0 to nb_color - 1 do
+    let count = color_counter.(c) in
+    if count = !max_count then bcs := c::!bcs
+    else if count > !max_count then (
+      max_count := count;
+      bcs := [c])
+    else ()
+  done;
+  !bcs)
+            
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;
