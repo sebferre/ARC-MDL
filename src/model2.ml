@@ -14,7 +14,7 @@ exception TODO
 (* binders and syntactic sugar *)
         
 let (++) p f = p @ [f]
-  
+
 let ( let| ) res f = Result.bind res f
 let ( let* ) seq f = seq |> Myseq.flat_map f
 
@@ -149,20 +149,23 @@ let string_of_field : field -> string = function
   | `Color -> "color"
   | `Size -> "size"
   | `Mask -> "mask"
-  | `Layers lp -> "layers[" ^ string_of_ilist_path lp ^ "]"
+  | `Layers lp -> "layer[" ^ string_of_ilist_path lp ^ "]"
 
 let string_of_path : path -> string =
   fun p -> String.concat "." (List.map string_of_field p)
 
 let pp_path p = print_string (string_of_path p)
 
-let rec string_of_ilist (string : 'a -> string) : 'a ilist -> string = function
-  | `Nil -> ""
-  | `Insert (left,elt,right) ->
-     " [ " ^ string_of_ilist string left
-     ^ "\n  " ^ string elt
-     ^ string_of_ilist string right ^ " ] "
-              
+let rec string_of_ilist (string : 'a -> string) (l : 'a ilist) : string =
+  let rec aux lp = function
+    | `Nil -> ""
+    | `Insert (left,elt,right) ->
+       aux (lp ++ `Left) left
+       ^ "\n  [" ^ string_of_ilist_path lp ^ "]: " ^ string elt
+       ^ aux (lp ++ `Right) right
+  in
+  aux [] l
+      
 let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
   | `Bool b -> if b then "true" else "false"
   | `Int i -> string_of_int i
@@ -522,18 +525,57 @@ let rec sdl_data ~(ctx : sdl_ctx) (d : data) (p : path) : staged_dl =
 let dl_data ~ctx (d : data) (p : path) : dl =
   fst (sdl_data ~ctx d p)
 
+let path_similarity ~ctx_path v =
+  let rec aux p1' p2' =
+    match p1', p2' with
+    | `I::p1, `I::p2 -> aux p1 p2
+    | `I::p1, `J::p2 -> 0.5 *. aux p1 p2
+    | `J::p1, `I::p2 -> 0.5 *. aux p1 p2
+    | `J::p1, `J::p2 -> aux p1 p2
+
+    | `Color::p1, `Color::p2 -> aux p1 p2
+
+    | `Mask::p1, `Mask::p2 -> aux p1 p2
+
+    | `Pos::p1, `Pos::p2 -> aux p1 p2
+    | `Pos::p1, `Size::p2 -> 0.5 *. aux p1 p2
+    | `Size::p1, `Size::p2 -> aux p1 p2
+    | `Size::p1, `Pos::p2 -> 0.5 *. aux p1 p2
+
+    | [], `Layers _::p2 -> 0.5 *. aux [] p2
+    | `Layers lp1::p1, `Layers lp2::p2 -> aux_ilist lp1 lp2 *. aux p1 p2
+    | [], [] -> 1.
+    | `Layers _::p1, [] -> 0.75 *. aux p1 []
+
+    | _ -> assert false
+  and aux_ilist lp1 lp2 =
+    if lp1 = lp2 then 1. else 0.8
+  in
+  aux (List.rev ctx_path) (List.rev v)
+  
+let dl_var ~(ctx_path : path) (vars : path list) (x : path) : dl =
+  (* DL of identifying x among vars, for use in scope of ctx_path *)
+  let total_w, x_w =
+    List.fold_left
+      (fun (total_w, x_w) v ->
+        let sim = path_similarity ~ctx_path v in
+        let w = exp sim in
+        total_w +. w, (if v=x then w else x_w))
+      (0.,0.) vars in
+  if x_w = 0. || total_w = 0. (* happens when unify generalizes some path, removing sub-paths *)
+  then Stdlib.infinity
+  else Mdl.Code.usage (x_w /. total_w)
+  
 let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
-  (* TODO: make it kind-dependent, including coding vars *)
+  (* TODO: make it kind-dependent *)
   match e with
   | `Var x ->
-     let env_size =
+     let dl_x = (* identifying one env var *)
        let k = path_kind x in
        match List.assoc_opt k ctx.env_sig with
-       | Some ps -> List.length ps
-       | None -> 0 in (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
-     Mdl.Code.usage 0.5
-     +. (if env_size = 0 then Stdlib.infinity else Mdl.Code.uniform env_size), (* identifying one env var *)
-     staged0
+       | Some vars -> dl_var ~ctx_path:p vars x
+       | None -> Stdlib.infinity in (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
+     Mdl.Code.usage 0.5 +. dl_x, staged0
   | #patt as patt ->
      Mdl.Code.usage 0.25
      +! sdl_patt sdl_expr ~ctx patt p
@@ -541,9 +583,13 @@ let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
      Mdl.Code.usage 0.25
      +! (match List.rev p, e with
          | (`I | `J)::_, (`Plus (e1,e2) | `Minus (e1,e2)) ->
+            let p2 = (* 2nd operand prefers a size to a position *)
+              match p with
+              | (`I|`J as f)::`Pos::p1 -> f::`Size::p1
+              | _ -> p in
             Mdl.Code.usage 0.5
             +! sdl_expr ~ctx e1 p
-            +? sdl_expr ~ctx e2 p
+            +? sdl_expr ~ctx e2 p2
          | _ -> assert false)
 
 let dl_expr ~ctx e p =
@@ -904,30 +950,30 @@ let parse_grid ~env t p (g : Grid.t) state =
             layers [] state.parts state in
         let* dsize, state = parse_vec ~env size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
+          Common.prof "Model2.parse_grid/bc" (fun () ->
           (* determining the majority color *)
 	  let color_counter = new Common.counter in
 	  Grid.Mask.iter
-	    (fun i j ->
-              if Grid.Mask.mem i j state.mask
-              then color_counter#add g.matrix.{i,j})
+	    (fun i j -> color_counter#add g.matrix.{i,j})
 	    state.mask;
 	  (match color_counter#most_frequents with
-	   | _, bc::_ -> bc
-	   | _ -> Grid.black) in
+	   | _, bc::_ -> bc (* TODO: return sequence of colors *)
+	   | _ -> Grid.black)) in
         let* dcolor, state = parse_color ~env color (p ++ `Color) bc state in
         let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
-        let new_delta = ref state.delta in
-	Grid.Mask.iter
-	  (fun i j ->
-	    if g.matrix.{i,j} <> bc then
-	      new_delta := (i,j, g.matrix.{i,j})::!new_delta)
-	  state.mask;
         let new_state =
+          Common.prof "Model2.parse_grid/new_state" (fun () ->
+          let new_delta = ref state.delta in
+	  Grid.Mask.iter
+	    (fun i j ->
+	      if g.matrix.{i,j} <> bc then
+	        new_delta := (i,j, g.matrix.{i,j})::!new_delta)
+	    state.mask;
           { state with
             delta = (!new_delta);
 	    mask = Grid.Mask.empty g.height g.width;
-	    parts = [] } in
+	    parts = [] }) in
 	Myseq.return (data, new_state)
      | _ -> Myseq.empty)
     ~env t p g state)

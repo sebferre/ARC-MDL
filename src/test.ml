@@ -207,7 +207,7 @@ let solved_train_names = (* 16 tasks *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=13.4s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=3.8s *)
     "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.5s *)
-    "91714a58.json"; (* keep rectangle, ignore many points, pb: succeeds while failing on 2/3 train pairs, runtime>60 but succeeds earlier *)
+    "91714a58.json"; (* keep rectangle, ignore many points, pb: succeeds while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
   ]
 
 let maybe_train_names =
