@@ -1247,17 +1247,17 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                 | Some x when x = shape -> raise Refinement_no_change
                 | _ -> shape)
           |> insert_template [`Color] (fun _ -> `U)) (* because background color is defined as remaining color after covering shapes *)
-  with Refinement_no_change -> None)
+  with Refinement_no_change -> None) (* does not seem to occur any more *)
 
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
   let u_vars =
     fold_template
-      (fun res p _ ->
+      (fun res p t0 ->
         let k = path_kind p in
         if k <> `Grid
-        then (p,k)::res
+        then (p,k,t0)::res
         else res)
       [] path0 t in
   let val_matrix =
@@ -1278,7 +1278,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                   k, vals)
                 env_sig in
             let u_val =
-              List.map (fun (p,k) ->
+              List.map (fun (p,k,t0) ->
                   match find_data p gd.data with
                   | Some d -> p, d
                   | None -> assert false)
@@ -1328,21 +1328,27 @@ and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl) list *) : (path
   (*let map_env_vals, map_u_vals =
     find_defs_transpose ~env_vars ~u_vars alignment in*)
   List.fold_left
-    (fun defs (u,k) ->
+    (fun defs (u,k,t0) ->
       let u_vals =
         List.map
           (fun (_,u_val,_) -> try List.assoc u u_val with _ -> assert false)
           alignment in
-      let defs =
-        let t_vals = unify u_vals in
-        if t_vals = `U
-        then defs
-        else Bintree.add (u, t_vals) defs in
-      let defs =
-        let exprs = find_u_expr ~env_sig u k u_vals alignment in
-        List.fold_left
-          (fun defs e -> Bintree.add (u, `E e) defs)
-          defs exprs in
+      let defs = (* defining u by a common pattern *)
+        if t0 = `U
+        then (* only for unknowns, uncessary for patts, expressions have priority *)
+          let t_vals = unify u_vals in
+          if t_vals = `U
+          then defs
+          else Bintree.add (u, t_vals) defs
+        else defs in
+      let defs = (* defining u by an expression *)
+        match t0 with
+        | `E _ -> defs (* already an expression *)
+        | _ -> (* unknowns and patterns *)
+           let exprs = find_u_expr ~env_sig u k u_vals alignment in
+           List.fold_left
+             (fun defs e -> Bintree.add (u, `E e) defs)
+             defs exprs in
       defs)
     Bintree.empty u_vars)
 and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list =
