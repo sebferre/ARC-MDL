@@ -8,6 +8,7 @@ let def_param name v to_str =
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 3 string_of_int (* max nb of selected grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
+let max_nb_shape_parse = def_param "max_nb_shape_parse" 16 string_of_int (* max nb of parses for a shape *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 
 exception TODO
@@ -866,10 +867,12 @@ let parse_vec ~env t p (vi, vj : int * int) state =
       | _ -> Myseq.empty)
     ~env t p (vi,vj) state
   
-let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mask.t) Myseq.t) : ('a * parse_state) Myseq.t = (* QUICK *)
-  seq_shapes
+let shape_postprocess (state : parse_state) (shapes : (int (* nb of newly explained pixels *) * 'a * delta * Grid.Mask.t) list) : ('a * parse_state) Myseq.t = (* QUICK *)
+  shapes
+  |> List.sort (fun (n1,_,_,_) (n2,_,_,_) -> Stdlib.compare n2 n1)
+  |> Myseq.from_list
   |> Myseq.filter_map
-       (fun (shape, occ_delta, occ_mask) ->
+       (fun (nb_explained_pixels, shape, occ_delta, occ_mask) ->
          let new_mask = Grid.Mask.diff state.mask occ_mask in
          if Grid.Mask.equal new_mask state.mask
          then None (* the shape is fully hidden, explains nothing new *)
@@ -885,21 +888,21 @@ let shape_postprocess (state : parse_state) (seq_shapes : ('a * delta * Grid.Mas
 			    (Grid.Mask.inter p.Grid.pixels new_mask)))
 		   state.parts } in
 	   Some (shape, new_state))
+  |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse)
   
 let parse_shape =
   let parse_points ~env parts state =
     Grid.points state.grid state.mask parts
-    |> Myseq.from_list
-    |> Myseq.map (fun (i,j,c) ->
+    |> List.map (fun (i,j,c) ->
+           let nb_explained_pixels = 1 in
            let occ_delta = [] in
            let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
-           (i,j,c), occ_delta, occ_mask)
+           nb_explained_pixels, (i,j,c), occ_delta, occ_mask)
     |> shape_postprocess state in
   let parse_rectangles ~env parts state =
     Grid.rectangles state.grid state.mask parts
-    |> Myseq.from_list
-    |> Myseq.map (fun (rect : Grid.rectangle) ->
-           rect, rect.delta, rect.mask)
+    |> List.map (fun (rect : Grid.rectangle) ->
+           rect.nb_explained_pixels, rect, rect.delta, rect.mask)
     |> shape_postprocess state in
   fun ~env t p (parts : Grid.part list) state ->
   Common.prof "Model2.parse_shape" (fun () ->

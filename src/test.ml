@@ -197,7 +197,7 @@ let solved_train_names = (* 16 tasks *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=3s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.4s *)
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.2s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=89s *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=69s *)
     "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.4s *)
     "1cf80156.json"; (* crop on shape, runtime=2.3s *)
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=4.2s *)
@@ -208,6 +208,7 @@ let solved_train_names = (* 16 tasks *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=3.8s *)
     "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.5s *)
     "91714a58.json"; (* keep rectangle, ignore many points, pb: succeeds while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
+    "794b24be.json"; (* map from nb blue pixels to red fixed shape *)
   ]
 
 let maybe_train_names =

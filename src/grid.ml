@@ -670,7 +670,8 @@ type rectangle = { height: int; width: int;
 		   color: color;
 		   mask : Mask.t; (* covered pixels *)
 		   rmask : Mask.t option; (* relative mask: in rectangle box, None if full *)
-		   delta : pixel list }
+		   delta : pixel list;
+                   nb_explained_pixels : int }
 
 let rectangle_as_grid (g : t) (r : rectangle) : t =
   let gr = make g.height g.width no_color in
@@ -699,11 +700,17 @@ let rectangles_of_part =
    let valid_area = ref 0 in
    let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
    let delta = ref [] in
+   let nb_explained_pixels = ref 0 in
    for i = p.mini to p.maxi do
      for j = p.minj to p.maxj do
        let c = g.matrix.{i,j} in
-       if Mask.mem i j mask && c <> p_color
-       then delta := (i,j,c)::!delta
+       if Mask.mem i j mask
+       then
+         if c = p_color
+         then (
+           incr valid_area;
+           incr nb_explained_pixels )
+         else delta := (i,j,c)::!delta
        else (
 	 r_mask := Mask.add_in_place i j !r_mask;
 	 incr valid_area )
@@ -726,16 +733,17 @@ let rectangles_of_part =
 	 color = p.color;
 	 mask = (!r_mask);
 	 rmask = Some m;
-	 delta = [] } :: res
+	 delta = [];
+         nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
    let res = (* adding full rectangle with delta *)
-     let _valid_area = !valid_area + List.length !delta in
-     let mask =
-       List.fold_left
-         (fun mask (i,j,c) -> Mask.add_in_place i j mask)
-         (!r_mask) !delta in
-     if true (* valid_area >= 1 * area / 2 *)
+     if List.length !delta < !valid_area
      then
+       let _valid_area = !valid_area + List.length !delta in
+       let mask =
+         List.fold_left
+           (fun mask (i,j,c) -> Mask.add_in_place i j mask)
+           (!r_mask) !delta in
        { height = p.maxi-p.mini+1;
 	 width = p.maxj-p.minj+1;
 	 offset_i = p.mini;
@@ -743,7 +751,8 @@ let rectangles_of_part =
 	 color = p.color;
 	 mask;
 	 rmask = None;
-	 delta = (!delta) } :: res
+	 delta = (!delta);
+         nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
    res)
  in
