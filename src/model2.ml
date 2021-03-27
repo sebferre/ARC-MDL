@@ -370,12 +370,13 @@ let rec default_data_of_path (p : path) : data =
   | (`I | `J)::`Pos::_ -> `Int 0
   | (`I | `J)::`Size::_ -> `Int 2
   | `Color::[] -> `Color Grid.black
-  | `Color::`Layers _::_ -> `Color Grid.blue
+  | `Color::`Layers _::_ -> `Color Grid.no_color
   | `Mask::_ -> `Mask None
   | `Pos::_ -> `Vec (`Int 0, `Int 0)
+  | `Size::[] -> `Vec (`Int 10, `Int 10)
   | `Size::_ -> `Vec (`Int 2, `Int 2)
-  | `Layers _::_ -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.blue, `Mask None)
-  | [] -> `Background (`Vec (`Int Grid.max_size, `Int Grid.max_size), `Color Grid.black, `Nil)
+  | `Layers _::_ -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
+  | [] -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
   | _ -> assert false
 
 let unify (ld : data list) : template (* without expression *) = (* QUICK *)
@@ -709,9 +710,9 @@ let rec eval_template ?(tentative = false) ~(env : data) (p : path) (t : templat
   | `U ->
      if tentative
      then
-       match find_data p env with (* tentative copy from env *)
+       (*match find_data p env with (* tentative copy from env *)
        | Some d -> d
-       | None -> default_data_of_path p (* default data *)
+       | None ->*) default_data_of_path p (* default data *)
      else raise Unbound_U
   | #patt as patt -> eval_patt (eval_template ~tentative ~env) p patt
   | `E e -> eval_expr ~env p e)
