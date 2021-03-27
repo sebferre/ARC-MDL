@@ -75,7 +75,7 @@ let rec map_ilist (f : ilist_path -> 'a -> 'b) (lp : ilist_path) (l : 'a ilist) 
     
 type kind =
   [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Grid ]
-        
+  
 type 'a patt =
   [ `Bool of bool
   | `Int of int
