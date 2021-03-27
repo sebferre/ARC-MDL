@@ -1440,7 +1440,7 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
 let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
-  Grid.init ();
+  Grid.reset_memoized_functions ();
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -1533,7 +1533,7 @@ let learn_model
       (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
-  Grid.init ();
+  Grid.reset_memoized_functions ();
   Mdl.Strategy.beam
     ~timeout
     ~beam_width

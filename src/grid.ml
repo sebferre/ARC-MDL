@@ -655,7 +655,7 @@ let point_of_part mask (part : part) : point option =
      && Mask.mem part.mini part.minj mask (* out-of-mask points are already covered *)
   then Some (part.mini, part.minj, part.color)
   else None
-  
+
 let points (g : t) (mask : Mask.t) (parts : part list) : point list =
   List.fold_left
     (fun res part ->
@@ -663,7 +663,13 @@ let points (g : t) (mask : Mask.t) (parts : part list) : point list =
       | Some point -> point::res
       | None -> res)
     [] parts
-  
+let points, reset_points =
+  let f, reset =
+    Common.memoize ~size:103
+      (fun (g,mask,parts) ->
+        points g mask parts) in
+  let f = fun g mask parts -> f (g,mask,parts) in
+  f, reset
 						       
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
@@ -690,10 +696,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   print_endline "RECTANGLES:";
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
-
-let ht_rectangles_of_part : ('a, rectangle list) Hashtbl.t = Hashtbl.create 103
-let rectangles_of_part =
- let aux (multipart, g, mask, p) : rectangle list =
+let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list =
    Common.prof "Grid.rectangles_of_part" (fun () ->
    let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
    let _area = h * w in
@@ -755,16 +758,15 @@ let rectangles_of_part =
          nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
    res)
- in
- fun ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) ->
- let key = (multipart, g, mask,p) in
- match Hashtbl.find_opt ht_rectangles_of_part key with
- | Some res -> res
- | None ->
-    let res = aux key in
-    Hashtbl.add ht_rectangles_of_part key res;
-    res
-      
+
+(*let rectangles_of_part, reset_rectangles_of_part =
+  let f, reset =
+    Common.memoize ~size:103
+      (fun (multipart,g,mask,p) ->
+        rectangles_of_part ~multipart g mask p) in
+  let f = fun ~multipart g mask p -> f (multipart,g,mask,p) in
+  f, reset*)
+ 
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
   Common.prof "Grid.rectangles" (fun () ->
   let h_sets =
@@ -813,6 +815,16 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    lr @ res)
       res v_sets in
   res)
+let rectangles, reset_rectangles =
+  let f, reset =
+    Common.memoize ~size:103
+      (fun (g,mask,parts) ->
+        rectangles g mask parts) in
+  let f = fun g mask parts -> f (g,mask,parts) in
+  f, reset
 
-let init () =
-  Hashtbl.clear ht_rectangles_of_part
+
+let reset_memoized_functions () =
+  reset_points ();
+  (*  reset_rectangles_of_part ();*)
+  reset_rectangles ()
