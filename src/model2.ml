@@ -7,6 +7,7 @@ let def_param name v to_str =
    
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 3 string_of_int (* max nb of selected grid parses *)
+let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 
 exception TODO
@@ -544,7 +545,7 @@ let path_similarity ~ctx_path v =
 
     | [], `Layers _::p2 -> 0.5 *. aux [] p2
     | `Layers lp1::p1, `Layers lp2::p2 -> aux_ilist lp1 lp2 *. aux p1 p2
-    | [], [] -> 1.
+    | [], [] -> 2.
     | `Layers _::p1, [] -> 0.75 *. aux p1 []
 
     | _ -> assert false
@@ -582,12 +583,12 @@ let rec sdl_expr ~(ctx : sdl_ctx) (e : expr) (p : path) : staged_dl =
   | _ ->
      Mdl.Code.usage 0.25
      +! (match List.rev p, e with
-         | (`I | `J)::_, (`Plus (e1,e2) | `Minus (e1,e2)) ->
+         | (`I | `J as fij)::rev_p_vec, (`Plus (e1,e2) | `Minus (e1,e2)) ->
             let p2 = (* 2nd operand prefers a size to a position *)
-              match p with
-              | (`I|`J as f)::`Pos::p1 -> f::`Size::p1
+              match rev_p_vec with
+              | `Pos::rev_p1 -> List.rev (fij::`Size::rev_p1)
               | _ -> p in
-            Mdl.Code.usage 0.5
+            Mdl.Code.usage 0.5 (* choice between Plus and Minus *)
             +! sdl_expr ~ctx e1 p
             +? sdl_expr ~ctx e2 p2
          | _ -> assert false)
@@ -957,7 +958,6 @@ let parse_grid ~env t p (g : Grid.t) state =
         let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
         let new_state =
-          Common.prof "Model2.parse_grid/new_state" (fun () ->
           let new_delta = ref state.delta in
 	  Grid.Mask.iter
 	    (fun i j ->
@@ -968,7 +968,7 @@ let parse_grid ~env t p (g : Grid.t) state =
           { state with
             delta = (!new_delta);
 	    mask = Grid.Mask.empty g.height g.width;
-	    parts = [] }) in
+	    parts = [] } in
 	Myseq.return (data, new_state)
      | _ -> Myseq.empty)
     ~env t p g state)
@@ -987,7 +987,15 @@ let compare_grid_read : grid_read -> grid_read -> int =
 let sort_grid_reads : grid_read list -> grid_read list =
   fun grs ->
   Common.prof "Model2.sort_grid_reads" (fun () ->
-  List.sort_uniq compare_grid_read grs)
+      List.sort_uniq compare_grid_read grs)
+
+let limit_grid_reads (grs : grid_read list) : grid_read list =
+  match grs with
+  | [] -> []
+  | (_,_,dl0)::_ ->
+     let min_dl = !max_parse_dl_factor *. dl0 in
+     Common.sub_list grs 0 !max_nb_parse
+     |> List.filter (fun (_,_,dl) -> dl <= min_dl)
                
 let read_grid
       ~(quota_diff : int)
@@ -1017,7 +1025,7 @@ let read_grid
   (*Printf.printf "### %d ###\n" (List.length l_sorted_parses);*)
   if l_sorted_parses = []
   then Result.Error Parse_failure
-  else Result.Ok (Common.sub_list l_sorted_parses 0 !max_nb_parse))
+  else Result.Ok (limit_grid_reads l_sorted_parses))
 							      
 (* result of reading a grid: grid data and description lengths *)
 type grids_read =
@@ -1110,7 +1118,7 @@ let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go 
     read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
   let gros = sort_grid_reads gros in
   (* TODO: should probably sort by dli + dlo rather than dlo only (joint DL) *)
-  let gros = Common.sub_list gros 0 !max_nb_parse in
+  let gros = limit_grid_reads gros in
   Result.Ok (gris,gros)
 
 let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids_read * grids_read, exn) Result.t =
@@ -1137,8 +1145,9 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
     Common.prof "Model2.read_grid_pairs/sort_limit" (fun () ->
     List.map
       (fun gros ->
-        let gros = sort_grid_reads gros in
-        Common.sub_list gros 0 !max_nb_parse)
+        gros
+        |> sort_grid_reads
+        |> limit_grid_reads)
       gross) in
   let gsri = {dl_m = dl_mi; reads = griss } in
   let gsro = {dl_m = dl_mo; reads = gross } in
@@ -1351,8 +1360,7 @@ and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl) list *) : (path
              defs exprs in
       defs)
     Bintree.empty u_vars)
-and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list =
-  Common.prof "Model2.find_u_expr" (fun () ->
+and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list = (* QUICK *)
   (* TODO: rather use map_env_vals rather than alignment *)
   (* requires to define eval_expr on lists of env *)
   let int_vars = signature_of_kind env_sig `Int in
@@ -1379,9 +1387,11 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list =
     | `Int ->
        List.fold_left (fun le v1 ->
            List.fold_left (fun le v2 ->
-	       `Minus (`Var v1, `Var v2)
-	       :: `Plus (`Var v1, `Var v2)
-               :: le)
+               let le = `Plus (`Var v1, `Var v2) :: le in
+               let le =
+                 if v1 = v2 then le (* this means 0 *)
+	         else `Minus (`Var v1, `Var v2) :: le in
+	       le)
              le int_vars)
          le int_vars
     | _ -> le in
@@ -1399,10 +1409,9 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list =
               u_path e)
           alignment in
       e_vals = u_vals)
-    le)
+    le
 
-let shape_refinements (t : template) : grid_refinement Myseq.t =
-  Common.prof "Model2.shape_refinements" (fun () ->
+let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
   let rec aux lp = function
     | `Nil ->
        Myseq.cons (RShape ([`Layers lp], `Point (`U, `U)))
@@ -1416,7 +1425,7 @@ let shape_refinements (t : template) : grid_refinement Myseq.t =
   in
   match t with
   | `Background (_,_,layers) -> aux [] layers
-  | _ -> assert false)
+  | _ -> assert false
                     
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.concat
@@ -1428,6 +1437,7 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
 let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
+  Grid.init ();
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -1520,6 +1530,7 @@ let learn_model
       (pairs : Task.pair list)
     : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
+  Grid.init ();
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -1568,8 +1579,8 @@ let learn_model
         print_newline ();
         List.iter2
           (fun gi gos -> Grid.pp_grids (gi :: gos))
-          input_grids output_grids;
+          input_grids output_grids);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
-	(*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
-        flush stdout);
+      (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
+      flush stdout;
       model_refinements r m gsri gsro))

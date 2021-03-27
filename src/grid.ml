@@ -689,8 +689,9 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   print_endline "RECTANGLES:";
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
+
+let ht_rectangles_of_part : ('a, rectangle list) Hashtbl.t = Hashtbl.create 103
 let rectangles_of_part =
- let ht : ('a, rectangle list) Hashtbl.t = Hashtbl.create 103 in
  let aux (multipart, g, mask, p) : rectangle list =
    Common.prof "Grid.rectangles_of_part" (fun () ->
    let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
@@ -748,11 +749,11 @@ let rectangles_of_part =
  in
  fun ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) ->
  let key = (multipart, g, mask,p) in
- match Hashtbl.find_opt ht key with
+ match Hashtbl.find_opt ht_rectangles_of_part key with
  | Some res -> res
  | None ->
     let res = aux key in
-    Hashtbl.add ht key res;
+    Hashtbl.add ht_rectangles_of_part key res;
     res
       
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
@@ -803,3 +804,6 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    lr @ res)
       res v_sets in
   res)
+
+let init () =
+  Hashtbl.clear ht_rectangles_of_part
