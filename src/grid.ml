@@ -437,7 +437,7 @@ module Skyline = (* min-skyline of coordinates *)
        - (x,y), (x',y) => x=x'
        - (x,y), (x',y'), x'<=x, y'<=y => x=x', y=y'
        - denotes the set of points
-         { (x',y') | some (x,y) in slyline: x'>=x, y'>=y }
+         { (x',y') | some (x,y) in skyline: x'>=x, y'>=y }
      *)
     let print sl =
       List.iter (fun (x,y) -> Printf.printf " (%d,%d)" x y) sl
@@ -526,7 +526,7 @@ let split_part (part : part) : part list =
     for j = part.minj to part.maxj+1 do
       if i <= part.maxi && j <= part.maxj
 	 && Mask.mem i j mask (* cell belongs to part *)
-      then
+      then (
 	let corners_above =
 	  if i = part.mini
 	  then Skyline.empty
@@ -540,39 +540,38 @@ let split_part (part : part) : part list =
 	let corners_left =
 	  Skyline.add (Skyline.min_x i corners_above) j corners_left in
 	arr.(i).(j) <- Skyline.inter corners_left corners_above
-      else (
-	let closed_corners =
-	  if i > part.mini && j > part.minj then
-	    Skyline.diff
-	      (Skyline.diff
-		 arr.(i-1).(j-1)
-		 arr.(i-1).(j))
-	      arr.(i).(j-1)
-	  else Skyline.empty in
-	Skyline.iter
-	  (fun (a,b) ->
-	   let mini, maxi = a, i-1 in
-	   let minj, maxj = b, j-1 in
-	   if mini=part.mini && maxi=part.maxi
-	      && minj=part.minj && maxj=part.maxj
-	   then () (* already known as part *)
-	   else (
-	     let pixels = ref (Mask.empty h w) in
-	     for i = mini to maxi do
-	       for j = minj to maxj do
-		 pixels := Mask.add_in_place i j !pixels
-	       done
-	     done;
-	     let subpart =
-	       { mini; maxi;
-		 minj; maxj;
-		 color = part.color;
-		 nb_pixels = (maxi-mini+1) * (maxj-minj+1);
-		 pixels = (!pixels) } in
-	     res := subpart::!res
-	   ))
-	  closed_corners
-      )
+      );
+      let closed_corners =
+	if i > part.mini && j > part.minj then
+	  Skyline.diff
+	    (Skyline.diff
+	       arr.(i-1).(j-1)
+	       arr.(i-1).(j))
+	    arr.(i).(j-1)
+	else Skyline.empty in
+      Skyline.iter
+	(fun (a,b) ->
+	  let mini, maxi = a, i-1 in
+	  let minj, maxj = b, j-1 in
+	  if mini=part.mini && maxi=part.maxi
+	     && minj=part.minj && maxj=part.maxj
+	  then () (* already known as part *)
+	  else (
+	    let pixels = ref (Mask.empty h w) in
+	    for i = mini to maxi do
+	      for j = minj to maxj do
+		pixels := Mask.add_in_place i j !pixels
+	      done
+	    done;
+	    let subpart =
+	      { mini; maxi;
+		minj; maxj;
+		color = part.color;
+		nb_pixels = (maxi-mini+1) * (maxj-minj+1);
+		pixels = (!pixels) } in
+	    res := subpart::!res
+	))
+	closed_corners
     done
   done;
   !res)
