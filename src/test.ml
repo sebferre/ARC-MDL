@@ -7,6 +7,7 @@ module Model = Model2
 (* TODO: ensure that used param values are output in log *)
              
 let training = ref true (* should be set to false on evaluation set *)
+let start_rank = ref max_int
 let task_timeout = ref 60
 let learning_verbose = ref false
 let grid_viz = ref false
@@ -185,11 +186,11 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
 		      
 let arc_dir = "/local/ferre/data/tasks/ARC/data/"
 let train_dir = arc_dir ^ "training/"
-let train_names = Array.to_list (Sys.readdir train_dir)
+let train_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir train_dir))
 let eval_dir = arc_dir ^ "evaluation/"
-let eval_names = Array.to_list (Sys.readdir eval_dir)
+let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
-let sferre_names = Array.to_list (Sys.readdir sferre_dir)
+let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names = (* 16 tasks *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=13s *)
@@ -288,13 +289,15 @@ let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   let _ =
     List.fold_left
       (fun rank name ->
-       let task = task_of_name dir name in
-       print_endline "=====================================";
-       Printf.printf "[-%d] Checking task %s: %d train, %d test\n"
-		     rank name
-		     (List.length task.train)
-		     (List.length task.test);
-       checker#process_task name task;
+        if rank <= !start_rank then (
+          let task = task_of_name dir name in
+          print_endline "=====================================";
+          Printf.printf "[-%d] Checking task %s: %d train, %d test\n"
+	    rank name
+	    (List.length task.train)
+	    (List.length task.test);
+          checker#process_task name task
+        );
        rank-1)
       nb_tasks names in
   checker#summarize_tasks;
@@ -393,6 +396,7 @@ chosen set (default)";
 			      (fun id ->
 			        String.sub name 0 (String.length id) = id))),
      "Use the tasks specified by their hexadecimal id prefix (comma-separated)";
+     "-r", Set_int start_rank, "Start processing with this task rank (only useful for error recovery)";
      "-learn", Unit (fun () -> checker := checker_learning), "Perform learning on chosen tasks (default)";
      "-apply", Unit (fun () -> checker := checker_apply), "Apply pre-defined models to the chosen tasks (Model.init_model by default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
@@ -402,5 +406,5 @@ chosen set (default)";
      "-v", Set learning_verbose, "Verbose output for the learning phase";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz] [-v]";	      		       
+    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz] [-v]";
   main_tasks !dir !names !checker
