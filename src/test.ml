@@ -191,28 +191,28 @@ let eval_names = Array.to_list (Sys.readdir eval_dir)
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = Array.to_list (Sys.readdir sferre_dir)
 
-let solved_train_names = (* 17 tasks *)
-  [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=17s *)
-    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=16s *)
-    "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=3s *)
-    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.4s *)
-    "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.2s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=75s *)
-    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.4s *)
-    "1cf80156.json"; (* crop on shape, runtime=2.3s *)
-    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=4.2s *)
-    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.8s *)
-    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=8.2s *)
-    "a79310a0.json"; (* cyan shape, moving 1 pixel down, 0.4s *)
-    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=13.4s *)
-    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=3.8s *)
-    "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.5s *)
-    "91714a58.json"; (* keep rectangle, ignore many points, pb: succeeds while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
+let solved_train_names = (* 16 tasks *)
+  [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=13s *)
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=8.2s *)
+    "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=2s *)
+    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.2s *)
+    "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.1s *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=33s *)
+    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.2s *)
+    "1cf80156.json"; (* crop on shape, runtime=1.5s *)
+    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=1.6s *)
+    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.6s *)
+    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=5s *)
+    "a79310a0.json"; (* cyan shape, moving 1 pixel down, 0.3s *)
+    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=9.6s *)
+    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2s *)
+    "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.3s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=24s *)
   ]
 
 let maybe_train_names =
   [
+    "91714a58.json"; (* pb: insists too much on understanding input with many noise points, succeeds on test while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
     "928ad970.json"; (* pb: position next to borders on all sides, need more expressions *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
     "496994bd.json"; (* pb: moving objects up to some obstacle *)
@@ -235,6 +235,7 @@ let maybe_train_names =
     "25d8a9c8.json"; (* pb: collection *)
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test *)
     "794b24be.json"; (* pb: need switch, [map from nb blue pixels to red fixed shape] *)
+    "a68b268e.json"; (* pb: should define mask on sub-grid + full sub-grid shape, [4 shapes with fixed position and color, stacked in some order] *)
   ]
 
 let task_model =

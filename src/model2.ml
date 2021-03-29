@@ -6,10 +6,11 @@ let def_param name v to_str =
   ref v
    
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" 3 string_of_int (* max nb of selected grid parses *)
+let max_nb_parse = def_param "max_nb_parse" 1000 string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_nb_shape_parse = def_param "max_nb_shape_parse" 16 string_of_int (* max nb of parses for a shape *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
+let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 
 exception TODO
 
@@ -998,7 +999,7 @@ let limit_grid_reads (grs : grid_read list) : grid_read list =
   | [] -> []
   | (_,_,dl0)::_ ->
      let min_dl = !max_parse_dl_factor *. dl0 in
-     Common.sub_list grs 0 !max_nb_parse
+     Common.sub_list grs 0 !max_nb_grid_reads
      |> List.filter (fun (_,_,dl) -> dl <= min_dl)
                
 let read_grid
@@ -1024,6 +1025,7 @@ let read_grid
     Myseq.return (env, gd, dl) in
   let l_sorted_parses =
     parses
+    |> Myseq.slice ~offset:0 ~limit:(!max_nb_parse)
     |> Myseq.to_rev_list
     |> sort_grid_reads in
   (*Printf.printf "### %d ###\n" (List.length l_sorted_parses);*)
@@ -1276,6 +1278,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   let val_matrix =
     List.map
       (fun grs ->
+        assert (grs <> []); (* otherwise, should be parse failure *)
         List.map
           (fun (env,gd,dl) ->
             let env_val =
