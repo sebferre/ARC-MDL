@@ -1347,7 +1347,10 @@ and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl) list *) : (path
     (fun defs (u,k,t0) ->
       let u_vals =
         List.map
-          (fun (_,u_val,_) -> try List.assoc u u_val with _ -> assert false)
+          (fun (_,u_val,_) ->
+            match List.assoc_opt u u_val with
+            | Some d -> d
+            | None -> assert false)
           alignment in
       let defs = (* defining u by a common pattern *)
         if t0 = `U

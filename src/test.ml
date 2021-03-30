@@ -192,7 +192,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 16 tasks *)
+let solved_train_names = (* 16 tasks, 102s *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=13s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=8.2s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=2s *)

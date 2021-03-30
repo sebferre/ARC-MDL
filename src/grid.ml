@@ -699,22 +699,23 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
    Common.prof "Grid.rectangles_of_part" (fun () ->
    let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
    let _area = h * w in
-   let valid_area = ref 0 in
-   let r_mask = ref (Mask.copy p.pixels) in (* pixels to be added to mask *)
-   let delta = ref [] in
-   let nb_explained_pixels = ref 0 in
+   let r_mask = ref (Mask.copy p.pixels) in (* rectangle mask *)
+   let valid_area = ref 0 in (* area of r_mask *)
+   let delta = ref [] in (* inconsistent pixels, relative to mask and p.color *)
+   let nb_explained_pixels = ref 0 in (* mask pixels explained by rectangle *)
    for i = p.mini to p.maxi do
      for j = p.minj to p.maxj do
        let c = g.matrix.{i,j} in
-       if Mask.mem i j mask
+       if Mask.mem i j mask (* pixel (i,j) in rectangle box, not yet explained *)
        then
-         if c = p_color
+         if c = p_color (* this pixel has the expected color *)
          then (
+	   r_mask := Mask.add_in_place i j !r_mask; (* included in rectangle mask *)
            incr valid_area;
-           incr nb_explained_pixels )
-         else delta := (i,j,c)::!delta
-       else (
-	 r_mask := Mask.add_in_place i j !r_mask;
+           incr nb_explained_pixels ) (* and hence now explained *)
+         else delta := (i,j,c)::!delta (* the pixel has yet to be explained *)
+       else ( (* pixel in rectangle box but already explained, hidden behind above layers *)
+	 r_mask := Mask.add_in_place i j !r_mask; (* we consider it as valid *)
 	 incr valid_area )
      done
    done;
