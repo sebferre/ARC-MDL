@@ -113,10 +113,13 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
              Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
              if !grid_viz then Grid.pp_grids [Model.grid_of_data gdi.data]
            );
-	  if !training then (Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo);
-          let score, label =
-            Model.write_grid ~env:envo m.output_template
-            |> Result.fold
+	   if !training then (
+             Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
+             if !grid_viz then Grid.pp_grids [Model.grid_of_data gdo.data]
+           );
+           let score, label =
+             Model.write_grid ~env:gdi.data m.output_template
+             |> Result.fold
                  ~ok:(fun derived_grid ->
                    match Grid.diff derived_grid output with
                    | None ->
@@ -192,7 +195,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 16 tasks, 102s *)
+let solved_train_names = (* 17 tasks, 102s *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=13s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=8.2s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=2s *)
@@ -209,10 +212,14 @@ let solved_train_names = (* 16 tasks, 102s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2s *)
     "9565186b.json"; (* keep bigest shape on grey background, the power of MDL!, runtime=0.3s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=24s *)
+    "ea32f347.json"; (* three grey segments, color them by decreasing length, works because parses big shapes first *)
   ]
 
 let maybe_train_names =
   [
+    "a1570a43.json"; (* pb: 4 points, which one is top left *)
+    "d9fac9be.json"; (* pb: succeeds by chance ? how right point is chosen *)
+    "681b3aeb.json"; (* pb: succeeds by chance [2 shapes, paving a 3x3 grid] *)
     "91714a58.json"; (* pb: insists too much on understanding input with many noise points, succeeds on test while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
     "928ad970.json"; (* pb: position next to borders on all sides, need more expressions *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
