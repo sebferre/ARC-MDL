@@ -1576,20 +1576,23 @@ let learn_model
         let input_grids =
           List.map
             (function
-             | (_,gdi,_)::_ -> grid_of_data gdi.data
+             | (_,gdi,_)::_ ->
+                gdi,
+                grid_of_data gdi.data
              | _ -> assert false)
             gsri.reads in
         let output_grids =
           List.map
             (function
              | (envo,gdo,_)::_ ->
+                gdo,
                 [grid_of_data gdo.data;
                  Result.get_ok (write_grid ~env:envo m.output_template)]
              | _ -> assert false)
             gsro.reads in
         print_newline ();
         List.iter2
-          (fun gi gos -> Grid.pp_grids (gi :: gos))
+          (fun (gdi,gi) (gdo,gos) -> Grid.pp_grids (gi :: gos))
           input_grids output_grids);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)

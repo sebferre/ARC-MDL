@@ -110,36 +110,46 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
            let envi, gdi, dli = List.hd gris in
            let envo, gdo, dlo = List.hd gros in
 	   if !training then (
+             print_endline "Input best reading:";
              Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
              if !grid_viz then Grid.pp_grids [Model.grid_of_data gdi.data]
            );
 	   if !training then (
+             print_endline "Output best reaading:";
              Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
              if !grid_viz then Grid.pp_grids [Model.grid_of_data gdo.data]
            );
-           let score, label =
-             Model.write_grid ~env:gdi.data m.output_template
-             |> Result.fold
-                 ~ok:(fun derived_grid ->
-                   match Grid.diff derived_grid output with
-                   | None ->
-                      if !grid_viz then Grid.pp_grids [derived_grid];
-                      1, "SUCCESS"
-                   | Some diff ->
-                      if !training then print_grid_diff ~grid:output ~derived_grid diff;
-                      0, "FAILURE")
-                 ~error:(function
-                   | Model.Unbound_U ->
-                      if !training then print_endline "! unbound unknown";
-                      0, "ERROR"
-                   | Model.Unbound_Var p ->
-                      if !training then Printf.printf "! unbound variable %s" (Model.string_of_path p);
-                      0, Printf.sprintf "ERROR"
-                   | exn -> raise exn) in
-          Printf.printf "TRAIN %s/%d: %d (%s)\n\n" name i score label;
-	  i+1,
-	  nb_ex+1,
-	  nb_correct + score)
+           let score, label = (* TODO: use apply model like for test *)
+             match Model.apply_model ~env:Model.data0 m input with
+             | Result.Ok gdi_derived_s ->
+                print_endline "Output writing (up to 3 trials):";
+                List.fold_left
+                  (fun (score,label) (gdi, derived_grid) ->
+                    if score=1 then score, label
+                    else (
+                      match Grid.diff derived_grid output with
+                      | None ->
+                         if !training then (
+                           Model.pp_grid_data gdi;
+                           if !grid_viz then Grid.pp_grids [derived_grid]);
+                         1, "SUCCESS"
+                      | Some diff ->
+                         if !training then print_grid_diff ~grid:output ~derived_grid diff;
+                         0, "FAILURE"))
+                  (0,"FAILURE") gdi_derived_s
+             | Result.Error err ->
+                (match err with
+                 | Model.Unbound_U ->
+                    if !training then print_endline "! unbound unknown";
+                    0, "ERROR"
+                 | Model.Unbound_Var p ->
+                    if !training then Printf.printf "! unbound variable %s" (Model.string_of_path p);
+                    0, Printf.sprintf "ERROR"
+                 | exn -> raise exn) in
+           Printf.printf "TRAIN %s/%d: %d (%s)\n\n" name i score label;
+	   i+1,
+	   nb_ex+1,
+	   nb_correct + score)
 	 (1,0,0)
 	 grioss task.train in
      
@@ -155,13 +165,14 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
                    if score=1 then score, label
                    else (
                      if !training then (
+                       print_endline "Input grid:";
                        Model.pp_grid_data gdi;
                        if !grid_viz then Grid.pp_grids [Model2.grid_of_data gdi.data]
                      );
+                     print_endline "Output grid:";
 	             ( match Grid.diff derived output with
 		       | None ->
                           if !training && !grid_viz then (
-                            print_endline "output grid";
                             Grid.pp_grids [derived]);
                           1, "SUCCESS"
 		       | Some diff ->
