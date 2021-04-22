@@ -369,6 +369,7 @@ let signature_of_kind (sg : signature) (k : kind) : path list =
 let rec default_data_of_path (p : path) : data =
   match List.rev p with
   | (`I | `J)::`Pos::_ -> `Int 0
+  | (`I | `J)::`Size::[] -> `Int 10
   | (`I | `J)::`Size::_ -> `Int 2
   | `Color::[] -> `Color Grid.black
   | `Color::`Layers _::_ -> `Color Grid.no_color
