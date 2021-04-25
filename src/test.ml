@@ -16,7 +16,7 @@ let refine_degree = def_param "refine_degree" 20 string_of_int
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let task_timeout = ref 60
+let task_timeout = ref 120
 let learning_verbose = ref false
 let grid_viz = ref false
 
@@ -227,8 +227,8 @@ let solved_train_names = (* 17 tasks, 102s? *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=3.2s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=26s. PB: can miss a shape because considers all black rectangles, reaches max_nb_shape_parse *)
-    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. PB: fails on horizontal segments *)
-    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=39s *)
+    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. PB: fails on test, why? *)
+    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=75s *)
   ]
 
 let maybe_train_names =

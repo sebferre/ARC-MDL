@@ -871,8 +871,7 @@ let parse_vec ~env t p (vi, vj : int * int) state =
     ~env t p (vi,vj) state
   
 let shape_postprocess (state : parse_state) (shapes : (int (* nb of newly explained pixels *) * 'a * delta * Grid.Mask.t) list) : ('a * parse_state) Myseq.t = (* QUICK *)
-  shapes
-  |> List.sort (fun (n1,_,_,_) (n2,_,_,_) -> Stdlib.compare n2 n1)
+  shapes (* already sorted in Grid *)
   |> Myseq.from_list
   |> Myseq.filter_map
        (fun (nb_explained_pixels, shape, occ_delta, occ_mask) ->
@@ -1627,7 +1626,8 @@ let learn_model
                  Result.get_ok (write_grid ~env:envo m.output_template)];
               print_newline ()
            | _ -> assert false)
-          gpsr.reads);
+          gpsr.reads;
+        Unix.sleepf 0.5);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
