@@ -612,7 +612,7 @@ let rec sdl_template ~(ctx : sdl_ctx) (t : template) (p : path) : staged_dl =
      Mdl.Code.usage 0.5 +. dl_expr ~ctx e p,
      staged0
   | #patt as patt ->
-     dl_patt_as_template
+     dl_patt_as_template (* Mdl.Code.usage 0.4 *)
      +! sdl_patt sdl_template ~ctx patt p
 
 let dl_diff ~(ctx : sdl_ctx) (diff : diff) (data : data) : dl =
@@ -985,7 +985,10 @@ let _ = Printexc.register_printer
            | Parse_failure -> Some "the grid could not be parsed with the given template"
            | _ -> None)
 
-type grid_read = data * grid_data * dl
+(* reading grids *)
+      
+(* result of reading a grid *)
+type grid_read = data * grid_data * dl (* env, grid_data, dl *)
 
 let compare_grid_read : grid_read -> grid_read -> int =
   fun (_,gd1,dl1) (_,gd2,dl2) ->
@@ -995,13 +998,17 @@ let sort_grid_reads : grid_read list -> grid_read list =
   Common.prof "Model2.sort_grid_reads" (fun () ->
       List.sort_uniq compare_grid_read grs)
 
-let limit_grid_reads (grs : grid_read list) : grid_read list =
-  match grs with
+let limit_dl (f_dl : 'a -> dl) (l : 'a list) : 'a list =
+  match l with
   | [] -> []
-  | (_,_,dl0)::_ ->
+  | x0::_ ->
+     let dl0 = f_dl x0 in
      let min_dl = !max_parse_dl_factor *. dl0 in
-     Common.sub_list grs 0 !max_nb_grid_reads
-     |> List.filter (fun (_,_,dl) -> dl <= min_dl)
+     List.filter (fun x -> f_dl x <= min_dl) l
+
+let limit_grid_reads (grs : grid_read list) : grid_read list =
+  Common.sub_list grs 0 !max_nb_grid_reads
+  |> limit_dl (fun (_,_,dl) -> dl)
                
 let read_grid
       ~(quota_diff : int)
@@ -1024,19 +1031,20 @@ let read_grid
     let dl = dl_data +. dl_diff +. dl_delta in
     let gd = {data; diff=state.diff; delta=state.delta} in
     Myseq.return (env, gd, dl) in
-  let l_sorted_parses =
+  let l_parses =
     parses
     |> Myseq.slice ~offset:0 ~limit:(!max_nb_parse)
-    |> Myseq.to_rev_list
-    |> sort_grid_reads in
-  (*Printf.printf "### %d ###\n" (List.length l_sorted_parses);*)
-  if l_sorted_parses = []
+    |> Myseq.to_rev_list in
+  if l_parses = []
   then Result.Error Parse_failure
-  else Result.Ok (limit_grid_reads l_sorted_parses))
-							      
-(* result of reading a grid: grid data and description lengths *)
+  else Result.Ok
+         (l_parses
+          |> sort_grid_reads
+          |> limit_grid_reads))
+
+(* result of reading a list of grids with a grid model *)
 type grids_read =
-  { dl_m : dl;
+  { dl_m : dl; (* DL of the model *)
     reads : grid_read list list; (* outer list over grids, inner list over parses, sorted in increasing DL *)
   }
 
@@ -1065,24 +1073,14 @@ let grids_read_has_delta (gsr : grids_read) : bool =
               (fun (_env, (gd : grid_data), _dl) ->
                 gd.delta <> []))
 
-let dl_template_data (gsr : grids_read) : dl triple (* model, data, model+data *) =
-  let dl_data =
-    !alpha (* because given training examples are only a sample from a class of grids *)
-    *. Mdl.sum gsr.reads
-         (function
-          | [] -> assert false
-          | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
-  gsr.dl_m, dl_data, gsr.dl_m +. dl_data
-		    
 let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m, dl_grid_data =
     sdl_template
       ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       t path0 in
-  let grss_res =
+  let| reads =
     let+| env, g = egrids in
     read_grid ~quota_diff ~dl_grid_data ~env t g in
-  let| reads = grss_res in
   Result.Ok {dl_m; reads}
 
   
@@ -1113,22 +1111,41 @@ let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) 
     sdl_template
       ~ctx:{env_sig=signature0; box_height=Grid.max_size; box_width=Grid.max_size}
       m.input_pattern path0 in    
-  let+|+ _, gdi, _ = read_grid ~quota_diff:(!max_nb_diff) ~dl_grid_data ~env m.input_pattern g in
-  let| grid = write_grid ~env:gdi.data m.output_template in
+  let+|+ _, gdi, _ =
+    read_grid ~quota_diff:(!max_nb_diff) ~dl_grid_data ~env m.input_pattern g in
+  let| grid =
+    write_grid ~env:gdi.data m.output_template in
   Result.Ok [(gdi, grid)])
 
-let read_grid_pair ~dl_gdi ~dl_gdo ?(env = data0) (m : model) (gi : Grid.t) (go : Grid.t) : (grid_read list * grid_read list, exn) Result.t =
-  let| gris =
-    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern gi in (* no diff allowed for training *)
-  let| gros =
-    let+|+ _, gdi, _ = Result.Ok gris in
-    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template go in
-  let gros = sort_grid_reads gros in
-  (* TODO: should probably sort by dli + dlo rather than dlo only (joint DL) *)
-  let gros = limit_grid_reads gros in
-  Result.Ok (gris,gros)
+(* result of reading a list of pairs of grids *)
+type grid_pairs_read =
+  { dl_mi : dl; (* input model DL *)
+    dl_mo : dl; (* output model DL *)
+    reads : (grid_read * grid_read * dl) list list; (* outer list over grids, inner list over parses, sorted in increasing DL *)
+  }
 
-let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids_read * grids_read, exn) Result.t =
+let split_grid_pairs_read (gprs: grid_pairs_read) : grids_read * grids_read =
+  let reads_i =
+    List.map
+      (fun reads_pair ->
+        reads_pair
+        |> List.map
+             (fun (gri,_,_) -> gri)
+        |> sort_grid_reads)
+      gprs.reads in
+  let reads_o =
+    List.map
+      (fun reads_pair ->
+        reads_pair
+        |> List.map
+             (fun (_,gro,_) -> gro)
+        |> sort_grid_reads)
+      gprs.reads in
+  let gsri = { dl_m = gprs.dl_mi; reads = reads_i } in
+  let gsro = { dl_m = gprs.dl_mo; reads = reads_o } in
+  gsri, gsro
+  
+let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_pairs_read, exn) Result.t =
   Common.prof "Model2.read_grid_pairs" (fun () ->
   (* takes model, input env+grid, output grids *)
   let dl_mi, dl_gdi =
@@ -1141,25 +1158,21 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grids
     sdl_template
       ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       m.output_template path0 in
-  let| griss =
-    let+| {input} = pairs in
-    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern input in (* no diff allowed during training *)
-  let| gross =
-    let+| gris, {output} = List.combine griss pairs in
-    let+|+ _, gdi, _ = Result.Ok gris in
-    read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
-  let gross = (* keeping only max_nb_parse best parses to avoid combinatorial *)
-    Common.prof "Model2.read_grid_pairs/sort_limit" (fun () ->
-    List.map
-      (fun gros ->
-        gros
-        |> sort_grid_reads
-        |> limit_grid_reads)
-      gross) in
-  let gsri = {dl_m = dl_mi; reads = griss } in
-  let gsro = {dl_m = dl_mo; reads = gross } in
-  Result.Ok (gsri,gsro))
-
+  let| reads =
+    let+| {input; output} = pairs in
+    let| reads_pair = 
+      let+|+ (envi,gdi,dli as gri) =
+        read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern input in (* no diff allowed during training *)
+      let+|+ (envo,gdo,dlo as gro) =
+        read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
+      let dl = dli +. dlo in
+      Result.Ok [(gri,gro,dl)] in
+    let reads_pair =
+      reads_pair
+      |> List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
+      |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
+    Result.Ok reads_pair in
+  Result.Ok {dl_mi; dl_mo; reads})
   
 (* template transformations *)
 
@@ -1445,6 +1458,15 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
   |> Myseq.filter_map
        (fun r -> apply_grid_refinement r t)
 
+let dl_grid_model_data (gsr : grids_read) : dl triple (* model, data, model+data *) =
+  let dl_data =
+    !alpha (* because given training examples are only a sample from a class of grids *)
+    *. Mdl.sum gsr.reads
+         (function
+          | [] -> assert false
+          | (_env,_gd,dl)::_ -> dl) in (* using smallest dl *)
+  gsr.dl_m, dl_data, gsr.dl_m +. dl_data
+		      
 let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
@@ -1457,7 +1479,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
     ~data:(fun (r,m) ->
       Result.to_option (read_grids ~quota_diff:0 ~env_sig m egrids))
     ~code:(fun (r,m) gsr ->
-      let lm, ld, lmd = dl_template_data gsr in
+      let lm, ld, lmd = dl_grid_model_data gsr in
       lmd)
     ~refinements:(fun (r,m) gsr dl ->
       (*pp_grid_model m; print_newline ();*)
@@ -1526,11 +1548,23 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
     [ref_defis; ref_shapis; ref_defos; ref_shapos]
       )
 
-let dl_model_data (gsri : grids_read) (gsro : grids_read) : dl triple triple =
+let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
   Common.prof "Model2.dl_model_data" (fun () ->
-  let lmi, ldi, lmdi = dl_template_data gsri in
-  let lmo, ldo, lmdo = dl_template_data gsro in
-  (lmi, lmo, lmi+.lmo), (ldi, ldo, ldi+.ldo), (lmdi, lmdo, lmdi+.lmdo))
+  let lmi = gpsr.dl_mi in
+  let lmo = gpsr.dl_mo in
+  let ldi, ldo =
+    List.fold_left
+      (fun (ldi,ldo) ->
+        function
+        | ((_,_,dli),(_,_,dlo),dl)::_ -> (ldi +. dli, ldo +. dlo)
+        | _ -> assert false)
+      (0.,0.) gpsr.reads in
+  let ldi, ldo = !alpha *. ldi, !alpha *. ldo in
+  let lm = lmi +. lmo in
+  let ld = ldi +. ldo in
+  (lmi, lmo, lm),
+  (ldi, ldo, ld),
+  (lmi+.ldi, lmo+.ldo, lm+.ld))
   
 let learn_model
       ?(verbose = false)
@@ -1539,7 +1573,7 @@ let learn_model
       ~init_model
       ~beam_width ~refine_degree
       (pairs : Task.pair list)
-    : ((refinement * model) * (grids_read * grids_read) * dl) list * bool
+    : ((refinement * model) * (grid_pairs_read * grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
   Mdl.Strategy.beam
@@ -1550,8 +1584,10 @@ let learn_model
     ~data:(fun (r,m) ->
       try
         (*print_string "\t\t=> "; pp_refinement r; print_newline ();*)
-        read_grid_pairs m pairs
-        |> Result.to_option
+        Result.to_option
+          (let| gprs = read_grid_pairs m pairs in
+           let grsi, grso = split_grid_pairs_read gprs in
+           Result.Ok (gprs,grsi,grso))
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
@@ -1559,41 +1595,39 @@ let learn_model
 	 pp_refinement r; print_newline ();
          pp_model m; print_newline ();
 	 raise exn)
-    ~code:(fun (r,m) (gsri,gsro) ->
+    ~code:(fun (r,m) (gpsr,gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     dl_model_data gsri gsro in
+	     dl_model_data gpsr (*gsri gsro*) in
            if verbose then (
              Printf.printf "\t?? %.1f\t" lmd;
-             pp_refinement r; print_newline ()
+             pp_refinement r; print_newline ();
+	     (*Printf.printf "\t\tl = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
+             print_endline " ===> all reads for first example";
+             List.hd gpsr.reads
+             |> List.iter
+                  (fun ((_,{data=d_i},dl_i), (_, {data=d_o}, dl_o), dl) ->
+                    print_endline " --- some read ---";
+                    pp_data d_i; print_newline ();
+                    pp_data d_o; print_newline ();
+                    Printf.printf "\tdl=%.1f\n" dl);
+             print_newline ()*)
            );
-	   (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
 	   flush stdout;
            lmd)
     ~refinements:
-    (fun (r,m) (gsri,gsro) dl ->
+    (fun (r,m) (gpsr,gsri,gsro) dl ->
       Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
       if grid_viz then (
-        let input_grids =
-          List.map
-            (function
-             | (_,gdi,_)::_ ->
-                gdi,
-                grid_of_data gdi.data
-             | _ -> assert false)
-            gsri.reads in
-        let output_grids =
-          List.map
-            (function
-             | (envo,gdo,_)::_ ->
-                gdo,
-                [grid_of_data gdo.data;
-                 Result.get_ok (write_grid ~env:envo m.output_template)]
-             | _ -> assert false)
-            gsro.reads in
-        print_newline ();
-        List.iter2
-          (fun (gdi,gi) (gdo,gos) -> Grid.pp_grids (gi :: gos))
-          input_grids output_grids);
+        List.iter
+          (function
+           | ((_,gdi,_), (envo,gdo,_), _)::_ ->
+              Grid.pp_grids
+                [grid_of_data gdi.data;
+                 grid_of_data gdo.data;
+                 Result.get_ok (write_grid ~env:envo m.output_template)];
+              print_newline ()
+           | _ -> assert false)
+          gpsr.reads);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
