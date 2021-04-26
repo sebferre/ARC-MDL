@@ -358,7 +358,7 @@ let signature_of_template (t : template) : signature =
         Hashtbl.replace ht k (p::ps0))
       () path0 t in
   Hashtbl.fold
-    (fun k ps res -> (k,ps)::res)
+    (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
     ht []
 
 let signature_of_kind (sg : signature) (k : kind) : path list =
@@ -1262,19 +1262,20 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
   let u_vars =
-    fold_template
-      (fun res p t0 ->
-        let k = path_kind p in
-        if k <> `Grid
-        then (p,k,t0)::res
-        else res)
-      [] path0 t in
+    List.rev
+      (fold_template
+         (fun res p t0 ->
+           let k = path_kind p in
+           if k <> `Grid
+           then (p,k,t0)::res
+           else res)
+         [] path0 t) in
   let val_matrix =
     List.map
       (fun grs ->
         assert (grs <> []); (* otherwise, should be parse failure *)
-        List.map
-          (fun (env,gd,dl) ->
+        List.mapi
+          (fun rank (env,gd,dl) ->
             let env_val =
               List.map
                 (fun (k,ps) -> (* for each kind *)
@@ -1293,20 +1294,23 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                   | Some d -> p, d
                   | None -> assert false)
                 u_vars in
-            env_val, u_val, dl)
+            env_val, u_val, dl, rank)
           grs)
       grss in
   val_matrix
-  |> List.map Myseq.from_list
-  |> Myseq.product
-  |> Myseq.fold_left
-       (fun defs alignment ->
-         Bintree.union defs (find_defs ~env_sig ~u_vars alignment))
-       Bintree.empty
-  |> Bintree.elements
+  |> Common.list_product (* TODO: find a way to avoid this combinatorial generation *)
+  |> List.map (fun alignment ->
+         let sum_dl, sum_rank =
+           List.fold_left
+             (fun (sum_dl,sum_rank) (_,_,dl,rank) -> (sum_dl +. dl, sum_rank + rank))
+             (0.,0) alignment in
+         sum_dl, sum_rank, alignment)
+  |> List.stable_sort Stdlib.compare (* increasing DL, increasing rank sum *)
   |> Myseq.from_list
+  |> Myseq.flat_map (fun (_,_,alignment) ->
+         find_defs ~env_sig ~u_vars alignment)
+  |> Myseq.unique)
   (* TODO: find appropriate sorting of defs: syntactic criteria, type criteria, DL criteria *)
-  |> Myseq.map (fun (p,t) -> RDef (p,t)))
 (*and find_defs_transpose ~env_vars ~u_vars alignment =
   Common.prof "Model2.find_defs_transpose" (fun () ->
 (* assuming env_val and u_val have variables in same order *)
@@ -1331,40 +1335,35 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            (p, v::lv1))
          u_val u_vals1 in
      env_vals, u_vals) *)
-and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl) list *) : (path * template) Bintree.t =
+and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl, rank) list *) : grid_refinement Myseq.t =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some pattern or expression over env vars *)
   (*let map_env_vals, map_u_vals =
     find_defs_transpose ~env_vars ~u_vars alignment in*)
-  List.fold_left
-    (fun defs (u,k,t0) ->
-      let u_vals =
-        List.map
-          (fun (_,u_val,_) ->
-            match List.assoc_opt u u_val with
-            | Some d -> d
-            | None -> assert false)
-          alignment in
-      let defs = (* defining u by a common pattern *)
-        if t0 = `U
-        then (* only for unknowns, uncessary for patts, expressions have priority *)
-          let t_vals = unify u_vals in
-          if t_vals = `U
-          then defs
-          else Bintree.add (u, t_vals) defs
-        else defs in
-      let defs = (* defining u by an expression *)
-        match t0 with
-        | `E _ -> defs (* already an expression *)
-        | _ -> (* unknowns and patterns *)
-           let exprs = find_u_expr ~env_sig u k u_vals alignment in
-           List.fold_left
-             (fun defs e -> Bintree.add (u, `E e) defs)
-             defs exprs in
-      defs)
-    Bintree.empty u_vars)
-and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list = (* QUICK *)
+  let* (u,k,t0) = Myseq.from_list u_vars in
+  let u_vals =
+    List.map
+      (fun (_,u_val,_,_) ->
+        match List.assoc_opt u u_val with
+        | Some d -> d
+        | None -> assert false)
+      alignment in
+  let defs_patt = (* defining u by a common pattern *)
+    if t0 = `U
+    then (* only for unknowns, uncessary for patts, expressions have priority *)
+      let t_vals = unify u_vals in
+      if t_vals = `U
+      then Myseq.empty
+      else Myseq.return (RDef (u, t_vals))
+    else Myseq.empty in
+  let defs_expr = (* defining u by an expression *)
+    match t0 with
+    | `E _ -> Myseq.empty (* already an expression *)
+    | _ -> (* unknowns and patterns *)
+       find_u_expr ~env_sig u k u_vals alignment in
+  Myseq.concat [defs_expr; defs_patt])
+and find_u_expr ~env_sig u_path u_kind u_vals alignment : grid_refinement Myseq.t = (* QUICK *)
   (* TODO: rather use map_env_vals rather than alignment *)
   (* requires to define eval_expr on lists of env *)
   let int_vars = signature_of_kind env_sig `Int in
@@ -1399,21 +1398,24 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : expr list = (* QUICK *
              le int_vars)
          le int_vars
     | _ -> le in
-  List.filter
-    (fun e ->
-      let e_vals =
-        List.map
-          (fun (env_val,_,_) ->
-            eval_expr_gen
-              ~lookup:(fun v ->
-                Option.bind
-                  (List.assoc_opt (path_kind v) env_val)
-                  (fun env_val_k ->
-                    List.assoc_opt v env_val_k))
-              u_path e)
-          alignment in
-      e_vals = u_vals)
-    le
+  let le = List.rev le in (* reverse to put in order *)
+  Myseq.from_list le
+  |> Myseq.filter_map (fun e ->
+         let e_vals =
+           List.map
+             (fun (env_val,_,_,_) ->
+               eval_expr_gen
+                 ~lookup:(fun v ->
+                   Option.bind
+                     (List.assoc_opt (path_kind v) env_val)
+                     (fun env_val_k ->
+                       List.assoc_opt v env_val_k))
+                 u_path e)
+             alignment in
+         if e_vals = u_vals
+         then Some (RDef (u_path, `E e))
+         else None)
+
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
   let rec aux lp = function
