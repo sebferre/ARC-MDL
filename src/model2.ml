@@ -6,7 +6,7 @@ let def_param name v to_str =
   ref v
    
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" 1000 string_of_int (* max nb of considered grid parses *)
+let max_nb_parse = def_param "max_nb_parse" 512 string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_nb_shape_parse = def_param "max_nb_shape_parse" 16 string_of_int (* max nb of parses for a shape *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
@@ -1117,9 +1117,7 @@ let split_grid_pairs_read (gprs: grid_pairs_read) : grids_read * grids_read =
     List.map
       (fun reads_pair ->
         reads_pair
-        |> List.map proj
-        |> List.sort_uniq (fun (_,gd1,dl1) (_,gd2,dl2) ->
-               Stdlib.compare (dl1,gd1) (dl2,gd2))) (* removing duplicate parses *)
+        |> List.map proj)
       gprs.reads in
   let reads_i = project_reads (fun (gri,_,_) -> gri) in
   let reads_o = project_reads (fun (_,gro,_) -> gro) in
@@ -1425,8 +1423,8 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
             Myseq.empty)
     | `Insert (above,shape,below) ->
        Myseq.concat
-         [aux (lp ++ `Left) above;
-          aux (lp ++ `Right) below]
+         [ aux (lp ++ `Right) below; (* insert below first *)
+           aux (lp ++ `Left) above ]
     | _ -> assert false
   in
   match t with
@@ -1527,7 +1525,7 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
 	   (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
   Myseq.concat
-    [ref_defis; ref_shapis; ref_defos; ref_shapos]
+    [ref_shapos; ref_shapis; ref_defos; ref_defis]
       )
 
 let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
