@@ -211,13 +211,13 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 17 tasks, 102s? *)
+let solved_train_names = (* 17 tasks, 216s *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=6.3s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=8.0s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=10s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.1s *)
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.1s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=33s *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=28s *)
     "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.2s *)
     "1cf80156.json"; (* crop on shape, runtime=0.9s *)
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.9s *)
@@ -226,9 +226,9 @@ let solved_train_names = (* 17 tasks, 102s? *)
     "a79310a0.json"; (* cyan shape, moving 1 pixel down, 0.2s *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=3.2s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2s *)
-    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=26s. PB: can miss a shape because considers all black rectangles, reaches max_nb_shape_parse *)
-    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. PB: fails on test, why? *)
-    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=75s *)
+    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=27s. *)
+    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=32s *)
+    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=81s *)
   ]
 
 let maybe_train_names =

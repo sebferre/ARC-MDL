@@ -989,14 +989,6 @@ let _ = Printexc.register_printer
 (* result of reading a grid *)
 type grid_read = data * grid_data * dl (* env, grid_data, dl *)
 
-let compare_grid_read : grid_read -> grid_read -> int =
-  fun (_,gd1,dl1) (_,gd2,dl2) ->
-  Stdlib.compare (dl1,gd1) (dl2,gd2)
-let sort_grid_reads : grid_read list -> grid_read list =
-  fun grs ->
-  Common.prof "Model2.sort_grid_reads" (fun () ->
-      List.sort_uniq compare_grid_read grs)
-
 let limit_dl (f_dl : 'a -> dl) (l : 'a list) : 'a list =
   match l with
   | [] -> []
@@ -1005,10 +997,6 @@ let limit_dl (f_dl : 'a -> dl) (l : 'a list) : 'a list =
      let min_dl = !max_parse_dl_factor *. dl0 in
      List.filter (fun x -> f_dl x <= min_dl) l
 
-let limit_grid_reads (grs : grid_read list) : grid_read list =
-  Common.sub_list grs 0 !max_nb_grid_reads
-  |> limit_dl (fun (_,_,dl) -> dl)
-               
 let read_grid
       ~(quota_diff : int)
       ~(dl_grid_data : ctx:sdl_ctx -> data -> dl)
@@ -1038,8 +1026,9 @@ let read_grid
   then Result.Error Parse_failure
   else Result.Ok
          (l_parses
-          |> sort_grid_reads
-          |> limit_grid_reads))
+          |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
+          |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
+          |> limit_dl (fun (_,_,dl) -> dl)))
 
 (* result of reading a list of grids with a grid model *)
 type grids_read =
@@ -1124,22 +1113,16 @@ type grid_pairs_read =
   }
 
 let split_grid_pairs_read (gprs: grid_pairs_read) : grids_read * grids_read =
-  let reads_i =
+  let project_reads proj =
     List.map
       (fun reads_pair ->
         reads_pair
-        |> List.map
-             (fun (gri,_,_) -> gri)
-        |> sort_grid_reads)
+        |> List.map proj
+        |> List.sort_uniq (fun (_,gd1,dl1) (_,gd2,dl2) ->
+               Stdlib.compare (dl1,gd1) (dl2,gd2))) (* removing duplicate parses *)
       gprs.reads in
-  let reads_o =
-    List.map
-      (fun reads_pair ->
-        reads_pair
-        |> List.map
-             (fun (_,gro,_) -> gro)
-        |> sort_grid_reads)
-      gprs.reads in
+  let reads_i = project_reads (fun (gri,_,_) -> gri) in
+  let reads_o = project_reads (fun (_,gro,_) -> gro) in
   let gsri = { dl_m = gprs.dl_mi; reads = reads_i } in
   let gsro = { dl_m = gprs.dl_mo; reads = reads_o } in
   gsri, gsro
@@ -1168,7 +1151,7 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
       Result.Ok [(gri,gro,dl)] in
     let reads_pair =
       reads_pair
-      |> List.sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
+      |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
       |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
     Result.Ok reads_pair in
   Result.Ok {dl_mi; dl_mo; reads})
@@ -1596,7 +1579,7 @@ let learn_model
 	 raise exn)
     ~code:(fun (r,m) (gpsr,gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     dl_model_data gpsr (*gsri gsro*) in
+	     dl_model_data gpsr in
            if verbose then (
              Printf.printf "\t?? %.1f\t" lmd;
              pp_refinement r; print_newline ();
