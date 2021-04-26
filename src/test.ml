@@ -77,14 +77,15 @@ let print_l_task_model name task model =
 	 
 (* === monitoring learning === *)
 
-type measures = (string * [`Tasks|`Bits] * float) list
+type measures = (string * [`Tasks|`Bits|`MRR] * float) list
 
 let print_measures count ms =
   List.iter
     (fun (a,t,v) ->
      match t with
      | `Tasks -> Printf.printf "%s = %.2f tasks (%.2f%%)\n" a v (100. *. v /. float count)
-     | `Bits -> Printf.printf "%s = %.1f bits (%.1f bits/task)\n" a v (v /. float count))
+     | `Bits -> Printf.printf "%s = %.1f bits (%.1f bits/task)\n" a v (v /. float count)
+     | `MRR -> Printf.printf "%s = %.2f\n" a (v /. float count))
     ms;
   print_newline ()
 				 
@@ -109,9 +110,9 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
      
      print_endline "\n# Input/output grids data (train)";
      let grioss = List.combine gsri.reads gsro.reads in
-     let _, nb_ex_train, nb_correct_train =
+     let _, nb_ex_train, nb_correct_train, sum_rrank_train =
        List.fold_left2
-	 (fun (i,nb_ex, nb_correct) (gris,gros) {input; output} ->
+	 (fun (i,nb_ex, nb_correct, sum_rrank) (gris,gros) {input; output} ->
            let envi, gdi, dli = List.hd gris in
            let envo, gdo, dlo = List.hd gros in
 	   if !training then (
@@ -124,50 +125,53 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
              Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
              if !grid_viz then Grid.pp_grids [Model.grid_of_data gdo.data]
            );
-           let score, label = (* TODO: use apply model like for test *)
+           let score, rank, label = (* TODO: use apply model like for test *)
              match Model.apply_model ~env:Model.data0 m input with
              | Result.Ok gdi_derived_s ->
                 print_endline "Output writing (up to 3 trials):";
                 List.fold_left
-                  (fun (score,label) (gdi, derived_grid) ->
-                    if score=1 then score, label
+                  (fun (score,rank,label) (gdi, derived_grid) ->
+                    if score=1 then score, rank, label
                     else (
                       match Grid.diff derived_grid output with
                       | None ->
                          if !training then (
                            Model.pp_grid_data gdi;
                            if !grid_viz then Grid.pp_grids [derived_grid]);
-                         1, "SUCCESS"
+                         1, rank, "SUCCESS"
                       | Some diff ->
-                         if !training then print_grid_diff ~grid:output ~derived_grid diff;
-                         0, "FAILURE"))
-                  (0,"FAILURE") gdi_derived_s
+                         if !training then (
+                           Model.pp_grid_data gdi;
+                           print_grid_diff ~grid:output ~derived_grid diff);
+                         0, rank+1, "FAILURE"))
+                  (0,1,"FAILURE") gdi_derived_s
              | Result.Error err ->
                 (match err with
                  | Model.Unbound_U ->
                     if !training then print_endline "! unbound unknown";
-                    0, "ERROR"
+                    0, 0, "ERROR"
                  | Model.Unbound_Var p ->
                     if !training then Printf.printf "! unbound variable %s" (Model.string_of_path p);
-                    0, Printf.sprintf "ERROR"
+                    0, 0, Printf.sprintf "ERROR"
                  | exn -> raise exn) in
            Printf.printf "TRAIN %s/%d: %d (%s)\n\n" name i score label;
 	   i+1,
 	   nb_ex+1,
-	   nb_correct + score)
-	 (1,0,0)
+	   nb_correct + score,
+           (if score=1 then sum_rrank +. 1. /. float rank else sum_rrank))
+	 (1,0,0,0.)
 	 grioss task.train in
      
      print_endline "# Checking test instances\n";
-     let _, nb_ex_test, nb_correct_test =
+     let _, nb_ex_test, nb_correct_test, sum_rrank_test =
        List.fold_left
-	 (fun (i,nb_ex,nb_correct) {input; output} ->
-	  let score, label =
+	 (fun (i,nb_ex,nb_correct,sum_rrank) {input; output} ->
+	  let score, rank, label =
 	    match Model.apply_model ~env:Model.data0 m input with
 	    | Result.Ok gdi_derived_s ->
                List.fold_left
-                 (fun (score,label) (gdi, derived) ->
-                   if score=1 then score, label
+                 (fun (score,rank,label) (gdi, derived) ->
+                   if score=1 then score, rank, label
                    else (
                      if !training then (
                        print_endline "Input grid:";
@@ -179,23 +183,30 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
 		       | None ->
                           if !training && !grid_viz then (
                             Grid.pp_grids [derived]);
-                          1, "SUCCESS"
+                          1, rank, "SUCCESS"
 		       | Some diff ->
-                          if !training then print_grid_diff ~grid:output ~derived_grid:derived diff;
-                          0, "FAILURE" )
+                          if !training then (
+                            Model.pp_grid_data gdi;
+                            print_grid_diff ~grid:output ~derived_grid:derived diff);
+                          0, rank+1, "FAILURE" )
                  ))
-                 (0,"FAILURE") gdi_derived_s
-	    | Result.Error msg -> 0, "ERROR" in
+                 (0,1,"FAILURE") gdi_derived_s
+	    | Result.Error msg -> 0, 0, "ERROR" in
 	  Printf.printf "TEST %s/%d: %d (%s)\n" name i score label;
-	  i+1, nb_ex+1, nb_correct+score)
-	 (1,0,0) task.test in
+	  i+1,
+          nb_ex+1,
+          nb_correct+score,
+          (if score=1 then sum_rrank +. 1. /. float rank else sum_rrank))
+	 (1,0,0,0.) task.test in
      print_newline ();
      let ms =
        [ "bits-train-error", `Bits, ldo;
 	 "acc-train-micro", `Tasks, float nb_correct_train /. float nb_ex_train;
 	 "acc-train-macro", `Tasks, (if nb_correct_train = nb_ex_train then 1. else 0.);
+         "acc-train-mrr", `MRR, sum_rrank_train /. float nb_ex_train;
 	 "acc-test-micro", `Tasks, float nb_correct_test /. float nb_ex_test;
 	 "acc-test-macro", `Tasks, (if nb_correct_test = nb_ex_test then 1. else 0.);
+         "acc-test-mrr", `MRR, sum_rrank_test /. float nb_ex_test;
        ] in
      print_endline "# Performance measures on task";
      print_measures 1 ms;
