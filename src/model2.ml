@@ -1021,7 +1021,7 @@ let read_grid
   let l_parses =
     parses
     |> Myseq.slice ~offset:0 ~limit:(!max_nb_parse)
-    |> Myseq.to_rev_list in
+    |> Myseq.to_list in
   if l_parses = []
   then Result.Error Parse_failure
   else Result.Ok
