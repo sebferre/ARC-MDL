@@ -92,16 +92,33 @@ let print_measures count ms =
 let print_learned_model ~init_model ~refine_degree name task : measures =
   Common.prof "Test.print_learned_model" (fun () ->
   let lm, timed_out =
-    Model.learn_model
-      ~verbose:(!training && !learning_verbose)
-      ~grid_viz:(!grid_viz)
-      ~timeout:(!task_timeout)
-      ~init_model
-      ~beam_width:(!beam_width) ~refine_degree
-      task.train (*gis_test gos*) in
+    try
+      Model.learn_model
+        ~verbose:(!training && !learning_verbose)
+        ~grid_viz:(!grid_viz)
+        ~timeout:(!task_timeout)
+        ~init_model
+        ~beam_width:(!beam_width) ~refine_degree
+        task.train (*gis_test gos*)
+    with exn ->
+      print_endline (Printexc.to_string exn);
+      Printexc.print_backtrace stdout;
+      [], false
+  in
   if timed_out && !training then print_endline "TIMEOUT";
   match lm with
-  | [] -> assert false
+  | [] ->
+     print_endline "Error: no learned model";
+     let ms =
+       [ "bits-train-error", `Bits, 0.;
+	 "acc-train-micro", `Tasks, 0.;
+	 "acc-train-macro", `Tasks, 0.;
+         "acc-train-mrr", `MRR, 0.;
+	 "acc-test-micro", `Tasks, 0.;
+	 "acc-test-macro", `Tasks, 0.;
+         "acc-test-mrr", `MRR, 0.;
+       ] in
+     ms     
   | ((_,m), (gpsr, gsri, gsro), l)::_ ->
      print_endline "\n# Learned model:";
      Model.pp_model m;
@@ -139,7 +156,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
                          1, rank, "SUCCESS"
                       | Some diff ->
                          if !training then (
-                           Model.pp_grid_data gdi;
+                           if !learning_verbose then Model.pp_grid_data gdi;
                            print_grid_diff ~grid:output ~derived_grid diff);
                          0, rank+1, "FAILURE"))
                   (0,1,"FAILURE") gdi_derived_s
@@ -184,7 +201,6 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
                           1, rank, "SUCCESS"
 		       | Some diff ->
                           if !training then (
-                            Model.pp_grid_data gdi;
                             print_grid_diff ~grid:output ~derived_grid:derived diff);
                           0, rank+1, "FAILURE" )
                  ))
@@ -220,7 +236,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 17 tasks, 234s *)
+let solved_train_names = (* 24 tasks, 511s *)
   [ "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=10.2s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=9.2s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=1.1s *)
@@ -238,20 +254,27 @@ let solved_train_names = (* 17 tasks, 234s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=63.2s. *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=88.5s *)
     "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=116.1s *)
+    "05269061.json"; (* diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
+    "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 20s, timeout trying to explain everything *)
+    "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=4.9s *)
+    "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=31s *)
+    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=8.3s *)
+    "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=39.1s *)
+    "de1cd16c.json"; (* pixel with the color of the area with the more points, actually selects the second largest such area. works with several trials. runtime=27.6s *)
   ]
 
 let maybe_train_names =
   [
+    "694f12f3.json"; (* pb: need for expression bias: still prefers 2 to size.j-2 *)
+    "1caeab9d.json"; (* pb: prefer to ignore points and have a ful rectangle *)
     "9565186b.json"; (* pb: MDL not enough to keep bigest shape (size vs mask), runtime=0.3s *)
     "a1570a43.json"; (* pb: 4 points, which one is top left *)
-    "d9fac9be.json"; (* pb: succeeds by chance ? how right point is chosen *)
-    "681b3aeb.json"; (* pb: succeeds by chance [2 shapes, paving a 3x3 grid] *)
+    "d9fac9be.json"; (* pb: succeeds by chance, should prune the bottom layer *)
     "91714a58.json"; (* pb: insists too much on understanding input with many noise points, succeeds on test while failing on 2/3 train pairs, runtime>60 but succeeds earlier, very weak *)
     "928ad970.json"; (* pb: position next to borders on all sides, need more expressions *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
     "496994bd.json"; (* pb: moving objects up to some obstacle *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
-    "694f12f3.json"; (* pb: need for expression bias, and ordering by size *)
     "41e4d17e.json"; (* pb: collection, map *)
     "952a094c.json"; (* pb: 4 points, which is which, need for nesting? explicit bottom right position of rectangles *)
     "98cf29f8.json"; (* pb: too slow, insufficient expressions on pos/size *)
