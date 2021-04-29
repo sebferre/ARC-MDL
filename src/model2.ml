@@ -37,7 +37,7 @@ let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'
   | x::lx1 ->
      let open Result in
      match f x, aux lx1 with
-     | Ok ly0, Ok ly1 -> Ok (List.rev_append ly0 ly1)
+     | Ok ly0, Ok ly1 -> Ok (List.append ly0 ly1)
      | Ok ly0, Error _ -> Ok ly0
      | Error _, Ok ly1 -> Ok ly1
      | Error e1, Error _ -> Error e1
