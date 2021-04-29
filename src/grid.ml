@@ -663,8 +663,8 @@ let points (g : t) (mask : Mask.t) (parts : part list) : point list =
          | Some point -> point::res
          | None -> res)
        []
-  |> List.sort (fun (i1,j1,c1) (i2,j2,c2) ->
-         if c1=black then +1 else if c2=black then -1 else 0) (* black points last *)
+  |> List.sort (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
+         Stdlib.compare (c1 = black, p1) (c2 = black, p2)) (* black points last *)
 let points, reset_points =
   let f, reset =
     Common.memoize ~size:103
@@ -821,8 +821,8 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
     List.sort
       (fun rect1 rect2 ->
         Stdlib.compare (* black last, decreasing nb_explained_pixels *)
-          (rect1.color = black, - rect1.nb_explained_pixels)
-          (rect2.color = black, - rect2.nb_explained_pixels))
+          (rect1.color = black, - rect1.nb_explained_pixels, rect1)
+          (rect2.color = black, - rect2.nb_explained_pixels, rect2))
       res in
   res)
 let rectangles, reset_rectangles =
