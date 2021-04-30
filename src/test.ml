@@ -110,14 +110,18 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
           | `TEST -> ()
         );
         print_endline "\n> Output prediction from input (up to 3 trials):";
-        let score, rank, label =
-	  match Model.apply_model ~env:Model.data0 m input with
+        let score, rank, label, _failed_derived_grids =
+	  match Model.apply_model m input with
 	  | Result.Ok gdi_derived_s ->
              List.fold_left
-               (fun (score,rank,label) (gdi, derived) ->
-                 if score=1 then score, rank, label (* already success *)
-                 else if rank > 3 then score, rank, label (* at most 3 trials *)
-                 else (
+               (fun (score,rank,label,failed_derived_grids) (gdi, derived) ->
+                 if score=1 then
+                   score, rank, label, failed_derived_grids (* already success *)
+                 else if rank > 3 then
+                   score, rank, label, failed_derived_grids (* at most 3 trials *)
+                 else if List.mem derived failed_derived_grids then
+                   score, rank, label, failed_derived_grids (* already derived that grid and it failed *)
+                 else ( (* score=0 && rank <= 3 && new derived_grid *)
                    Printf.printf ">> Trial %d\n" rank;
                    if !training then (
                      Model.pp_grid_data gdi;
@@ -129,21 +133,24 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                           print_endline "correct output grid";
                           if !grid_viz then Grid.pp_grids [derived]
                         );
-                        1, rank, "SUCCESS"
+                        1, rank, "SUCCESS", failed_derived_grids
 		     | Some diff ->
                         if !training then (
                           print_grid_diff ~grid:output ~derived_grid:derived diff);
-                        0, rank+1, "FAILURE" )
+                        0, rank+1, "FAILURE", derived::failed_derived_grids )
                ))
-               (0,1,"FAILURE") gdi_derived_s
-	  | Result.Error msg -> 0, 0, "ERROR" in
+               (0,1,"FAILURE",[]) gdi_derived_s
+	  | Result.Error msg -> 0, 0, "ERROR", [] in
         let tt = match train_test with `TRAIN _ -> "TRAIN" | `TEST -> "TEST" in
         let str_rank =
-          match rank with
-          | 1 -> "1st"
-          | 2 -> "2nd"
-          | 3 -> "3rd"
-          | _ -> assert (score = 0); "-" in
+          if score = 0
+          then "-"
+          else
+            match rank with
+            | 1 -> "1st"
+            | 2 -> "2nd"
+            | 3 -> "3rd"
+            | _ -> assert false in
 	Printf.printf "\n%s %s/%d: %d %s (%s)\n" tt name i score str_rank label;
 	i+1,
         nb_ex+1,
@@ -251,7 +258,7 @@ let maybe_train_names =
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "0b148d64.json"; (* crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)
     "d9fac9be.json"; (* pb: need for nested shapes, relative position. point with the other color than the 3x3 square. runtime=15.6s *)
-    "de1cd16c.json"; (* pb: need collection, cardinal, and max. pixel with the color of the area with the more points, actually selects the second largest such area. works with several trials. runtime=27.6s *)
+    "de1cd16c.json"; (* pb: need collection, cardinal, and max. pixel with the color of the area with the more points, actually selects the second largest such area. worked once with several trials. runtime=27.6s *)
     "0962bcdd.json"; (* pb: need for better choice between vars and constants, favor expressions more over constants *) 
     "694f12f3.json"; (* pb: need for expression bias: still prefers 2 to size.j-2 *)
     "bb43febb.json"; (* pb: need for nested shape, or at least favoring similar paths in a same shape, or transformations rather than arithmetics *)
@@ -279,6 +286,9 @@ let maybe_train_names =
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test *)
     "794b24be.json"; (* pb: need switch, [map from nb blue pixels to red fixed shape] *)
     "a68b268e.json"; (* pb: should define mask on sub-grid + full sub-grid shape, [4 shapes with fixed position and color, stacked in some order] *)
+    "c0f76784.json";
+    "08ed6ac7.json";
+    "f8ff0b80.json";
   ]
 
 let task_model =
