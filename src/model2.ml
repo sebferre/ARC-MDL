@@ -1109,6 +1109,7 @@ let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) 
 type grid_pairs_read =
   { dl_mi : dl; (* input model DL *)
     dl_mo : dl; (* output model DL *)
+    input_reads : grid_read list list; (* outer list over grids, inner list over parses *)
     reads : (grid_read * grid_read * dl) list list; (* outer list over grids, inner list over parses, sorted in increasing DL *)
   }
 
@@ -1138,11 +1139,12 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
     sdl_template
       ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
       m.output_template path0 in
-  let| reads =
+  let| input_reads_reads =
     let+| {input; output} = pairs in
+    let| reads_input =
+      read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern input in (* no diff allowed during training *)
     let| reads_pair = 
-      let+|+ (envi,gdi,dli as gri) =
-        read_grid ~quota_diff:0 ~dl_grid_data:dl_gdi ~env m.input_pattern input in (* no diff allowed during training *)
+      let+|+ (envi,gdi,dli as gri) = Result.Ok reads_input in      
       let+|+ (envo,gdo,dlo as gro) =
         read_grid ~quota_diff:0 ~dl_grid_data:dl_gdo ~env:gdi.data m.output_template output in
       let dl = dli +. dlo in
@@ -1151,8 +1153,9 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
       reads_pair
       |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
       |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
-    Result.Ok reads_pair in
-  Result.Ok {dl_mi; dl_mo; reads})
+    Result.Ok (reads_input, reads_pair) in
+  let input_reads, reads = List.split input_reads_reads in
+  Result.Ok {dl_mi; dl_mo; input_reads; reads})
   
 (* template transformations *)
 
@@ -1600,16 +1603,18 @@ let learn_model
     (fun (r,m) (gpsr,gsri,gsro) dl ->
       Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
       if grid_viz then (
-        List.iter
-          (function
-           | ((_,gdi,_), (envo,gdo,_), _)::_ ->
+        List.iter2
+          (fun reads_input reads_pair ->
+            match reads_input, reads_pair with
+            | (_,gdi,_)::_, ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
               Grid.pp_grids
-                [grid_of_data gdi.data;
+                [grid_of_data gdi_knowing_o.data;
                  grid_of_data gdo.data;
-                 Result.get_ok (write_grid ~env:envo m.output_template)];
+                 grid_of_data gdi.data;
+                 Result.get_ok (write_grid ~env:gdi.data m.output_template)];
               print_newline ()
            | _ -> assert false)
-          gpsr.reads;
+          gpsr.input_reads gpsr.reads;
         Unix.sleepf 0.5);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
