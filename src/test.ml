@@ -227,7 +227,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 23 tasks, 481s *)
+let solved_train_names = (* 23 tasks, 494s *)
   [ "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.7s *)
     "1cf80156.json"; (* crop on shape, runtime=1.3s *)
     "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 20s, timeout trying to explain everything *)

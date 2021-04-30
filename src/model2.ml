@@ -349,13 +349,20 @@ let signature_of_template (t : template) : signature =
   let ht = Hashtbl.create 13 in
   let () =
     fold_template
-      (fun () p _ ->
+      (fun () p t1 ->
         let k = path_kind p in
         let ps0 =
           match Hashtbl.find_opt ht k with
           | None -> []
           | Some ps -> ps in
-        Hashtbl.replace ht k (p::ps0))
+        Hashtbl.replace ht k (p::ps0);
+        if k = `Vec && t1 = `U then (
+          let ps0 =
+            match Hashtbl.find_opt ht `Int with
+            | None -> []
+            | Some ps -> ps in
+          Hashtbl.replace ht `Int (p ++ `I :: p ++ `J :: ps0)
+        ))
       () path0 t in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
