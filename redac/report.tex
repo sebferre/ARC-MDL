@@ -89,22 +89,22 @@ Minimum Description Length
 This document describes our approach to the ARC (Abstraction and
 Reasoning Corpus) challenge introduced by François Chollet as a tool
 to measure intelligence, both human and artificial~\cite{Chollet2019}.
-ARC was introduced in order to foster research on general artificial
-intelligence, and to move from system-centric generalization to
-developer-specific generalization. The latter enables a system to
-``handle situations that neither the system nor the developer of the
-system have encountered before''. For instance, a system trained to
-recognize cats features system-centric generalization because it can
-recognize cats that it has never seen, but in general, it does not
-feature developer-aware generalization because it can not learn to
-recognize horses with only a few examples (unlike a young child
-would).
+ARC was introduced in order to foster research on Artificial General
+Intelligence (AGI)~\cite{Goertzel2014agi}, and to move from
+system-centric generalization to developer-specific
+generalization. The latter enables a system to ``handle situations
+that neither the system nor the developer of the system have
+encountered before''. For instance, a system trained to recognize cats
+features system-centric generalization because it can recognize cats
+that it has never seen, but in general, it does not feature
+developer-aware generalization because it can not learn to recognize
+horses with only a few examples (unlike a young child would).
 
 ARC is made of 1000 learning tasks, 400 for training, 400 for
 evaluation, and 200 kept secret by its author in order to ensure
 bias-free evaluation. Each task consists in learning how to generate
 an output colored grid from an input colored grid (see
-Figure~\ref{fig:task} of an example).
+Figure~\ref{fig:task} for an example).
 %
 ARC is a challenging target for AI. As F. Chollet writes: ``to the
 best of our knowledge, ARC does not appear to be approachable by any
@@ -119,10 +119,10 @@ following:
 \item The predicted output has to match exactly the expected
   output. If a single cell is wrong, the task is considered as
   failed. To compensate for that, three attempts are allowed for each
-  input grids.
-\item In each task, there are only between 2 and 4 training instances
-  (input grid + output grid), and 1 or 2 test instances for which a
-  prediction has to be made.
+  input grid.
+\item In each task, there are generally between 2 and 4 training
+  instances (input grid + output grid), and 1 or 2 test instances for
+  which a prediction has to be made.
 \item Each task relies on a distinct transformation from the input
   grid to the output grid. In particular, no evaluation task can be
   solved by reusing a transformation learned on the training
@@ -135,26 +135,52 @@ think that this helps to focus on the core features of intelligence
 rather than on scalability issues.
 
 Our approach is based on the MDL (Minimum Description Length)
-principle~\cite{Rissanen1978,Grunwald2019} according to which the best
-model for some data is the one that compresses the most the data.
+principle~\cite{Rissanen1978,Grunwald2019} according to which {\em ``the best
+model for some data is the one that compresses the most the data''}.
 %
-The MDL principle has already been applied successively to pattern
+The MDL principle has already been applied successfully to pattern
 mining, classification, and clustering tasks~\cite{KRIMP2011}.
 %
 A major difference with those work is that the model to be learned
-need not only explain the data but also be able to perform a
-computation from an input data to an output data, here colored grids.
+needs not only explain the data but also be able to perform a
+prediction, here the output grid from the input grid.
+%
+At this stage (Version~2), we consider rather simple models that have
+no chance to cover a large proportion of ARC tasks: single-color
+points and shapes, and basic arithmetic of positions and sizes. Our
+prime objective is to demonstrate the effectiveness of an MDL-based
+approach to the ARC challenge, and hopefully to AGI. Our approach
+succeeds on 25/400 training tasks and 6/400 evaluation tasks, with a
+learning timeout of 1min only per task. We find such a result quite
+encouraging given the difficulty of the problem. Moreover, the
+successful tasks are quite diverse, and the learned model is often
+close to the simplest model for the task (in the chosen class of
+models).
+
+This report is organized as follows. Section~\ref{arc} gives a formal
+definition of ARC grids and tasks. Section~\ref{related} discusses
+related work on artificial intelligence, in particular structured
+prediction, AGI, or programming by demonstration; it also presents the
+MDL principle and some of its applications to AI and knowledge
+discovery. Section~\ref{modelling} explains our modelling of the ARC
+tasks in the framework of two-parts MDL, in particular our class of
+models. Section~\ref{learning} describes the MDL-based learning
+process, which boils down to defining description lengths and model
+refinements. Section~\ref{eval} reports on the evaluation of our
+approch on training and evaluation ARC tasks, as well as on the
+learned models for a few tasks.
 
 %%%
-\section{Formalizing ARC Tasks}
+\section{Defining ARC Tasks}
 \label{arc}
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{fig/training_b94a9452.png}
-  \caption{One of the training tasks, with three examples on the left,
-    a test input grid in the middle, and the widget that can be used
-    to draw the corresponding output grid.}
+  \caption{One of the training tasks ({\tt b94a9452}), with three
+    examples on the left, a test input grid in the middle, and the
+    widget on the right that can be used to draw the missing output
+    grid.}
   \label{fig:task}
 \end{figure}
 
@@ -169,8 +195,9 @@ Figure~\ref{fig:task}).
 \begin{definition}[grid]
   A {\em grid} $g \in C^{h \times w}$ is a matrix of colors with $h>0$
   rows, and $w>0$ columns. A grid is often displayed as a colored
-  grid. The number of rows is called the {\em height} of the grid, and
-  the number of columns is called the {\em width} of the grid.
+  grid. The number of rows~$h = {\it height}(g)$ is called the {\em
+    height} of the grid, and the number of
+  columns~$w = {\it width}(g)$ is called the {\em width} of the grid.
   
   A {\em grid cell} is caracterized by {\em coordinates}~$(i,j)$,
   where $i$ selects a row, and $j$ selects a column. The color at
@@ -181,8 +208,8 @@ Figure~\ref{fig:task}).
 In ARC, grids have a size from (1,1) to (30,30).
 
 \begin{definition}[example] 
-  An {\em example} is a pair of grids~$e = (x,y)$, where $x$ is called
-  the {\em input grid}, and $y$ is called the {\em output grid}.
+  An {\em example} is a pair of grids~$e = (g^i,g^o)$, where $g^i$ is called
+  the {\em input grid}, and $g^o$ is called the {\em output grid}.
 \end{definition}
 
 As illustrated by Figure~\ref{fig:task}, the output grid needs not
@@ -190,14 +217,13 @@ have the same size as the input grid, it can be smaller or bigger.
 
 \begin{definition}[task]
   A {\em task} is a pair~$T = (E,F)$, where $E$ is the set of {\em
-    training examples}, and $F$ is the set of {\em test examples}.
-  The learner has access to the input and ouput grids of the training
-  examples, but only to the input grids of the test examples. Its
-  % TODO: wrong, no access to test input grids
-  objective is to predict the hidden output grids of all test
-  examples.
+    train examples}, and $F$ is the set of {\em test examples}.
 \end{definition}
 
+The learner has only access to the input and ouput grids of the
+train examples. Its objective is, for each test example, to predict
+the output grid given the input grid.
+%
 As illustrated by Figure~\ref{fig:task}, the different input grids of
 a task need not have the same size, nor use the same colors. The same
 applies to test grids.
@@ -205,16 +231,28 @@ applies to test grids.
 The ARC is composed of 1000 tasks in total: 400 for training, 400 for
 evaluation by developers, and 200 for independent
 evaluation. Figure~\ref{fig:task} shows one of the 400 training tasks,
-with three training examples, and one test grid. Developers should
+with three train examples, and one test input grid. Developers should
 only look at the training tasks, not at the evaluation tasks, which
 should only be used to evaluate the broad generalization capability of
 the system.
-
-Each task has between 2 and 4 training examples, and 1 or 2 test
-examples.
+%
+Each task has generally between 2 and 4 train examples, and 1 or 2
+test examples.
 
 %%%
-\section{Modelling ARC Tasks as Two-Part MDL}
+\section{Related Work}
+\label{related}
+
+AI, machine learning, structured prediction...
+
+Programming by demonstration...
+
+MDL work...
+
+
+
+%%%
+\section{Modelling ARC Tasks in Two-Parts MDL}
 \label{modelling}
 
 The objective is here to design a class of {\em task models} that can
@@ -222,292 +260,538 @@ be used to represent a transformation from input grids to output
 grids.
 %
 Our key intuition is that a task model can be decomposed into two grid
-models, one for the input grids, and another for the output grid. The
-{\em input grid model} expresses what is common to all input grids,
-while the {\em output grid model} expresses what is common to all
-training output grids.
+models, one for the input grids, and another for the output grids. The
+{\em input grid model} expresses what all train input grids have in
+common, while the {\em output grid model} expresses what all train
+output grids have in common, as a function of the input grid.
 %
-The actual transformation involves the two models as follows. The
-input grid model is used to {\em parse} the test input grid, and the
-parsing process produces some information that complements the input
-model to fully specify that specific grid. Then, that parsing
-information is fed into the output grid model in order to generate a
-grid that matches the output model, and is also specific and related
-to the input grid.
+The actual transformation from input grid to output grid involves the
+two models as follows. The input grid model is used to {\em parse} the
+input grid, which produces some information that characterizes the
+input grid. Then, that parsing information is fed into the output grid
+model in order to generate an output grid.
 
 \subsection{Models}
 \label{model}
 
-The main component of grid models is {\em shapes}. Indeed, ARC grids
-can often be read as various shapes over a background. Shapes can have
-nested shapes, be adjacent or overlap with other shapes. Each shape
-has a number of attributes (e.g., height, width, position, and color
-for rectangles), which may be either constant over examples or
-variable.
+\begin{figure}[t]
+\begin{center}
+\begin{datatype}
+  {\it Pair} \is {\bf InOut}(in: {\it Grid}, out: {\it Grid})
+  \\
+  {\it Grid} \is {\bf Grid}(size: {\it Vector},\ color: C,\ layers: list({\it Shape}))
+  \\
+  {\it Shape} \is {\bf Point}(pos: {\it Vector},\ color: C)
+  \altis {\bf Rectangle}(pos: {\it Vector},\ size: {\it Vector},\ color: C,\ mask: {\it MK})
+  \\
+  {\it Vector} \is {\bf Vec}(i: \nat,\ j: \nat)
+\end{datatype}
+\end{center}
+\caption{Datatypes used in grid models and grid data}
+\label{fig:patterns}
+\end{figure}
 
-Given a shape, parsing a grid consists in finding its instances in the
+\paragraph{Version 2.}
+The main component of our grid models is {\em shapes}. Indeed, ARC
+grids can often be read as various shapes over a background. Shapes
+can have nested shapes, be adjacent or overlap with other shapes. Each
+shape has a number of attributes (e.g., height, width, position, and
+color for rectangles; position and color for points). Each shape
+attribute may be constant (e.g., the shape is always red) or variable
+across the examples.
+
+\KILL{Given a shape, parsing a grid consists in finding its instances in the
 grid, if any, and to return corresponding values for its variable
 attributes. In contrast, generating a grid requires values for the
 variable attributes as input in order to generate a shape instance in
-the grid.
+the grid.}
 
-\paragraph{Version 1.} We define the first version of our model with
-algebraic data types. 
+We define our models as templates over data structures representing
+concrete pairs of grids. Figure~\ref{fig:patterns} defines those data
+structure with algebraic data types for pairs, grids, shapes, and
+vectors (2D positions and sizes). They use primitive types for natural
+numbers ($\nat$), colors ($C$), and 2D bitmaps we call {\em masks}
+(${\it MK}$). Uppercase names in bold are called {\em constructors}, and the
+lowercase names of constructor arguments are called {\em fields}.
 
-\begin{center}
-\begin{datatype}
-  {\it task} \is {\bf InOut}({\it grid}, {\it grid})
-  \\
-  {\it grid} \is {\bf Background}(height: {\it attr}_\nat, width: {\it attr}_\nat, color: {\it attr}_C)
-  \altis {\bf AddShape}({\it shape}, {\it grid})
-  \\
-  {\it shape} \is {\bf Rectangle}(height: {\it attr}_\nat, width: {\it attr}_\nat,\\
-  & & \hspace*{1cm} mini: {\it attr}_\nat, minj: {\it attr}_\nat, color: {\it attr}_C)
-  \\
-  {\it attr}_\alpha \is {\bf Unkown}(ident)
-  \altis {\bf Expr}({\it expr}_\alpha)
-  \\
-  {\it expr}_\alpha \is {\bf Var}(ident)
-  \altis {\bf Const}(c: \alpha)
-  \altis {\bf Plus}({\it expr}_\nat, {\it expr}_\nat), \alpha = \nat
-  \altis {\bf Minus}({\it expr}_\nat, {\it expr}_\nat), \alpha = \nat
-\end{datatype}
-\end{center}
-
-A task model is made of two grid models, one for the input grid,
-another for the output grid.
+A task is made of two grids, one for the input grid, and another for
+the output grid.
 %
-Each grid model is a stack of shapes on top of a background. The
-background is attributed with two integer attributes -- height and
-width -- and a color attribute.
+Each grid is described as a stack of layers on top of a background,
+each layer being made of a single shape. The background has a size (a
+2D vector), and a color.
 %
-The only shape at this stage is the rectangle, attributed with four
-integer attributes -- height, width, mini (with $i$ as a row index),
-and minj (with $j$ as a column index) -- and a color attribute. The
-height and width give the size of the rectangle, while mini and minj
-give its position on the background.
-
-An attribute is either an unknown -- with some identifier name -- or
-an expression. The purpose of unknowns is to capture the variable
-attributes of shapes during parsing. As a consequence, the output grid
-model of a successful learned model should not contain
-unknowns. However, as we show later, unknowns are also relevant in the
-output grid models in the course of learning. We note $U(grid)$ the
-set of unknowns in a grid model.
+A shape is either a point, described by its position and color; or a
+rectangle, described by its position, size, color, and mask. That mask
+allows to account for irregular shapes, and indicates which pixels in
+the rectangle box actually belong to the shape (other pixels can be
+seen as transparent).
 %
-The purpose of expressions is to define attribute values as constant
-over all examples, or as the result of a computation involving
-variables. Parsing and generation of grids require that values are
-given for those variables but each example may receive different
-values for each variable. Complex expressions are typically used in
-the output grid models, where variables match unknowns of the input
-grid model, and their values come from the parsing of the input
-grid. On the contrary, only constants are used in the input grid
-models as they receive no other information than the input grid.  We
-note $V(grid)$ the set of expression variables used in a grid model.
-
-Index~$\alpha$ of ${\it attr}, {\it expr}$ is the type of attribute
-and expression values. Hence the use of type~$\alpha$ in
-${\bf Const}$, and the constraints $\alpha = \nat$ for constructors
-${\bf Plus}, {\bf Minus}$.
-
-A task model is {\em well-formed} if the input grid model has no
-expression variable, and if all expression variables occuring in the
-output grid model occur as unknowns in the input grid model. As
-mentioned above, unknowns are allowed in the output grid model in
-order to represent intermediate stages in the learning process. They
-represent output attributes that are not yet explained in terms of
-input attributes.
-
-A task model is {\em effective} if it is well-formed, and the output
-grid model has no unknown. Such a model can therefore be used to
-generate output grids from the parsing of input grids. An effective
-and correct model for the task in Figure~\ref{fig:task} is the
-following (color~0 is black).
+A data structure describing the first train pair in Figure~\ref{fig:task}
+is:
 \[\begin{array}{l}
-{\bf InOut}( \\
-\quad {\bf AddShape}({\bf Rectangle}(?H_2,?W_2,?I_2,?J_2,?C_2), \\
-\quad \quad {\bf AddShape}({\bf Rectangle}(?H_1,?W_1,?I_1,?J_1,?C_1), \\
-\quad \quad \quad {\bf Background}(?H_0,?W_0,0))), \\
-\quad {\bf AddShape}({\bf Rectangle}(H_2,W_2,I_2-I_1,J_2-J_1,C_1), \\
-\quad \quad  {\bf Background}(H_1,W_1,C_2))) \\
+    {\bf InOut}( \\
+    \quad {\bf Grid}({\bf Vec}(12,13), black,\\
+    \quad \quad [{\bf Rectangle}({\bf Vec}(2,4), {\bf Vec}(2,2), yellow, full),\\
+    \quad \quad ~{\bf Rectangle}({\bf Vec}(1,3), {\bf Vec}(4,4), red, full)]), \\
+    \quad {\bf Grid}({\bf Vec}(4,4), yellow, \\
+    \quad \quad [{\bf Rectangle}({\bf Vec}(1,1), {\bf Vec}(2,2), red, full)])).
+  \end{array} \]
+Mask $full$ denotes a mask where all pixels in the rectangle box are on.
+
+A {\em path} in a data structure is a sequence of fields that goes
+from the root of the data structure to some sub-structure. In the
+above example, path~$in.size.j$ refers to the input grid width, which
+is $13$; path~$out.layers[0].color$ refers to the color of the top
+shape in the output grid. which is $red$; and path~$in.layers[1].pos$
+refers to the position of the bottom shape in the input grid, which is
+${\bf Vec}(1,3)$. Given a data structure~$d$ and a path~$p$, the
+substructure of~$d$ that is refered by~$p$ is written with the
+dot-notation $d.p$.
+
+In order to generalize from specific pairs of grids to general task
+models, we introduce two kinds of elements that can be used in place
+of any sub-structure: unknowns and expressions.
+%
+An {\em unknown}, which we note with a question mark $?$, indicates
+that any data structure of the expected type can fit in. For example,
+a grid model that matches all input grids in Figure~\ref{fig:task} is:
+\[\begin{array}{l}
+    {\bf Grid}({\bf Vec}(12,?), black,\\
+    \quad [{\bf Rectangle}(?, ?, ?, ?),\\
+    \quad ~{\bf Rectangle}(?, ?, ?, full)])
   \end{array}\]
+%
+It matches grids with 12 rows and a black background, and two stacked
+rectangles of any position, any size, and any color. The top rectangle
+may have any mask, while the bottom rectangle is full. The purpose of
+parsing is to fill in the holes, replacing unknowns with data
+structures such that the whole resulting data structure correctly
+describes a grid or a pair of grids.
+%
+An {\em unknown path} is a path in the model that leads to an
+unknown. The unknown paths in the above grid model are: $size$,
+$layers[0].pos$, $layers[0].size$, $layers[0].color$, $layers[1].pos$,
+$layers[1].size$, $layers[1].color$. The set of unknown paths of a
+model~$M$ is denoted by~$U(M)$.
+%
+A data structure that may contain unknowns is called a {\em
+  pattern}. A data structure is said {\em ground} if it contains no
+unknown. Given a ground data structure~$d$ and a pattern~$p$, the
+notation $d \sim p$ says that $d$ {\em agrees with}~$p$ or that $p$
+{\em matches}~$d$. It means that the ground data structure~$d$ can be
+obtained by a substitution of the pattern unknowns with ground data
+structures. For example, we have
+${\bf Vec}(12,14) \sim {\bf Vec}(12,?)$.
 
-\paragraph{Version 1.1.} We define a minor refinement of Version~1 of
-our model. The changes only concern shapes whose new definition is the
-following.
+An {\em expression} defines part of the data structure as the result
+of a computation over some input data structure, which we call the
+{\em environment}. Expressions are made of primitive values,
+constructors, operators/functions, and variables. In Version~2, the
+only operators are addition and substraction over natural numbers,
+they are used to compute the position and size of grids and shapes.
+Variables are references to parts of the environment. A convenient way
+to refer to such parts is to use {\em paths} in the environment data
+structure.
+%
+Expressions that would only be made of primitive values and
+constructors would actually be data structures, and are therefore not
+considered as expressions.
+%
+The environment of the output grid is the input grid, so that parts of
+the output grid can be computed based on the input grid contents. The
+input grid has no environment so that expressions are not useful in
+the input grid model.
+%
+Re-using the above model for input grids, we can now define a correct
+and complete model for the task in Figure~\ref{fig:task}, using
+unknowns for the input grid, and expressions for the output grid:
+\[\begin{array}{l}
+    {\bf InOut}( \\
+    \quad {\bf Grid}({\bf Vec}(12,?), black,\\
+    \quad \quad [~{\bf Rectangle}({\bf Vec}(?,?), {\bf Vec}(?, ?), ?, full),\\
+    \quad \quad ~~{\bf Rectangle}({\bf Vec}(?,?), {\bf Vec}(?, ?), ?, full)~]), \\
+    \quad {\bf Grid}(layers[1].size, layers[0].color, \\
+    \quad \quad [~ {\bf Rectangle}(\\
+    \quad \quad \quad {\bf Vec}(layers[0].i - layers[1].i, layers[0].j - layers[1].j), \\
+    \quad \quad \quad layers[0].size, layers[1].color, full) ~])).
+  \end{array} \]
 
-\begin{center}
-\begin{datatype}
-  {\it shape} \is {\bf Point}(i: {\it attr}_\nat, j: {\it attr}_\nat, color: {\it attr}_C)
-  \altis {\bf Rectangle}(height: {\it attr}_\nat, width: {\it attr}_\nat, mini: {\it attr}_\nat, minj: {\it attr}_\nat,\\
-  & & \hspace*{1cm} color: {\it attr}_C, mask: {\it attr}_M)
-\end{datatype}
-\end{center}
+In words, this models says: ``find two stacked full rectangles on a
+black background in the input grid, then generate an output grid,
+whose size is the same as the bottom shape, and whose background color
+is the color of the top shape, and finally add a full rectangle shape
+whose size is the same as the top shape, whose color is the same as
+the bottom shape, and whose position is the difference between the top
+shape position and the bottom shape position (relative position).''
 
-We introduce a new simple shape, {\em points}, which are described
-their coordinate and color. To account for irregular shapes, we extend
-rectangles with a new attribute, {\em mask}, whose values are 2D
-bitmaps, to indicate which pixels in the rectangle actually belong to
-the shape. We define the code length of a bitmap~$m \in M$ as follows,
-assuming that the grid dimensions $h \times w$ are known from the
-shape, and given that there are $k$ activated pixels in the bitmap.
-\[ L(m) = \left\{
-  \begin{array}{l@{\quad}l}
-    1 & \textrm{when the bitmap is full} \\
-    1 + log\ hw + log(C_{hw}^k) & \textrm{otherwise} \\
-  \end{array}\right. \]
+A model is {\em well-formed} if it is well-typed (constructor
+arguments, operator operand types, etc,), and if all variables are
+valid paths in the environment data. More specifically, a task model
+is well-formed if the input grid model contains no variable, and if
+all variables in the output grid model are valid paths in the input
+grid model.
+
+A task model is {\em definite} if its output grid model contains no
+unknown, so that it can be used to deterministically generate an
+output grid from a data structure describing the input grid.
 
 
 \subsection{Data According to a Model}
 \label{data}
 
-A model captures regularities in data but is generally not enough to
-capture all the information in data. In MDL-based approaches to model
-selection it is essential to have a lossless encoding of data in order
-to have a fair comparison of different models.
+In MDL-based approaches, it is essential to have a lossless encoding
+of data in order to have a fair comparison of different
+models. Therefore, it is important to identify the ``data according to
+the model'', i.e. the data that needs to be added to a model in order
+to capture all the information in the original data.
 
-Given a task and a task model, the question is: What minimum data
-needs to be added to the task model in order to recover the task,
-i.e. all input and output grids of the task.
+We first consider grid models, where data is a grid. An analogy can be
+made with formal languages and grammars. In this analogy, grids are
+sentences, grid models are grammars, and data according to the model
+is the parse tree. A parse tree explains how the grammar generates
+the sentence. Here, data structures as defined in
+Figure~\ref{fig:patterns} play the role of parse trees for grid
+models, they are {\em grid parse trees} and we denote them with the
+greek letter~$\pi$. A grid parse tree, the data according to the
+model, is a data structure that instantiates the grid model by
+replacing expressions by their value, and unknowns by values such that
+the resulting data structure correctly describes the grid.
+
+For input grid~$g^i_k$ ($k$-th example), $\pi^i_k$ denotes one
+possible grid parse tree according to some fixed input grid
+model~$m^i$. Similarly, for output grid~$g^o_k$, $\pi^o_k$ denotes one
+possible grid parse tree according to some fixed output grid
+model~$m^o$ and output environment~$\varepsilon^o$.
+
+In practice, a grid model may not explain all the cells of a
+grid. This happens in case of noise in the data, and also in the
+learning process where intermediate models are obviously
+incomplete. To account for those situations without losing
+information, we define ``data according to the model'' as a grid parse
+tree plus the list of cells that differ between the original grid~$g$
+and the grid generated by the grid parse tree~$\pi$. We call this
+additional information a {\em grid delta}, written~$\delta$.
+\KILL{Formally, a grid
+delta is a set of triples~$(i,j,c) \in \nat \times \nat \times C$
+stating that the cell at coordinates~$(i,j)$ has color~$c$ in~$g$,
+which is different from the color specified by~$\pi$.}
+
+An additional difficulty is when a test input grid does not match the
+input grid model learned from the train examples. For instance, all
+input grids in the train examples have size (10,10) but the test
+input grid has size (10,12). In this case, there is no grid parse tree
+that agrees with both the grid model and the grid. In many cases, this
+discrepancy does not alter the validity of the model, which only
+happens to be overspecific (a form of overfitting).
 %
-Regarding input grids~$g^i_k$, for $k$ running through examples,
-values must be given for each unknown in the input grid model~$m^i$,
-and so for each task example~$k$. We call those {\em input
-  parameters}~$\pi^i_k$. In the case where the input model and
-parameters do not explain entirely the input grid, we also include as
-data the list of cells that are different in the original grid and in
-the model-generated grid. We call this the {\em input
-  delta}~$\delta^i_k$. As a well-formed input grid model contains no
-expression variable, there is no need to provide values for such
-variables.
+Our approach to this difficulty is to allow for approximate parsing,
+i.e. to allow grid parse trees to diverge from the grid model. As
+those differences are present in the grid parse tree~$\pi$, there is
+no loss of information. Of course, the description length will take
+into acount such differences to penalize them.
 
-Regarding output grids~$g^o_k$, output parameters~$\pi^o_k$ and output
-delta~$\delta^o_k$ must be provided similarly to input grids. In
-well-formed models, no values for expression variables need to be
-provided as they are provided by input parameters. The objective of
-learning is to find a model with neither output parameters nor output
-delta because in this case, the output grid is entirely determined by
-the input grid.
+As an illustration, let us consider the following (incomplete) input
+grid model for the task in Figure~\ref{fig:task}:
+\[ {\bf Grid}(?, black, [\ {\bf Rectangle}(?,?,?,full)\ ]). \] There
+are mainly two ``data according to the model'' for the first input
+grid~$g^i_1$ (the upper index is $i$ for input grids and $o$ for
+output grids, the lower index identifies the example):
+\begin{enumerate}
+\item matching the outer red rectangle\\
+  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black, [\ {\bf Rectangle}({\bf Vec}(1,3), {\bf Vec}(4,4), red, {\it full})\ ])$\\
+  $\delta^i_1 = \{ (2,4,yellow), (2,5,yellow), (3,4,yellow), (3,5,yellow) \}$
 
-More formally, a set of parameters is a partial mapping from
-identifiers to values of various types (integers, colors). A delta is
-a set of triples~$(i,j,c) \in \nat \times \nat \times C$ stating that
-the cell at coordinates~$(i,j)$ has color~$c$ (instead of the color
-specified by the grid model).
+\item matching the inner yellow rectangle\\
+  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black, [\ {\bf Rectangle}({\bf Vec}(2,4), {\bf Vec}(2,2), yellow, {\it full})\ ])$\\
+  $\delta^i_1 = \{ (1,3,red), (1,4,red), (1,5,red), (1,6,red), (2,3,red), (2,6,red), (3,3,red), ...\}$
+\end{enumerate}
+The first solution looks better because it has a much smaller grid
+delta, and its grid parse tree has the same size as in the second
+solution.
 
-The data in Figure~\ref{fig:task} according to the above model has
-empty input and output delta, as well as empty output parameters. The
-input parameters are given in the following tables for the train input
-grids.
-\begin{center}
-  \begin{tabular}{l|cccccccccccc}
-    input grid & $H_0$ & $W_0$ & $H_1$ & $W_1$ & $I_1$ & $J_1$ & $C_1$ & $H_2$ & $W_2$ & $I_2$ & $J_2$ & $C_2$ \\
-    \hline
-    1 & 12 & 13 & 4 & 4 & 1 & 3 & 2 & 2 & 2 & 2 & 4 & 4 \\
-    2 & 12 & 11 & 3 & 3 & 2 & 4 & 1 & 1 & 1 & 3 & 5 & 3 \\
-    3 & 12 & 13 & 5 & 5 & 6 & 2 & 4 & 1 & 1 & 8 & 4 & 6 \\
-    \hline
-  \end{tabular}
-\end{center}
 
-\subsection{Parsing and Generating a Grid with a Grid Model}
-\label{parsing}
-\label{generating}
+\subsection{Primitive Functions on Grids, Grid Models, Grid Parse Trees, and Grid Deltas}
+\label{primitive:functions}
 
-% schema of grid model
-% involving: grid, env, model, params, delta 
-% parsing: env, grid, model -> params, delta
-% generating: env, model, params, delta -> grid
+We here define the key primitive functions to manipulate grids, grid
+models, grid parse trees and grid deltas.
 
-In MDL terms, {\em parsing} corresponds to the encoding of a grid into
-parameters and delta with a grid model, while {\em generating}
-corresponds the decoding of parameters and delta into a grid with a
-grid model. To complete the picture, each process may also take as
-input an additional set of parameters called {\em
-  environment}~$\epsilon$, providing values for expression variables.
+We first define {\em grid deltas} and simple arithmetics on them.
+
+\begin{definition}[grid delta]
+  Let $g_1, g_2 \in C^{h \times w}$ two same-size grids. The {\em grid
+    delta} $\delta \subseteq \nat \times \nat \times C$ between the
+  two grids, written $g_2 - g_1$, is defined as the set of cells that
+  need changing color in~$g_1$ in order to obtain~$g_2$.
+  \[ \delta = g_2 - g_1 = \{ (i,j,c) \mid g_2[i,j] \neq g_1[i,j], c = g_2[i,j] \} \]
+  
+  A grid delta~$\delta$ can be added to a grid~$g_1$ to get a corrected same-size grid~$g_2$.
+  \[ g_2 = g_1 + \delta \iff \forall i \in [0,h[, j \in [0,w[: g_2[i,j] =
+    \left\{
+      \begin{array}{ll}
+        c & \quad\textrm{if~} (i,j,c) \in \delta \\
+        g_1[i,j] & \quad\textrm{otherwise} \\
+      \end{array}\right. \]
+  %% lemma: g_1 + (g_2 - g_1) = g_2
+\end{definition}
+
+Then we define two functions that are directly related to the
+semantics of grid models. The first function converts a grid parse tree
+into a grid.
+
+\begin{definition}[grid drawing]
+  Let $\pi$ be a grid parse tree, ${\it draw}(\pi)$ is the grid that
+  results from the drawing following the instructions given by the
+  grid parse tree.  
+\end{definition}
+
+\paragraph{Version 2.} Given a grid parse tree~$\pi$ as specified in
+Figure~\ref{fig:patterns}, the grid ${\it draw}(\pi)$ is obtained by
+first generating a grid with the specified size and background color,
+and then layers are drawn on that grid, bottom up. Each layer, either
+a point or a rectangle, is drawn in the obvious way. For a point
+${\bf Point}({\bf Vec}(i,j),c)$, the cell at position~$(i,j)$ is set
+to color~$c$. For a rectangle
+${\bf Rectangle}({\bf Vec}(i,j),{\bf Vec}(h,w),c,m)$, each cell at
+position $(i+x,j+y)$, for any $x \in [0,h[$ and $y \in [0,w[$, is set
+to color~$c$ if the relative position~$(x,y)$ belongs to mask~$m$.
+
+\paragraph{}The second function applies a grid model to an
+environment, resolving references to it, and replacing expressions by
+their evaluation result.
+
+\begin{definition}[model application]
+  Let $m$ be a grid model, and $\varepsilon$ an environment for the
+  model. ${\it apply}(m,\varepsilon)$ is the model that results from
+  the substitution of expressions in~$m$ by their evaluation over the
+  environment~$\varepsilon$. The resulting model has no expression but
+  may still have unknowns.
+  %
+  The operation is ill-defined if some variable in~$m$ is not defined
+  in~$\varepsilon$. 
+\end{definition}
+
+\paragraph{Version 2.} Environments are grid parse trees, and
+variables are paths into them. There are only two operators, plus and
+minus, and they are evaluated in the usual way on integer values.
+
+\paragraph{}
+We also define two non-deterministic functions that produce grid parse
+trees from a grid model, and hence grid descriptions. The first
+function corresponds to the parsing of a grid.
+
+\begin{definition}[grid parsing]
+  Let $m$ be a grid model, and $g$ be a grid. ${\it parse}(m,g)$
+  non-deterministically returns a grid parse tree~$\pi$ that
+  approximately agrees with model~$m$, and approximately draws as
+  grid~$g$. Non-determinism allows for different interpretations of
+  the grid by the model.
+\end{definition}
+
+\paragraph{Version 2.} This is by far the most complex primitive
+function.
 %
-Formally, for every model~$m$, the parsing and generating processes
-are functions with the following signatures:
-\begin{itemize}
-\item ${\it parse}_m : (\epsilon, g) \to (\pi, \delta)$,
-\item ${\it generate}_m : (\epsilon, \pi, \delta) \to g$.
-\end{itemize}
+Parsing is decomposed in three stages. First, the grid is partitioned
+into contiguous monocolor regions.
+%
+Second, shapes are looked for as single parts or as unions of parts to
+cover the case where some shapes are overlaped by other shapes. When a
+shape is not a point or a full rectangle, two shapes are considered:
+one shape with a full mask, considering the missing cells as noise on
+top of the rectangle; another shape with a mask containing the cells
+in the rectangle box that have the same color. 
+%
+Third, matching superpositions of shapes are looked for according to
+the model. Candidate shapes are considered in a fixed ordering that
+includes some heuristics. Black shapes are considered last because
+black is often the background color. Then, shapes are considered in
+dereasing number of covered cells. Beyond those heuristics, a total
+ordering is defined because it makes experiments more reproducible,
+and also because it helps disambiguate some situations. For instance,
+if the model contains several point shapes, they will be matched to
+points in the grid from left to right, top-down.
 
-Parsing a grid works by first instantiating the model with the
-environment, substituting expression variables by their value in the
-environment, if defined. The resulting model is then matched over the
-grid, thus providing values for the model unknowns,
-i.e. parameters. Finally, cells that are not covered by the matching
-are collected as the delta.  When several matchings are possible, the
-one with the smallest delta should be chosen.
+As an example of parsing, the test input grid in Figure~\ref{fig:task}
+has three contiguous parts: the light blue one, the green one, and the
+black one. Three rectangles can be identified from those parts: a
+small light blue square, a green rectangle overlaped by the blue one,
+and a black rectangle covering the whole grid and overlaped by the
+other rectangles. According to the above model, this input grid is
+parsed as a 2x2 light blue rectangle at coordinates (3,4), on top of a
+6x6 green rectangle at coordinates (1,2), on top of a black
+background.
 
-Generating a grid starts like parsing by instantiating the model with
-the environment. Then, the model is further instantiated with
-parameters, substituting the unknowns by their value in the
-parameters. From there, a grid can be generated according to the
-semantics of the model. Finally, the delta is applied to the grid,
-possibly modifying some cells.
+Compared to Version~1, parsing has been made non-deterministic in the
+sense that a sequence of grid parse trees is produced. We use the
+description lengths as defined below to order this sequence from the
+shorter DL to the longer DL. Indeed, the shorter the DL, the more
+plausible the grid parse tree is. Because of combinatorial problems in
+the parsing process, we use various bounds: maximum number of concrete
+shapes for a given shape in the model, maximum number of produced grid
+parse trees before sorting them, and maximum number of grid parse
+trees actually returned. Relative to approximate parsing, we also
+bound the number of differences w.r.t. the model.
 
-Parsing should be compatible with generating in the sense that
-\[ \forall m, \epsilon, g: \exists \pi, \delta: {\it
-    parse}_m(\epsilon,g) = (\pi,\delta) \Rightarrow {\it
-    generate}_m(\epsilon,\pi,\delta) = g. \] The converse does not
-necessarily hold in the sense that there may be several
-pairs~$(\pi,\delta)$ generating the same grid~$g$. In practice, the
-generating process is easier to implement than the parsing process
-because while the former is rather straightforward, the latter can
-have a high complexity.
+\paragraph{}
+The second function corresponds to generation, where the grid parse
+tree is produced by filling in the holes of the grid model,
+i.e. guessing at the missing elements.
 
-\paragraph{Version 1.} In this first version, the parsing is
-decomposed in three stages. First, the grid is partitioned into
-contiguous monocolor regions. Second, rectangle shapes are looked for
-as single parts or as unions of parts to cover the case where some
-rectangle is overlaped by another shape. Third, matching
-superpositions of rectangles are looked for according to the model.
+\begin{definition}[grid generation]
+  Let $m$ be a grid model without any expression. ${\it generate}(m)$
+  non-deterministically returns a grid parse tree that is obtained by
+  replacing unknowns in the model by type-compatible sub-trees.
+\end{definition}
 
-For instance, the test input grid in Figure~\ref{fig:task} has three
-contiguous parts: the light blue one, the green one, and the black
-one. Three rectangles can be identified from those parts: a small
-light blue square, a green rectangle overlaped by the blue one, and a
-black rectangle covering the whole grid and overlaped by the other
-rectangles. According to the above model, this input grid is parsed as
-a 2x2 light blue rectangle at coordinates (3,4), on top of a 6x6 green
-rectangle at coordinates (1,2), on top of a black background.
-
-\paragraph{Version 1.1.} The first and second stages of Version~1 have
-been extended to account for points and rectangle masks. This results
-in more candidate shapes, hence more ways to understand a grid, and
-hence more chances to find a good model. The third stage has also been
-improved by taking into account description lengths to guide parsing
-towards the most plausible reading.
+\paragraph{Version 2.} We simply replace unknowns by default
+values. It makes it very unlikely to generate the right output grid by
+chance but it helps to visualize the intermediate states of the
+learning process. The default position is $(0,0)$, the default size is
+$(10,10)$ for grids, and $(2,2)$ for rectangles, the default color is
+black, the default mask is the full mask, the default shape is a
+rectangle with default values in each field.
 
 
-\subsection{Predicting Output from Input with a Task Model}
-\label{predicting}
+\subsection{Reading and Writing a Grid with a Grid Model}
+\label{read:write}
+
+We define two important components for reading and writing grids.
+They are simply composed from the above primitve functions, and are
+used as basic blocks for training and using models.
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[b]{0.55\textwidth}
+    \centering
+    \includegraphics[height=3.2cm]{fig/read.pdf}
+    \caption{The {\em read} component.}
+    \label{fig:read}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.44\textwidth}
+    \centering
+    \includegraphics[height=3.2cm]{fig/write.pdf}
+    \caption{The {\em write} component.}
+    \label{fig:write}
+  \end{minipage}
+\end{figure}
+
+\begin{definition}[grid reading]
+  Let $m$ be a model. Function ${\it read}_m$ takes an environment and
+  a grid as input, and returns a grid parse tree and delta as output.
+  \[ {\it read}_m(\varepsilon,g) = \{ (\pi,\delta) \mid m_\varepsilon
+    = {\it apply}(m,\varepsilon), \pi \in {\it
+      parse}(m_\varepsilon,g), \delta = g - {\it draw}(\pi) \} \]
+\end{definition}
+
+Figure~\ref{fig:read} gives a schematic description of the {\em read}
+component. When reading a grid~$g$, the grid model is first applied to
+the input environment, in order to resolve any expression that the
+model may contain. The resulting model is then used to parse the input
+grid into a grid parse tree~$\pi$. Finally, the grid delta between the
+grid specified by~$\pi$ and~$g$ is computed. The pair~$(\pi,\delta)$
+provides a lossless representation of the input grid, as expressed by
+the following lemma.
+\[ (\pi,\delta) \in {\it read}_m(\varepsilon,g) \Longrightarrow g =
+  {\it draw}(\pi) + \delta. \] %% TODO: prove it as a lemma
+
+
+\begin{definition}[grid writing]
+  Let $m$ be a grid model. Function ${\it write}_m(\varepsilon)$ takes
+  an environment as input, and returns a grid as output.
+  \[ {\it write}_m(\varepsilon) = \{ g \mid m_\varepsilon = {\it
+      apply}(m,\varepsilon), \pi = {\it generate}(m_\varepsilon), g =
+    {\it draw}(\pi) \} \]
+\end{definition}
+
+Figure~\ref{fig:write} gives a schematic description of the {\em
+  write} component. When writing a grid, the grid model is first
+applied to the input environment, in order to resolve any expression
+that the model may contain. The resulting model is then used to
+generate a grid parse tree, by instantiating the unknowns, from which
+a concrete grid can be drawn.
+
+
+\subsection{Task Models: Prediction and Training}
+\label{training:predicting}
 
 % TODO: schema showing the information flow
 % involving: gi, mi, pi, di, mo, po, do
 
-Using an effective task model~$m = (m^i,m^o)$ to predict the output
-grid from the input grid simply consists into the composition of
-parsing with the input grid model, and generating with the output grid
-model.
-\[ {\it predict}_m(g^i) := {\it
-    generate}_{m^o}(\pi^i,\emptyset,\emptyset) \textrm{~s.t.~} \pi^i,
-  \delta^i = {\it parse}_{m^i}(\emptyset, g^i) \] 
-%
-The input grid~$g^i$ is first parsed with the input grid model~$m^i$,
-using an empty environment, which results in input parameters~$\pi^i$
-and input delta~$\delta^i$. Then, the predicted grid is generated by
-applying the output model~$m^o$ using the input parameters as
-environment, and empty output parameters and delta. Output parameters
-are not needed because the task model is effective.
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.6\textwidth]{fig/predict.pdf}
+  \caption{Prediction mode: producing an output grid from the input grid}
+  \label{fig:predict}
+\end{figure}
 
-For instance, given the parameters returned by the parsing of the test
-input grid in Figure~\ref{fig:task}, the output grid model generates a
-2x2 green rectangle at coordinates (2,2), on top of a 6x6 light blue
-background, which is the expected grid.
+Using a task model~$M = {\bf InOut}(m^i,m^o)$ to predict the output
+grid from the input grid simply consists into the chaining of grid reading and grid writing.
+
+% the input grid model, and writing the resulting input grid parse tree into an output grid.
+
+\[ {\it predict}_M(g^i) = \{g^o \mid (\pi^i,\delta^i) \in {\it read}_{m^i}({\it nil},g^i), g^o \in {\it write}_{m^o}(\pi^i) \} \]
+
+Figure~\ref{fig:predict} gives a schematic description of
+prediction. The input grid~$g^i$ is first read with the input grid
+model~$m^i$, using an empty environment, which non-deterministically
+results in an input grid parse tree~$\pi^i$ and an input
+delta~$\delta^i$. Then, the predicted output grid is produced by
+writing the output grid model~$m^o$ using the input grid parse tree as
+environment.
+
+For instance, given the input grid parse tree returned by the reading
+of the test input grid in Figure~\ref{fig:task}, the output grid model
+generates a 2x2 green rectangle at coordinates (2,2), on top of a 6x6
+light blue background, which is the expected grid.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.6\textwidth]{fig/train.pdf}
+  \caption{Training mode: reading the input and output grids in chain}
+  \label{fig:train}
+\end{figure}
+
+\paragraph{}
+During the training phase, both the input and output grids are
+known. However, computing a grid delta between the predicted output
+grid and the expected output grid is not enough to learn a better
+model. It is more useuful to have the grid parse tree for each grid,
+because it provides an explanation of how the model ``sees'' the
+grids. We therefore define the ${\it train}$ function that chains the
+reading of the input and ouput grids.
+
+\HIDE{ On output grids~$y_k$, we use parsing rather than
+  generating. This is explained by the fact that description lengths
+  are used at the learning stage rather than at the application
+  stage. During learning, output models are incomplete, and still
+  require some parameters and delta to generate the output
+  grid~$y_k$. However, this output grid is available during learning
+  (for train examples), and using parsing enables to find which
+  parameters and delta are required. The objective of learning is to
+  make those output parameters and delta become empty. Knowing what
+  are the required parameters and delta can help the learner improve
+  the model in this direction.}
+
+
+\[\begin{array}{rl}
+    {\it train}_M(g^i,g^o) = \{ (\pi^i,\delta^i,\pi^o,\delta^o) \mid & (\pi^i,\delta^i) \in {\it read}_{m^i}({\it nil},g^i),\\
+                                                                     & (\pi^o,\delta^o) \in {\it read}_{m^o}(\pi^i,g^o) \}
+  \end{array}\]
+
+Figure~\ref{fig:train} gives a schematic description of training. The
+first step is the same as prediction. The input~$g^i$ is first read
+with the input grid model~$m^i$, using an empty environment, which
+non-deterministically resuts in an input grid parse tree~$\pi^i$ and
+an input grid delta~$\delta^i$. In the second step, the output
+grid~$g^o$ is read with the output grid model~$m^o$, using $\pi^i$ as
+environment, which non-deterministically results in an output grid
+parse tree~$\pi^o$ and an output grid delta~$\delta^o$.
+%
+The two grid parse trees and the two grid deltas collectively form a
+lossless description of the two grids according to the task model.
+ 
 
 %%%
 \section{Learning Task Models}
@@ -527,74 +811,199 @@ of bits required to communicate data~$D$ with model~$M$. It is
 decomposed in two parts according to the equation
 \[ L(M,D) = L(M) + L(D|M) \] where $L(M)$ is the DL of the model, and
 $L(D|M)$ is the DL of the data encoded with the model.
-
-In our case, $M$ is a task model~$m = (m^i,m^o)$, and the data is the
-part~$T^-$ of a task~$T = (E,F)$ that is accessible to the learner.
-As the objective is to learn a model that generalizes to new
-instances, only the training examples are accessible, so
-$T^- = E$\footnote{In Version~1, test input grids were wrongly
-  considered as part of~$T^-$. In the following, we only use $T^-$
-  relative to Version~1.}.
-We therefore have
-\[ L(m,E) = L(m) + L(E|m). \]
+%
+In our case, a model~$M$ is a task model~${\bf InOut}(m^i,m^o)$, and
+data~$D$ is the part of a task~$T = (E,F)$ that is accessible to
+the learner. As the objective is to learn a model that generalizes to
+new instances, only the train examples are accessible, so
+$D = E$.
+% \footnote{In Version~1, test input grids were wrongly considered as part of~$T^-$. In the following, we only use $T^-$ relative to Version~1.}.
 
 The description length of the task model is the sum of the description
 lengths of its two grid models.
-\[ L(m) = L(m^i) + L(m^o) \] 
+\[ L(M) = L(m^i) + L(m^o) \]
 %
-The description length of the task data boils down to the description
-length of parameters and deltas:
-\[
-  %\begin{array}{lcl}
-L(E|m) = \alpha \sum_{e_k \in E} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k) + L_{m^o}(\pi^o_k) + L(\delta^o_k|h^o_k,w^o_k)
-%& + & \alpha \sum_{e_k \in F} L_{m^i}(\pi^i_k) + L(\delta^i_k|h^i_k,w^i_k), \\
-     %    \end{array}
-\]
+We detail the description length of grid models below. The
+description length of the task data~$D = E$ is the sum of the
+description length of each example.
+\[ L(D|M) = L(E|M) = \alpha \sum_{(g^i,g^o) \in E} L(g^i,g^o|M) \]
 %
-where for every example~$e_k = (x_k,y_k)$,
-$x_k \in C^{h^i_k \times w^i_k}$, $y_k \in C^{h^o_k \times w^o_k}$,
-$\pi^i_k, \delta^i_k = {\it parse}_{m^i}(\emptyset,x_k)$, and
-$\pi^o_k, \delta^o_k = {\it parse}_{m^o}(\pi^i_k,y_k)$.
-%For test
-%examples, the output terms are not included because output grids are
-%not accessible to the learner. We nonetheless include test input grids
-%in order to ensure that the learned model is applicable to them, and
-%also because it makes sense to use all of the available information.
+Factor~$\alpha$ equals~10 by default to give more weights to the data,
+relative to the model, and hence allow the learning of more complex
+models. Indeed, ARC tasks have a very low number of examples (3 on
+average).
+
+The description length of a pair of grids, according to a task model,
+is based on the chained reading of the two grids. It boils down to
+description lengths of grid parse trees and grid deltas. As reading
+grids is non-deterministic, we define the description length as the
+minimum DL over all readings, thus choosing the ``best'' reading.
+\[\begin{array}{ll}
+    L(g^i,g^o|M) = {\it min}\ \{ & L(\pi^i|m^i) + L(\delta^i|\pi^i) + L(\pi^o|{\it apply}(m^o,\pi^i)) + L(\delta^o|\pi^o)\\
+                             & \mid (\pi^i,\delta^i,\pi^o,\delta^o) \in {\it train}_M(g^i,g^o)\ \}
+  \end{array}\]
+
+Note that the description lengths~$L(\pi|m)$ of grid parse trees~$\pi$
+are relative to the grid model~$m$ (if necessary, applied to its
+environment). Indeed, we only need to encode the parts of the grid
+parse tree that are unknown in the grid model or that differ from the
+grid model. Its detailed definition depends on the definition of grid
+models.
+
+The description length~$L(\delta|\pi)$ of a grid delta~$\delta$ is
+relative to a grid parse tree~$\pi$. This is valid as the grid parse
+tree is encoded before the delta, and is therefore available when
+encoding the grid delta. Its detailed definition also slightly depends
+on grid models.
+
+When defining description lengths for grid models and grid parse
+trees, we assume a few basic description lengths for elementary types:
+\begin{itemize}
+\item $L_\nat(n) = 2\,\log (n+1) + 1$: universal encoding of natural
+  intergers (including zero), more precisely the gamma encoding
+  shifted by one to include zero;
+\item $L_P(x \in X) = -\log P(x)$: encoding based on a probability distribution~$P$ over elements~$X$;
+\item $L_X(x \in X) = \log |X|$: encoding based on a uniform distribution over elements~$X$.
+%\item $L_C(c) = \log |C|$: encoding of colors along a uniform distribution.
+\end{itemize}
+
+
+\paragraph{Version~2.}
+In order to define the description lengths of grid models and grid
+parse trees, we first need to define the description lengths of
+primitive types, algebraic datatypes, expressions, and templates.
+
+{\em Primitive types.} Integers are used for positions and sizes. For
+positions, we use a uniform distribution over the rows or columns of a
+grid. Hence for a row position~$i$ in a grid~$g$,
+$L(i|g) = \log {\it height}(g)$; similarly, for a column position~$j$
+in a grid~$g$, $L(j|g) = \log {\it width}(g)$. When the grid size is
+not known, the maximum grid size is used (30 in the ARC challenge).
 %
-Factor~$\alpha$ equals~1 by default but can be set to a higher value
-to give more weights to the data, relative to the model, and hence
-allow the learning of more complex models. Indeed, ARC tasks have a
-very low number of examples (max. 4).
+For sizes, we use the universal encoding of natural numbers~$L_\nat$.
+%
+For the color of shapes, we use the uniform distribution~$L_C$. For
+the background color of grids, we use a probability
+distribution~$P_{BC}$ that gives a higher probability to color black
+($P_{BC} = 0.91$) than to other colors ($P_{BC} = 0.01$). Indeed, in
+most tasks, grids have a black background. Hence, for a background
+color~$c$, $L(c) = -\log P_{BC}(c)$. \KILL{We then define the
+  description length of background colors $L_{BC}(c)$ as
+  $L_{P_{bc}}(c)$.}
+%
+As the mask of a rectangle is a bitmap, we simply define its
+description length as its number of bits, i.e. its height times its
+width, which are known from the rectangle size. However, as it is
+common to have full masks for pure rectangles, we use a bit to encode
+whether the mask is full or not, and we then encode the bitmap only if
+it is not full.
+\[ L(mask|h,w) = \left\{
+  \begin{array}{l@{\quad}l}
+    1 & \textrm{when the mask bitmap is full} \\
+    1 + hw & \textrm{otherwise} \\
+  \end{array}\right. \]
+When the rectangle size is not known, e.g. in a model with unknowns, a
+constant bitmap cannot be specified and the only possible value is the
+full mask.
 
-On output grids~$y_k$, we use parsing rather than generating. This is
-explained by the fact that description lengths are used at the
-learning stage rather than at the application stage. During learning,
-output models are incomplete, and still require some parameters and
-delta to generate the output grid~$y_k$. However, this output grid is
-available during learning (for training examples), and using parsing
-enables to find which parameters and delta are required. The objective
-of learning is to make those output parameters and delta become
-empty. Knowing what are the required parameters and delta can help the
-learner improve the model in this direction.
+{\em Algebraic types.} For each algebraic datatype (${\it Grid}$,
+${\it Shape}$, ${\it Vector}$), each constructor determines which
+fields are to be encoded. Therefore, it suffices to encode the choice
+of a constructor among the constructors of the datatype, in addition
+to the encoding of the fields. For datatypes~${\it Grid}$ and
+${\it Vector}$, there is a single constructor, hence there is no
+choice to be made. Hence, $L({\bf Grid}) = L({\bf Vec}) = 0$. For
+datatype~${\it Shape}$, there are two constructors, to which we give a
+uniform distribution. Hence,
+$L({\bf Point}) = L({\bf Rectangle}) = -\log 0.5 = 1$.
+%
+For a given constructor, the encoding of some field may depend on
+other fields, thus inducing an ordering of fields. This is the case
+for constructor~${\bf Rectangle}$ where the mask field depends on the
+size field (see the encoding of masks above).\footnote{We could also consider
+that the position field depends on the size field. Indeed, given a
+grid size and a rectangle size, not all positions are possible if we
+assume that the rectangle must fit into the grid.}
+%\[ L({\bf Rectangle}(pos,size,c,m|g) = L({\bf Rectangle}) + L(pos|g) + L(size|g) + L(c) + L(m|size) \]
+%
+Grids have a list of shapes. The encoding of a list starts with the
+universal encoding of the length of the list, followed by the encoding
+of the list elements.
 
-Note that the description lengths of parameters are indexed by the
-parametrized grid models. Indeed, knowing the grid model, we know the
-number and types of parameters so that we can encode the parameter
-values in a compact way, simply adding the description length of each
-parameter value:
-\[ L_m(\pi_k) = \sum_{(u,c) \in \pi_k} L_{m,u}(c). \] For every
-model~$m$ and every unknown~$u$ in that model, $L_{m,u}$ is the
-model-specific encoding for the unknown value. A model-independant
-encoding should encode the number and types of parameters in addition
-to the values. The model-specific encoding are defined along with the
-escription length of models (see below).
+{\em Expressions.} There are three kinds of expressions (with
+distribution~$P_e$): primitive values and constructors ($P_e = 0.25$,
+2 bits), function applications ($P_e = 0.25$, 2 bits), and variables
+($P_e = 0.5$, 1 bit). Primitive values and constructors are encoded as
+described above. Functions are encoded along a uniform distribution
+over the functions whose result type is the expected type. The
+expected type is determined by the syntactic context of the
+expression: e.g., a color if it is the color field of the grid or a
+shape, an integer if it is a component of the position of a shape, or
+an operand of an arithmetic operator. Currently, there are only two
+functions, addition and substraction, both with result type
+${\it int}$. Variables are encoded according to the environment
+signature, i.e. the set of variables that are available in the
+environment, grouped by data type. A variable is encoded according to
+a probability distribution over the environment variables of same
+type. In order to distinguish between the same-type variables, we
+define the probability distribution as the softmax of the similarities
+between the paths of those variables with the expression path. This
+implies that defining a shape height as a function of a shape height
+is prefered to defining it as a function of a shape width or a shape
+position.
 
-The description length of deltas is parametrized by the height~$h$ and
-width~$w$ of the encoded grid. This is valid because knowing the grid
-model and the parameters, the size of the grid is known, and it only
-remains to specify which of the grid cells need to be given a
-different color.
+{\em Templates.} There are three kinds of templates (with
+distribution~$P_t$): primitive value and constructors ($P_t = 0.4$,
+1.3 bits), expressions ($P_t = 0.5$, 1 bit), and unknowns
+($P_t = 0.1$, 3.3 bits). In a template, each field of a constructor is
+a template, thus allowing unknowns and expressions at any place. In
+practice, we never use unknowns for whole grid models, and for whole
+shapes. Expressions are given the higher probability because they
+explain some part of the grid parse tree from the
+environment. unknowns are given the lower probability because they
+correspond to unexplained parts.
 
+{\em Grid models} ($L(m)$) are templates over type ${\it Grid}$,
+and are encoded as such.
+
+{\em Grid parse trees} ($L(\pi|m)$) are only made of primitive values
+and constructors, and could be encoded as such. However, as grid parse
+trees are obtained by parsing grids according to a grid model, parts
+of the grid parse tree are already encoded in the grid
+model. Actually, the very purpose of grid models is precisely to
+factor out what all example grids have in common, and avoiding to
+encode it repeatedly. The only parts of grid parse trees that need to
+be encoded are (a) the parts corresponding to unknowns in the grid
+model, and (b) the parts that differ from the grid model due to
+approximate parsing.
+\begin{itemize}
+\item[(a)] About the unknowns, a fixed ordering can be derived from
+  the model. Therefore, it is enough to concatenate the encodings of
+  the grid parse subtrees that correspond to each unknown.
+\item[(b)] About the differing parts, we have no apriori information,
+  neither on their number, nor on their location in the grid parse
+  tree. We first encode their number with universal encoding. We then
+  encode each differing part by encoding its location in the grid
+  parse tree, using a uniform distribution, and the subtree at that
+  location.
+\end{itemize}
+The encoding of the location of the differing parts could probably be
+improved in several ways. First, some differences are more likely than
+others: e.g., a different rectangle width vs a completely different
+shape. Second, not all subsets of locations make sense as a difference
+location should not be inside another difference location as it would
+entail to encode twice the same part.
+
+{\em Grid delta} ($L(\delta|\pi)$). For comparability with grid models and grid parse
+trees, we encode a grid delta~$\delta$ as a set of points.  The
+description length of a grid delta is hence defined as:
+\[ L(\delta|\pi) = L_\nat(|\delta|) + \sum_{(i,j,c) \in \delta} L({\bf Point}({\bf Vec}(i,j),c)|{\it draw}(\pi)). \]
+%
+Note that the description length of points is made relative to the
+grid drawn from the grid parse tree. In particular, this makes the
+grid size available to the encoding of the point position.
+
+\KILL{
 \paragraph{Version~1 } uses the following definition.
 \[ L(h,w,\delta) = L_\nat(|\delta|) + log(C_{hw}^{|\delta|}) + |\delta|log(|C|-1) \]
 %
@@ -609,14 +1018,14 @@ more comparable to models made of point shapes.
 \[ L(h,w,\delta) = |\delta|(log\ h + log\ w + log\ |C|) \]
 
 \paragraph{}
-In the following we assume a few basic description lengths for
-elementary types:
-\begin{itemize}
-\item $L_\nat(n) = 2\,log\ (n+1) + 1$: a universal encoding of natural
-  intergers (including zero), more precisely the gamma encoding
-  shifted by one to include zero;
-\item $L_C = log\ |C|$: an encoding of colors along a uniform distribution.
-\end{itemize}
+We define the code length of a bitmap~$m \in M$ as follows,
+assuming that the grid dimensions $h \times w$ are known from the
+shape, and given that there are $k$ activated pixels in the bitmap.
+\[ L(m|h,w) = \left\{
+  \begin{array}{l@{\quad}l}
+    1 & \textrm{when the bitmap is full} \\
+    1 + hw & \textrm{otherwise} \\
+  \end{array}\right. \]
 
 %%% V1
 
@@ -708,25 +1117,65 @@ refinements are possible based on the knowledge of the grid model as
 prior. For instance, uniform encoding can be used instead of universal
 encoding for integers when bounds are known for the attribute value
 (e.g., grid size).
+}%KILL
 
-For the task in Figure~\ref{fig:task}, the following table compares
-the description lengths of the initial model and the above example
-model, for $\alpha=10$ (each example counts as 10). The split between
-the model and data according to the model is also given.
-
-\begin{center}
-  \begin{tabular}{|l|r|r|r|}
+\begin{table}[t]
+  \centering
+  \caption{Comparison of description lengths of the initial model (left) and the solution model given above (right).}
+  \begin{minipage}{0.4\textwidth}
+    \begin{center}
+      \begin{tabular}{|l||r|r||r|}
     \hline
-    model & $L(m)$ & $L(T^-|m)$ & $L(m,T^-)$ \\
+          & $L(M)$ & $L(D|M)$ & $L(M,D)$ \\
     \hline
-    initial & 8.0 & 5394.4 & 5402.4 \\
-    example & 96.0 & 1487.6 & 1583.6 \\
     \hline
-  \end{tabular}
-\end{center}
+    input & 9.0 & 9984.0 & 9993.0 \\
+    \hline
+    output & 9.0 & 1634.7 & 1643.7 \\
+    \hline
+    \hline
+    chained & 18.0 & 11618.7 & 11636.7 \\
+    \hline
+      \end{tabular}
+    \end{center}
+  \end{minipage}
+\hfill
+\begin{minipage}{0.4\textwidth}
+  \begin{center}
+    \begin{tabular}{|l||r|r||r|}
+    \hline
+      & $L(M)$ & $L(D|M)$ & $L(M,D)$ \\
+    \hline
+    \hline
+    input & 68.9 & 1711.3 & 1780.2 \\
+    \hline
+    output & 50.6 & 0.0 & 50.6 \\
+    \hline
+    \hline
+    chained & 119.5 & 1711.3 & 1830.8 \\
+    \hline
+    \end{tabular}
+  \end{center}
+\end{minipage}
+\label{tab:dl:example}
+\end{table}
 
-The increase in the model DL is largely compensated by the data DL.
+\paragraph{}
+For the task in Figure~\ref{fig:task}, Table~\ref{tab:dl:example}
+compares the description lengths of the initial model and the solution
+model given as example above, for $\alpha=10$ (each example counts as
+10). The tables detail the split between input grid and output grid on
+one hand, and the split between the model ($L(M)$) and the data
+according to the model ($L(D|M)$) on the other hand.
+%
+We observe that the increase in the model DL is largely compensated by
+the decrease of the data DL. The resulting compression gain is 16.3\%, a six-fold
+reduction. In particular, with the solution model, the description
+length of the ouput grids has fallen to zero, which means that output
+grids are entirely explained by the model and the input grid parse
+tree.
 
+\KILL{
 \paragraph{Version 1.1.} The description length for shapes is extended
 in the obvious way, giving the same weight to points and rectangles.
 
@@ -753,28 +1202,29 @@ in the obvious way, giving the same weight to points and rectangles.
     \hline
   \end{tabular}
 \end{center}
+}%KILL
 
 
 \subsection{Learning Strategy}
 
 The model space is generally too vast for a systematic exploration,
-and heuristics have therefore to be employed to guide the search for a
-good model.
+and heuristics have to be employed to guide the search for a good
+model.
 %
 The learning strategy consists in the iterative refinement of models,
 starting with an initial model, in search for the best model, i.e. the
 most compressive model. Given a class of models, a search strategy is
 therefore entirely specified by:
 \begin{enumerate}
-\item an initial model~$m_o$ ({\em initial model}), generally the
+\item an initial model~$M_o$ ({\em initial model}), generally the
   simplest one;
-\item and a function~$R$ mapping each model~$m$ to an ordered
-  list~$m_1, m_2, \ldots$ of refined models ({\em refinements}),
+\item and a function~$R$ mapping each model~$M$ to an ordered
+  list~$M_1, M_2, \ldots$ of refined models ({\em refinements}),
   generally taking into account the data according to the model (here,
-  grids, parameters and delta).
+  grids, grid parse trees and grid deltas).
 \end{enumerate}
-We call a refinement~$m_i$ {\em compressive} if it reduces the
-description length of the original model~$m$. The ordering of
+We say that a refinement~$M_i$ is {\em compressive} if it reduces the
+description length compared to the original model~$M$. The ordering of
 refinements is important because the number of possible refinements
 could be huge, and it has a cost to evaluate each refinement by
 measuring its description length. Indeed, this involves the parsing of
@@ -792,121 +1242,165 @@ iteration. $K_m$ is the beam width. The search halts when no
 compressive refinement can be found.
 % TODO: think again about strategy, look at beam stack search for instance, anytime+backtracking... complete if enough time
 
-\paragraph{Version 1.} The initial model is made of two minimal grid
-models, reduced to a background with unknown size and color.
-\[ {\bf InOut}({\it Background}(H_1,W_1,C_1), {\it
-    Background}(H_2,W_2,C_2)) \] Capital letters represent unknowns.
+\paragraph{Version 2.} The initial model is made of two minimal grid
+models, reduced to a background with unknown size and color, and no
+shape layer.
+\[ {\bf InOut}({\bf Grid}(?,?,[\ ]), {\bf Grid}(?,?,[\ ])) \]
 
-Two kinds of refinements are used: (1) addition
-of a shape to a grid model (input or output), and (2) replacing
-unknowns by an expressions in a grid model. As the only shape in this
-version is the rectangle, the first kind of refinement consists in
-inserting a new rectangle on top of the stack of rectangles, or at
-some depth up to 3. The inserted rectangle is completely unspecified
-in the sense that new unknowns are created for all of its attributes
-(size, position, and color).
+Two kinds of refinements are used: (1) the addition of a shape to a
+grid model (input or output), and (2) the replacement of a part of a
+template (typically some unknown) by another template (typically a
+value or an expression).
+%
+When adding a shape, its kind -- point or rectangle -- is fixed but
+all its fields are left unspecified. The added shape template is
+therefore either ${\bf Point}(?,?)$ or ${\bf Rectangle}(?,?,?,?)$.  If
+there is already a non-empty list of shapes, the new shape can be
+inserted at any position in the list, from bottom to top.
 
-The second kind of refinement enables to specify those unknowns by
-replacing them with expressions, i.e. either constants or computations
-involving constants and environment variables. For the input grid
-model, it can only be constants because the environment is empty. For
-the output grid model, input unknowns are available as environment
-variables. We only consider complex expressions for integers, and with
-a form among $x$, $x+c$, $x-c$, $x+y$, $x-y$, for environment
-variables~$x,y$, and a constant~$c$. We use input and output
-parameters in order to identify which (unknown,expression) pairs are
-so that both have the same value over all example grids. When an input
-unknown is replaced by a constant, its occurences in the output grid
-model (if any) as expression variables also have to be replaced by
-that constant.
+The second kind of refinements enables to replace part of a model at
+path~$p$ by a template~$t$. The replacing template is either a {\em
+  pattern}, i.e. a combination of primitive values, constructors, and
+unknowns; or an {\em expression} using environment variables. For the
+input grid model, it can only be patterns because the environment is
+empty. For the output grid model, every path into the input grid parse
+tree is available as an environment variable.
+%
+In this version, we only consider patterns made of a single primitive
+value or a single constructor with all fields being unknowns; and we
+only consider expressions on integers with a form among $x$, $x+c$,
+$x-c$, $x+y$, $x-y$, for any environment variables~$x,y$, and any
+constant integer~$c$.
+%
+When the replaced part~$p$ is an unknown, it enables to make the model
+more specific to the task. When the replaced part is a pattern in the
+output grid model, and it is replaced by an expression, it enables to
+better define the output grid as a function of the input grid. To
+summarize, unknowns may be replaced by patterns and expressions, and
+patterns in the output grid model may be replaced by expressions.
 
-A tentative ordering of refinements is the following: input
-expressions, input shapes, output expressions, output shapes. Among
-expressions, the ordering is: $c$, $x$, $x+c$, $x-c$, $x+y$, $x-y$.
+Let $E$ be the set of examples (pairs of grids), and $M = (m^i,m^o)$
+be the current model. We generate the following refinements:
+\begin{enumerate}
+\item An input unknown at~$p \in U(m^i)$ can be replaced by
+  pattern~$t$ if
+\[ \forall (g^i_k,g^o_k) \in E: \exists (\pi^i_k,\delta^i_k) \in {\it
+    read}_{m^i}(nil,g^i_k): \pi^i_k.p \sim t \]
+%
+\item An output unknown at~$p \in U(m^o)$ can be replaced by
+pattern~$t$ if
+\[ \forall (g^i_k,g^o_k) \in E: \exists (\pi^i_k,\delta^i_k,\pi^o_k,\delta^o_k) \in {\it
+    train}_M(g^i_k,g^o_k): \pi^o_k.p \sim t \]
+%
+\item An output grid model part at~$p \in m^o$ can be replaced by expression~$e$ if
+\[ \forall (g^i_k,g^o_k) \in E: \exists (\pi^i_k,\delta^i_k,\pi^o_k,\delta^o_k) \in {\it
+    train}_M(g^i_k,g^o_k): \pi^o_k.p = {\it apply}(e, \pi^i_k) \]
+\end{enumerate}
+
+
+A tentative ordering of refinements is the following: output shapes,
+input shapes, output expressions, input expressions.  Among
+expressions, the ordering is: $x$, $x-c$, $x+c$, $x-y$, $x+y$.
 
 The sequence of compressive refinements that leads to the above model
-about task in Figure~\ref{fig:task} is shown in the table below,
-giving after each refinement the new values for description
-lengths. For concision, successive unknown replacements are aggregated
-into a single step.
+about task in Figure~\ref{fig:task} is shown in the table below. The
+description length includes both the model and the data, and both the
+input grid and the output grid. It is the description length reached
+after applying the refinement. Each refinement is described as an
+equality between a model path (left-hand side) and a template
+(right-hand side). Refinements defining a layer by a shape actually
+inserts a new layer for that shape.
 
 \begin{center}
-  \begin{tabular}{|c|l|r|r|r|}
+  \begin{tabular}{|r|r|l|}
     \hline
-    step & refinement & $L(m)$ & $L(T^-|m)$ & $L(m,T^-)$ \\
+    step & $L(M,D)$ & refinement \\
     \hline
-    0 & ${\bf InOut}({\it Background}(H_1,W_1,C_1),$ & & & \\
-    & \hspace*{1.1cm}${\it Background}(H_2,W_2,C_2))$ & 8 & 5394 & 5402 \\
-    1 & $C_1 \leftarrow 0$ & 9 & 5390 & 5399 \\
-    2 & ${\bf Rectangle}(H_3,W_3,I_1,J_1,C_3)$ on top of $m^i$ & 16 & 2651 & 2667 \\
-    3 & ${\bf Rectangle}(H_4,W_4,I_2,J_2,C_4)$ on top of $m^i$ & 25 & 2476 & 2501 \\
-    4 & $H_2 \leftarrow H_3, W_2 \leftarrow W_3, C_2 \leftarrow C_4$ & 43 & 1951 & 1994 \\
-    5 & ${\bf Rectangle}(H_5,W_5,I_3,J_3, C_5)$ on top of $m^o$ & 50 & 1819 & 1869 \\
-    6 & $H_5 \leftarrow H_4, W_5 \leftarrow W_4,, C_5 \leftarrow C_3$ & & & \\
-     & \hspace*{1cm} $I_3 \leftarrow I_2-I_1, J_3 \leftarrow J_2-J_1$ & 96 & 1488 & 1584 \\
+    1 & 4461.6 & $in.layer[1] = {\bf Rectangle}(?,?,?,?)$ \\
+    2 & 4047.2 & $out.size = layer[1].size$ \\
+    3 & 3650.4 & $in.layer[0] = {\bf Rectangle}(?,?,?,?)$ \\
+    4 & 3352.6 & $out.layer[0] = {\bf Rectangle}(?,?,?,?)$ \\
+    5 & 3114.6 & $out.color = in.layer[0].color$ \\
+    6 & 2896.4 & $out.layer[0].size = in.layer[0].size$ \\
+    7 & 2757.0 & $out.layer[0].color = in.layer[1].color$ \\
+    8 & 2686.3 & $out.layer[0].mask = full$ \\
+    9 & 2615.7 & $in.layer[0].mask = full$ \\
+    10 & 2545.0 & $in.layer[1].mask = full$ \\
+    11 & 2499.4 & $in.color = black$ \\
+    12 & 2464.4	& $out.layer[0].pos = {\bf Vec}(?,?)$ \\
+    13 & 2374.4	& $out.layer[0].pos.i = in.layer[0].pos.i - in.layer[1].pos.i$ \\
+    14 & 2284.5	& $out.layer[0].pos.j = in.layer[0].pos.j - in.layer[1].pos.j$ \\
+    15 & 2249.5	& $in.size = {\bf Vec}(?,?)$ \\
+    16 & 1970.9	& $in.size.i=12$ \\
+    17 & 1935.9	& $in.layer[0].pos = {\bf Vec}(?,?)$ \\
+    18 & 1900.9	& $in.layer[0].size = {\bf Vec}(?,?)$ \\
+    19 & 1865.9	& $in.layer[1].pos = {\bf Vec}(?,?)$ \\
+    20 & 1830.8	& $in.layer[1].size = {\bf Vec}(?,?)$ \\
     \hline
   \end{tabular}
 \end{center}
 
+At steps 1 and 3, two rectangle shapes are introduced in the input.
+At step 4, a rectangle shape is introduced in the output. Combined
+with the background grid, this is enough to cover all cells in both
+grids. As of step 4, there are therefore empty grid deltas.
+%
+At steps 2 and 5, the size and color of the output grid are
+respectively equated to the bottom input shape ($in.layer[1].size$)
+and to the top input shape ($in.layer[0].color$). At steps 6 and 7,
+the size and color of the output shape are equated to respectively to
+the top input shape ($in.layer[0].size$), and to the bottom input
+shape ($in.layer[1].color$). At this stage, only the position of the
+output shape remains to be specified.
+%
+Steps 8-10 finds that all shapes are {\em full} rectangles. Step 11
+finds that the input background color is black.
+%
+Steps 12-14 expand the output shape position as a vector, and find the
+expressions that define those positions, here differences between the
+top input shape and the bottom input shape.
+%
+At this stage, the model has solved the task as it can correctly
+generate the output grid for any input grid.
+%
+The other steps expand the remaining positions and sizes as vectors,
+and find that all input grids have 12 rows. The latter is an
+accidental regularity, and approximate parsing is necessary to parse
+the test instance as it has 14 rows.
 
-\paragraph{Version 1.1.} A new refinement is the insertion of points
-as shapes.
 
 %%%
 \section{Evaluation}
 \label{eval}
 
-\KILL{
-\begin{table}[t]
-  \centering
-  \caption{Performance on training and evaluation tasks, per version}
-  \begin{tabular}{|c|c|c|c|c|c|}
-    \hline
-     & & \multicolumn{3}{|c|}{training} & evaluation \\
-    ~Version~ & ~timeout~ & ~no output~ & ~wrong output~ & ~correct~ & ~correct~ \\
-    \hline
-    v1 & 1s & 278 & 116.5 & 5.5 & 0 \\
-    \hline
-  \end{tabular}
-  \label{tab:eval}
-\end{table}
-
-For evaluation tasks, we only report the number of correct
-predictions (among the 400 tasks) in order to avoid leaking
-information from the evaluation dataset to the developer. For training
-tasks, we provide finer results by splitting the 400 tasks in three
-categories:
-\begin{itemize}
-\item {\bf no output}: no effective model could be found in the
-  timeout;
-\item {\bf wrong output}: an effective model could be found but there
-  is a discrepancy between the predicted output and the expected
-  output;
-\item {\bf correct}: an effective model could be found, and predicts
-  the expected output.
-\end{itemize}
-In results, half tasks appear because some tasks have two test
-instances. If one test is correct, and another is wrong, we count 0.5
-for each test. This enables to give the same weight to each task.
-}%KILL
 
 \begin{table}[t]
   \centering
   \caption{Performance on training and evaluation tasks as the number of tasks solved, per version}
   \begin{tabular}{|c|c|c|c|c|c|c|c|c|}
     \hline
-     & & & & \multicolumn{2}{c|}{training} & \multicolumn{2}{c|}{evaluation} \\
-    version & $\alpha$ & timeout & avg. time & train & test & train & test \\
+     & & & & & \multicolumn{2}{c|}{training} & \multicolumn{2}{c|}{evaluation} \\
+    version & date & $\alpha$ & timeout & avg. time & train & test & train & test \\
     \hline
-    v1 & ~10~ & 20s & 9s & ~9 / 9.6~ & ~5 / 5.5~ & ~0 / 0.3~ & ~0 / 0.0~ \\
-    v1.1 & ~10~ & 2s & 1.53s & ~16 / 17.3~ & ~5 / 5.0~ & ~4 / 4.3~ & ~4 / 4.0~ \\
+    v1 & & ~10~ & 20s & 9s & ~9 / 9.6~ & ~5 / 5.5~ & ~0 / 0.3~ & ~0 / 0.0~ \\
+    \hline
+    v1.1 & 2021-03-01 & ~10~ & 2s & 1.53s & ~16 / 17.3~ & ~5 / 5.0~ & ~4 / 4.3~ & ~4 / 4.0~ \\
+    \hline
+%    v2 & 2021-03-31 & ~10~ & 10s & 7.6s & ~14 / 19.2~ & ~14 / 14.0~ & ~2 / 3.6~ & ~2 / 2.0~ \\
+%    v2 & 2021-03-31 & ~10~ & 30s & 19.0s & ~16 / 25.3~ & ~18 / 18.5~ & ~2 / 4.3~ & ~3 / 3.0~ \\
+%    v2 & 2021-04-26 & ~10~ & 30s & 24.1s & ~23 / 27.0~ & ~17 / 17.0~ & ~3 / 4.9~ & ~3 / 3.0~ \\
+%    v2 & 2021-04-26 & ~10~ & 60s & 35.4s & ~36 / 40.8~ & ~25 / 25.0~ &  ~6 / 8.6~ & ~6 / 6.0~ \\
+    v2 & 2021-05-01 & ~10~ & 30s & 20.3 & ~28 / 34.6~ & ~19 / 19.5~ &   &  \\
+    v2 & 2021-05-01 & ~10~ & 60s & 35.1s & ~33 / 41.2~ & ~22 / 22.5~ &  ~7 / 9.9~ & ~6 / 6.0~ \\
+    v2 & 2021-05-01 & ~10~ & 120s &  & & &  ~8 / 10.9~ & ~7 / 7.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
 \end{table}
 
 Table~\ref{tab:eval} reports on the performance of our approach on
-both training and evaluation tasks (400 tasks each). A timeout is set
+both training and evaluation tasks (400 tasks each), for successive
+versions and timeouts. The timeout sets a limit to the learning time
 for each task. On both collections of tasks, we provide performance
 for train examples, for which output grids are known, and for test
 examples. In each case, we give two measures $n_1/n_2$: $n_1$ is the
@@ -917,8 +1411,8 @@ has two test examples and only one is solved, the score is~$0.5$.
 \paragraph{Version 1.} This first version was designed by looking at
 tasks {\tt ba97ae07} and {\tt b94a9452}. Evaluating it on training
 tasks has shown that this simple model manages to solve 3.5 additional
-tasks: {\tt 6f8cd79b}, {\tt 25ff71a9} (2 correct cases), {\tt
-  5582e5ca}, {\tt bda2d7a6} (1 correct cases out of 2). This version
+tasks: {\tt 6f8cd79b}, {\tt 25ff71a9} (2 correct examples), {\tt
+  5582e5ca}, {\tt bda2d7a6} (1 correct example out of 2). This version
 even manages to explain all train examples of 3 additional tasks,
 hence 8 tasks in total, although they fail on the related test
 examples: tasks {\tt a79310a0} (3 examples), {\tt bb43febb} (2
@@ -985,6 +1479,137 @@ valuable improvement.
 This is confirmed by Table~\ref{tab:eval} that shows that this new
 version succeeds in 4 evaluation tasks, instead of none for the
 previous version.
+
+%% TODO: give parameter values
+\paragraph{Version 2.} Table~\ref{tab:eval} reports results for
+Version~2 for different timeouts. It uses a greedy search ($K_m = 1$)
+but at each step, it look for up to 20 compressive refinements
+($K_r = 20$), selecting the best one among them. Grid parsing looks
+for up to 512 grid parse trees, and keep only the three best
+ones. Approximate parsing is not activated on train examples, and
+limited to 3 differences on test examples.
+%
+Table~\ref{tab:eval} shows a sharp improvement w.r.t. previous
+versions, especially on the training tasks. The number of successful
+tasks jumps from~5 to 22 in the training dataset, and from~4 to~7 in
+the evaluation dataset. This seems to confirm that evaluation tasks
+are intrisically more complex than training tasks.
+%
+As the language of models is the same as in Version~1.1, the
+improvement come mostly from the way those models are used and
+modified:
+\begin{itemize}
+\item the use of paths in grid parse trees rather than variable names,
+\item the introduction of non-determinism in grid parsing,
+\item the ordering of candidate grid parse trees and refinements,
+\item the ability to replace any part of a template, not only unknowns,
+\item better definitions of description lengths.
+\end{itemize}
+Higher timeouts are required because of the non-determinism that
+significantly increases computation complexity.
+
+For a timeout of 60s, the 22 successful training tasks are: {\tt
+  1bfc4729}, {\tt 1cf80156}, {\tt 1f85a75f}, {\tt 25ff71a9}, {\tt
+  445eab21}, {\tt 48d8fb45}, {\tt 5521c0d9}, {\tt 5582e5ca}, {\tt
+  681b3aeb}, {\tt 6f8cd79b}, {\tt a1570a43}, {\tt a79310a0}, {\tt
+  a87f7484}, {\tt aabf363d}, {\tt b1948b0a}, {\tt b94a9452}, {\tt
+  ba97ae07}, {\tt bda2d7a6}, {\tt bdad9b1f}, {\tt e48d4e1a}, {\tt
+  e9afcf9a}, {\tt ea32f347}.  We also know that task~{\tt 23581191}
+can be solved with a higher timeout of~120s.
+%
+Task~{\tt 48d8fb45} is successful although the learned model does not
+exhibit a proper understanding of it. The system found a correlation
+that was probably not intended by the creator of the task.
+%
+The models learned on other tasks are adequate, and are rather diverse
+despite the simplicity of the model language. We informally describe a
+few learned models to illustrate this diversity.
+\begin{itemize}
+\item {\tt a79310a0}. Find a cyan rectangle and move it one row
+  down. Unexpectedly, the test instance has an irregular shape instead
+  of a rectangle. Thanks to approximate parsing, the input grid parse
+  tree contains a mask of the irregular shape, which is used to
+  generate the output grid.
+\item {\tt aabf363d}. Find an arbitrary shape and a colored point in
+  the bottom left corner, and output the same shape except for the
+  color, which is the same as the point.
+\item {\tt b94a9452}. Find an arbitray shape on a pink background,
+  simply change the background color to red.
+\item {\tt ba97ae07}. Find two full rectangles, reverse the list of
+  layers: bottom rectangle on top, top rectangle at bottom.
+\item {\tt bdad9b1f}. Find two segments, a 2x1 cyan rectangle, and 1x2
+  red rectangle. Extend each segment into a line spanning the whole
+  grid, then add a yellow point at the crossing of the two lines.
+\item {\tt e48d4e1a}. Find two colored lines, a 1x10 rectangle and a
+  10x1 rectangle, on a 10x10 black grid. Find also a grey rectangle in
+  the top right corner with width=1. Generate the same lines at
+  different positions, according to the height~$H$ of the grey
+  rectangle. The vertical line is moved $H$ columns left
+  (substraction), and the horizontal line is moved $H$ rows down
+  (addition). This involves arithmetic expressions for computing the
+  new positions.
+\item {\tt ea32f347}. Find three grey full rectangles, implictly
+  ordered from the larger (top layer) to the smaller (bottom layer)
+  according to the parsing ordering heuristics. Generate the same
+  rectangles with different colors: the top one gets blue, the middle
+  one gets yellow, and the bottom one gets red.
+\item {\tt 1cf80156}. Crop an arbitrary colored shape on a black grid.
+\item {\tt 1f85a75f}. Crop an arbitrary colored shape on a black grid
+  that also contains many points of other colors at random positions
+  (a kind of noise).
+\item {\tt 6f8cd79b}. Starting with a black grid of any size, generate
+  a cyan grid of same size, and add a black rectangle at position
+  (1,1) whose size is two rows and two columns less than the grid. The
+  effect is to add a cyan border to the input grid.
+\item {\tt 445eab21}. Find two shapes, the larger one implicitly on
+  top. Generate a 2x2 grid whose color is the same as the top shape.
+\item {\tt 681b3aeb}. Find two shapes on a black background. Generate
+  a 3x3 grid with the color of one shape, and add at position (0,0)
+  the other shape. Actually, the two shapes complement each other and
+  pave the 3x3 grid. The learned model works because the evaluation
+  protocol allows for three predicted output grids, and there are only
+  two possibilities as the top left cell must belong to one of the two
+  shapes. Moreover, as the larger shape is tried first and it has a
+  higher probability to occupy the top left cell, there is more than
+  50\% chance being correct on first trial.
+\item {\tt 5521c0d9}. Find three full rectangles: a yellow one, a red
+  one, and a blue one. Move each of them upward in the grid by as much
+  as their height.
+\item {\tt 5582e5ca}. Find two shapes on a 3x3 colored grid. Generate
+  the same colored grid without the shapes. Actually, the task is to
+  identify the majority color in the input grid. Even without a notion
+  of counting and majority in the models, the MDL principle implicitly
+  identifies the majority color as the one that compresses the most.
+\end{itemize}
+\HIDE{
+  \item {\tt 05269061}. Find three shapes, and generate a three-color
+  checker boards as a combination of three shapes with complex
+  masks. One color is handled by the background color. Another color
+  is handled by the top shape whose mask is a set of stripes. The last
+  color is handled by the two bottom shapes, although a single one
+  should be sufficient. The three input shapes are three stripes
+  picked at random, one for each color. The learned model cannot
+  predict for sure which color is where, so that it often fails on
+  first trial. This task can actually not be genuinely understood by
+  Version~2 models but interestingly, it could nonetheless be solved
+  to some extent.}
+
+For 11 training tasks, the approach was successful on all train
+instances although it failed on the test instances. This means that a
+working model was found but that it does not generalize to the test
+instances. Here are some causes for the lack of generalization:
+\begin{itemize}
+\item wrong choice between constants and variables, and finding
+  accidental arithmetic equalities (e.g., {\tt 0962bcdd});
+\item wrong segmentation of shapes, e.g. prefering a full rectangle to
+  an irregular shape (e.g., {\tt 1caeab9d});
+\item the transformation should be performed several times in the test
+  instance whereas once is enough in all train instances (e.g., {\tt
+    29c11459});
+\item there is an invariance by grid rotation or grid transposition
+  (e.g., {\tt 4522001f}).
+\end{itemize}
+
 
 %%%
 \section{Conclusion and Perspectives}
