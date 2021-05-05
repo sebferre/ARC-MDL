@@ -14,3 +14,6 @@ redac/*.blg
 redac/*.log
 redac/*.pdf
 redac/*.bst
+redac/fig/*.bak
+redac/fig/*.pdf
+
