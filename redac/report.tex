@@ -1377,22 +1377,22 @@ the test instance as it has 14 rows.
 \begin{table}[t]
   \centering
   \caption{Performance on training and evaluation tasks as the number of tasks solved, per version}
-  \begin{tabular}{|c|c|c|c|c|c|c|c|c|}
+  \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|}
     \hline
-     & & & & & \multicolumn{2}{c|}{training} & \multicolumn{2}{c|}{evaluation} \\
-    version & date & $\alpha$ & timeout & avg. time & train & test & train & test \\
+     & & & & \multicolumn{3}{c|}{training} & \multicolumn{3}{c|}{evaluation} \\
+    version & date & $\alpha$ & timeout & time & train & test & time & train & test \\
     \hline
-    v1 & & ~10~ & 20s & 9s & ~9 / 9.6~ & ~5 / 5.5~ & ~0 / 0.3~ & ~0 / 0.0~ \\
+    v1.0 & 2020-10-21 & ~10~ & 20s & 7s & ~8 / 9.5~ & ~5 / 5.5~ & 12s & ~0 / 0.3~ & ~0 / 0.0~ \\
     \hline
-    v1.1 & 2021-03-01 & ~10~ & 2s & 1.53s & ~16 / 17.3~ & ~5 / 5.0~ & ~4 / 4.3~ & ~4 / 4.0~ \\
+    v1.1 & 2021-03-01 & ~10~ & 2s & 1.5s & ~16 / 17.3~ & ~5 / 5.0~ & 1.5s & ~4 / 4.3~ & ~4 / 4.0~ \\
     \hline
 %    v2 & 2021-03-31 & ~10~ & 10s & 7.6s & ~14 / 19.2~ & ~14 / 14.0~ & ~2 / 3.6~ & ~2 / 2.0~ \\
 %    v2 & 2021-03-31 & ~10~ & 30s & 19.0s & ~16 / 25.3~ & ~18 / 18.5~ & ~2 / 4.3~ & ~3 / 3.0~ \\
 %    v2 & 2021-04-26 & ~10~ & 30s & 24.1s & ~23 / 27.0~ & ~17 / 17.0~ & ~3 / 4.9~ & ~3 / 3.0~ \\
 %    v2 & 2021-04-26 & ~10~ & 60s & 35.4s & ~36 / 40.8~ & ~25 / 25.0~ &  ~6 / 8.6~ & ~6 / 6.0~ \\
-    v2 & 2021-05-01 & ~10~ & 30s & 20.3 & ~28 / 34.6~ & ~19 / 19.5~ &   &  \\
-    v2 & 2021-05-01 & ~10~ & 60s & 35.1s & ~33 / 41.2~ & ~22 / 22.5~ &  ~7 / 9.9~ & ~6 / 6.0~ \\
-    v2 & 2021-05-01 & ~10~ & 120s &  & & &  ~8 / 10.9~ & ~7 / 7.0~ \\
+    v2 & 2021-05-01 & ~10~ & 30s & 20s & ~28 / 34.6~ & ~19 / 19.5~ & 24s & ~6 / 7.8~  & ~5 / 5.0~ \\
+    v2 & 2021-05-01 & ~10~ & 60s & 35s & ~33 / 41.2~ & ~22 / 22.5~ & 46s & ~7 / 9.9~ & ~6 / 6.0~ \\
+    v2 & 2021-05-01 & ~10~ & 120s &  & & & 82s & ~8 / 10.9~ & ~7 / 7.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
