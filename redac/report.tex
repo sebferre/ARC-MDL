@@ -1392,7 +1392,7 @@ the test instance as it has 14 rows.
 %    v2 & 2021-04-26 & ~10~ & 60s & 35.4s & ~36 / 40.8~ & ~25 / 25.0~ &  ~6 / 8.6~ & ~6 / 6.0~ \\
     v2 & 2021-05-01 & ~10~ & 30s & 20s & ~28 / 34.6~ & ~19 / 19.5~ & 24s & ~6 / 7.8~  & ~5 / 5.0~ \\
     v2 & 2021-05-01 & ~10~ & 60s & 35s & ~33 / 41.2~ & ~22 / 22.5~ & 46s & ~7 / 9.9~ & ~6 / 6.0~ \\
-    v2 & 2021-05-01 & ~10~ & 120s &  & & & 82s & ~8 / 10.9~ & ~7 / 7.0~ \\
+    v2 & 2021-05-01 & ~10~ & 120s & 57s & ~35 / 43.5~ & ~24 / 24.5~ & 82s & ~8 / 10.9~ & ~7 / 7.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -1491,7 +1491,7 @@ limited to 3 differences on test examples.
 %
 Table~\ref{tab:eval} shows a sharp improvement w.r.t. previous
 versions, especially on the training tasks. The number of successful
-tasks jumps from~5 to 22 in the training dataset, and from~4 to~7 in
+tasks jumps from~5 to 24 in the training dataset, and from~4 to~8 in
 the evaluation dataset. This seems to confirm that evaluation tasks
 are intrisically more complex than training tasks.
 %
@@ -1514,8 +1514,8 @@ For a timeout of 60s, the 22 successful training tasks are: {\tt
   681b3aeb}, {\tt 6f8cd79b}, {\tt a1570a43}, {\tt a79310a0}, {\tt
   a87f7484}, {\tt aabf363d}, {\tt b1948b0a}, {\tt b94a9452}, {\tt
   ba97ae07}, {\tt bda2d7a6}, {\tt bdad9b1f}, {\tt e48d4e1a}, {\tt
-  e9afcf9a}, {\tt ea32f347}.  We also know that task~{\tt 23581191}
-can be solved with a higher timeout of~120s.
+  e9afcf9a}, {\tt ea32f347}.  For a timeout of 120s, the additional
+successful tasks are: {\tt 23581191}, {\tt 91714a58}.
 %
 Task~{\tt 48d8fb45} is successful although the learned model does not
 exhibit a proper understanding of it. The system found a correlation
