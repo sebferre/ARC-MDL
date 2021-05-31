@@ -289,6 +289,7 @@ let maybe_train_names =
     "c0f76784.json";
     "08ed6ac7.json";
     "f8ff0b80.json";
+    "a61ba2ce.json"; (* pb: prefers expressions to constant integers for grid size and shape positions, accidental regularity in 2 examples *)
   ]
 
 let task_model =
