@@ -290,6 +290,7 @@ let maybe_train_names =
     "08ed6ac7.json";
     "f8ff0b80.json";
     "a61ba2ce.json"; (* pb: prefers expressions to constant integers for grid size and shape positions, accidental regularity in 2 examples *)
+    "50cb2852.json"; (* pb: collection *)
   ]
 
 let task_model =
@@ -303,11 +304,11 @@ let task_model =
                                       `Rectangle (`U,`U,`U,`U),
                                       `Nil)));
      output_template =
-       `Background (`E (`Var [`Size]), `E (`Var [`Color]),
+       `Background (`Var [`Size], `Var [`Color],
                     `Insert (`Nil,
-                             `E (`Var [`Layers [`Right]]),
+                             `Var [`Layers [`Right]],
                              `Insert (`Nil,
-                                      `E (`Var [`Layers []]),
+                                      `Var [`Layers []],
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
@@ -316,9 +317,9 @@ let task_model =
                              `Rectangle (`U,`U,`U,`U),
                              `Nil));
      output_template =
-       `Background (`E (`Var [`Layers []; `Size]), `E (`Var [`Layers[`Right]; `Color]),
+       `Background (`Var [`Layers []; `Size], `Var [`Layers[`Right]; `Color],
                     `Insert (`Nil,
-                             `Rectangle (`Vec (`Int 0, `Int 0), `E (`Var [`Layers []; `Size]), `E (`Var [`Layers []; `Color]), `E (`Var [`Layers []; `Mask])),
+                             `Rectangle (`Vec (`Int 0, `Int 0), `Var [`Layers []; `Size], `Var [`Layers []; `Color], `Var [`Layers []; `Mask]),
                              `Nil))}; 
   ]
   
