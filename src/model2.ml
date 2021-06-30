@@ -76,6 +76,7 @@ let rec map_ilist (f : ilist_path -> 'a -> 'b) (lp : ilist_path) (l : 'a ilist) 
     
 type kind =
   [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Grid ]
+let all_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape; `Grid]
   
 type 'a patt =
   [ `Bool of bool
@@ -429,7 +430,18 @@ let unify (ld : data list) : template (* without expression *) = (* QUICK *)
   match ld with
   | [] -> assert false
   | d0::ld1 -> List.fold_left aux (d0 :> template) ld1
-        
+
+let root_template_of_data (d : data) : template =
+  match d with
+  | `Bool _
+    | `Int _
+    | `Color _
+    | `Mask _ -> (d :> template)
+  | `Vec _ -> `Vec (`U, `U)
+  | `Point _ -> `Point (`U, `U)
+  | `Rectangle _ -> `Rectangle (`U, `U, `U, `U)
+  | `Background _ -> assert false (* should not happen *)
+
 (* description lengths *)
 
 type dl = Mdl.bits
@@ -1335,6 +1347,95 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
             env_val, u_val, dl, rank)
           grs)
       grss in
+
+  let k_le_map =
+    defs_expressions ~env_sig in
+  let _, defs =
+    List.fold_left (* iteration through examples *)
+      (fun (first_ex,defs_yes) reads_ex ->
+        let _, defs_yes, _ =
+          List.fold_left (* iteration through example read *)
+            (fun (first_ex,defs_yes,defs_maybe) (env_val, u_val, dl, rank) ->
+              (* defs_yes: defs valid according to previous examples, and previous reads on current example *)
+              (* defs_maybe: defs valid according to previous examples, but not in previous reads on current example, undefined on first example *)
+              if first_ex (* on first example *)
+              then
+                let rev_delta_defs_yes =
+                  List.fold_left (* WARNING: preserving order on u_vars *)
+                    (fun rev_delta_defs_yes (p,k,t0) ->
+                      let d = try List.assoc p u_val with _ -> assert false in
+                      let lt = [] in (* candidate def bodies *)
+                      let lt =
+                        match t0 with
+                        | `U -> root_template_of_data d :: lt
+                        | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
+                      let lt =
+                        match t0 with
+                        | #expr -> lt (* already an expression *)
+                        | _ -> (try List.assoc k k_le_map with _ -> assert false) @ lt in 
+                      List.fold_left (* WARNING: preserving order on lt *)
+                        (fun rev_delta_defs_yes t ->
+                          if List.exists (* check if def already found *)
+                               (fun (_,_,p0,_,t0) -> p0=p && t0=t)
+                               defs_yes
+                             || not (defs_check p k t d env_val)
+                          then rev_delta_defs_yes
+                          else (dl, rank, p, k, t) :: rev_delta_defs_yes)
+                        rev_delta_defs_yes
+                        lt
+                    )
+                    []
+                    u_vars
+                in
+                let defs_yes = List.rev_append rev_delta_defs_yes defs_yes in
+                (first_ex,defs_yes,defs_maybe)
+              else
+                let rev_new_defs_yes, rev_defs_maybe =
+                  List.fold_left (* WARNING: preserving orer on defs_yes and defs_maybe *)
+                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,p,k,t as def) ->
+                      let d = try List.assoc p u_val with _ -> assert false in
+                      if defs_check p k t d env_val
+                      then
+                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, p, k, t) :: rev_new_defs_yes in
+                        (rev_new_defs_yes, rev_defs_maybe)
+                      else
+                        let rev_defs_maybe = def :: rev_defs_maybe in (* kept for remaining reads *)
+                        (rev_new_defs_yes, rev_defs_maybe)
+                    )
+                    ([],[])
+                    defs_maybe
+                in
+                let defs_yes = List.rev_append rev_new_defs_yes defs_yes in
+                let defs_maybe = List.rev rev_defs_maybe in
+                (first_ex,defs_yes,defs_maybe)
+            )
+            (first_ex,[],defs_yes) (* defs_yes at previous example is used as defs_maybe for checking *)
+            reads_ex in
+        false, defs_yes (* the remaining defs_maybe is trashed, they're non-valid defs *)
+      )
+      (true,[])
+      val_matrix in
+  defs
+  |> List.stable_sort (* increasing DL, increasing rank sum *)
+       (fun (sum_dl1,sum_rank1,_,_,_) (sum_dl2,sum_rank2,_,_,_) ->
+         Stdlib.compare (sum_dl1,sum_rank1) (sum_dl2,sum_rank2))
+  |> Myseq.from_list
+  |> Myseq.map (fun (_,_,p,k,t) -> RDef (p,t)))
+and defs_check p k t d env_val =
+  match t with
+  | `U -> assert false (* should not be used as def *)
+  | #patt -> t = root_template_of_data d
+  | #expr ->
+     let res =
+       apply_template_gen
+         ~lookup:(fun v ->
+           Option.bind
+             (List.assoc_opt (path_kind v) env_val)
+             (fun env_val_k ->
+               List.assoc_opt v env_val_k))
+         p t in
+     res = (d :> template)
+(*
   val_matrix
   |> Common.list_product (* TODO: find a way to avoid this combinatorial generation *)
   |> List.map (fun alignment ->
@@ -1348,7 +1449,9 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   |> Myseq.flat_map (fun (_,_,alignment) ->
          find_defs ~env_sig ~u_vars alignment)
   |> Myseq.unique)
+
   (* TODO: find appropriate sorting of defs: syntactic criteria, type criteria, DL criteria *)
+ *)
 (*and find_defs_transpose ~env_vars ~u_vars alignment =
   Common.prof "Model2.find_defs_transpose" (fun () ->
 (* assuming env_val and u_val have variables in same order *)
@@ -1373,7 +1476,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            (p, v::lv1))
          u_val u_vals1 in
      env_vals, u_vals) *)
-and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl, rank) list *) : grid_refinement Myseq.t =
+(*and find_defs ~env_sig ~u_vars alignment (* (env_val, u_val, dl, rank) list *) : grid_refinement Myseq.t =
   Common.prof "Model2.find_defs" (fun () ->
   (* find if some gd param unknowns can be replaced
      by some pattern or expression over env vars *)
@@ -1453,6 +1556,45 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : grid_refinement Myseq.
          if e_vals = (u_vals :> template list)
          then Some (RDef (u_path, e))
          else None)
+ *)
+and defs_expressions ~env_sig : (kind * template list) list =
+  let int_vars = signature_of_kind env_sig `Int in
+  List.map
+    (fun k ->
+      let le = [] in
+      let le =
+        List.fold_left
+          (fun le v -> `Var v::le) (* order does not matter *)
+          le (signature_of_kind env_sig k) in
+      let le =
+        match k with
+        | `Int ->
+           List.fold_left
+             (fun le v ->
+               Common.fold_for
+                 (fun i le ->
+	           `Plus (`Var v, `Int i)
+                   :: `Minus (`Var v, `Int i)
+                   :: le)
+                 1 3 le)
+             le int_vars
+        | _ -> le in
+      let le =
+        match k with
+        | `Int ->
+           List.fold_left (fun le v1 ->
+               List.fold_left (fun le v2 ->
+                   let le = `Plus (`Var v1, `Var v2) :: le in
+                   let le =
+                     if v1 = v2 then le (* this means 0 *)
+	             else `Minus (`Var v1, `Var v2) :: le in
+	           le)
+                 le int_vars)
+             le int_vars
+        | _ -> le in
+      let le = List.rev le in (* reverse to put in order *)
+      k, le)
+    all_kinds
 
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
