@@ -251,6 +251,7 @@ let solved_train_names = (* 23 tasks, 494s *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=40.8s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=88.5s *)
+    (*"7e0986d6.json"; (* collection of rectangles + noise points to be removed *)*)
   ]
 
 let maybe_train_names =
@@ -291,6 +292,7 @@ let maybe_train_names =
     "f8ff0b80.json";
     "a61ba2ce.json"; (* pb: prefers expressions to constant integers for grid size and shape positions, accidental regularity in 2 examples *)
     "50cb2852.json"; (* pb: collection *)
+    "54d82841.json"; (* pb: collection *)
   ]
 
 let task_model =

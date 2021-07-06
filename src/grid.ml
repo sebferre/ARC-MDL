@@ -625,13 +625,16 @@ let segment_by_color (g : t) : part list =
 	  nb_pixels + 1)
 	 (h, -1, w, -1, 0)
 	 ph in
-     let part =
-       { mini; maxi;
-	 minj; maxj;
-	 color = c;
-	 nb_pixels;
-	 pixels = (!pixels) } in
-     part :: split_part part @ res)
+     if mini=0 && maxi=h-1 && minj=0 && maxj=w-1 && c=black (* ignoring black background *)
+     then res
+     else
+       let part =
+         { mini; maxi;
+	   minj; maxj;
+	   color = c;
+	   nb_pixels;
+	   pixels = (!pixels) } in
+       part :: split_part part @ res)
     [])
 
 

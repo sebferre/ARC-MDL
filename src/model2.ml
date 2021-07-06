@@ -16,8 +16,6 @@ exception TODO
 
 (* binders and syntactic sugar *)
         
-let (++) p f = p @ [f]
-
 let ( let| ) res f = Result.bind res f
 let ( let* ) seq f = seq |> Myseq.flat_map f
 
@@ -57,7 +55,9 @@ type 'a ilist = (* insertable list *)
   | `Insert of 'a ilist * 'a * 'a ilist ]
 type ilist_field = [`Left | `Right]
 type ilist_path = ilist_field list
-  
+
+let (++|) p f = p @ [f]
+                
 let rec ilist_length : 'a ilist -> int = function
   | `Nil -> 0
   | `Insert (left,elt,right) ->
@@ -67,16 +67,16 @@ let rec map_ilist (f : ilist_path -> 'a -> 'b) (lp : ilist_path) (l : 'a ilist) 
   match l with
   | `Nil -> `Nil
   | `Insert (left,elt,right) ->
-     let left = map_ilist f (lp ++ `Left) left in
+     let left = map_ilist f (lp ++| `Left) left in
      let elt = f lp elt in
-     let right = map_ilist f (lp ++ `Right) right in
+     let right = map_ilist f (lp ++| `Right) right in
      `Insert (left,elt,right)
 
 (* type definitions for data, expressions, templates *)
     
 type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Grid ]
-let all_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape; `Grid]
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `ManyShapes | `Grid ]
+let all_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape; `ManyShapes; `Grid]
   
 type 'a patt =
   [ `Bool of bool
@@ -86,15 +86,30 @@ type 'a patt =
   | `Vec of 'a * 'a (* i, j -> vec *)
   | `Point of 'a * 'a (* pos, color -> shape *)
   | `Rectangle of 'a * 'a * 'a * 'a (* pos, size, color, mask -> shape *)
-  (*  | `Repeat of 'a (* shape -> layer *) *)
   | `Background of 'a * 'a * 'a ilist (* size, color, layers (top first) -> grid *)
-                                (*  | `Many of 'a list (* many-valued data *) *)
+  | `Many of bool * 'a list (* many-valued data: ordered, values (shapes) *)
   ]
 
-type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `Layers of ilist_path ]
-type path = field list
+type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `Layers of ilist_path | `Any of path | `Item of int * path ]
+and path = field list
 let path0 = []
 
+let rec (++) p f =
+  match List.rev p with
+  | `Any q::rev_p1 -> List.rev (`Any (q ++ f)::rev_p1)
+  | `Item (i,q)::rev_p1 -> List.rev (`Item (i, q ++ f)::rev_p1)
+  | _ -> p @ [f]
+
+let path_split_any (path : path) : (path * path) option (* ctx, local *) =
+  match List.rev path with
+  | `Any q::rev_p -> Some (List.rev rev_p, q) (* TODO: optimize to avoid double List.rev *)
+  | _ -> None
+       
+let path_ctx (path : path) : path option =
+  match List.rev path with
+  | `Any q::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
+  | _ -> None
+       
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
 
@@ -103,12 +118,13 @@ type 'a expr =
   | `Plus of 'a * 'a
   | `Minus of 'a * 'a
   | `If of 'a * 'a * 'a
+  | `For of path * 'a (* path is a many-valued var *)
   ]
          
 type template =
   [ `U
+  | `Repeat of template patt
   | template patt
-  (*  | `For of path * template (* iteration through a many-valued path *) *)
   | template expr ]
 
 type signature = (kind * path list) list (* map from kinds to path lists *)
@@ -146,9 +162,10 @@ let string_of_kind : kind -> string = function
   | `Mask -> "mask"
   | `Vec -> "vector"
   | `Shape -> "shape"
+  | `ManyShapes -> "many-shapes"
   | `Grid -> "grid"
           
-let string_of_field : field -> string = function
+let rec string_of_field : field -> string = function
   | `I -> "i"
   | `J -> "j"
   | `Pos -> "pos"
@@ -156,8 +173,10 @@ let string_of_field : field -> string = function
   | `Size -> "size"
   | `Mask -> "mask"
   | `Layers lp -> "layer[" ^ string_of_ilist_path lp ^ "]"
+  | `Any p -> "*." ^ string_of_path p
+  | `Item (i,p) -> "[" ^ string_of_int i ^ "]." ^ string_of_path p
 
-let string_of_path : path -> string =
+and string_of_path : path -> string =
   fun p -> String.concat "." (List.map string_of_field p)
 
 let pp_path p = print_string (string_of_path p)
@@ -166,9 +185,9 @@ let rec string_of_ilist (string : 'a -> string) (l : 'a ilist) : string =
   let rec aux lp = function
     | `Nil -> ""
     | `Insert (left,elt,right) ->
-       aux (lp ++ `Left) left
+       aux (lp ++| `Left) left
        ^ "\n  [" ^ string_of_ilist_path lp ^ "]: " ^ string elt
-       ^ aux (lp ++ `Right) right
+       ^ aux (lp ++| `Right) right
   in
   aux [] l
       
@@ -194,8 +213,11 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
      "a background with size " ^ string size
      ^ " and color " ^ string color
      ^ " and layers" ^ string_of_ilist string layers
-(*  | `Many l ->
-     "[ " ^ String.concat ", " (List.map string l) ^ " ]" *)
+  | `Many (ordered,l) ->
+     let contents = String.concat ",\n\t" (List.map string l) in
+     if ordered
+     then "[ " ^ contents ^ " ]"
+     else "{ " ^ contents ^ " }"
 
 let rec string_of_data : data -> string = function
   | #patt as patt -> string_of_patt string_of_data patt
@@ -203,7 +225,7 @@ let rec string_of_data : data -> string = function
 let pp_data d = print_string (string_of_data d)
 
 let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
-  | `Var p -> string_of_path p
+  | `Var p -> "{" ^string_of_path p ^ "}"
   | `Plus (a,b) ->
      string a ^ " + " ^ string b
   | `Minus (a,b) ->
@@ -212,13 +234,15 @@ let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
      "if " ^ string cond
      ^ " then " ^ string e1
      ^ " else " ^ string e2
+  | `For (p,e1) ->
+     "for {" ^ string_of_path p ^ "}: " ^ string e1
 
 (*let pp_expr e = print_string (string_of_expr e)*)
 
 let rec string_of_template : template -> string = function
   | `U -> "?"
+  | `Repeat patt -> "repeat " ^ string_of_patt string_of_template patt
   | #patt as patt -> string_of_patt string_of_template patt
-  (*  | `For (p,t) -> "for each " ^ string_of_path p ^ ": " ^ string_of_template t *)
   | #expr as e -> string_of_expr string_of_template e
 
 let pp_template t = print_string (string_of_template t)
@@ -275,6 +299,29 @@ let find_patt (find : path -> 'a -> 'a option)
      Option.bind
        (find_ilist lp layers)
        (fun x -> find p x)
+  | `Any p1::[], `Many (ordered,items) -> (* Any must be last *)
+     let l_opt =
+       List.fold_right
+         (fun item l_opt ->
+           match l_opt with
+           | None -> None 
+           | Some l ->
+              match find p1 item with
+              | None -> None
+              | Some d1 -> Some (d1::l))
+         items (Some []) in
+     ( match l_opt with
+       | None -> None
+       | Some l ->
+          let l =
+            if ordered (* list vs set *)
+            then l
+            else List.sort Stdlib.compare l in
+          Some (`Many (ordered,l)) )
+  | `Item (i,p1)::[], `Many (_,items) ->
+     ( match List.nth_opt items i with
+       | None -> None
+       | Some item -> find p1 item )
   | _ -> None
 
 let rec find_data (p : path) (d : data) : data option = (* QUICK *)
@@ -286,6 +333,7 @@ let rec find_template (p : path) (t : template) : template option =
   Common.prof "Model2.find_template" (fun () ->
   match p, t with
   | [], _ -> Some t
+  | `Any p1::[], `Repeat patt1 -> find_patt find_template p1 patt1
   | _, (#patt as patt) -> find_patt find_template p patt
   | _ -> None)
 
@@ -293,18 +341,18 @@ let rec fold_ilist (f : 'b -> ilist_path -> 'a -> 'b) (acc : 'b) (lp : ilist_pat
   match l with
   | `Nil -> acc
   | `Insert (left,elt,right) ->
-     let acc = fold_ilist f acc (lp ++ `Left) left in
+     let acc = fold_ilist f acc (lp ++| `Left) left in
      let acc = f acc lp elt in
-     let acc = fold_ilist f acc (lp ++ `Right) right in
+     let acc = fold_ilist f acc (lp ++| `Right) right in
      acc
        
 let rec fold2_ilist (f : 'c -> ilist_path -> 'a -> 'b -> 'c) (acc : 'c) (lp : ilist_path) (l1 : 'a ilist) (l2 : 'b ilist) : 'c =
   match l1, l2 with
   | `Nil, `Nil -> acc
   | `Insert (left1,elt1,right1), `Insert (left2,elt2,right2) ->
-     let acc = fold2_ilist f acc (lp ++ `Left) left1 left2 in
+     let acc = fold2_ilist f acc (lp ++| `Left) left1 left2 in
      let acc = f acc lp elt1 elt2 in
-     let acc = fold2_ilist f acc (lp ++ `Right) right1 right2 in
+     let acc = fold2_ilist f acc (lp ++| `Right) right1 right2 in
      acc
   | _ -> invalid_arg "Model2.fold2_ilist: inconsistent ilists"
        
@@ -334,22 +382,32 @@ let fold_patt (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (patt : 'a p
            fold acc (p ++ `Layers lp) shape)
          acc [] layers in
      acc
-(*  | `Many l ->
-     List.fold_left
-       (fun acc x -> fold acc p x) (* same path *)
-       acc l *)
+  | `Many (ordered,items) ->
+     let _, acc =
+       List.fold_left
+         (fun (i,acc) item -> i+1, fold acc (p ++ `Item (i,[])) item)
+         (0,acc) items in
+     acc
 
 let rec fold_data (f : 'b -> path -> data -> 'b) (acc : 'b) (p : path) (d : data) : 'b =
   let acc = f acc p d in
   fold_patt (fold_data f) acc p d
 
+let fold_expr (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (e : 'a expr) : 'b =
+  match e with
+  | `Var _ -> acc
+  | `Plus _ | `Minus _ | `If _ -> acc (* not folding through arithmetics and conditional *)
+  | `For (p_many,t1) ->
+     let acc = fold acc (p ++ `Any []) t1 in
+     acc
+  
 let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (t : template) : 'b =
   let acc = f acc p t in
   match t with
   | `U -> acc
+  | `Repeat patt1 -> fold_patt (fold_template f) acc (p ++ `Any []) patt1
   | #patt as patt -> fold_patt (fold_template f) acc p patt
-  (*  | `For (p,t1) -> fold_template f acc p t1 (* same path *) *)
-  | #expr -> acc (* not folding through expressions *)
+  | #expr as e -> fold_expr (fold_template f) acc p e
        
 let size_of_data (d : data) : int =
   fold_data (fun res _ _ -> res+1) 0 path0 d
@@ -363,6 +421,10 @@ let rec path_kind (p : path) : kind =
   | `Mask::_ -> `Mask
   | (`Pos | `Size)::_ -> `Vec
   | `Layers _::_ -> `Shape
+  | `Any []::`Layers _::_ -> `ManyShapes
+  | `Any p1::_ -> path_kind p1
+  | `Item (_,[])::`Layers _::_ -> `Shape
+  | `Item (_,p1)::_ -> path_kind p1
   | [] -> `Grid
 
 let signature_of_template (t : template) : signature =
@@ -405,10 +467,12 @@ let rec default_data_of_path (p : path) : data =
   | `Size::[] -> `Vec (`Int 10, `Int 10)
   | `Size::_ -> `Vec (`Int 2, `Int 2)
   | `Layers _::_ -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
+  | `Any q::_ -> default_data_of_path q
+  | `Item (_,q)::_ -> default_data_of_path q
   | [] -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
   | _ -> assert false
 
-let unify (ld : data list) : template (* without expression *) = (* QUICK *)
+(*let unify (ld : data list) : template (* without expression *) = (* QUICK *)
   let rec aux t d =
     match t, d with
     | `U, _ -> t
@@ -429,18 +493,21 @@ let unify (ld : data list) : template (* without expression *) = (* QUICK *)
   in
   match ld with
   | [] -> assert false
-  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1
+  | d0::ld1 -> List.fold_left aux (d0 :> template) ld1 *)
 
-let root_template_of_data (d : data) : template =
+let rec root_template_of_data (d : data) : template list =
   match d with
   | `Bool _
     | `Int _
     | `Color _
-    | `Mask _ -> (d :> template)
-  | `Vec _ -> `Vec (`U, `U)
-  | `Point _ -> `Point (`U, `U)
-  | `Rectangle _ -> `Rectangle (`U, `U, `U, `U)
+    | `Mask _ -> [(d :> template)]
+  | `Vec _ -> [`Vec (`U, `U)]
+  | `Point _ -> [`Point (`U, `U)]
+  | `Rectangle _ -> [`Rectangle (`U, `U, `U, `U)]
   | `Background _ -> assert false (* should not happen *)
+  | `Many (ordered,items) ->
+     List.sort_uniq Stdlib.compare
+       (List.concat (List.map root_template_of_data items))
 
 (* description lengths *)
 
@@ -498,9 +565,10 @@ let dl_ctx_of_data (d : data) : dl_ctx =
   { env_sig = signature0; box_height; box_width }
       
 
-let dl_patt_as_template = Mdl.Code.usage 0.4
+let dl_patt_as_template = Mdl.Code.usage 0.3
 
-let dl_patt
+
+let rec dl_patt
       (dl : ctx:dl_ctx -> ?path:path -> 'a -> dl)
       ~(ctx : dl_ctx) ~(path : path) (patt : 'a patt) : dl =
   match List.rev path, patt with
@@ -515,20 +583,27 @@ let dl_patt
 
   | `Mask::_, `Mask m -> dl_mask m
 
-  | (`Size | `Pos)::_, `Vec (i,j) ->
-     dl ~ctx i ~path:(path ++ `I)
-     +. dl ~ctx j ~path:(path ++ `J)
+  | (`Size | `Pos)::_, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
 
   | `Layers _::_, `Point (pos,color) ->
-     Mdl.Code.usage 0.5
-     +. dl ~ctx pos ~path:(path ++ `Pos)
-     +. dl ~ctx color ~path:(path ++ `Color)
+     Mdl.Code.usage 0.3 +. dl_patt_point dl ~ctx ~path pos color
   | `Layers _::_, `Rectangle (pos,size,color,mask) ->
-     Mdl.Code.usage 0.5
-     +. dl ~ctx pos ~path:(path ++ `Pos)
-     +. dl ~ctx size ~path:(path ++ `Size)
-     +. dl ~ctx color ~path:(path ++ `Color)
-     +. dl ~ctx mask ~path:(path ++ `Mask)
+     Mdl.Code.usage 0.3 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
+  | `Layers _::_, `Many (ordered,items) ->
+     Mdl.Code.usage 0.4
+     +. 0. (* TODO: ordered *)
+     +. Mdl.Code.universal_int_plus (List.length items)
+     +. Mdl.sum items (fun item -> dl ~ctx item ~path:(path ++ `Any [])) (* exact item index does not matter here *)
+
+  | (`Any [] | `Item (_,[]))::`Layers _::_, _ ->
+     ( match patt with
+       | `Point (pos,color) ->
+          Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
+       | `Rectangle (pos,size,color,mask) ->
+          Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
+       | _ -> assert false )
+
+  | (`Any q | `Item (_,q))::`Layers _::_, _ -> dl_patt dl ~ctx ~path:q patt
 
   | [], `Background (size,color,layers) ->
      let box_height =
@@ -554,34 +629,53 @@ let dl_patt
      print_string (string_of_patt (fun _ -> "_") patt);
      print_newline ();
      assert false
+and dl_patt_vec dl ~ctx ~path i j =
+  dl ~ctx i ~path:(path ++ `I)
+  +. dl ~ctx j ~path:(path ++ `J)  
+and dl_patt_point dl ~ctx ~path pos color =
+  dl ~ctx pos ~path:(path ++ `Pos)
+  +. dl ~ctx color ~path:(path ++ `Color)
+and dl_patt_rectangle dl ~ctx ~path pos size color mask =
+  dl ~ctx pos ~path:(path ++ `Pos)
+  +. dl ~ctx size ~path:(path ++ `Size)
+  +. dl ~ctx color ~path:(path ++ `Color)
+  +. dl ~ctx mask ~path:(path ++ `Mask)
+                        
 
 let rec dl_data ~(ctx : dl_ctx) ?(path = []) (d : data) : dl =
   dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
   +. dl_patt dl_data ~ctx ~path d
 
 let path_similarity ~ctx_path v =
-  let rec aux p1' p2' =
-    match p1', p2' with
-    | `I::p1, `I::p2 -> aux p1 p2
-    | `I::p1, `J::p2 -> 0.5 *. aux p1 p2
-    | `J::p1, `I::p2 -> 0.5 *. aux p1 p2
-    | `J::p1, `J::p2 -> aux p1 p2
+  let rec aux rev_p1' rev_p2' =
+    match rev_p1', rev_p2' with
+    | `I::rev_p1, `I::rev_p2 -> aux rev_p1 rev_p2
+    | `I::rev_p1, `J::rev_p2 -> 0.5 *. aux rev_p1 rev_p2
+    | `J::rev_p1, `I::rev_p2 -> 0.5 *. aux rev_p1 rev_p2
+    | `J::rev_p1, `J::rev_p2 -> aux rev_p1 rev_p2
 
-    | `Color::p1, `Color::p2 -> aux p1 p2
+    | `Color::rev_p1, `Color::rev_p2 -> aux rev_p1 rev_p2
 
-    | `Mask::p1, `Mask::p2 -> aux p1 p2
+    | `Mask::rev_p1, `Mask::rev_p2 -> aux rev_p1 rev_p2
 
-    | `Pos::p1, `Pos::p2 -> aux p1 p2
-    | `Pos::p1, `Size::p2 -> 0.5 *. aux p1 p2
-    | `Size::p1, `Size::p2 -> aux p1 p2
-    | `Size::p1, `Pos::p2 -> 0.5 *. aux p1 p2
+    | `Pos::rev_p1, `Pos::rev_p2 -> aux rev_p1 rev_p2
+    | `Pos::rev_p1, `Size::rev_p2 -> 0.5 *. aux rev_p1 rev_p2
+    | `Size::rev_p1, `Size::rev_p2 -> aux rev_p1 rev_p2
+    | `Size::rev_p1, `Pos::rev_p2 -> 0.5 *. aux rev_p1 rev_p2
 
-    | [], `Layers _::p2 -> 0.5 *. aux [] p2
-    | `Layers lp1::p1, `Layers lp2::p2 -> aux_ilist lp1 lp2 *. aux p1 p2
+    | [], `Layers _::rev_p2 -> 0.5 *. aux [] rev_p2
+    | `Layers lp1::rev_p1, `Layers lp2::rev_p2 -> aux_ilist lp1 lp2 *. aux rev_p1 rev_p2
     | [], [] -> 2.
-    | `Layers _::p1, [] -> 0.75 *. aux p1 []
+    | `Layers _::rev_p1, [] -> 0.75 *. aux rev_p1 []
 
-    | _ -> assert false
+    | `Any q1::rev_p1, `Any q2::rev_p2 -> aux (List.rev q1) (List.rev q2) *. aux rev_p1 rev_p2
+    | `Any q1::rev_p1, rev_p2 -> 0.75 *. aux (List.rev_append q1 rev_p1) rev_p2
+    | rev_p1, `Any q2::rev_p2 -> 0.5 *. aux rev_p1 (List.rev_append q2 rev_p2)
+
+    | `Item _::_, _ -> assert false (* path_similarity only used for models *)
+    | _, `Item _::_ -> assert false (* and Item not used in models, so far *)
+
+    | _ -> assert false (* uncompatible kinds *)
   and aux_ilist lp1 lp2 =
     if lp1 = lp2 then 1. else 0.8
   in
@@ -599,6 +693,12 @@ let dl_var ~(ctx_path : path) (vars : path list) (x : path) : dl =
   if x_w = 0. || total_w = 0. (* happens when unify generalizes some path, removing sub-paths *)
   then Stdlib.infinity
   else Mdl.Code.usage (x_w /. total_w)
+
+let dl_path ~(env_sig : signature) ~(ctx_path : path) (x : path) : dl =
+  let k = path_kind x in
+  match List.assoc_opt k env_sig with
+  | Some vars -> dl_var ~ctx_path vars x
+  | None -> Stdlib.infinity (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> ?path:path -> 'a -> dl)
@@ -606,14 +706,10 @@ let rec dl_expr
   (* TODO: make it kind-dependent *)
   match e with
   | `Var x ->
-     let dl_x = (* identifying one env var *)
-       let k = path_kind x in
-       match List.assoc_opt k ctx.env_sig with
-       | Some vars -> dl_var ~ctx_path:path vars x
-       | None -> Stdlib.infinity in (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
-     Mdl.Code.usage 0.5 +. dl_x
+     Mdl.Code.usage 0.5
+     +. dl_path ~env_sig:ctx.env_sig ~ctx_path:path x
   | _ ->
-     Mdl.Code.usage 0.25
+     Mdl.Code.usage 0.5
      +. (match List.rev path, e with
          | (`I | `J as fij)::rev_p_vec, (`Plus (e1,e2) | `Minus (e1,e2)) ->
             let p2 = (* 2nd operand prefers a size to a position *)
@@ -623,13 +719,22 @@ let rec dl_expr
             Mdl.Code.usage 0.5 (* choice between Plus and Minus *)
             +. dl ~ctx e1 ~path
             +. dl ~ctx e2 ~path:p2
+            
+         | `Layers _::_, `For (p_many,e1) ->
+            dl_path ~env_sig:ctx.env_sig ~ctx_path:path p_many
+            +. dl ~ctx e1 ~path:(path ++ `Any [])
+         
          | _ -> assert false)
 
 let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
-  match t with
-  | `U -> Mdl.Code.usage 0.1
+  match t with (* TODO: take path/kind into account, not all combinations are possible *)
+  | `U ->
+     Mdl.Code.usage 0.1
+  | `Repeat patt1 ->
+     Mdl.Code.usage 0.1
+     +. dl_patt dl_template ~ctx ~path:(path ++ `Any []) patt1
   | #patt as patt ->
-     dl_patt_as_template (* Mdl.Code.usage 0.4 *)
+     dl_patt_as_template (* Mdl.Code.usage 0.3 *)
      +. dl_patt dl_template ~ctx ~path patt
   | #expr as e ->
      Mdl.Code.usage 0.5
@@ -660,13 +765,24 @@ let dl_data_given_patt
      +. fold2_ilist
           (fun sum lp shape dshape -> sum +. dl ~ctx shape dshape ~path:(path ++ `Layers lp))
           0. [] layers dlayers
+  | `Many (ordered,items), `Many (dordered,ditems) ->
+     assert (ordered = dordered);
+     assert (List.length items = List.length ditems);
+     List.fold_left2
+       (fun res item ditem -> res +. dl ~ctx ~path:(path ++ `Any []) item ditem)
+       0. items ditems
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = []) (t : template) (d : data) : dl =
   match t, d with
   | `U, _ -> dl_data ~ctx ~path d
+  | `Repeat patt1, `Many (false,items) ->
+     Mdl.Code.universal_int_plus (List.length items)
+     +. Mdl.sum items (fun item ->
+            dl_data_given_patt dl_data_given_template ~ctx ~path:(path ++ `Any []) patt1 item)
+  | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
-  | #expr, _ -> assert false
+  | #expr, _ -> assert false (* should have been evaluated out *)
 
            
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
@@ -690,44 +806,51 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
        (fun (i,j,c) ->
          dl_data ~ctx ~path:[`Layers []]
            (`Point (`Vec (`Int i, `Int j), `Color c)))
-           
+
 (* NOT using optimized DL below for fair comparisons with model points: 
   +. Mdl.Code.comb nb_pixels area (* where they are *)
   +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
     
 (* evaluation of expression and templates on environment data *)
 
-exception Unbound_Var of path
+exception Unbound_var of path
 exception Invalid_expr of template expr
 let _ =
   Printexc.register_printer
     (function
-     | Unbound_Var p -> Some ("unbound variable: " ^ string_of_path p)
+     | Unbound_var p -> Some ("unbound variable: " ^ string_of_path p)
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr string_of_template e)
      | _ -> None)
 
-let apply_patt (apply : path -> 'a -> 'b) (p : path) : 'a patt -> 'b patt = function
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
-  | `Vec (i,j) ->
-     `Vec (apply (p ++ `I) i,
-           apply (p ++ `J) j)
-  | `Point (pos,color) ->
-     `Point (apply (p ++ `Pos) pos,
-             apply (p ++ `Color) color)
-  | `Rectangle (pos,size,color,mask) ->
-     `Rectangle (apply (p ++ `Pos) pos,
-                 apply (p ++ `Size) size,
-                 apply (p ++ `Color) color,
-                 apply (p ++ `Mask) mask)
-  | `Background (size,color,layers) ->
-     `Background (apply (p ++ `Size) size,
-                  apply (p ++ `Color) color,
-                  map_ilist
-                    (fun lp shape -> apply (p ++ `Layers lp) shape)
-                    [] layers)
-
 type apply_lookup = path -> data option
     
+let apply_patt
+      (apply : lookup:apply_lookup -> path -> 'a -> 'b)
+      ~(lookup : apply_lookup) (p : path) : 'a patt -> 'b patt = function
+  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
+  | `Vec (i,j) ->
+     `Vec (apply ~lookup (p ++ `I) i,
+           apply ~lookup (p ++ `J) j)
+  | `Point (pos,color) ->
+     `Point (apply ~lookup (p ++ `Pos) pos,
+             apply ~lookup (p ++ `Color) color)
+  | `Rectangle (pos,size,color,mask) ->
+     `Rectangle (apply ~lookup (p ++ `Pos) pos,
+                 apply ~lookup (p ++ `Size) size,
+                 apply ~lookup (p ++ `Color) color,
+                 apply ~lookup (p ++ `Mask) mask)
+  | `Background (size,color,layers) ->
+     `Background (apply ~lookup (p ++ `Size) size,
+                  apply ~lookup (p ++ `Color) color,
+                  map_ilist
+                    (fun lp shape -> apply ~lookup (p ++ `Layers lp) shape)
+                    [] layers)
+  | `Many (ordered,items) ->
+     `Many (ordered,
+            List.map
+              (fun item -> apply ~lookup (p ++ `Any []) item) (* TODO: use `Item ? *)
+              items)
+
 let apply_expr_gen
           (apply : lookup:apply_lookup -> path -> 'a -> template)
           ~(lookup : apply_lookup) (p : path) (e : 'a expr) : template = (* QUICK *)
@@ -735,7 +858,7 @@ let apply_expr_gen
   | `Var v ->
      (match lookup v with
       | Some d -> (d :> template)
-      | None -> raise (Unbound_Var v))
+      | None -> raise (Unbound_var v))
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
@@ -751,6 +874,23 @@ let apply_expr_gen
          then apply ~lookup p e1
          else apply ~lookup p e2
       | _ -> raise (Invalid_expr e))
+  | `For (p_many,e1) ->
+     (match lookup p_many with
+      | Some (`Many (ordered,items)) ->
+         let rev_p_many = List.rev p_many in
+         let lookup_item i =
+           fun p ->
+           match List.rev p with
+           | `Any q1::rev_p1 when rev_p1 = rev_p_many ->
+              let p_item = List.rev (`Item (i,q1)::rev_p1) in (* pointing at the i-th item *)
+              lookup p_item
+           | _ -> lookup p in
+         let items_e1 =
+           List.mapi
+             (fun i _item -> apply ~lookup:(lookup_item i) (p ++ `Any []) e1) (* TODO: use directly item in lookup functions *)
+             items in
+         `Many (ordered, items_e1) (* TODO: how to decide on ordered? add to `For construct? *)
+      | _ -> raise (Unbound_var p_many))
 
 let apply_expr apply ~(env : data) p e =
   apply_expr_gen apply ~lookup:(fun p -> find_data p env) p e
@@ -759,11 +899,13 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : path) (t : template) : 
   Common.prof "Model2.apply_template_gen" (fun () ->
   match t with
   | `U -> `U
-  | #patt as patt -> (apply_patt (apply_template_gen ~lookup) p patt :> template)
+  | `Repeat patt1 -> `Repeat (apply_patt apply_template_gen ~lookup (p ++ `Any []) patt1)
+  | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e)
 
 let rec apply_template ~(env : data) (p : path) (t : template) : template =
   apply_template_gen ~lookup:(fun p -> find_data p env) p t
+(* TODO: remove path argument, seems useless *)
 
 
 (* grid generation from data and template *)
@@ -771,7 +913,12 @@ let rec apply_template ~(env : data) (p : path) (t : template) : template =
 let rec generate_template (p : path) (t : template) : data =
   match t with
   | `U -> default_data_of_path p (* default data *)
-  | #patt as patt -> apply_patt generate_template p patt
+  | `Repeat patt1 -> apply_patt
+                       (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
+                       (p ++ `Any []) patt1
+  | #patt as patt -> apply_patt
+                       (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
+                       p patt
   | #expr -> assert false (* should be eliminated by call to apply_template *)
 
   
@@ -790,11 +937,11 @@ let rec grid_of_data : data -> Grid.t = function
   | d -> raise (Invalid_data_as_grid d)
 and draw_layers g = function
   | `Nil -> ()
-  | `Insert (above, shape, below) ->
+  | `Insert (above, layer, below) ->
      draw_layers g below;
-     draw_shape g shape;
+     draw_layer g layer;
      draw_layers g above
-and draw_shape g = function
+and draw_layer g = function
   | `Point (`Vec (`Int i, `Int j), `Color c) ->
      Grid.set_pixel g i j c
   | `Rectangle (`Vec (`Int mini, `Int minj), `Vec (`Int h, `Int w), `Color c, `Mask m_opt) ->
@@ -808,6 +955,8 @@ and draw_shape g = function
 	 then Grid.set_pixel g i j c
        done;
      done
+  | `Many (ordered,items) ->
+     items |> List.iter (draw_layer g)
   | d -> raise (Invalid_data_as_grid d)
 
 
@@ -845,20 +994,54 @@ let rec parse_ilist
   | `Nil ->
      Myseq.return (`Nil, state)
   | `Insert (left,elt,right) ->
-     let* dleft, state = parse_ilist parse_elt left (lp ++ `Left) x state in
+     let* dleft, state = parse_ilist parse_elt left (lp ++| `Left) x state in
      let* delt, state = parse_elt elt lp x state in
-     let* dright, state = parse_ilist parse_elt right (lp ++ `Right) x state in
+     let* dright, state = parse_ilist parse_elt right (lp ++| `Right) x state in
      let dl = `Insert (dleft, delt, dright) in
      Myseq.return (dl, state)
 
+let parse_repeat
+      (parse_item : int -> parse_state -> (data * parse_state) Myseq.t)
+      (state : parse_state)
+    : (data list * parse_state) Myseq.t =
+  let rec aux i rev_items state =
+    match Myseq.hd_opt (parse_item i state) with
+    | None -> Myseq.return (List.rev rev_items, state)
+    | Some (item,state) -> aux (i+1) (item::rev_items) state
+(*       Myseq.concat
+         [ aux (i+1) (item::rev_items) state;
+           Myseq.return (List.rev rev_items, state) ] (* TEST *) *)
+  in
+  aux 0 [] state
+
+let parse_many
+      (parse_item : int -> 'a -> parse_state -> (data * parse_state) Myseq.t)
+      (items : 'a list) (state : parse_state)
+    : (data list * parse_state) Myseq.t =
+  let rec aux i state = function
+    | [] -> Myseq.return ([], state)
+    | item::items1 ->
+       let* ditem, state = parse_item i item state in
+       let* ditems1, state = aux (i+1) state items1 in
+       Myseq.return (ditem::ditems1, state)
+  in
+  aux 0 state items (* TODO: apply slice to the keep only the first parse? *)
 
 let rec parse_template
-      ~(parse_u : (data * parse_state) Myseq.t)
-      ~(parse_patt : template patt -> (data * parse_state) Myseq.t)
-      (t : template)
+          ~(parse_u : (data * parse_state) Myseq.t)
+          ?(parse_repeat : template patt -> (data list * parse_state) Myseq.t = fun _ -> assert false)
+          ~(parse_patt : template patt -> (data * parse_state) Myseq.t)
+          (t : template)
         : (data * parse_state) Myseq.t =
   match t with
   | `U -> parse_u
+  | `Repeat patt1 ->
+     let* items, state = parse_repeat patt1 in
+     if items = []
+     then Myseq.empty
+     else
+       let data = `Many (false, items) in
+       Myseq.return (data,state)
   | #patt as patt -> parse_patt patt
   | #expr -> assert false
 
@@ -943,8 +1126,8 @@ let shape_postprocess (state : parse_state) (shapes : (int (* nb of newly explai
 	   Some (shape, new_state))
   |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse)
   
-let parse_shape =
-  let parse_points parts state =
+let rec parse_shape =
+  let parse_all_points parts state =
     Grid.points state.grid state.mask parts
     |> List.map (fun (i,j,c) ->
            let nb_explained_pixels = 1 in
@@ -952,22 +1135,36 @@ let parse_shape =
            let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
            nb_explained_pixels, (i,j,c), occ_delta, occ_mask)
     |> shape_postprocess state in
-  let parse_rectangles parts state =
+  let parse_all_rectangles parts state =
     Grid.rectangles state.grid state.mask parts
     |> List.map (fun (rect : Grid.rectangle) ->
            rect.nb_explained_pixels, rect, rect.delta, rect.mask)
     |> shape_postprocess state in
+  let parse_point pos color p parts state =
+    let* (i,j,c), state = parse_all_points parts state in
+    let* dpos, state = parse_vec pos (p ++ `Pos) (i,j) state in
+    let* dcolor, state = parse_color color (p ++ `Color) c state in
+    Myseq.return (`Point (dpos,dcolor), state) in
+  let parse_rectangle pos size color mask p parts state =
+    let* r, state = parse_all_rectangles parts state in
+    let open Grid in
+    let* dpos, state = parse_vec pos (p ++ `Pos) (r.offset_i,r.offset_j) state in
+    let* dsize, state = parse_vec size (p ++ `Size) (r.height,r.width) state in
+    let* dcolor, state = parse_color color (p ++ `Color) r.color state in
+    let* dmask, state = parse_mask mask (p ++ `Mask) r.rmask state in
+    Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
+  in
   fun t p (parts : Grid.part list) state ->
   Common.prof "Model2.parse_shape" (fun () ->
   parse_template
     ~parse_u:
     (Myseq.concat
-       [parse_points parts state
+       [parse_all_points parts state
         |> Myseq.map
              (fun ((i,j,c), state) ->
                `Point (`Vec (`Int i, `Int j), `Color c),
                state);
-        parse_rectangles parts state
+        parse_all_rectangles parts state
         |> Myseq.map
              (fun (r,state) ->
                let open Grid in
@@ -976,21 +1173,30 @@ let parse_shape =
                            `Color r.color,
                            `Mask r.rmask),
                state) ])
+    ~parse_repeat:(
+      function
+      | `Point (pos,color) ->
+         parse_repeat (* TODO: optimize to avoid iterating n times through parts *)
+           (fun i state -> parse_point pos color (p ++ `Item (i,[])) state.parts state)
+           state
+      | `Rectangle (pos,size,color,mask) ->
+         parse_repeat
+           (fun i state -> parse_rectangle pos size color mask (p ++ `Item (i,[])) state.parts state)
+           state
+      | _ -> assert false)
     ~parse_patt:(function
       | `Point (pos,color) ->
-         let* (i,j,c), state = parse_points parts state in
-         let* dpos, state = parse_vec pos (p ++ `Pos) (i,j) state in
-         let* dcolor, state = parse_color color (p ++ `Color) c state in
-         Myseq.return (`Point (dpos,dcolor), state)
+         parse_point pos color p parts state
       | `Rectangle (pos,size,color,mask) ->
-         let* r, state = parse_rectangles parts state in
-         let open Grid in
-         let* dpos, state = parse_vec pos (p ++ `Pos) (r.offset_i,r.offset_j) state in
-         let* dsize, state = parse_vec size (p ++ `Size) (r.height,r.width) state in
-         let* dcolor, state = parse_color color (p ++ `Color) r.color state in
-         let* dmask, state = parse_mask mask (p ++ `Mask) r.rmask state in
-         Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
-      | _ -> Myseq.empty)
+         parse_rectangle pos size color mask p parts state
+      | `Many (ordered,items) ->
+         let* ditems, state =
+           parse_many
+             (fun i item state ->
+               parse_shape (item :> template) (p ++ `Item (i,[])) state.parts state)
+             items state in
+         Myseq.return (`Many (ordered,ditems),state)
+      | _ -> assert false)
     t)
   
 let parse_grid t p (g : Grid.t) state =
@@ -1214,31 +1420,55 @@ let rec insert_ilist (lp : ilist_path) (f : 'a option -> 'a) (l : 'a ilist) : 'a
   | `Right::lp1, `Insert (left, elt, right) -> `Insert (left, elt, insert_ilist lp1 f right)
   | _ -> assert false
 
-let rec insert_template (p : path) (f : template option -> template) (t : template) : template =
-  match p, t with
-  | [], _ -> f (Some t)
-  | `I::p1, `Vec (i,j) -> `Vec (insert_template p1 f i, j)
-  | `J::p1, `Vec (i,j) -> `Vec (i, insert_template p1 f j)
-  | `Pos::p1, `Point (pos,color) -> `Point (insert_template p1 f pos, color)
-  | `Color::p1, `Point (pos,color) -> `Point (pos, insert_template p1 f color)
-  | `Pos::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (insert_template p1 f pos, size,color,mask)
-  | `Size::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos, insert_template p1 f size, color,mask)
-  | `Color::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size, insert_template p1 f color, mask)
-  | `Mask::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size,color, insert_template p1 f mask)
-  | `Size::p1, `Background (size,color,layers) -> `Background (insert_template p1 f size, color,layers)
-  | `Color::p1, `Background (size,color,layers) -> `Background (size, insert_template p1 f color,layers)
+let insert_patt insert (f : 'a option -> 'a) (p : path) (patt : 'a patt) : 'a patt =
+  match p, patt with
+  | `I::p1, `Vec (i,j) -> `Vec (insert f p1 i, j)
+  | `J::p1, `Vec (i,j) -> `Vec (i, insert f p1 j)
+  | `Pos::p1, `Point (pos,color) -> `Point (insert f p1 pos, color)
+  | `Color::p1, `Point (pos,color) -> `Point (pos, insert f p1 color)
+  | `Pos::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (insert f p1 pos, size,color,mask)
+  | `Size::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos, insert f p1 size, color,mask)
+  | `Color::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size, insert f p1 color, mask)
+  | `Mask::p1, `Rectangle (pos,size,color,mask) -> `Rectangle (pos,size,color, insert f p1 mask)
+  | `Size::p1, `Background (size,color,layers) -> `Background (insert f p1 size, color,layers)
+  | `Color::p1, `Background (size,color,layers) -> `Background (size, insert f p1 color,layers)
   | `Layers lp :: p1, `Background (size,color,layers) ->
      let layers =
        insert_ilist
          lp
          (function
           | None -> if p1=[] then f None else assert false
-          | Some shape -> insert_template p1 f shape)
+          | Some shape -> insert f p1 shape)
          layers in
      `Background (size,color,layers)
+  | `Item (i,q)::[], `Many (ordered,items) ->
+     let ar_items = Array.of_list items in
+     assert (i >= 0 && i < Array.length ar_items);
+     ar_items.(i) <- insert f q (ar_items.(i) :> template);
+     let new_items = Array.to_list ar_items in
+     `Many (ordered, new_items)
+  | _ ->
+     pp_path p; print_string ": ";
+     print_string (string_of_patt (fun _ -> "_") patt);
+     print_newline ();
+     assert false
+
+let insert_expr insert (f : 'a option -> 'a) (p : path) (e : 'a expr) : 'a expr =
+  match p, e with
+  | _, (`Plus _ | `Minus _) -> assert false
+  | `Any q::[], `For (p_many, t1) -> `For (p_many, insert f q t1)
+  | _ -> assert false
+       
+let rec insert_template (f : template option -> template) (p : path) (t : template) : template =
+  match p, t with
+  | [], _ -> f (Some t)
+  | `Any q::[], `Repeat patt1 -> `Repeat (insert_patt insert_template f q patt1)
+  | _, (#patt as patt) -> (insert_patt insert_template f p patt :> template)
+  | _, (#expr as e) -> (insert_expr insert_template f p e :> template)
   | _ -> assert false
 
-let rec map_template (f : path -> template -> template) (p : path) (t : template) : template =
+                   
+(*let rec map_template (f : path -> template -> template) (p : path) (t : template) : template =
   match t with
   | `U -> f p t
   | #expr -> f p t
@@ -1265,18 +1495,20 @@ let rec map_template (f : path -> template -> template) (p : path) (t : template
          (fun lp shape ->
            map_template f (p ++ `Layers lp) shape)
          [] layers in
-     f p (`Background (size,color,layers))
+     f p (`Background (size,color,layers)) *)
                                                                                     
 (* model refinements and learning *)
 
 type grid_refinement =
   | RGridInit
-  | RDef of path * template
+  | RDef of path * template * path option (* many-ctx *)
   | RShape of path * template (* shape *)
+  | RRepeat of path
+  | RSingle of path
 
 let pp_grid_refinement = function
   | RGridInit -> ()
-  | RDef (p,t) ->
+  | RDef (p,t,ctx) ->
      print_string "DEF: "; pp_path p;
      print_string "="; pp_template t
   | RShape (path,sh) ->
@@ -1284,28 +1516,74 @@ let pp_grid_refinement = function
      pp_path path;
      print_string ": ";
      pp_template sh
+  | RRepeat path ->
+     print_string "REPEAT at ";
+     pp_path path
+  | RSingle path ->
+     print_string "SINGLE at ";
+     pp_path path
 
 exception Refinement_no_change
 let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) =
   Common.prof "Model2.apply_grid_refinement" (fun () ->
   try
-    Some
-      (r,
-       match r with
-       | RGridInit -> raise Refinement_no_change
-       | RDef (modified_p,new_t) ->
-          t
-          |> insert_template modified_p
-               (function
-                | Some x when x = new_t -> raise Refinement_no_change
-                | _ -> new_t)
-       | RShape (path,shape) ->
-          t
-          |> insert_template path
-               (function
-                | Some x when x = shape -> raise Refinement_no_change
-                | _ -> shape)
-          |> insert_template [`Color] (fun _ -> `U)) (* because background color is defined as remaining color after covering shapes *)
+    let t =
+      match r with
+      | RGridInit -> raise Refinement_no_change
+      | RDef (modified_p,new_t,None) ->
+         t
+         |> insert_template
+              (function
+               | Some x when x = new_t -> raise Refinement_no_change
+               | _ -> new_t)
+              modified_p
+      | RDef (modified_p, new_t, Some p_many) ->
+         let insert_aux local t1 =
+           t1
+           |> insert_template
+                (function
+                 | Some x when x = new_t -> raise Refinement_no_change
+                 | _ -> new_t)
+                local in
+         ( match path_split_any modified_p with
+           | None -> raise Refinement_no_change
+           | Some (ctx,local) ->
+              t
+              |> insert_template
+                   (function
+                    | Some (`Repeat patt) ->
+                       `For (p_many, insert_aux local (patt :> template))
+                    | Some (`For (p_many_0, t1)) when p_many_0 = p_many ->
+                       `For (p_many, insert_aux local t1)
+                    | _ -> raise Refinement_no_change)
+                   ctx )
+      | RShape (path,shape) ->
+         t
+         |> insert_template
+              (function
+               | Some x when x = shape -> raise Refinement_no_change
+               | _ -> shape)
+              path
+         |> insert_template (fun _ -> `U) [`Color] (* because background color is defined as remaining color after covering shapes *)
+      | RRepeat path ->
+         t
+         |> insert_template
+              (function
+               | Some (`Point _ | `Rectangle _ as patt) -> `Repeat (patt :> template patt)
+               | _ -> raise Refinement_no_change)
+              path
+      | RSingle path ->
+         t
+         |> insert_template
+              (function
+               | Some (`Repeat patt) -> (patt :> template)
+               | _ -> raise Refinement_no_change)
+              path
+    in
+(*    print_string "New grid template: ";
+    pp_template t;
+    print_newline (); *)
+    Some (r,t)
   with Refinement_no_change -> None) (* does not seem to occur any more *)
 
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
@@ -1326,25 +1604,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         assert (grs <> []); (* otherwise, should be parse failure *)
         List.mapi
           (fun rank (env,gd,dl) ->
-            let env_val =
-              List.map
-                (fun (k,ps) -> (* for each kind *)
-                  let vals =
-                    List.fold_right
-                      (fun p res -> (* for each path *)
-                        match find_data p env with
-                        | Some d -> (p,d)::res
-                        | None -> assert false)
-                      ps [] in
-                  k, vals)
-                env_sig in
             let u_val =
               List.map (fun (p,k,t0) ->
                   match find_data p gd.data with
                   | Some d -> p, d
                   | None -> assert false)
                 u_vars in
-            env_val, u_val, dl, rank)
+            env, u_val, dl, rank)
           grs)
       grss in
 
@@ -1355,7 +1621,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       (fun (first_ex,defs_yes) reads_ex ->
         let _, defs_yes, _ =
           List.fold_left (* iteration through example read *)
-            (fun (first_ex,defs_yes,defs_maybe) (env_val, u_val, dl, rank) ->
+            (fun (first_ex,defs_yes,defs_maybe) (env, u_val, dl, rank) ->
               (* defs_yes: defs valid according to previous examples, and previous reads on current example *)
               (* defs_maybe: defs valid according to previous examples, but not in previous reads on current example, undefined on first example *)
               if first_ex (* on first example *)
@@ -1367,20 +1633,22 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                       let lt = [] in (* candidate def bodies *)
                       let lt =
                         match t0 with
-                        | `U -> root_template_of_data d :: lt
+                        | `U -> List.fold_right
+                                  (fun t lt -> (t,None)::lt)
+                                  (root_template_of_data d) lt
                         | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
                       let lt =
                         match t0 with
                         | #expr -> lt (* already an expression *)
                         | _ -> (try List.assoc k k_le_map with _ -> assert false) @ lt in 
                       List.fold_left (* WARNING: preserving order on lt *)
-                        (fun rev_delta_defs_yes t ->
+                        (fun rev_delta_defs_yes (t,ctx) ->
                           if List.exists (* check if def already found *)
-                               (fun (_,_,p0,_,t0) -> p0=p && t0=t)
+                               (fun (_,_,p0,_,t0,ctx0) -> p0=p && t0=t && ctx0=ctx)
                                defs_yes
-                             || not (defs_check p k t d env_val)
+                             || not (defs_check p k t ctx d env)
                           then rev_delta_defs_yes
-                          else (dl, rank, p, k, t) :: rev_delta_defs_yes)
+                          else (dl, rank, p, k, t, ctx) :: rev_delta_defs_yes)
                         rev_delta_defs_yes
                         lt
                     )
@@ -1392,11 +1660,11 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               else
                 let rev_new_defs_yes, rev_defs_maybe =
                   List.fold_left (* WARNING: preserving orer on defs_yes and defs_maybe *)
-                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,p,k,t as def) ->
+                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,p,k,t,ctx as def) ->
                       let d = try List.assoc p u_val with _ -> assert false in
-                      if defs_check p k t d env_val
+                      if defs_check p k t ctx d env
                       then
-                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, p, k, t) :: rev_new_defs_yes in
+                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, p, k, t, ctx) :: rev_new_defs_yes in
                         (rev_new_defs_yes, rev_defs_maybe)
                       else
                         let rev_defs_maybe = def :: rev_defs_maybe in (* kept for remaining reads *)
@@ -1417,24 +1685,35 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       val_matrix in
   defs
   |> List.stable_sort (* increasing DL, increasing rank sum *)
-       (fun (sum_dl1,sum_rank1,_,_,_) (sum_dl2,sum_rank2,_,_,_) ->
+       (fun (sum_dl1,sum_rank1,_,_,_,_) (sum_dl2,sum_rank2,_,_,_,_) ->
          Stdlib.compare (sum_dl1,sum_rank1) (sum_dl2,sum_rank2))
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,p,k,t) -> RDef (p,t)))
-and defs_check p k t d env_val =
+  |> Myseq.map (fun (_,_,p,k,t,ctx) -> RDef (p,t,ctx)))
+and defs_check p k t ctx d env =
   match t with
   | `U -> assert false (* should not be used as def *)
-  | #patt -> t = root_template_of_data d
+  | `Repeat _ -> assert false (* should not be used as def *)
+  | #patt -> List.mem t (root_template_of_data d)
   | #expr ->
-     let res =
-       apply_template_gen
-         ~lookup:(fun v ->
-           Option.bind
-             (List.assoc_opt (path_kind v) env_val)
-             (fun env_val_k ->
-               List.assoc_opt v env_val_k))
-         p t in
-     res = (d :> template)
+     (*     print_string "CHECK expr: "; pp_template t; Option.iter (fun p_many -> print_string " at ctx "; pp_path p_many) ctx; print_newline (); *)
+     let e_opt =
+       match ctx, d with
+       | None, `Many _ -> None (* incompatible expr and data *)
+       | None, _ -> Some t
+       | Some p_many, `Many _ -> Some (`For (p_many, t))
+       | _ -> None in
+     ( match e_opt with
+       | None -> false
+       | Some e ->
+          let res =
+            apply_template_gen
+              ~lookup:(fun v -> find_data v env)
+              p e in
+          match res, (d :> template) with
+          | `Many (ordered1,items1), `Many (ordered2,items2) ->
+             (* TODO: how to handle [ordered] flags *)
+             List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *)
+          | t1, t2 -> t1 = t2 )
 (*
   val_matrix
   |> Common.list_product (* TODO: find a way to avoid this combinatorial generation *)
@@ -1557,24 +1836,26 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : grid_refinement Myseq.
          then Some (RDef (u_path, e))
          else None)
  *)
-and defs_expressions ~env_sig : (kind * template list) list =
+and defs_expressions ~env_sig : (kind * (template * path option) list) list =
+  (* the [path option] is for the repeat context path, to be used in a For loop *)
   let int_vars = signature_of_kind env_sig `Int in
   List.map
     (fun k ->
       let le = [] in
       let le =
         List.fold_left
-          (fun le v -> `Var v::le) (* order does not matter *)
+          (fun le v -> (`Var v, path_ctx v)::le) (* order does not matter *)
           le (signature_of_kind env_sig k) in
       let le =
         match k with
         | `Int ->
            List.fold_left
              (fun le v ->
+               let v_ctx = path_ctx v in
                Common.fold_for
                  (fun i le ->
-	           `Plus (`Var v, `Int i)
-                   :: `Minus (`Var v, `Int i)
+	           (`Plus (`Var v, `Int i), v_ctx)
+                   :: (`Minus (`Var v, `Int i), v_ctx)
                    :: le)
                  1 3 le)
              le int_vars
@@ -1583,12 +1864,17 @@ and defs_expressions ~env_sig : (kind * template list) list =
         match k with
         | `Int ->
            List.fold_left (fun le v1 ->
+               let v1_ctx = path_ctx v1 in
                List.fold_left (fun le v2 ->
-                   let le = `Plus (`Var v1, `Var v2) :: le in
-                   let le =
-                     if v1 = v2 then le (* this means 0 *)
-	             else `Minus (`Var v1, `Var v2) :: le in
-	           le)
+                   let v2_ctx = path_ctx v2 in
+                   if v1_ctx = v2_ctx
+                   then
+                     let le = (`Plus (`Var v1, `Var v2), v1_ctx) :: le in
+                     let le =
+                       if v1 = v2 then le (* this means 0 *)
+	               else (`Minus (`Var v1, `Var v2), v1_ctx) :: le in
+	             le
+                   else le) (* not same context *)
                  le int_vars)
              le int_vars
         | _ -> le in
@@ -1598,21 +1884,27 @@ and defs_expressions ~env_sig : (kind * template list) list =
 
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
+  (*let aux_repeat p = function
+    | `Repeat _ -> Myseq.return (RSingle p)
+    | `Point _ | `Rectangle _ -> Myseq.return (RRepeat p)
+    | _ -> assert false in *)
   let rec aux lp = function
     | `Nil ->
-       Myseq.cons (RShape ([`Layers lp], `Point (`U, `U)))
-         (Myseq.cons (RShape ([`Layers lp], `Rectangle (`U, `U, `U, `U)))
+       let* shape = Myseq.from_list [`Point (`U, `U); `Rectangle (`U, `U, `U, `U)] in
+       Myseq.cons (RShape ([`Layers lp], `Repeat shape))
+         (Myseq.cons (RShape ([`Layers lp], (shape :> template)))
             Myseq.empty)
     | `Insert (above,shape,below) ->
        Myseq.concat
-         [ aux (lp ++ `Right) below; (* insert below first *)
-           aux (lp ++ `Left) above ]
+         [ (*aux_repeat [`Layers lp] shape;*) (* TEST *)
+           aux (lp ++| `Right) below; (* insert below first *)
+           aux (lp ++| `Left) above ]
     | _ -> assert false
   in
   match t with
   | `Background (_,_,layers) -> aux [] layers
   | _ -> assert false
-                    
+       
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.concat
     [defs_refinements ~env_sig t grss;
