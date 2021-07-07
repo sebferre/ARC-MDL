@@ -75,8 +75,9 @@ let rec map_ilist (f : ilist_path -> 'a -> 'b) (lp : ilist_path) (l : 'a ilist) 
 (* type definitions for data, expressions, templates *)
     
 type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `ManyShapes | `Grid ]
-let all_kinds = [`Int; `Bool; `Color; `Mask; `Vec; `Shape; `ManyShapes; `Grid]
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Layer | `Grid ]
+let all_kinds =
+  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Layer;  `Grid ]
   
 type 'a patt =
   [ `Bool of bool
@@ -90,24 +91,26 @@ type 'a patt =
   | `Many of bool * 'a list (* many-valued data: ordered, values (shapes) *)
   ]
 
-type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `Layers of ilist_path | `Any of path | `Item of int * path ]
+type field = [ `I | `J | `Pos | `Color | `Size | `Mask | `Layers of ilist_path | `Item of int option (* pos *) * path ]
 and path = field list
 let path0 = []
 
+let any_item = `Item (None,[])
+let ith_item i = `Item (Some i, [])
+
 let rec (++) p f =
   match List.rev p with
-  | `Any q::rev_p1 -> List.rev (`Any (q ++ f)::rev_p1)
-  | `Item (i,q)::rev_p1 -> List.rev (`Item (i, q ++ f)::rev_p1)
+  | `Item (i_opt,q)::rev_p1 -> List.rev (`Item (i_opt, q ++ f)::rev_p1)
   | _ -> p @ [f]
 
-let path_split_any (path : path) : (path * path) option (* ctx, local *) =
+let path_split_any_item (path : path) : (path * path) option (* ctx, local *) =
   match List.rev path with
-  | `Any q::rev_p -> Some (List.rev rev_p, q) (* TODO: optimize to avoid double List.rev *)
+  | `Item (None,q)::rev_p -> Some (List.rev rev_p, q) (* TODO: optimize to avoid double List.rev *)
   | _ -> None
        
 let path_ctx (path : path) : path option =
   match List.rev path with
-  | `Any q::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
+  | `Item (_,q)::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
   | _ -> None
        
 type data = data patt
@@ -162,7 +165,7 @@ let string_of_kind : kind -> string = function
   | `Mask -> "mask"
   | `Vec -> "vector"
   | `Shape -> "shape"
-  | `ManyShapes -> "many-shapes"
+  | `Layer -> "layer"
   | `Grid -> "grid"
           
 let rec string_of_field : field -> string = function
@@ -173,8 +176,8 @@ let rec string_of_field : field -> string = function
   | `Size -> "size"
   | `Mask -> "mask"
   | `Layers lp -> "layer[" ^ string_of_ilist_path lp ^ "]"
-  | `Any p -> "*." ^ string_of_path p
-  | `Item (i,p) -> "[" ^ string_of_int i ^ "]." ^ string_of_path p
+  | `Item (None,p) -> "*." ^ string_of_path p
+  | `Item (Some i,p) -> "[" ^ string_of_int i ^ "]." ^ string_of_path p
 
 and string_of_path : path -> string =
   fun p -> String.concat "." (List.map string_of_field p)
@@ -299,14 +302,14 @@ let find_patt (find : path -> 'a -> 'a option)
      Option.bind
        (find_ilist lp layers)
        (fun x -> find p x)
-  | `Any p1::[], `Many (ordered,items) -> (* Any must be last *)
+  | `Item (None,q)::[], `Many (ordered,items) -> (* Any must be last *)
      let l_opt =
        List.fold_right
          (fun item l_opt ->
            match l_opt with
            | None -> None 
            | Some l ->
-              match find p1 item with
+              match find q item with
               | None -> None
               | Some d1 -> Some (d1::l))
          items (Some []) in
@@ -318,10 +321,10 @@ let find_patt (find : path -> 'a -> 'a option)
             then l
             else List.sort Stdlib.compare l in
           Some (`Many (ordered,l)) )
-  | `Item (i,p1)::[], `Many (_,items) ->
+  | `Item (Some i,q)::[], `Many (_,items) ->
      ( match List.nth_opt items i with
        | None -> None
-       | Some item -> find p1 item )
+       | Some item -> find q item )
   | _ -> None
 
 let rec find_data (p : path) (d : data) : data option = (* QUICK *)
@@ -333,7 +336,7 @@ let rec find_template (p : path) (t : template) : template option =
   Common.prof "Model2.find_template" (fun () ->
   match p, t with
   | [], _ -> Some t
-  | `Any p1::[], `Repeat patt1 -> find_patt find_template p1 patt1
+  | `Item (_,q)::[], `Repeat patt1 -> find_patt find_template q patt1
   | _, (#patt as patt) -> find_patt find_template p patt
   | _ -> None)
 
@@ -385,7 +388,7 @@ let fold_patt (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (patt : 'a p
   | `Many (ordered,items) ->
      let _, acc =
        List.fold_left
-         (fun (i,acc) item -> i+1, fold acc (p ++ `Item (i,[])) item)
+         (fun (i,acc) item -> i+1, fold acc (p ++ ith_item i) item)
          (0,acc) items in
      acc
 
@@ -398,14 +401,14 @@ let fold_expr (fold : 'b -> path -> 'a -> 'b) (acc : 'b) (p : path) (e : 'a expr
   | `Var _ -> acc
   | `Plus _ | `Minus _ | `If _ -> acc (* not folding through arithmetics and conditional *)
   | `For (p_many,t1) ->
-     let acc = fold acc (p ++ `Any []) t1 in
+     let acc = fold acc (p ++ any_item) t1 in
      acc
   
 let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (t : template) : 'b =
   let acc = f acc p t in
   match t with
   | `U -> acc
-  | `Repeat patt1 -> fold_patt (fold_template f) acc (p ++ `Any []) patt1
+  | `Repeat patt1 -> fold_patt (fold_template f) acc (p ++ any_item) patt1
   | #patt as patt -> fold_patt (fold_template f) acc p patt
   | #expr as e -> fold_expr (fold_template f) acc p e
        
@@ -420,11 +423,9 @@ let rec path_kind (p : path) : kind =
   | `Color::_ -> `Color
   | `Mask::_ -> `Mask
   | (`Pos | `Size)::_ -> `Vec
-  | `Layers _::_ -> `Shape
-  | `Any []::`Layers _::_ -> `ManyShapes
-  | `Any p1::_ -> path_kind p1
-  | `Item (_,[])::`Layers _::_ -> `Shape
-  | `Item (_,p1)::_ -> path_kind p1
+  | `Layers _::_ -> `Layer
+  | `Item (_,[])::_ -> `Shape
+  | `Item (_,q)::_ -> path_kind q
   | [] -> `Grid
 
 let signature_of_template (t : template) : signature =
@@ -467,7 +468,6 @@ let rec default_data_of_path (p : path) : data =
   | `Size::[] -> `Vec (`Int 10, `Int 10)
   | `Size::_ -> `Vec (`Int 2, `Int 2)
   | `Layers _::_ -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
-  | `Any q::_ -> default_data_of_path q
   | `Item (_,q)::_ -> default_data_of_path q
   | [] -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
   | _ -> assert false
@@ -593,9 +593,9 @@ let rec dl_patt
      Mdl.Code.usage 0.4
      +. 0. (* TODO: ordered *)
      +. Mdl.Code.universal_int_plus (List.length items)
-     +. Mdl.sum items (fun item -> dl ~ctx item ~path:(path ++ `Any [])) (* exact item index does not matter here *)
+     +. Mdl.sum items (fun item -> dl ~ctx item ~path:(path ++ any_item)) (* exact item index does not matter here *)
 
-  | (`Any [] | `Item (_,[]))::`Layers _::_, _ ->
+  | `Item (_,[])::`Layers _::_, _ ->
      ( match patt with
        | `Point (pos,color) ->
           Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
@@ -603,7 +603,7 @@ let rec dl_patt
           Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
        | _ -> assert false )
 
-  | (`Any q | `Item (_,q))::`Layers _::_, _ -> dl_patt dl ~ctx ~path:q patt
+  | `Item (_,q)::`Layers _::_, _ -> dl_patt dl ~ctx ~path:q patt
 
   | [], `Background (size,color,layers) ->
      let box_height =
@@ -668,12 +668,9 @@ let path_similarity ~ctx_path v =
     | [], [] -> 2.
     | `Layers _::rev_p1, [] -> 0.75 *. aux rev_p1 []
 
-    | `Any q1::rev_p1, `Any q2::rev_p2 -> aux (List.rev q1) (List.rev q2) *. aux rev_p1 rev_p2
-    | `Any q1::rev_p1, rev_p2 -> 0.75 *. aux (List.rev_append q1 rev_p1) rev_p2
-    | rev_p1, `Any q2::rev_p2 -> 0.5 *. aux rev_p1 (List.rev_append q2 rev_p2)
-
-    | `Item _::_, _ -> assert false (* path_similarity only used for models *)
-    | _, `Item _::_ -> assert false (* and Item not used in models, so far *)
+    | `Item (_,q1)::rev_p1, `Item (_,q2)::rev_p2 -> aux (List.rev q1) (List.rev q2) *. aux rev_p1 rev_p2
+    | `Item (_,q1)::rev_p1, rev_p2 -> 0.75 *. aux (List.rev_append q1 rev_p1) rev_p2
+    | rev_p1, `Item (_,q2)::rev_p2 -> 0.5 *. aux rev_p1 (List.rev_append q2 rev_p2)
 
     | _ -> assert false (* uncompatible kinds *)
   and aux_ilist lp1 lp2 =
@@ -722,7 +719,7 @@ let rec dl_expr
             
          | `Layers _::_, `For (p_many,e1) ->
             dl_path ~env_sig:ctx.env_sig ~ctx_path:path p_many
-            +. dl ~ctx e1 ~path:(path ++ `Any [])
+            +. dl ~ctx e1 ~path:(path ++ any_item)
          
          | _ -> assert false)
 
@@ -732,7 +729,7 @@ let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
      Mdl.Code.usage 0.1
   | `Repeat patt1 ->
      Mdl.Code.usage 0.1
-     +. dl_patt dl_template ~ctx ~path:(path ++ `Any []) patt1
+     +. dl_patt dl_template ~ctx ~path:(path ++ any_item) patt1
   | #patt as patt ->
      dl_patt_as_template (* Mdl.Code.usage 0.3 *)
      +. dl_patt dl_template ~ctx ~path patt
@@ -769,7 +766,7 @@ let dl_data_given_patt
      assert (ordered = dordered);
      assert (List.length items = List.length ditems);
      List.fold_left2
-       (fun res item ditem -> res +. dl ~ctx ~path:(path ++ `Any []) item ditem)
+       (fun res item ditem -> res +. dl ~ctx ~path:(path ++ any_item) item ditem)
        0. items ditems
   | _ -> assert false (* data inconsistent with pattern *)
     
@@ -779,7 +776,7 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = []) (t : template) (d : 
   | `Repeat patt1, `Many (false,items) ->
      Mdl.Code.universal_int_plus (List.length items)
      +. Mdl.sum items (fun item ->
-            dl_data_given_patt dl_data_given_template ~ctx ~path:(path ++ `Any []) patt1 item)
+            dl_data_given_patt dl_data_given_template ~ctx ~path:(path ++ any_item) patt1 item)
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
@@ -848,7 +845,7 @@ let apply_patt
   | `Many (ordered,items) ->
      `Many (ordered,
             List.map
-              (fun item -> apply ~lookup (p ++ `Any []) item) (* TODO: use `Item ? *)
+              (fun item -> apply ~lookup (p ++ any_item) item)
               items)
 
 let apply_expr_gen
@@ -881,13 +878,13 @@ let apply_expr_gen
          let lookup_item i =
            fun p ->
            match List.rev p with
-           | `Any q1::rev_p1 when rev_p1 = rev_p_many ->
-              let p_item = List.rev (`Item (i,q1)::rev_p1) in (* pointing at the i-th item *)
+           | `Item (None,q1)::rev_p1 when rev_p1 = rev_p_many ->
+              let p_item = List.rev (`Item (Some i,q1)::rev_p1) in (* pointing at the i-th item *)
               lookup p_item
            | _ -> lookup p in
          let items_e1 =
            List.mapi
-             (fun i _item -> apply ~lookup:(lookup_item i) (p ++ `Any []) e1) (* TODO: use directly item in lookup functions *)
+             (fun i _item -> apply ~lookup:(lookup_item i) (p ++ any_item) e1) (* TODO: use directly item in lookup functions *)
              items in
          `Many (ordered, items_e1) (* TODO: how to decide on ordered? add to `For construct? *)
       | _ -> raise (Unbound_var p_many))
@@ -899,7 +896,7 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : path) (t : template) : 
   Common.prof "Model2.apply_template_gen" (fun () ->
   match t with
   | `U -> `U
-  | `Repeat patt1 -> `Repeat (apply_patt apply_template_gen ~lookup (p ++ `Any []) patt1)
+  | `Repeat patt1 -> `Repeat (apply_patt apply_template_gen ~lookup (p ++ any_item) patt1)
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e)
 
@@ -915,7 +912,7 @@ let rec generate_template (p : path) (t : template) : data =
   | `U -> default_data_of_path p (* default data *)
   | `Repeat patt1 -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
-                       (p ++ `Any []) patt1
+                       (p ++ any_item) patt1
   | #patt as patt -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
                        p patt
@@ -1179,7 +1176,7 @@ let rec parse_shape =
         if i >= !max_nb_shape_parse
         then Myseq.empty
         else
-          let p_item = p ++ `Item (i,[]) in
+          let p_item = p ++ ith_item i in
           let* point, next_points = points_next in
           let* state = Myseq.from_option (state_minus_point state point) in
           let* data, state = parse_point pos color p_item point state in
@@ -1196,7 +1193,7 @@ let rec parse_shape =
         if i >= !max_nb_shape_parse
         then Myseq.empty
         else
-          let p_item = p ++ `Item (i,[]) in
+          let p_item = p ++ ith_item i in
           let* rect, next_rectangles = rectangles in
           let* state = Myseq.from_option (state_minus_rectangle state rect) in
           let* data, state = parse_rectangle pos size color mask p_item rect state in
@@ -1238,7 +1235,7 @@ let rec parse_shape =
          let* ditems, state =
            parse_many
              (fun i item state ->
-               parse_shape (item :> template) (p ++ `Item (i,[])) state.parts state)
+               parse_shape (item :> template) (p ++ ith_item i) state.parts state)
              items state in
          Myseq.return (`Many (ordered,ditems),state)
       | _ -> assert false)
@@ -1487,7 +1484,13 @@ let insert_patt insert (f : 'a option -> 'a) (p : path) (patt : 'a patt) : 'a pa
           | Some shape -> insert f p1 shape)
          layers in
      `Background (size,color,layers)
-  | `Item (i,q)::[], `Many (ordered,items) ->
+  | `Item (None,q)::[], `Many (ordered,items) ->
+     let new_items =
+       List.map
+         (fun item -> insert f q item)
+         items in
+     `Many (ordered, new_items)
+  | `Item (Some i,q)::[], `Many (ordered,items) ->
      let ar_items = Array.of_list items in
      assert (i >= 0 && i < Array.length ar_items);
      ar_items.(i) <- insert f q (ar_items.(i) :> template);
@@ -1502,13 +1505,13 @@ let insert_patt insert (f : 'a option -> 'a) (p : path) (patt : 'a patt) : 'a pa
 let insert_expr insert (f : 'a option -> 'a) (p : path) (e : 'a expr) : 'a expr =
   match p, e with
   | _, (`Plus _ | `Minus _) -> assert false
-  | `Any q::[], `For (p_many, t1) -> `For (p_many, insert f q t1)
+  | `Item (_,q)::[], `For (p_many, t1) -> `For (p_many, insert f q t1)
   | _ -> assert false
        
 let rec insert_template (f : template option -> template) (p : path) (t : template) : template =
   match p, t with
   | [], _ -> f (Some t)
-  | `Any q::[], `Repeat patt1 -> `Repeat (insert_patt insert_template f q patt1)
+  | `Item (_,q)::[], `Repeat patt1 -> `Repeat (insert_patt insert_template f q patt1)
   | _, (#patt as patt) -> (insert_patt insert_template f p patt :> template)
   | _, (#expr as e) -> (insert_expr insert_template f p e :> template)
   | _ -> assert false
@@ -1591,7 +1594,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                  | Some x when x = new_t -> raise Refinement_no_change
                  | _ -> new_t)
                 local in
-         ( match path_split_any modified_p with
+         ( match path_split_any_item modified_p with
            | None -> raise Refinement_no_change
            | Some (ctx,local) ->
               t
