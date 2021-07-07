@@ -217,7 +217,7 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
      let contents = String.concat ",\n\t" (List.map string l) in
      if ordered
      then "[ " ^ contents ^ " ]"
-     else "{ " ^ contents ^ " }"
+     else "{\n\t" ^ contents ^ " }"
 
 let rec string_of_data : data -> string = function
   | #patt as patt -> string_of_patt string_of_data patt
@@ -956,7 +956,7 @@ and draw_layer g = function
        done;
      done
   | `Many (ordered,items) ->
-     items |> List.iter (draw_layer g)
+     items |> List.rev |> List.iter (draw_layer g)
   | d -> raise (Invalid_data_as_grid d)
 
 
@@ -1001,19 +1001,32 @@ let rec parse_ilist
      Myseq.return (dl, state)
 
 let parse_repeat
-      (parse_item : int -> parse_state -> (data * parse_state) Myseq.t)
+      (parse_item : int -> 'a -> parse_state -> (data * 'a * parse_state) Myseq.t)
+      (parts : 'a)
       (state : parse_state)
     : (data list * parse_state) Myseq.t =
-  let rec aux i rev_items state =
-    match Myseq.hd_opt (parse_item i state) with
-    | None -> Myseq.return (List.rev rev_items, state)
-    | Some (item,state) -> aux (i+1) (item::rev_items) state
-(*       Myseq.concat
-         [ aux (i+1) (item::rev_items) state;
-           Myseq.return (List.rev rev_items, state) ] (* TEST *) *)
+  let rec aux i parts state =
+    let seq_items = parse_item i parts state in
+    if Myseq.is_empty seq_items
+    then
+      if i = 0
+      then Myseq.empty (* the final result lists must not be empty *)
+      else Myseq.return ([],state)
+    else
+      let* item, parts, state = seq_items in
+      let* items1, state = aux (i+1) parts state in
+      Myseq.return (item::items1, state)
   in
-  aux 0 [] state
-
+  let res = aux 0 parts state in
+(*
+  print_string "parse_repeat[0] = ";
+  (match Myseq.hd_opt res with
+   | Some (ld,_) -> pp_data (`Many (false,ld))
+   | None -> ());
+  print_newline ();
+ *)
+  res
+     
 let parse_many
       (parse_item : int -> 'a -> parse_state -> (data * parse_state) Myseq.t)
       (items : 'a list) (state : parse_state)
@@ -1037,11 +1050,9 @@ let rec parse_template
   | `U -> parse_u
   | `Repeat patt1 ->
      let* items, state = parse_repeat patt1 in
-     if items = []
-     then Myseq.empty
-     else
-       let data = `Many (false, items) in
-       Myseq.return (data,state)
+     assert (items <> []);
+     let data = `Many (false, items) in
+     Myseq.return (data,state)
   | #patt as patt -> parse_patt patt
   | #expr -> assert false
 
@@ -1103,56 +1114,94 @@ let parse_vec t p (vi, vj : int * int) state =
          Myseq.return (`Vec (di,dj), state)
       | _ -> Myseq.empty)
     t
-  
-let shape_postprocess (state : parse_state) (shapes : (int (* nb of newly explained pixels *) * 'a * delta * Grid.Mask.t) list) : ('a * parse_state) Myseq.t = (* QUICK *)
-  shapes (* already sorted in Grid *)
-  |> Myseq.from_list
-  |> Myseq.filter_map
-       (fun (nb_explained_pixels, shape, occ_delta, occ_mask) ->
-         let new_mask = Grid.Mask.diff state.mask occ_mask in
-         if Grid.Mask.equal new_mask state.mask
-         then None (* the shape is fully hidden, explains nothing new *)
-         else
-           let new_state =
-             { state with
-               delta = occ_delta @ state.delta;
-	       mask = new_mask;
-	       parts =
-	         List.filter
-		   (fun p ->
-		     not (Grid.Mask.is_empty
-			    (Grid.Mask.inter p.Grid.pixels new_mask)))
-		   state.parts } in
-	   Some (shape, new_state))
-  |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse)
+
+let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
+  let new_mask = Grid.Mask.diff state.mask occ_mask in
+  if Grid.Mask.equal new_mask state.mask
+  then None (* the shape is fully hidden, explains nothing new *)
+  else
+    let new_state =
+      { state with
+        delta = occ_delta @ state.delta;
+	mask = new_mask;
+	parts =
+	  List.filter
+	    (fun p ->
+	      not (Grid.Mask.is_empty
+		     (Grid.Mask.inter p.Grid.pixels new_mask)))
+	    state.parts } in
+    Some new_state
+let state_minus_point state (i,j,c) =
+  let nb_explained_pixels = 1 in
+  let occ_delta = [] in
+  let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
+  state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask
+let state_minus_rectangle state (rect : Grid.rectangle) =
+  state_minus_shape_gen state rect.nb_explained_pixels rect.delta rect.mask
   
 let rec parse_shape =
-  let parse_all_points parts state =
-    Grid.points state.grid state.mask parts
-    |> List.map (fun (i,j,c) ->
-           let nb_explained_pixels = 1 in
-           let occ_delta = [] in
-           let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
-           nb_explained_pixels, (i,j,c), occ_delta, occ_mask)
-    |> shape_postprocess state in
-  let parse_all_rectangles parts state =
-    Grid.rectangles state.grid state.mask parts
-    |> List.map (fun (rect : Grid.rectangle) ->
-           rect.nb_explained_pixels, rect, rect.delta, rect.mask)
-    |> shape_postprocess state in
-  let parse_point pos color p parts state =
-    let* (i,j,c), state = parse_all_points parts state in
+  let parse_point pos color p (i,j,c) state =
     let* dpos, state = parse_vec pos (p ++ `Pos) (i,j) state in
     let* dcolor, state = parse_color color (p ++ `Color) c state in
     Myseq.return (`Point (dpos,dcolor), state) in
-  let parse_rectangle pos size color mask p parts state =
-    let* r, state = parse_all_rectangles parts state in
+  let parse_rectangle pos size color mask p rect state =
     let open Grid in
-    let* dpos, state = parse_vec pos (p ++ `Pos) (r.offset_i,r.offset_j) state in
-    let* dsize, state = parse_vec size (p ++ `Size) (r.height,r.width) state in
-    let* dcolor, state = parse_color color (p ++ `Color) r.color state in
-    let* dmask, state = parse_mask mask (p ++ `Mask) r.rmask state in
+    let* dpos, state = parse_vec pos (p ++ `Pos) (rect.offset_i,rect.offset_j) state in
+    let* dsize, state = parse_vec size (p ++ `Size) (rect.height,rect.width) state in
+    let* dcolor, state = parse_color color (p ++ `Color) rect.color state in
+    let* dmask, state = parse_mask mask (p ++ `Mask) rect.rmask state in
     Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
+  in
+  let parse_all_points parts state =
+    let* point = Myseq.from_list (Grid.points state.grid state.mask parts) in
+    let* state = Myseq.from_option (state_minus_point state point) in
+    Myseq.return (point, state) in
+  let parse_all_rectangles parts state =
+    let* rect = Myseq.from_list (Grid.rectangles state.grid state.mask parts) in
+    let* state = Myseq.from_option (state_minus_rectangle state rect) in
+    Myseq.return (rect, state)
+  in
+  let parse_single_point pos color p parts state =
+    let* point, state = parse_all_points parts state in
+    parse_point pos color p point state in
+  let parse_single_rectangle pos size color mask p parts state =
+    let* rect, state = parse_all_rectangles parts state in
+    parse_rectangle pos size color mask p rect state
+  in
+  let parse_repeat_point pos color p parts state =
+    let points_next =
+      Grid.points state.grid state.mask parts
+      |> Myseq.from_list
+      |> Myseq.introspect in
+    (*print_endline "POINTS"; (* TEST *)*)
+    parse_repeat
+      (fun i points_next state ->
+        if i >= !max_nb_shape_parse
+        then Myseq.empty
+        else
+          let p_item = p ++ `Item (i,[]) in
+          let* point, next_points = points_next in
+          let* state = Myseq.from_option (state_minus_point state point) in
+          let* data, state = parse_point pos color p_item point state in
+          Myseq.return (data, Myseq.introspect next_points, state))
+      points_next state in
+  let parse_repeat_rectangle pos size color mask p parts state =
+    let rectangles =
+      Grid.rectangles state.grid state.mask parts
+      |> Myseq.from_list
+      |> Myseq.introspect in
+    (*print_endline "RECTANGLES"; (* TEST *)*)
+    parse_repeat
+      (fun i rectangles state ->
+        if i >= !max_nb_shape_parse
+        then Myseq.empty
+        else
+          let p_item = p ++ `Item (i,[]) in
+          let* rect, next_rectangles = rectangles in
+          let* state = Myseq.from_option (state_minus_rectangle state rect) in
+          let* data, state = parse_rectangle pos size color mask p_item rect state in
+          Myseq.return (data, Myseq.introspect next_rectangles, state))
+      rectangles state
   in
   fun t p (parts : Grid.part list) state ->
   Common.prof "Model2.parse_shape" (fun () ->
@@ -1176,19 +1225,15 @@ let rec parse_shape =
     ~parse_repeat:(
       function
       | `Point (pos,color) ->
-         parse_repeat (* TODO: optimize to avoid iterating n times through parts *)
-           (fun i state -> parse_point pos color (p ++ `Item (i,[])) state.parts state)
-           state
+         parse_repeat_point pos color p parts state
       | `Rectangle (pos,size,color,mask) ->
-         parse_repeat
-           (fun i state -> parse_rectangle pos size color mask (p ++ `Item (i,[])) state.parts state)
-           state
+         parse_repeat_rectangle pos size color mask p parts state
       | _ -> assert false)
     ~parse_patt:(function
       | `Point (pos,color) ->
-         parse_point pos color p parts state
+         parse_single_point pos color p parts state
       | `Rectangle (pos,size,color,mask) ->
-         parse_rectangle pos size color mask p parts state
+         parse_single_rectangle pos size color mask p parts state
       | `Many (ordered,items) ->
          let* ditems, state =
            parse_many
@@ -1197,7 +1242,8 @@ let rec parse_shape =
              items state in
          Myseq.return (`Many (ordered,ditems),state)
       | _ -> assert false)
-    t)
+    t
+  |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
   
 let parse_grid t p (g : Grid.t) state =
   Common.prof "Model2.parse_grid" (fun () ->
@@ -2055,7 +2101,8 @@ let learn_model
            if verbose then (
              Printf.printf "\t?? %.1f\t" lmd;
              pp_refinement r; print_newline ();
-	     (*Printf.printf "\t\tl = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
+(*             
+	     Printf.printf "\t\tl = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
              print_endline " ===> all reads for first example";
              List.hd gpsr.reads
              |> List.iter
@@ -2064,7 +2111,8 @@ let learn_model
                     pp_data d_i; print_newline ();
                     pp_data d_o; print_newline ();
                     Printf.printf "\tdl=%.1f\n" dl);
-             print_newline ()*)
+             print_newline ()
+ *)             
            );
 	   flush stdout;
            lmd)
