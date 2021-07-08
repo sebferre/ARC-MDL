@@ -103,6 +103,13 @@ let rec (++) p f =
   | `Item (i_opt,q)::rev_p1 -> List.rev (`Item (i_opt, q ++ f)::rev_p1)
   | _ -> p @ [f]
 
+let rec path_rev_tail p = (* to access context of path, reading the path from the tail *)
+  let rev_p = List.rev p in
+  match rev_p with
+  | `Item (_,[])::_ -> rev_p
+  | `Item (_,q)::_ -> path_rev_tail q
+  | _ -> rev_p
+       
 let path_split_any_item (path : path) : (path * path) option (* ctx, local *) =
   match List.rev path with
   | `Item (None,q)::rev_p -> Some (List.rev rev_p, q) (* TODO: optimize to avoid double List.rev *)
@@ -571,41 +578,38 @@ let dl_patt_as_template = Mdl.Code.usage 0.3
 let rec dl_patt
       (dl : ctx:dl_ctx -> ?path:path -> 'a -> dl)
       ~(ctx : dl_ctx) ~(path : path) (patt : 'a patt) : dl =
-  match List.rev path, patt with
-  | `I::`Pos::_, `Int i -> dl_index ~bound:ctx.box_height i
-  | `J::`Pos::_, `Int j -> dl_index ~bound:ctx.box_width j
-
-  | (`I | `J)::`Size::_, `Int i -> dl_length i
-
-  | `Color::[], `Color c -> dl_background_color c
-
-  | `Color::_, `Color c -> dl_color c
-
-  | `Mask::_, `Mask m -> dl_mask m
-
-  | (`Size | `Pos)::_, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
-
-  | `Layers _::_, `Point (pos,color) ->
-     Mdl.Code.usage 0.3 +. dl_patt_point dl ~ctx ~path pos color
-  | `Layers _::_, `Rectangle (pos,size,color,mask) ->
-     Mdl.Code.usage 0.3 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
-  | `Layers _::_, `Many (ordered,items) ->
-     Mdl.Code.usage 0.4
-     +. 0. (* TODO: ordered *)
-     +. Mdl.Code.universal_int_plus (List.length items)
-     +. Mdl.sum items (fun item -> dl ~ctx item ~path:(path ++ any_item)) (* exact item index does not matter here *)
-
-  | `Item (_,[])::`Layers _::_, _ ->
-     ( match patt with
-       | `Point (pos,color) ->
-          Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
-       | `Rectangle (pos,size,color,mask) ->
-          Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
+  match path_kind path, patt with
+  | `Int, `Int n ->
+     ( match path_rev_tail path with
+       | `I::`Pos::_ -> dl_index ~bound:ctx.box_height n
+       | `J::`Pos::_ -> dl_index ~bound:ctx.box_width n
+       | (`I | `J)::`Size::_ -> dl_length n
        | _ -> assert false )
 
-  | `Item (_,q)::`Layers _::_, _ -> dl_patt dl ~ctx ~path:q patt
+  | `Color, `Color c ->
+     ( match path_rev_tail path with
+       | `Color::[] -> dl_background_color c
+       | _ -> dl_color c )
 
-  | [], `Background (size,color,layers) ->
+  | `Mask, `Mask m -> dl_mask m
+
+  | `Vec, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
+
+  | `Layer, `Many (ordered,items) ->
+     Mdl.Code.universal_int_plus (List.length items)
+     +. 0. (* TODO: encode ordered when length > 1 *)
+     +. Mdl.sum items
+          (fun item -> dl ~ctx item ~path:(path ++ any_item)) (* exact item index does not matter here *)
+  | `Layer, _ -> (* single shape instead of Many *)
+     Mdl.Code.universal_int_plus 1 (* singleton *)
+     +. dl_patt dl ~ctx patt ~path:(path ++ any_item)
+
+  | `Shape, `Point (pos,color) ->
+     Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
+  | `Shape, `Rectangle (pos,size,color,mask) ->
+     Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
+
+  | `Grid, `Background (size,color,layers) ->
      let box_height =
        match size with
        | `Vec (`Int i, _) -> i
@@ -700,41 +704,67 @@ let dl_path ~(env_sig : signature) ~(ctx_path : path) (x : path) : dl =
 let rec dl_expr
           (dl : ctx:dl_ctx -> ?path:path -> 'a -> dl)
           ~(ctx : dl_ctx) ~(path : path) (e : 'a expr) : dl =
-  (* TODO: make it kind-dependent *)
+  let k = path_kind path in
+  let usage_expr = (* 0. when no expression on kind *)
+    match k with
+    | `Int -> 0.5
+    | `Color -> 0.
+    | `Bool -> 0.
+    | `Mask -> 0.
+    | `Vec -> 0.
+    | `Shape -> 0.
+    | `Layer -> 0.5
+    | `Grid -> 0.
+  in
   match e with
   | `Var x ->
-     Mdl.Code.usage 0.5
+     Mdl.Code.usage (1. -. usage_expr)
      +. dl_path ~env_sig:ctx.env_sig ~ctx_path:path x
   | _ ->
-     Mdl.Code.usage 0.5
-     +. (match List.rev path, e with
-         | (`I | `J as fij)::rev_p_vec, (`Plus (e1,e2) | `Minus (e1,e2)) ->
-            let p2 = (* 2nd operand prefers a size to a position *)
-              match rev_p_vec with
-              | `Pos::rev_p1 -> List.rev (fij::`Size::rev_p1)
-              | _ -> path in
+     Mdl.Code.usage usage_expr
+     +. (match path_kind path, e with
+         | `Int, (`Plus (e1,e2) | `Minus (e1,e2)) ->
+            let rec make_p2 p = (* 2nd operand prefers a size to a position *)
+              match List.rev p with
+              | `Item (i_opt,q)::rev_p1 ->
+                 let q2 = make_p2 q in
+                 List.rev (`Item (i_opt,q2)::rev_p1)
+              | _ -> p in
+            let p2 = make_p2 path in
             Mdl.Code.usage 0.5 (* choice between Plus and Minus *)
             +. dl ~ctx e1 ~path
             +. dl ~ctx e2 ~path:p2
             
-         | `Layers _::_, `For (p_many,e1) ->
+         | `Layer, `For (p_many,e1) ->
             dl_path ~env_sig:ctx.env_sig ~ctx_path:path p_many
             +. dl ~ctx e1 ~path:(path ++ any_item)
          
          | _ -> assert false)
 
 let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
+  let k = path_kind path in
+  let usage_repeat =
+    match k with
+    | `Int -> 0.
+    | `Bool -> 0.
+    | `Color -> 0.
+    | `Mask -> 0.
+    | `Vec -> 0.
+    | `Shape -> 0.
+    | `Layer -> 0.2
+    | `Grid -> 0.
+  in
   match t with (* TODO: take path/kind into account, not all combinations are possible *)
   | `U ->
      Mdl.Code.usage 0.1
   | `Repeat patt1 ->
-     Mdl.Code.usage 0.1
+     Mdl.Code.usage usage_repeat
      +. dl_patt dl_template ~ctx ~path:(path ++ any_item) patt1
   | #patt as patt ->
      dl_patt_as_template (* Mdl.Code.usage 0.3 *)
      +. dl_patt dl_template ~ctx ~path patt
   | #expr as e ->
-     Mdl.Code.usage 0.5
+     Mdl.Code.usage (0.6 -. usage_repeat)
      +. dl_expr dl_template ~ctx ~path e
 
     
@@ -801,7 +831,7 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. Mdl.sum delta
        (fun (i,j,c) ->
-         dl_data ~ctx ~path:[`Layers []]
+         dl_data ~ctx ~path:[`Layers []; any_item] (* dummy path with kind Shape *)
            (`Point (`Vec (`Int i, `Int j), `Color c)))
 
 (* NOT using optimized DL below for fair comparisons with model points: 
@@ -874,12 +904,11 @@ let apply_expr_gen
   | `For (p_many,e1) ->
      (match lookup p_many with
       | Some (`Many (ordered,items)) ->
-         let rev_p_many = List.rev p_many in
          let lookup_item i =
            fun p ->
-           match List.rev p with
-           | `Item (None,q1)::rev_p1 when rev_p1 = rev_p_many ->
-              let p_item = List.rev (`Item (Some i,q1)::rev_p1) in (* pointing at the i-th item *)
+           match path_split_any_item p with
+           | Some (ctx,local) when ctx = p_many ->
+              let p_item = List.rev (`Item (Some i, local)::List.rev ctx) in (* pointing at the i-th item *)
               lookup p_item
            | _ -> lookup p in
          let items_e1 =
