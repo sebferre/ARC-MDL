@@ -107,7 +107,7 @@ let rec path_rev_tail p = (* to access context of path, reading the path from th
   let rev_p = List.rev p in
   match rev_p with
   | `Item (_,[])::_ -> rev_p
-  | `Item (_,q)::_ -> path_rev_tail q
+  | `Item (_,q)::_ -> path_rev_tail q @ rev_p (* keep rev_p to avoid confusion between grid color and shape color, for instance *)
   | _ -> rev_p
        
 let path_split_any_item (path : path) : (path * path) option (* ctx, local *) =
@@ -572,7 +572,7 @@ let dl_ctx_of_data (d : data) : dl_ctx =
   { env_sig = signature0; box_height; box_width }
       
 
-let dl_patt_as_template = Mdl.Code.usage 0.3
+let dl_patt_as_template = Mdl.Code.usage 0.4
 
 
 let rec dl_patt
@@ -751,7 +751,7 @@ let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
     | `Mask -> 0.
     | `Vec -> 0.
     | `Shape -> 0.
-    | `Layer -> 0.2
+    | `Layer -> 0.1
     | `Grid -> 0.
   in
   match t with (* TODO: take path/kind into account, not all combinations are possible *)
@@ -761,10 +761,10 @@ let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
      Mdl.Code.usage usage_repeat
      +. dl_patt dl_template ~ctx ~path:(path ++ any_item) patt1
   | #patt as patt ->
-     dl_patt_as_template (* Mdl.Code.usage 0.3 *)
+     dl_patt_as_template (* Mdl.Code.usage 0.4 *)
      +. dl_patt dl_template ~ctx ~path patt
   | #expr as e ->
-     Mdl.Code.usage (0.6 -. usage_repeat)
+     Mdl.Code.usage (0.5 -. usage_repeat)
      +. dl_expr dl_template ~ctx ~path e
 
     
@@ -1968,7 +1968,9 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
     | _ -> assert false in *)
   let rec aux lp = function
     | `Nil ->
-       let* shape = Myseq.from_list [`Point (`U, `U); `Rectangle (`U, `U, `U, `U)] in
+       let* shape = Myseq.from_list
+                      [`Point (`U, `U);
+                       `Rectangle (`U, `U, `U, `U)] in
        Myseq.cons (RShape ([`Layers lp], `Repeat shape))
          (Myseq.cons (RShape ([`Layers lp], (shape :> template)))
             Myseq.empty)
