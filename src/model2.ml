@@ -117,7 +117,7 @@ let path_split_any_item (path : path) : (path * path) option (* ctx, local *) =
        
 let path_ctx (path : path) : path option =
   match List.rev path with
-  | `Item (_,q)::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
+  | `Item (None,q)::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
   | _ -> None
        
 type data = data patt
@@ -445,7 +445,15 @@ let signature_of_template (t : template) : signature =
           match Hashtbl.find_opt ht k with
           | None -> []
           | Some ps -> ps in
-        Hashtbl.replace ht k (p::ps0);
+        let ps =
+          match List.rev p with
+          | `Item (None,q)::rev_p1 -> (* if many-valued, add path to first item *)
+             (*let p_fst = List.rev (`Item (Some 0, q)::rev_p1) in
+             let p_snd = List.rev (`Item (Some 1, q)::rev_p1) in
+             let p_trd = List.rev (`Item (Some 2, q)::rev_p1) in *)
+             (*p_trd::p_snd::p_fst::*)p::ps0
+          | _ -> p::ps0 in
+        Hashtbl.replace ht k ps;
         if k = `Vec && t1 = `U then (
           let ps0 =
             match Hashtbl.find_opt ht `Int with
