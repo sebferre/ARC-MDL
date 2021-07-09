@@ -448,10 +448,10 @@ let signature_of_template (t : template) : signature =
         let ps =
           match List.rev p with
           | `Item (None,q)::rev_p1 -> (* if many-valued, add path to first item *)
-             (*let p_fst = List.rev (`Item (Some 0, q)::rev_p1) in
+             let p_fst = List.rev (`Item (Some 0, q)::rev_p1) in
              let p_snd = List.rev (`Item (Some 1, q)::rev_p1) in
-             let p_trd = List.rev (`Item (Some 2, q)::rev_p1) in *)
-             (*p_trd::p_snd::p_fst::*)p::ps0
+             let p_trd = List.rev (`Item (Some 2, q)::rev_p1) in
+             p_trd::p_snd::p_fst::p::ps0
           | _ -> p::ps0 in
         Hashtbl.replace ht k ps;
         if k = `Vec && t1 = `U then (
@@ -937,8 +937,10 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : path) (t : template) : 
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e)
 
-let rec apply_template ~(env : data) (p : path) (t : template) : template =
-  apply_template_gen ~lookup:(fun p -> find_data p env) p t
+let rec apply_template ~(env : data) (p : path) (t : template) : (template,exn) Result.t =
+  try Result.Ok (apply_template_gen ~lookup:(fun p -> find_data p env) p t)
+  with
+  | (Unbound_var _ as exn) -> Result.Error exn (* catching runtime error in expression eval *)
 (* TODO: remove path argument, seems useless *)
 
 
@@ -995,15 +997,13 @@ and draw_layer g = function
 
 
 let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
-  try
-    let t' = apply_template ~env [] t in
-    let d = generate_template [] t' in
-    let g = grid_of_data d in
-    List.iter
-      (fun (i,j,c) -> Grid.set_pixel g i j c)
-      delta;
-    Result.Ok g
-  with exn -> Result.Error exn)       
+  let| t' = apply_template ~env [] t in
+  let d = generate_template [] t' in
+  let g = grid_of_data d in
+  List.iter
+    (fun (i,j,c) -> Grid.set_pixel g i j c)
+    delta;
+  Result.Ok g)
 
 (* parsing grids with templates *)
 
@@ -1339,7 +1339,7 @@ let read_grid
       ~(env : data) (t : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
   Common.prof "Model2.read_grid" (fun () ->
-  let t = apply_template ~env [] t in (* reducing expression *)
+  let| t = apply_template ~env [] t in (* reducing expressions *)
   let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
@@ -1791,15 +1791,12 @@ and defs_check p k t ctx d env =
      ( match e_opt with
        | None -> false
        | Some e ->
-          let res =
-            apply_template_gen
-              ~lookup:(fun v -> find_data v env)
-              p e in
-          match res, (d :> template) with
-          | `Many (ordered1,items1), `Many (ordered2,items2) ->
+          match apply_template ~env p (e :> template), (d :> template) with
+          | Result.Ok (`Many (ordered1,items1)), `Many (ordered2,items2) ->
              (* TODO: how to handle [ordered] flags *)
              List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *)
-          | t1, t2 -> t1 = t2 )
+          | Result.Ok t1, t2 -> t1 = t2
+          | Result.Error _, _ -> false )
 (*
   val_matrix
   |> Common.list_product (* TODO: find a way to avoid this combinatorial generation *)
