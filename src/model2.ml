@@ -183,7 +183,9 @@ let rec string_of_field : field -> string = function
   | `Size -> "size"
   | `Mask -> "mask"
   | `Layers lp -> "layer[" ^ string_of_ilist_path lp ^ "]"
+  | `Item (None,[]) -> "*"
   | `Item (None,p) -> "*." ^ string_of_path p
+  | `Item (Some i,[]) -> "[" ^ string_of_int i ^ "]"
   | `Item (Some i,p) -> "[" ^ string_of_int i ^ "]." ^ string_of_path p
 
 and string_of_path : path -> string =
@@ -415,7 +417,9 @@ let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (
   let acc = f acc p t in
   match t with
   | `U -> acc
-  | `Repeat patt1 -> fold_patt (fold_template f) acc (p ++ any_item) patt1
+  | `Repeat patt1 ->
+     let acc = f acc (p ++ any_item) (patt1 :> template) in
+     fold_patt (fold_template f) acc (p ++ any_item) patt1
   | #patt as patt -> fold_patt (fold_template f) acc p patt
   | #expr as e -> fold_expr (fold_template f) acc p e
        
@@ -1722,9 +1726,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                                   (root_template_of_data d) lt
                         | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
                       let lt =
+                        let aux lt =
+                          (try List.assoc k k_le_map with _ -> assert false) @ lt in 
                         match t0 with
-                        | #expr -> lt (* already an expression *)
-                        | _ -> (try List.assoc k k_le_map with _ -> assert false) @ lt in 
+                        | `For _ -> aux lt
+                        | #expr -> lt (* not replacing expressions, except For *)
+                        | _ -> aux lt in
                       List.fold_left (* WARNING: preserving order on lt *)
                         (fun rev_delta_defs_yes (t,ctx) ->
                           if List.exists (* check if def already found *)
@@ -1782,7 +1789,6 @@ and defs_check p k t ctx d env =
      (*     print_string "CHECK expr: "; pp_template t; Option.iter (fun p_many -> print_string " at ctx "; pp_path p_many) ctx; print_newline (); *)
      let e_opt =
        match ctx, d with
-       | None, `Many _ -> None (* incompatible expr and data *)
        | None, _ -> Some t
        | Some p_many, `Many _ -> Some (`For (p_many, t))
        | _ -> None in
@@ -1790,10 +1796,14 @@ and defs_check p k t ctx d env =
        | None -> false
        | Some e ->
           match apply_template ~env p (e :> template), (d :> template) with
-          | Result.Ok (`Many (ordered1,items1)), `Many (ordered2,items2) ->
-             (* TODO: how to handle [ordered] flags *)
-             List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *)
-          | Result.Ok t1, t2 -> t1 = t2
+          | Result.Ok t1, t2 ->
+             (match t1, t2 with
+              | `Many (ordered1,items1), `Many (ordered2,items2) ->
+                 (* TODO: how to handle [ordered] flags *)
+                 List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *)
+              | `Many _, _ -> false
+              | _, `Many _ -> false
+              | t1, t2 -> t1 = t2)
           | Result.Error _, _ -> false )
 (*
   val_matrix
@@ -2120,7 +2130,7 @@ let learn_model
     ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
       try
-        (*print_string "\t\t=> "; pp_refinement r; print_newline ();*)
+        (* print_string "\t=> "; pp_refinement r; print_newline (); *)
         Result.to_option
           (let| gprs = read_grid_pairs m pairs in
            let grsi, grso = split_grid_pairs_read gprs in
