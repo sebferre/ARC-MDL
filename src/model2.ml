@@ -1210,14 +1210,11 @@ let rec parse_shape =
     (*print_endline "POINTS"; (* TEST *)*)
     parse_repeat
       (fun i points_next state ->
-        if i >= !max_nb_shape_parse
-        then Myseq.empty
-        else
-          let p_item = p ++ ith_item i in
-          let* point, next_points = points_next in
-          let* state = Myseq.from_option (state_minus_point state point) in
-          let* data, state = parse_point pos color p_item point state in
-          Myseq.return (data, Myseq.introspect next_points, state))
+        let p_item = p ++ ith_item i in
+        let* point, next_points = points_next in
+        let* state = Myseq.from_option (state_minus_point state point) in
+        let* data, state = parse_point pos color p_item point state in
+        Myseq.return (data, Myseq.introspect next_points, state))
       points_next state in
   let parse_repeat_rectangle pos size color mask p parts state =
     let rectangles =
@@ -1227,14 +1224,11 @@ let rec parse_shape =
     (*print_endline "RECTANGLES"; (* TEST *)*)
     parse_repeat
       (fun i rectangles state ->
-        if i >= !max_nb_shape_parse
-        then Myseq.empty
-        else
-          let p_item = p ++ ith_item i in
-          let* rect, next_rectangles = rectangles in
-          let* state = Myseq.from_option (state_minus_rectangle state rect) in
-          let* data, state = parse_rectangle pos size color mask p_item rect state in
-          Myseq.return (data, Myseq.introspect next_rectangles, state))
+        let p_item = p ++ ith_item i in
+        let* rect, next_rectangles = rectangles in
+        let* state = Myseq.from_option (state_minus_rectangle state rect) in
+        let* data, state = parse_rectangle pos size color mask p_item rect state in
+        Myseq.return (data, Myseq.introspect next_rectangles, state))
       rectangles state
   in
   fun t p (parts : Grid.part list) state ->
