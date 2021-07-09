@@ -1047,9 +1047,13 @@ let parse_repeat
       then Myseq.empty (* the final result lists must not be empty *)
       else Myseq.return ([],state)
     else
-      let* item, parts, state = seq_items in
-      let* items1, state = aux (i+1) parts state in
-      Myseq.return (item::items1, state)
+      let* item0, parts0, state0 = seq_items in
+      Myseq.concat [
+          (let* items1, state1 = aux (i+1) parts0 state0 in
+           Myseq.return (item0::items1, state1));
+          
+          aux i parts0 state (* ignoring item0 *)
+        ]
   in
   let res = aux 0 parts state in
 (*
