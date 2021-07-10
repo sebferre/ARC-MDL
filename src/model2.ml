@@ -1701,7 +1701,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
             env, u_val, dl, rank)
           grs)
       grss in
-
+  let tprio = (* priority among definitions according to def body, expressions first *)
+    function
+    | `U -> 3
+    | `Repeat _ -> 2
+    | #patt -> 1
+    | #expr -> 0 in
   let k_le_map =
     defs_expressions ~env_sig in
   let _, defs =
@@ -1735,11 +1740,11 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                       List.fold_left (* WARNING: preserving order on lt *)
                         (fun rev_delta_defs_yes (t,ctx) ->
                           if List.exists (* check if def already found *)
-                               (fun (_,_,p0,_,t0,ctx0) -> p0=p && t0=t && ctx0=ctx)
+                               (fun (_,_,_,p0,_,t0,ctx0) -> p0=p && t0=t && ctx0=ctx)
                                defs_yes
                              || not (defs_check p k t ctx d env)
                           then rev_delta_defs_yes
-                          else (dl, rank, p, k, t, ctx) :: rev_delta_defs_yes)
+                          else (dl, rank, tprio t, p, k, t, ctx) :: rev_delta_defs_yes)
                         rev_delta_defs_yes
                         lt
                     )
@@ -1751,11 +1756,11 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               else
                 let rev_new_defs_yes, rev_defs_maybe =
                   List.fold_left (* WARNING: preserving orer on defs_yes and defs_maybe *)
-                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,p,k,t,ctx as def) ->
+                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,prio,p,k,t,ctx as def) ->
                       let d = try List.assoc p u_val with _ -> assert false in
                       if defs_check p k t ctx d env
                       then
-                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, p, k, t, ctx) :: rev_new_defs_yes in
+                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, prio, p, k, t, ctx) :: rev_new_defs_yes in
                         (rev_new_defs_yes, rev_defs_maybe)
                       else
                         let rev_defs_maybe = def :: rev_defs_maybe in (* kept for remaining reads *)
@@ -1776,10 +1781,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       val_matrix in
   defs
   |> List.stable_sort (* increasing DL, increasing rank sum *)
-       (fun (sum_dl1,sum_rank1,_,_,_,_) (sum_dl2,sum_rank2,_,_,_,_) ->
-         Stdlib.compare (sum_dl1,sum_rank1) (sum_dl2,sum_rank2))
+       (fun (sum_dl1,sum_rank1,prio1,_,_,_,_) (sum_dl2,sum_rank2,prio2,_,_,_,_) ->
+         Stdlib.compare (sum_dl1,sum_rank1,prio1) (sum_dl2,sum_rank2,prio2))
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,p,k,t,ctx) -> RDef (p,t,ctx)))
+  |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx)))
 and defs_check p k t ctx d env =
   match t with
   | `U -> assert false (* should not be used as def *)
