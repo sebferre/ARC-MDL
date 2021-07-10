@@ -340,6 +340,16 @@ module MaskZ =
 	done
       done
 
+    let fold f acc m =
+      let res = ref acc in
+      for i = 0 to m.height - 1 do
+        let i_w = i * m.width in
+	for j = 0 to m.width - 1 do
+	  if Z.testbit m.bits (i_w + j) then
+	    res := f !res i j
+	done
+      done;
+      !res
   end
     
 module Mask = MaskZ
@@ -652,21 +662,30 @@ let pp_points g ps =
   print_endline "POINTS:";
   pp_grids (g :: List.map (point_as_grid g) ps)
 
-let point_of_part mask (part : part) : point option =
+let points_of_part ?(acc : point list = []) mask (part : part) : point list =
+  (* mask gives the part of the grid that remains to be covered *)
   if part.mini = part.maxi && part.minj = part.maxj
-     && Mask.mem part.mini part.minj mask (* out-of-mask points are already covered *)
-  then Some (part.mini, part.minj, part.color)
-  else None
+     && Mask.mem part.mini part.minj mask
+  then (part.mini, part.minj, part.color)::acc
+  else
+    if part.nb_pixels <= 5
+       && (part.maxi - part.mini + 1 <= 3)
+       && (part.maxj - part.minj + 1 <= 3)
+    then (* splitting small shapes into points *)
+      Mask.fold
+        (fun acc i j ->
+          if Mask.mem i j mask
+          then (i, j, part.color)::acc
+          else acc)
+        acc part.pixels
+    else acc
 
 let points (g : t) (mask : Mask.t) (parts : part list) : point list =
   parts
   |> List.fold_left
-       (fun res part ->
-         match point_of_part mask part with
-         | Some point -> point::res
-         | None -> res)
+       (fun res part -> points_of_part ~acc:res mask part)
        []
-  |> List.sort (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
+  |> List.sort_uniq (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
          Stdlib.compare (c1 = black, p1) (c2 = black, p2)) (* black points last *)
 let points, reset_points =
   let f, reset =
