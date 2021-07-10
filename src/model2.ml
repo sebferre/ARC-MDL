@@ -2112,11 +2112,26 @@ let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
         | _ -> assert false)
       (0.,0.) gpsr.reads in
   let ldi, ldo = !alpha *. ldi, !alpha *. ldo in
-  let lm = lmi +. lmo in
-  let ld = ldi +. ldo in
-  (lmi, lmo, lm),
-  (ldi, ldo, ld),
-  (lmi+.ldi, lmo+.ldo, lm+.ld))
+  let lmdi = lmi +. ldi in
+  let lmdo = lmo +. ldo in
+  (lmi, lmo, lmi +. lmo),
+  (ldi, ldo, ldi +. ldo),
+  (lmdi, lmdo, lmdi +. lmdo))
+
+let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
+  let lmdi0 = ref (-1.) in
+  let lmdo0 = ref (-1.) in
+  fun gpsr ->
+  let (lmi,lmo,lm), (ldi,ldo,ld), (lmdi,lmdo,lmd) =
+    dl_model_data gpsr in
+  let () = (* setting initial DLs *)
+    if !lmdi0 < 0.
+    then ( lmdi0 := lmdi; lmdo0 := lmdo ) in
+  let nlmi, nldi, nlmdi = lmi /. !lmdi0, ldi /. !lmdi0, lmdi /. !lmdi0 in
+  let nlmo, nldo, nlmdo = lmo /. !lmdo0, ldo /. !lmdo0, lmdo /. !lmdo0 in
+  (nlmi, nlmo, nlmi +. nlmo),
+  (nldi, nldo, nldi +. nldo),
+  (nlmdi, nlmdo, nlmdi +. nlmdo)
   
 let learn_model
       ?(verbose = false)
@@ -2128,6 +2143,7 @@ let learn_model
     : ((refinement * model) * (grid_pairs_read * grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
+  let norm_dl_model_data = make_norm_dl_model_data () in      
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -2149,9 +2165,9 @@ let learn_model
 	 raise exn)
     ~code:(fun (r,m) (gpsr,gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     dl_model_data gpsr in
+	     norm_dl_model_data gpsr in
            if verbose then (
-             Printf.printf "\t?? %.1f\t" lmd;
+             Printf.printf "\t?? %.3f\t" lmd;
              pp_refinement r; print_newline ();
 (*             
 	     Printf.printf "\t\tl = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
@@ -2170,7 +2186,7 @@ let learn_model
            lmd)
     ~refinements:
     (fun (r,m) (gpsr,gsri,gsro) dl ->
-      Printf.printf "%.1f\t" dl; pp_refinement r; print_newline ();
+      Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ();
       if grid_viz then (
         List.iter2
           (fun reads_input reads_pair ->
