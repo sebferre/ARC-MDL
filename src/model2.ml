@@ -104,21 +104,24 @@ let rec (++) p f =
   | _ -> p @ [f]
 
 let rec path_rev_tail p = (* to access context of path, reading the path from the tail *)
+  Common.prof "Model2.path_rev_tail" (fun () ->
   let rev_p = List.rev p in
   match rev_p with
   | `Item (_,[])::_ -> rev_p
   | `Item (_,q)::_ -> path_rev_tail q @ rev_p (* keep rev_p to avoid confusion between grid color and shape color, for instance *)
-  | _ -> rev_p
+  | _ -> rev_p)
        
 let path_split_any_item (path : path) : (path * path) option (* ctx, local *) =
+  Common.prof "Model2.path_split_any_item" (fun () ->
   match List.rev path with
   | `Item (None,q)::rev_p -> Some (List.rev rev_p, q) (* TODO: optimize to avoid double List.rev *)
-  | _ -> None
+  | _ -> None)
        
 let path_ctx (path : path) : path option =
+  Common.prof "Model2.path_ctx" (fun () ->
   match List.rev path with
   | `Item (None,q)::rev_p -> Some (List.rev rev_p) (* TODO: optimize to avoid double List.rev *)
-  | _ -> None
+  | _ -> None)
        
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
@@ -293,7 +296,7 @@ let rec find_ilist (lp : ilist_path) (l : 'a ilist) : 'a option =
      | [] -> Some elt
      | `Left::lp1 -> find_ilist lp1 left
      | `Right::lp1 -> find_ilist lp1 right
-  
+
 let find_patt (find : path -> 'a -> 'a option)
       (p : path) (patt : 'a patt) : 'a option =
   match p, patt with
@@ -424,11 +427,13 @@ let rec fold_template (f : 'b -> path -> template -> 'b) (acc : 'b) (p : path) (
   | #expr as e -> fold_expr (fold_template f) acc p e
        
 let size_of_data (d : data) : int =
-  fold_data (fun res _ _ -> res+1) 0 path0 d
+  Common.prof "Model2.size_of_data" (fun () ->
+  fold_data (fun res _ _ -> res+1) 0 path0 d)
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ -> res+1) 0 path0 t
 
 let rec path_kind (p : path) : kind =
+  Common.prof "Model2.path_kind" (fun () ->
   match List.rev p with
   | (`I | `J)::_ -> `Int
   | `Color::_ -> `Color
@@ -437,9 +442,10 @@ let rec path_kind (p : path) : kind =
   | `Layers _::_ -> `Layer
   | `Item (_,[])::_ -> `Shape
   | `Item (_,q)::_ -> path_kind q
-  | [] -> `Grid
+  | [] -> `Grid)
 
 let signature_of_template (t : template) : signature =
+  Common.prof "Model2.signature_of_template" (fun () ->
   let ht = Hashtbl.create 13 in
   let () =
     fold_template
@@ -468,7 +474,7 @@ let signature_of_template (t : template) : signature =
       () path0 t in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
-    ht []
+    ht [])
 
 let signature_of_kind (sg : signature) (k : kind) : path list =
   match List.assoc_opt k sg with
@@ -515,6 +521,7 @@ let rec default_data_of_path (p : path) : data =
   | d0::ld1 -> List.fold_left aux (d0 :> template) ld1 *)
 
 let rec root_template_of_data (d : data) : template list =
+  Common.prof "Model2.root_template_of_data" (fun () ->
   match d with
   | `Bool _
     | `Int _
@@ -526,7 +533,7 @@ let rec root_template_of_data (d : data) : template list =
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
      List.sort_uniq Stdlib.compare
-       (List.concat (List.map root_template_of_data items))
+       (List.concat (List.map root_template_of_data items)))
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -535,6 +542,7 @@ let matches_ilist (matches : 'a -> 'b -> bool)
   List.for_all2 matches rev_l1 rev_l2
   
 let rec matches_template (t : template) (d : data) : bool =
+  Common.prof "Model2.matches_template" (fun () ->
   match t, d with
   | `U, _ -> true
   | `Bool b1, `Bool b2 when b1 = b2 -> true
@@ -554,7 +562,7 @@ let rec matches_template (t : template) (d : data) : bool =
   | `Many (ordered1,items1), `Many (ordered2,items2) ->
      ordered1 = ordered2 (* TODO: better handle ordered *)
      && List.for_all2 (fun item1 item2 -> matches_template item1 item2) items1 items2
-  | _ -> false
+  | _ -> false)
     
 (* description lengths *)
 
@@ -600,6 +608,7 @@ let dl_ctx0 =
     box_width = Grid.max_size }
   
 let dl_ctx_of_data (d : data) : dl_ctx =
+  Common.prof "Model2.dl_ctx_of_data" (fun () ->
   (* retrieving grid size: make assumption on paths *)
   let box_height =
     match find_data [`Size; `I] d with
@@ -609,7 +618,7 @@ let dl_ctx_of_data (d : data) : dl_ctx =
     match find_data [`Size; `J] d with
     | Some (`Int j) -> j
     | _ -> Grid.max_size in
-  { env_sig = signature0; box_height; box_width }
+  { env_sig = signature0; box_height; box_width })
       
 
 let dl_patt_as_template = Mdl.Code.usage 0.4
@@ -687,10 +696,12 @@ and dl_patt_rectangle dl ~ctx ~path pos size color mask =
                         
 
 let rec dl_data ~(ctx : dl_ctx) ?(path = []) (d : data) : dl =
+  Common.prof "Model2.dl_data" (fun () ->
   dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
-  +. dl_patt dl_data ~ctx ~path d
+  +. dl_patt dl_data ~ctx ~path d)
 
 let path_similarity ~ctx_path v =
+  Common.prof "Model2.path_similarity" (fun () ->
   let rec aux rev_p1' rev_p2' =
     match rev_p1', rev_p2' with
     | `I::rev_p1, `I::rev_p2 -> aux rev_p1 rev_p2
@@ -720,9 +731,10 @@ let path_similarity ~ctx_path v =
   and aux_ilist lp1 lp2 =
     if lp1 = lp2 then 1. else 0.8
   in
-  aux (List.rev ctx_path) (List.rev v)
+  aux (List.rev ctx_path) (List.rev v))
   
 let dl_var ~(ctx_path : path) (vars : path list) (x : path) : dl =
+  Common.prof "Model2.dl_var" (fun () ->
   (* DL of identifying x among vars, for use in scope of ctx_path *)
   let total_w, x_w =
     List.fold_left
@@ -733,7 +745,7 @@ let dl_var ~(ctx_path : path) (vars : path list) (x : path) : dl =
       (0.,0.) vars in
   if x_w = 0. || total_w = 0. (* happens when unify generalizes some path, removing sub-paths *)
   then Stdlib.infinity
-  else Mdl.Code.usage (x_w /. total_w)
+  else Mdl.Code.usage (x_w /. total_w))
 
 let dl_path ~(env_sig : signature) ~(ctx_path : path) (x : path) : dl =
   let k = path_kind x in
@@ -762,7 +774,7 @@ let rec dl_expr
      +. dl_path ~env_sig:ctx.env_sig ~ctx_path:path x
   | _ ->
      Mdl.Code.usage usage_expr
-     +. (match path_kind path, e with
+     +. (match k, e with
          | `Int, (`Plus (e1,e2) | `Minus (e1,e2)) ->
             let rec make_p2 p = (* 2nd operand prefers a size to a position *)
               match List.rev p with
@@ -782,6 +794,7 @@ let rec dl_expr
          | _ -> assert false)
 
 let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
+  Common.prof "Model2.dl_template" (fun () ->
   let k = path_kind path in
   let usage_repeat =
     match k with
@@ -805,7 +818,7 @@ let rec dl_template ~(ctx : dl_ctx) ?(path = []) (t : template) : dl =
      +. dl_patt dl_template ~ctx ~path patt
   | #expr as e ->
      Mdl.Code.usage (0.5 -. usage_repeat)
-     +. dl_expr dl_template ~ctx ~path e
+     +. dl_expr dl_template ~ctx ~path e)
 
     
 let dl_data_given_patt
@@ -841,6 +854,7 @@ let dl_data_given_patt
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = []) (t : template) (d : data) : dl =
+  Common.prof "Model2.dl_data_given_template" (fun () ->
   match t, d with
   | `U, _ -> dl_data ~ctx ~path d
   | `Repeat patt1, `Many (false,items) ->
@@ -849,10 +863,11 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = []) (t : template) (d : 
             dl_data_given_patt dl_data_given_template ~ctx ~path:(path ++ any_item) patt1 item)
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
-  | #expr, _ -> assert false (* should have been evaluated out *)
+  | #expr, _ -> assert false) (* should have been evaluated out *)
 
            
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
+  Common.prof "Model2.dl_diff" (fun () ->
   let data_size = size_of_data data in
   Mdl.Code.universal_int_star (List.length diff)
   -. 1. (* some normalization to get 0 for empty grid data *)
@@ -863,16 +878,17 @@ let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
            | Some d1 -> d1
            | None -> assert false in
          Mdl.Code.uniform data_size
-         +. dl_data ~ctx d1 ~path:p1)
+         +. dl_data ~ctx d1 ~path:p1))
     
 let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
+  Common.prof "Model2.dl_delta" (fun () ->
   let nb_pixels = List.length delta in
   Mdl.Code.universal_int_star nb_pixels (* number of delta pixels *)
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. Mdl.sum delta
        (fun (i,j,c) ->
          dl_data ~ctx ~path:[`Layers []; any_item] (* dummy path with kind Shape *)
-           (`Point (`Vec (`Int i, `Int j), `Color c)))
+           (`Point (`Vec (`Int i, `Int j), `Color c))))
 
 (* NOT using optimized DL below for fair comparisons with model points: 
   +. Mdl.Code.comb nb_pixels area (* where they are *)
@@ -970,15 +986,17 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : path) (t : template) : 
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e)
 
 let rec apply_template ~(env : data) (p : path) (t : template) : (template,exn) Result.t =
+  Common.prof "Model2.apply_template" (fun () ->
   try Result.Ok (apply_template_gen ~lookup:(fun p -> find_data p env) p t)
   with
-  | (Unbound_var _ as exn) -> Result.Error exn (* catching runtime error in expression eval *)
+  | (Unbound_var _ as exn) -> Result.Error exn) (* catching runtime error in expression eval *)
 (* TODO: remove path argument, seems useless *)
 
 
 (* grid generation from data and template *)
 
 let rec generate_template (p : path) (t : template) : data =
+  Common.prof "Model2.generate_template" (fun () ->
   match t with
   | `U -> default_data_of_path p (* default data *)
   | `Repeat patt1 -> apply_patt
@@ -987,7 +1005,7 @@ let rec generate_template (p : path) (t : template) : data =
   | #patt as patt -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
                        p patt
-  | #expr -> assert false (* should be eliminated by call to apply_template *)
+  | #expr -> assert false) (* should be eliminated by call to apply_template *)
 
   
 exception Invalid_data_as_grid of data
@@ -1126,7 +1144,7 @@ let rec parse_template
   | #patt as patt -> parse_patt patt
   | #expr -> assert false
 
-let parse_bool t p (b : bool) state =
+let parse_bool t p (b : bool) state = (* QUICK *)
   parse_template
     ~parse_u:(Myseq.return (`Bool b, state))
     ~parse_patt:(function
@@ -1138,7 +1156,7 @@ let parse_bool t p (b : bool) state =
       | _ -> Myseq.empty)
     t
 
-let parse_int t p (i : int) state =
+let parse_int t p (i : int) state = (* QUICK *)
   parse_template
     ~parse_u:(Myseq.return (`Int i, state))
     ~parse_patt:(function
@@ -1150,7 +1168,7 @@ let parse_int t p (i : int) state =
       | _ -> Myseq.empty)
     t
 
-let parse_color t p (c : Grid.color) state =
+let parse_color t p (c : Grid.color) state = (* QUICK *)
   parse_template
     ~parse_u:(Myseq.return (`Color c, state))
     ~parse_patt:(function
@@ -1162,7 +1180,7 @@ let parse_color t p (c : Grid.color) state =
       | _ -> Myseq.empty)
     t
   
-let parse_mask t p (m : Grid.Mask.t option) state =
+let parse_mask t p (m : Grid.Mask.t option) state = (* QUICK *)
   parse_template
     ~parse_u:(Myseq.return (`Mask m, state))
     ~parse_patt:(function
@@ -1174,7 +1192,7 @@ let parse_mask t p (m : Grid.Mask.t option) state =
       | _ -> Myseq.empty)
     t
 
-let parse_vec t p (vi, vj : int * int) state =
+let parse_vec t p (vi, vj : int * int) state = (* QUICK *)
   parse_template
     ~parse_u:(Myseq.return (`Vec (`Int vi, `Int vj), state))
     ~parse_patt:(function
@@ -1186,6 +1204,7 @@ let parse_vec t p (vi, vj : int * int) state =
     t
 
 let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
+  Common.prof "Model2.state_minus_shape_gen" (fun () ->
   let new_mask = Grid.Mask.diff state.mask occ_mask in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
@@ -1200,7 +1219,7 @@ let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
 	      not (Grid.Mask.is_empty
 		     (Grid.Mask.inter p.Grid.pixels new_mask)))
 	    state.parts } in
-    Some new_state
+    Some new_state)
 let state_minus_point state (i,j,c) =
   let nb_explained_pixels = 1 in
   let occ_delta = [] in
@@ -1222,23 +1241,23 @@ let rec parse_shape =
     let* dmask, state = parse_mask mask (p ++ `Mask) rect.rmask state in
     Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
   in
-  let parse_all_points parts state =
+  let parse_all_points parts state = Myseq.prof "Model2.parse_all_points" (
     let* point = Myseq.from_list (Grid.points state.grid state.mask parts) in
     let* state = Myseq.from_option (state_minus_point state point) in
-    Myseq.return (point, state) in
-  let parse_all_rectangles parts state =
+    Myseq.return (point, state)) in
+  let parse_all_rectangles parts state = Myseq.prof "Model2.parse_all_rectangles" (
     let* rect = Myseq.from_list (Grid.rectangles state.grid state.mask parts) in
     let* state = Myseq.from_option (state_minus_rectangle state rect) in
-    Myseq.return (rect, state)
+    Myseq.return (rect, state))
   in
-  let parse_single_point pos color p parts state =
+  let parse_single_point pos color p parts state = Myseq.prof "Model2.parse_single_point" (
     let* point, state = parse_all_points parts state in
-    parse_point pos color p point state in
-  let parse_single_rectangle pos size color mask p parts state =
+    parse_point pos color p point state) in
+  let parse_single_rectangle pos size color mask p parts state = Myseq.prof "Model2.parse_single_rectangle" (
     let* rect, state = parse_all_rectangles parts state in
-    parse_rectangle pos size color mask p rect state
+    parse_rectangle pos size color mask p rect state)
   in
-  let parse_repeat_point pos color p parts state =
+  let parse_repeat_point pos color p parts state = Myseq.prof "Model2.parse_repeat_point" (
     let points_next =
       Grid.points state.grid state.mask parts
       |> Myseq.from_list
@@ -1256,8 +1275,8 @@ let rec parse_shape =
           next_points (* only points in remaining mask *)
           |> Myseq.filter (fun (i,j,c) -> Grid.Mask.mem i j state.mask) in
         Myseq.return (data, Myseq.introspect next_points, state))
-      points_next state in
-  let parse_repeat_rectangle pos size color mask p parts state =
+      points_next state) in
+  let parse_repeat_rectangle pos size color mask p parts state = Myseq.prof "Model2.parse_repeat_rectangle" (
     let rectangles_next =
       Grid.rectangles state.grid state.mask parts
       |> Myseq.from_list
@@ -1276,11 +1295,11 @@ let rec parse_shape =
           |> Myseq.filter (fun (r : Grid.rectangle) ->
                  not Grid.Mask.(is_empty (inter r.mask state.mask))) in
         Myseq.return (data, Myseq.introspect next_rectangles, state))
-      rectangles_next state
+      rectangles_next state)
   in
   fun t p (parts : Grid.part list) state ->
-  Common.prof "Model2.parse_shape" (fun () ->
-  parse_template
+  Myseq.prof "Model2.parse_shape"
+  (parse_template
     ~parse_u:
     (Myseq.concat
        [parse_all_points parts state
@@ -1321,8 +1340,8 @@ let rec parse_shape =
   |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
   
 let parse_grid t p (g : Grid.t) state =
-  Common.prof "Model2.parse_grid" (fun () ->
-  parse_template
+  Myseq.prof "Model2.parse_grid"
+  (parse_template
     ~parse_u:(Myseq.empty)
     ~parse_patt:
     (function
@@ -1390,23 +1409,28 @@ let read_grid
   let parses =
     let* data, state = parse_grid t path0 g state in
     let ctx = dl_ctx_of_data data in
-    let dl_data = dl_data_given_template ~ctx t data in
-    let dl_diff = dl_diff ~ctx state.diff data in
-    let dl_delta = dl_delta ~ctx state.delta in
-    let dl = dl_data +. dl_diff +. dl_delta in
+    let dl = Common.prof "Model2.read_grid/dl" (fun () ->
+      let dl_data = dl_data_given_template ~ctx t data in
+      let dl_diff = dl_diff ~ctx state.diff data in
+      let dl_delta = dl_delta ~ctx state.delta in
+      dl_data +. dl_diff +. dl_delta) in
     let gd = {data; diff=state.diff; delta=state.delta} in
     Myseq.return (env, gd, dl) in
   let l_parses =
-    parses
-    |> Myseq.slice ~offset:0 ~limit:(!max_nb_parse)
-    |> Myseq.to_list in
+    Common.prof "Model2.read_grid/first_parses" (fun () ->
+        parses
+        |> Myseq.slice ~offset:0 ~limit:(!max_nb_parse)
+        |> Myseq.to_list) in
   if l_parses = []
   then Result.Error Parse_failure
-  else Result.Ok
-         (l_parses
+  else
+    let best_parses =
+      Common.prof "Model2.read_grid/best_parses" (fun () ->
+          l_parses
           |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
           |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
-          |> limit_dl (fun (_,_,dl) -> dl)))
+          |> limit_dl (fun (_,_,dl) -> dl)) in
+    Result.Ok best_parses)
 
 (* result of reading a list of grids with a grid model *)
 type grids_read =
@@ -1587,12 +1611,13 @@ let insert_expr insert (f : 'a option -> 'a) (p : path) (e : 'a expr) : 'a expr 
   | _ -> assert false
        
 let rec insert_template (f : template option -> template) (p : path) (t : template) : template =
+  Common.prof "Model2.insert_template" (fun () ->
   match p, t with
   | [], _ -> f (Some t)
   | `Item (_,q)::[], `Repeat patt1 -> `Repeat (insert_patt insert_template f q patt1)
   | _, (#patt as patt) -> (insert_patt insert_template f p patt :> template)
   | _, (#expr as e) -> (insert_expr insert_template f p e :> template)
-  | _ -> assert false
+  | _ -> assert false)
 
                    
 (*let rec map_template (f : path -> template -> template) (p : path) (t : template) : template =
@@ -1715,7 +1740,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
   with Refinement_no_change -> None) (* does not seem to occur any more *)
 
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
-  Common.prof "Model2.defs_refinements" (fun () ->
+  Myseq.prof "Model2.defs_refinements" (
   assert (grss <> []);
   let u_vars =
     List.rev
@@ -1826,6 +1851,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   |> Myseq.from_list
   |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check p k t ctx d env =
+  Common.prof "Model2.defs_check" (fun () ->
   match t with
   | `U -> assert false (* should not be used as def *)
   | `Repeat _ -> assert false (* should not be used as def *)
@@ -1852,7 +1878,7 @@ and defs_check p k t ctx d env =
               | `Many _, _ -> false
               | _, `Many _ -> false
               | t1, t2 -> t1 = t2)
-          | Result.Error _, _ -> false )
+          | Result.Error _, _ -> false ) )
 (*
   val_matrix
   |> Common.list_product (* TODO: find a way to avoid this combinatorial generation *)
@@ -1977,6 +2003,7 @@ and find_u_expr ~env_sig u_path u_kind u_vals alignment : grid_refinement Myseq.
  *)
 and defs_expressions ~env_sig : (kind * (template * path option) list) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
+  Common.prof "Model2.defs_expressions" (fun () ->
   let int_vars = signature_of_kind env_sig `Int in
   List.map
     (fun k ->
@@ -2019,7 +2046,7 @@ and defs_expressions ~env_sig : (kind * (template * path option) list) list =
         | _ -> le in
       let le = List.rev le in (* reverse to put in order *)
       k, le)
-    all_kinds
+    all_kinds)
 
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
@@ -2047,11 +2074,12 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
   | _ -> assert false
        
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
+  Myseq.prof "Model2.grid_refinements" (
   Myseq.concat
     [defs_refinements ~env_sig t grss;
      shape_refinements t]
   |> Myseq.filter_map
-       (fun r -> apply_grid_refinement r t)
+       (fun r -> apply_grid_refinement r t))
 
 let dl_grid_model_data (gsr : grids_read) : dl triple (* model, data, model+data *) =
   let dl_data =
@@ -2105,7 +2133,8 @@ let apply_refinement (r : refinement) (m : model) : (refinement * model) option 
      |> Option.map (fun (_,t) -> r, {m with output_template = t})
                  
 let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
-  = Common.prof "Model2.model_refinements" (fun () ->
+  =
+  Myseq.prof "Model2.model_refinements" (
   let on_input = true
     (*match last_r with
     | RInit -> true
