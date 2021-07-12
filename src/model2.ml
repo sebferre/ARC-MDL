@@ -528,6 +528,34 @@ let rec root_template_of_data (d : data) : template list =
      List.sort_uniq Stdlib.compare
        (List.concat (List.map root_template_of_data items))
 
+let matches_ilist (matches : 'a -> 'b -> bool)
+      (il1 : 'a ilist) (il2 : 'b ilist) : bool =
+  let rev_l1 = fold_ilist (fun res _ t -> t::res) [] [] il1 in
+  let rev_l2 = fold_ilist (fun res _ d -> d::res) [] [] il2 in
+  List.for_all2 matches rev_l1 rev_l2
+  
+let rec matches_template (t : template) (d : data) : bool =
+  match t, d with
+  | `U, _ -> true
+  | `Bool b1, `Bool b2 when b1 = b2 -> true
+  | `Int i1, `Int i2 when i1 = i2 -> true
+  | `Color c1, `Color c2 when c1 = c2 -> true
+  | `Mask m1, `Mask m2 when m1 = m2 -> true
+  | `Vec (i1,j1), `Vec (i2,j2) ->
+     matches_template i1 i2 && matches_template j1 j2
+  | `Point (pos1,color1), `Point (pos2,color2) ->
+     matches_template pos1 pos2 && matches_template color1 color2
+  | `Rectangle (pos1,size1,color1,mask1), `Rectangle (pos2,size2,color2,mask2) ->
+     matches_template pos1 pos2 && matches_template size1 size2
+     && matches_template color1 color2 && matches_template mask1 mask2
+  | `Background (size1,color1,layers1), `Background (size2,color2,layers2) ->
+     matches_template size1 size2 && matches_template color1 color2
+     && matches_ilist matches_template layers1 layers2
+  | `Many (ordered1,items1), `Many (ordered2,items2) ->
+     ordered1 = ordered2 (* TODO: better handle ordered *)
+     && List.for_all2 (fun item1 item2 -> matches_template item1 item2) items1 items2
+  | _ -> false
+    
 (* description lengths *)
 
 type dl = Mdl.bits
@@ -1600,16 +1628,17 @@ let rec insert_template (f : template option -> template) (p : path) (t : templa
 
 type grid_refinement =
   | RGridInit
-  | RDef of path * template * path option (* many-ctx *)
+  | RDef of path * template * path option (* many-ctx *) * bool (* partial: only true for some items if many items *)
   | RShape of path * template (* shape *)
   | RRepeat of path
   | RSingle of path
 
 let pp_grid_refinement = function
   | RGridInit -> ()
-  | RDef (p,t,ctx) ->
+  | RDef (p,t,ctx,partial) ->
      print_string "DEF: "; pp_path p;
-     print_string "="; pp_template t
+     print_string "="; pp_template t;
+     if partial then print_string " (partial)"
   | RShape (path,sh) ->
      print_string "SHAPE at ";
      pp_path path;
@@ -1629,14 +1658,14 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
     let t =
       match r with
       | RGridInit -> raise Refinement_no_change
-      | RDef (modified_p,new_t,None) ->
+      | RDef (modified_p,new_t,None, partial) ->
          t
          |> insert_template
               (function
                | Some x when x = new_t -> raise Refinement_no_change
                | _ -> new_t)
               modified_p
-      | RDef (modified_p, new_t, Some p_many) ->
+      | RDef (modified_p, new_t, Some p_many, partial) ->
          let insert_aux local t1 =
            t1
            |> insert_template
@@ -1795,12 +1824,15 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (sum_dl1,sum_rank1,prio1,_,_,_,_) (sum_dl2,sum_rank2,prio2,_,_,_,_) ->
          Stdlib.compare (sum_dl1,sum_rank1,prio1) (sum_dl2,sum_rank2,prio2))
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx)))
+  |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check p k t ctx d env =
   match t with
   | `U -> assert false (* should not be used as def *)
   | `Repeat _ -> assert false (* should not be used as def *)
-  | #patt -> List.mem t (root_template_of_data d)
+  | #patt ->
+     ( match d with
+       | `Many (_,items) -> List.for_all (matches_template t) items
+       | _ -> matches_template t d )
   | #expr ->
      (*     print_string "CHECK expr: "; pp_template t; Option.iter (fun p_many -> print_string " at ctx "; pp_path p_many) ctx; print_newline (); *)
      let e_opt =
