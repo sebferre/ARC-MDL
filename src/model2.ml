@@ -1219,25 +1219,36 @@ let rec parse_shape =
     parse_repeat
       (fun i points_next state ->
         let p_item = p ++ ith_item i in
-        let* point, next_points = points_next in
+        let* point, next_points =
+          points_next
+          |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse) in
         let* state = Myseq.from_option (state_minus_point state point) in
         let* data, state = parse_point pos color p_item point state in
+        let next_points : Grid.point Myseq.t =
+          next_points (* only points in remaining mask *)
+          |> Myseq.filter (fun (i,j,c) -> Grid.Mask.mem i j state.mask) in
         Myseq.return (data, Myseq.introspect next_points, state))
       points_next state in
   let parse_repeat_rectangle pos size color mask p parts state =
-    let rectangles =
+    let rectangles_next =
       Grid.rectangles state.grid state.mask parts
       |> Myseq.from_list
       |> Myseq.introspect in
     (*print_endline "RECTANGLES"; (* TEST *)*)
     parse_repeat
-      (fun i rectangles state ->
+      (fun i rectangles_next state ->
         let p_item = p ++ ith_item i in
-        let* rect, next_rectangles = rectangles in
-        let* state = Myseq.from_option (state_minus_rectangle state rect) in
+        let* rect, next_rectangles =
+          rectangles_next
+          |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse) in
+        let* state : parse_state = Myseq.from_option (state_minus_rectangle state rect) in
         let* data, state = parse_rectangle pos size color mask p_item rect state in
+        let next_rectangles =
+          next_rectangles (* only rectangles included in remaining masks *)
+          |> Myseq.filter (fun (r : Grid.rectangle) ->
+                 not Grid.Mask.(is_empty (inter r.mask state.mask))) in
         Myseq.return (data, Myseq.introspect next_rectangles, state))
-      rectangles state
+      rectangles_next state
   in
   fun t p (parts : Grid.part list) state ->
   Common.prof "Model2.parse_shape" (fun () ->
@@ -2180,7 +2191,7 @@ let learn_model
                     pp_data d_o; print_newline ();
                     Printf.printf "\tdl=%.1f\n" dl);
              print_newline ()
- *)             
+ *)
            );
 	   flush stdout;
            lmd)
