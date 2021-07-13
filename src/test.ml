@@ -306,11 +306,11 @@ let task_model =
                                       `Rectangle (`U,`U,`U,`U),
                                       `Nil)));
      output_template =
-       `Background (`Var [`Size], `Var [`Color],
+       `Background (`Var (`Field (`Size,`Root)), `Var (`Field (`Color, `Root)),
                     `Insert (`Nil,
-                             `Var [`Layers [`Right]],
+                             `Var (`Field (`Layer (`Right `Root), `Root)),
                              `Insert (`Nil,
-                                      `Var [`Layers []],
+                                      `Var (`Field (`Layer `Root, `Root)),
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
@@ -319,9 +319,13 @@ let task_model =
                              `Rectangle (`U,`U,`U,`U),
                              `Nil));
      output_template =
-       `Background (`Var [`Layers []; `Size], `Var [`Layers[`Right]; `Color],
+       `Background (`Var (`Field (`Size, `Field (`Layer `Root, `Root))),
+                    `Var (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
                     `Insert (`Nil,
-                             `Rectangle (`Vec (`Int 0, `Int 0), `Var [`Layers []; `Size], `Var [`Layers []; `Color], `Var [`Layers []; `Mask]),
+                             `Rectangle (`Vec (`Int 0, `Int 0),
+                                         `Var (`Field (`Size, (`Field (`Layer `Root, `Root)))),
+                                         `Var (`Field (`Color, (`Field (`Layer `Root, `Root)))),
+                                         `Var (`Field (`Mask, (`Field (`Layer `Root, `Root))))),
                              `Nil))}; 
   ]
   

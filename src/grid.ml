@@ -720,8 +720,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   print_endline "RECTANGLES:";
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
-let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list =
-   Common.prof "Grid.rectangles_of_part" (fun () ->
+let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = (* QUICK *)
    let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
    let _area = h * w in
    let r_mask = ref (Mask.copy p.pixels) in (* rectangle mask *)
@@ -782,7 +781,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
 	 delta = (!delta);
          nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
-   res)
+   res
 
 (*let rectangles_of_part, reset_rectangles_of_part =
   let f, reset =
