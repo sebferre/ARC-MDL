@@ -563,8 +563,7 @@ let matches_ilist (matches : 'a -> 'b -> bool)
   let rev_l2 = fold_ilist (fun res _ d -> d::res) [] `Root il2 in
   List.for_all2 matches rev_l1 rev_l2
   
-let rec matches_template (t : template) (d : data) : bool =
-  Common.prof "Model2.matches_template" (fun () ->
+let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   match t, d with
   | `U, _ -> true
   | `Bool b1, `Bool b2 when b1 = b2 -> true
@@ -584,7 +583,7 @@ let rec matches_template (t : template) (d : data) : bool =
   | `Many (ordered1,items1), `Many (ordered2,items2) ->
      ordered1 = ordered2 (* TODO: better handle ordered *)
      && List.for_all2 (fun item1 item2 -> matches_template item1 item2) items1 items2
-  | _ -> false)
+  | _ -> false
     
 (* description lengths *)
 
@@ -667,10 +666,10 @@ let rec dl_patt
   | `Vec, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
 
   | `Layer, `Many (ordered,items) ->
-     Mdl.Code.universal_int_plus (List.length items)
-     +. 0. (* TODO: encode ordered when length > 1 *)
-     +. Mdl.sum items
+     0. (* TODO: encode ordered when length > 1 *)
+     +. Mdl.Code.list_plus
           (fun item -> dl ~ctx item ~path:(any_item path)) (* exact item index does not matter here *)
+          items
   | `Layer, _ -> (* single shape instead of Many *)
      Mdl.Code.universal_int_plus 1 (* singleton *)
      +. dl_patt dl ~ctx patt ~path:(any_item path)
@@ -721,8 +720,7 @@ let rec dl_data ~(ctx : dl_ctx) ?(path = `Root) (d : data) : dl = (* QUICK *)
   dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
   +. dl_patt dl_data ~ctx ~path d
 
-let path_similarity ~ctx_path v =
-  Common.prof "Model2.path_similarity" (fun () ->
+let path_similarity ~ctx_path v = (* QUICK *)
   let rec aux lp1' lp2' =
     match lp1', lp2' with
     | `Root::lp1, _ -> aux lp1 lp2'
@@ -752,7 +750,7 @@ let path_similarity ~ctx_path v =
   and aux_ilist lp1 lp2 =
     if lp1 = lp2 then 1. else 0.8
   in
-  aux [ctx_path] [v])
+  aux [ctx_path] [v]
   
 let dl_var ~(ctx_path : revpath) (vars : revpath list) (x : revpath) : dl =
   Common.prof "Model2.dl_var" (fun () ->
@@ -878,9 +876,9 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   match t, d with
   | `U, _ -> dl_data ~ctx ~path d
   | `Repeat patt1, `Many (false,items) ->
-     Mdl.Code.universal_int_plus (List.length items)
-     +. Mdl.sum items (fun item ->
-            dl_data_given_patt dl_data_given_template ~ctx ~path:(any_item path) patt1 item)
+     Mdl.Code.list_plus (fun item ->
+         dl_data_given_patt dl_data_given_template ~ctx ~path:(any_item path) patt1 item)
+       items
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
@@ -888,27 +886,29 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
            
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
   Common.prof "Model2.dl_diff" (fun () ->
-  let data_size = size_of_data data in
-  Mdl.Code.universal_int_star (List.length diff)
-  -. 1. (* some normalization to get 0 for empty grid data *)
-  +. Mdl.sum diff
-       (fun p1 ->
-         let d1 =
-           match find_data p1 data with
-           | Some d1 -> d1
-           | None -> assert false in
-         Mdl.Code.uniform data_size
-         +. dl_data ~ctx d1 ~path:p1))
+  if diff = []
+  then 0.
+  else
+    let dl_data_size = Mdl.Code.uniform (size_of_data data) in
+    -. 1. (* some normalization to get 0 for empty grid data *)
+    +. Mdl.Code.list_star
+         (fun p1 ->
+           let d1 =
+             match find_data p1 data with
+             | Some d1 -> d1
+             | None -> assert false in
+           dl_data_size
+           +. dl_data ~ctx d1 ~path:p1)
+         diff)
     
 let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
   Common.prof "Model2.dl_delta" (fun () ->
-  let nb_pixels = List.length delta in
-  Mdl.Code.universal_int_star nb_pixels (* number of delta pixels *)
   -. 1. (* some normalization to get 0 for empty grid data *)
-  +. Mdl.sum delta
+  +. Mdl.Code.list_star
        (fun (i,j,c) ->
          dl_data ~ctx ~path:(any_item (`Field (`Layer `Root, `Root))) (* dummy path with kind Shape *)
-           (`Point (`Vec (`Int i, `Int j), `Color c))))
+           (`Point (`Vec (`Int i, `Int j), `Color c)))
+       delta)
 
 (* NOT using optimized DL below for fair comparisons with model points: 
   +. Mdl.Code.comb nb_pixels area (* where they are *)
@@ -1014,8 +1014,7 @@ let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,ex
 
 (* grid generation from data and template *)
 
-let rec generate_template (p : revpath) (t : template) : data =
-  Common.prof "Model2.generate_template" (fun () ->
+let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
   match t with
   | `U -> default_data_of_path p (* default data *)
   | `Repeat patt1 -> apply_patt
@@ -1024,7 +1023,7 @@ let rec generate_template (p : revpath) (t : template) : data =
   | #patt as patt -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
                        p patt
-  | #expr -> assert false) (* should be eliminated by call to apply_template *)
+  | #expr -> assert false (* should be eliminated by call to apply_template *)
 
   
 exception Invalid_data_as_grid of data
@@ -1428,7 +1427,7 @@ let read_grid
   let parses =
     let* data, state = parse_grid t path0 g state in
     let ctx = dl_ctx_of_data data in
-    let dl = Common.prof "Model2.read_grid/dl" (fun () ->
+    let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
       let dl_data = dl_data_given_template ~ctx t data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
