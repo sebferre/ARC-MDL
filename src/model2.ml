@@ -85,11 +85,6 @@ let rec map_ilist (f : ilist_revpath -> 'a -> 'b) (lp : ilist_revpath) (l : 'a i
 
 (* type definitions for data, expressions, templates *)
     
-type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Layer | `Grid ]
-let all_kinds =
-  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Layer;  `Grid ]
-  
 type 'a patt =
   [ `Bool of bool
   | `Int of int
@@ -132,12 +127,6 @@ let rec path_parent : revpath -> revpath option = function
        | None -> Some ctx
        | Some local_parent -> Some (`Item (i_opt,local_parent,ctx)) )
        
-let rec path_tail (p : revpath) : revpath = (* to access context of path, reading the path from the tail *)
-  match p with
-  | `Item (_,`Root,_) -> p
-  | `Item (_,local,_) -> path_tail local (* keep rev_p to avoid confusion between grid color and shape color, for instance *)
-  | _ -> p
-       
 let path_split_any_item (path : revpath) : (revpath * revpath) option (* local, ctx *) =
   match path with
   | `Item (None,local,ctx) -> Some (local,ctx)
@@ -147,6 +136,58 @@ let path_ctx (path : revpath) : revpath option =
   match path with
   | `Item (None,local,ctx) -> Some ctx
   | _ -> None
+
+type kind =
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Layer | `Grid ]
+let all_kinds =
+  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Layer;  `Grid ]
+
+let rec path_kind (p : revpath) : kind =
+  match p with
+  | `Root -> `Grid
+  | `Field (f,_) ->
+     (match f with
+      | (`I | `J) -> `Int
+      | `Color -> `Color
+      | `Mask -> `Mask
+      | (`Pos | `Size) -> `Vec
+      | `Layer _ -> `Layer)
+  | `Item (_,`Root,_) -> `Shape
+  | `Item (_,local,_) -> path_kind local
+
+type role = (* same information as kind + contextual information *)
+  [ `Int of [`I | `J] * role_vec
+  | `Color of role_frame
+  | `Mask
+  | `Vec of role_vec
+  | `Shape
+  | `Layer
+  | `Grid ]
+and role_vec =
+  [ `Pos | `Size of role_frame ]
+and role_frame =
+  [ `Shape | `Grid ]
+
+let rec path_role ?(ctx = None) (p : revpath) : role =
+  match p with
+  | `Root when ctx=None -> `Grid
+  | `Root -> `Shape
+  | `Field ((`I | `J as f), p1) -> `Int (f, path_role_vec ~ctx p1)
+  | `Field (`Color, p1) -> `Color (path_role_frame ~ctx p1)
+  | `Field (`Mask, _) -> `Mask
+  | `Field (`Pos, _) -> `Vec `Pos
+  | `Field (`Size, p1) -> `Vec (`Size (path_role_frame ~ctx p1))
+  | `Field (`Layer _, _) -> `Layer
+  | `Item (_,local,ctx) -> path_role ~ctx:(Some ctx) local
+and path_role_vec ~ctx : revpath -> role_vec = function
+  | `Field (`Pos, _) -> `Pos
+  | `Field (`Size, p1) -> `Size (path_role_frame ~ctx p1)
+  | _ -> assert false
+and path_role_frame ~ctx : revpath -> role_frame = function
+  | `Root when ctx = None -> `Grid
+  | `Root -> `Shape
+  | `Field (`Layer _, _) -> `Shape
+  | _ -> assert false
        
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
@@ -476,19 +517,6 @@ let size_of_data (d : data) : int =
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ -> res+1) 0 path0 t
 
-let rec path_kind (p : revpath) : kind =
-  match p with
-  | `Root -> `Grid
-  | `Field (f,_) ->
-     (match f with
-      | (`I | `J) -> `Int
-      | `Color -> `Color
-      | `Mask -> `Mask
-      | (`Pos | `Size) -> `Vec
-      | `Layer _ -> `Layer)
-  | `Item (_,`Root,_) -> `Shape
-  | `Item (_,local,_) -> path_kind local
-
 let signature_of_template (t : template) : signature =
   Common.prof "Model2.signature_of_template" (fun () ->
   let ht = Hashtbl.create 13 in
@@ -526,22 +554,20 @@ let signature_of_kind (sg : signature) (k : kind) : revpath list =
   | Some ps -> ps
   | None -> []
   
-let rec default_data_of_path ?(ctx = None) (p : revpath) : data =
-  match p with
-  | `Field ((`I | `J), `Field (`Pos, _)) -> `Int 0
-  | `Field ((`I | `J), `Field (`Size, `Root)) -> `Int 10
-  | `Field ((`I | `J), `Field (`Size, _)) -> `Int 2
-  | `Field (`Color, `Root) when ctx=None -> `Color Grid.black
-  | `Field (`Color, _) -> `Color Grid.no_color
-  | `Field (`Mask, _) -> `Mask None
-  | `Field (`Pos, _) -> `Vec (`Int 0, `Int 0)
-  | `Field (`Size, `Root) when ctx=None -> `Vec (`Int 10, `Int 10)
-  | `Field (`Size, _) -> `Vec (`Int 2, `Int 2)
-  | `Field (`Layer _, _) -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
-  | `Item (_,local,ctx) -> default_data_of_path ~ctx:(Some ctx) local
-  | `Root when ctx=None -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
-  | `Root -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
-  | _ -> assert false
+let rec default_data_of_path (p : revpath) : data =
+  match path_role p with
+  | `Int (_, `Pos) -> `Int 0
+  | `Int (_, `Size `Grid) -> `Int 10
+  | `Int (_, `Size `Shape) -> `Int 2
+  | `Color `Grid -> `Color Grid.black
+  | `Color `Shape -> `Color Grid.no_color
+  | `Mask -> `Mask None
+  | `Vec `Pos -> `Vec (`Int 0, `Int 0)
+  | `Vec (`Size `Grid) -> `Vec (`Int 10, `Int 10)
+  | `Vec (`Size `Shape) -> `Vec (`Int 2, `Int 2)
+  | `Shape -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
+  | `Layer -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
+  | `Grid -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
 
 let rec root_template_of_data (d : data) : template list = (* QUICK *)
   match d with
@@ -650,20 +676,26 @@ let rec dl_patt
       ~(ctx : dl_ctx) ~(path : revpath) (patt : 'a patt) : dl =
   match path_kind path, patt with
   | `Int, `Int n ->
-     ( match path_tail path with
-       | `Field (`I, `Field (`Pos, _)) -> dl_index ~bound:ctx.box_height n
-       | `Field (`J, `Field (`Pos, _)) -> dl_index ~bound:ctx.box_width n
-       | `Field ((`I | `J), `Field (`Size, _)) -> dl_length n
+     ( match path_role path with
+       | `Int (`I, `Pos) -> dl_index ~bound:ctx.box_height n
+       | `Int (`J, `Pos) -> dl_index ~bound:ctx.box_width n
+       | `Int (_, `Size _) -> dl_length n
        | _ -> assert false )
 
   | `Color, `Color c ->
-     ( match path with
-       | `Field (`Color, `Root) -> dl_background_color c
-       | _ -> dl_color c )
+     ( match path_role path with
+       | `Color `Grid -> dl_background_color c
+       | `Color `Shape -> dl_color c
+       | _ -> assert false )
 
   | `Mask, `Mask m -> dl_mask m
 
   | `Vec, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
+
+  | `Shape, `Point (pos,color) ->
+     Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
+  | `Shape, `Rectangle (pos,size,color,mask) ->
+     Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
 
   | `Layer, `Many (ordered,items) ->
      0. (* TODO: encode ordered when length > 1 *)
@@ -673,11 +705,6 @@ let rec dl_patt
   | `Layer, _ -> (* single shape instead of Many *)
      Mdl.Code.universal_int_plus 1 (* singleton *)
      +. dl_patt dl ~ctx patt ~path:(any_item path)
-
-  | `Shape, `Point (pos,color) ->
-     Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
-  | `Shape, `Rectangle (pos,size,color,mask) ->
-     Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
 
   | `Grid, `Background (size,color,layers) ->
      let box_height =
