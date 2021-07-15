@@ -671,42 +671,49 @@ let dl_ctx_of_data (d : data) : dl_ctx =
 let dl_patt_as_template = Mdl.Code.usage 0.4
 
 
-let rec dl_patt
+let dl_patt
       (dl : ctx:dl_ctx -> ?path:revpath -> 'a -> dl)
       ~(ctx : dl_ctx) ~(path : revpath) (patt : 'a patt) : dl =
-  match path_kind path, patt with
-  | `Int, `Int n ->
+  match patt with
+  | `Int n ->
      ( match path_role path with
        | `Int (`I, `Pos) -> dl_index ~bound:ctx.box_height n
        | `Int (`J, `Pos) -> dl_index ~bound:ctx.box_width n
        | `Int (_, `Size _) -> dl_length n
        | _ -> assert false )
 
-  | `Color, `Color c ->
+  | `Color c ->
      ( match path_role path with
        | `Color `Grid -> dl_background_color c
        | `Color `Shape -> dl_color c
        | _ -> assert false )
 
-  | `Mask, `Mask m -> dl_mask m
+  | `Mask m -> dl_mask m
 
-  | `Vec, `Vec (i,j) -> dl_patt_vec dl ~ctx ~path i j
+  | `Vec (i,j) ->
+     dl ~ctx i ~path:(path ++ `I)
+     +. dl ~ctx j ~path:(path ++ `J)  
 
-  | `Shape, `Point (pos,color) ->
-     Mdl.Code.usage 0.5 +. dl_patt_point dl ~ctx ~path pos color
-  | `Shape, `Rectangle (pos,size,color,mask) ->
-     Mdl.Code.usage 0.5 +. dl_patt_rectangle dl ~ctx ~path pos size color mask
+  | `Point (pos,color) ->
+     ( match path with `Field (`Layer _, _) -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
+     +. Mdl.Code.usage 0.5
+     +. dl ~ctx pos ~path:(path ++ `Pos)
+     +. dl ~ctx color ~path:(path ++ `Color)
+  | `Rectangle (pos,size,color,mask) ->
+     ( match path with `Field (`Layer _, _) -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
+     +. Mdl.Code.usage 0.5
+     +. dl ~ctx pos ~path:(path ++ `Pos)
+     +. dl ~ctx size ~path:(path ++ `Size)
+     +. dl ~ctx color ~path:(path ++ `Color)
+     +. dl ~ctx mask ~path:(path ++ `Mask)
 
-  | `Layer, `Many (ordered,items) ->
+  | `Many (ordered,items) ->
      0. (* TODO: encode ordered when length > 1 *)
      +. Mdl.Code.list_plus
           (fun item -> dl ~ctx item ~path:(any_item path)) (* exact item index does not matter here *)
           items
-  | `Layer, _ -> (* single shape instead of Many *)
-     Mdl.Code.universal_int_plus 1 (* singleton *)
-     +. dl_patt dl ~ctx patt ~path:(any_item path)
 
-  | `Grid, `Background (size,color,layers) ->
+  | `Background (size,color,layers) ->
      let box_height =
        match size with
        | `Vec (`Int i, _) -> i
@@ -729,21 +736,9 @@ let rec dl_patt
      pp_path path; print_string ": ";
      print_string (string_of_patt (fun _ -> "_") patt);
      print_newline ();
-     assert false
-and dl_patt_vec dl ~ctx ~path i j =
-  dl ~ctx i ~path:(path ++ `I)
-  +. dl ~ctx j ~path:(path ++ `J)  
-and dl_patt_point dl ~ctx ~path pos color =
-  dl ~ctx pos ~path:(path ++ `Pos)
-  +. dl ~ctx color ~path:(path ++ `Color)
-and dl_patt_rectangle dl ~ctx ~path pos size color mask =
-  dl ~ctx pos ~path:(path ++ `Pos)
-  +. dl ~ctx size ~path:(path ++ `Size)
-  +. dl ~ctx color ~path:(path ++ `Color)
-  +. dl ~ctx mask ~path:(path ++ `Mask)
-                        
+     assert false                        
 
-let rec dl_data ~(ctx : dl_ctx) ?(path = `Root) (d : data) : dl = (* QUICK *)
+let rec dl_data ~(ctx : dl_ctx) ?(path = `Root) (d : data) = (* QUICK *)
   dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
   +. dl_patt dl_data ~ctx ~path d
 
@@ -909,7 +904,6 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
-
            
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
   Common.prof "Model2.dl_diff" (fun () ->
@@ -2203,3 +2197,5 @@ let learn_model
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
       model_refinements r m gsri gsro))
+
+
