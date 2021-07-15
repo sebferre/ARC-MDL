@@ -646,12 +646,10 @@ let dl_mask : Grid.Mask.t option -> dl =
 
      
 type dl_ctx =
-  { env_sig : signature;
-    box_height : int;
+  { box_height : int;
     box_width : int }
 let dl_ctx0 =
-  { env_sig = signature0;
-    box_height = Grid.max_size;
+  { box_height = Grid.max_size;
     box_width = Grid.max_size }
   
 let dl_ctx_of_data (d : data) : dl_ctx =
@@ -665,14 +663,14 @@ let dl_ctx_of_data (d : data) : dl_ctx =
     match find_data (`Field (`J, `Field (`Size, `Root))) d with
     | Some (`Int j) -> j
     | _ -> Grid.max_size in
-  { env_sig = signature0; box_height; box_width })
+  { box_height; box_width })
       
 
 let dl_patt_as_template = Mdl.Code.usage 0.4
 
 
 let dl_patt
-      (dl : ctx:dl_ctx -> ?path:revpath -> 'a -> dl)
+      (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
       ~(ctx : dl_ctx) ~(path : revpath) (patt : 'a patt) : dl =
   match patt with
   | `Int n ->
@@ -695,12 +693,12 @@ let dl_patt
      +. dl ~ctx j ~path:(path ++ `J)  
 
   | `Point (pos,color) ->
-     ( match path with `Field (`Layer _, _) -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
+     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
      +. Mdl.Code.usage 0.5
      +. dl ~ctx pos ~path:(path ++ `Pos)
      +. dl ~ctx color ~path:(path ++ `Color)
   | `Rectangle (pos,size,color,mask) ->
-     ( match path with `Field (`Layer _, _) -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
+     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
      +. Mdl.Code.usage 0.5
      +. dl ~ctx pos ~path:(path ++ `Pos)
      +. dl ~ctx size ~path:(path ++ `Size)
@@ -723,7 +721,7 @@ let dl_patt
        | `Vec (_, `Int j) -> j
        | _ -> ctx.box_width in
      let nb_layers = ilist_length layers in
-     let ctx_layers = { ctx with box_height; box_width } in
+     let ctx_layers = { box_height; box_width } in
      dl ~ctx size ~path:(path ++ `Size)
      +. dl ~ctx color ~path:(path ++ `Color)
      +. fold_ilist
@@ -738,9 +736,25 @@ let dl_patt
      print_newline ();
      assert false                        
 
-let rec dl_data ~(ctx : dl_ctx) ?(path = `Root) (d : data) = (* QUICK *)
-  dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
-  +. dl_patt dl_data ~ctx ~path d
+let dl_data, reset_dl_data =
+  let rec aux ~ctx ~path d =
+    dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
+    +. dl_patt aux ~ctx ~path d
+  in
+  (*  aux *)
+  let mem = Hashtbl.create 1003 in
+  let reset () = Hashtbl.clear mem in
+  let f =
+    fun ~(ctx : dl_ctx) ?(path = `Root) (d : data) -> (* QUICK *)
+    let role = path_role path in
+    let key = (ctx,role,d) in (* dl_patt in dl_data does not depend on exact path, only on role *)
+    match Hashtbl.find_opt mem key with
+    | Some dl -> dl
+    | None ->
+       let dl = aux ~ctx ~path d in
+       Hashtbl.add mem key dl;
+       dl in
+  f, reset
 
 let path_similarity ~ctx_path v = (* QUICK *)
   let rec aux lp1' lp2' =
@@ -795,8 +809,8 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
   | None -> Stdlib.infinity (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
   
 let rec dl_expr
-          (dl : ctx:dl_ctx -> ?path:revpath -> 'a -> dl)
-          ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
+          (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
+          ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
   let usage_expr = (* 0. when no expression on kind *)
     match k with
@@ -812,7 +826,7 @@ let rec dl_expr
   match e with
   | `Var x ->
      Mdl.Code.usage (1. -. usage_expr)
-     +. dl_path ~env_sig:ctx.env_sig ~ctx_path:path x
+     +. dl_path ~env_sig ~ctx_path:path x
   | _ ->
      Mdl.Code.usage usage_expr
      +. (match k, e with
@@ -829,37 +843,40 @@ let rec dl_expr
             +. dl ~ctx e2 ~path:p2
             
          | `Layer, `For (p_many,e1) ->
-            dl_path ~env_sig:ctx.env_sig ~ctx_path:path p_many
+            dl_path ~env_sig ~ctx_path:path p_many
             +. dl ~ctx e1 ~path:(any_item path)
          
          | _ -> assert false)
 
-let rec dl_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
+let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
   Common.prof "Model2.dl_template" (fun () ->
-  let k = path_kind path in
-  let usage_repeat =
-    match k with
-    | `Int -> 0.
-    | `Bool -> 0.
-    | `Color -> 0.
-    | `Mask -> 0.
-    | `Vec -> 0.
-    | `Shape -> 0.
-    | `Layer -> 0.1
-    | `Grid -> 0.
+  let rec aux ~ctx ~path t =
+    let k = path_kind path in
+    let usage_repeat =
+      match k with
+      | `Int -> 0.
+      | `Bool -> 0.
+      | `Color -> 0.
+      | `Mask -> 0.
+      | `Vec -> 0.
+      | `Shape -> 0.
+      | `Layer -> 0.1
+      | `Grid -> 0.
+    in
+    match t with (* TODO: take path/kind into account, not all combinations are possible *)
+    | `U ->
+       Mdl.Code.usage 0.1
+    | `Repeat patt1 ->
+       Mdl.Code.usage usage_repeat
+       +. dl_patt aux ~ctx ~path:(any_item path) patt1
+    | #patt as patt ->
+       dl_patt_as_template (* Mdl.Code.usage 0.4 *)
+       +. dl_patt aux ~ctx ~path patt
+    | #expr as e ->
+       Mdl.Code.usage (0.5 -. usage_repeat)
+       +. dl_expr aux ~env_sig ~ctx ~path e
   in
-  match t with (* TODO: take path/kind into account, not all combinations are possible *)
-  | `U ->
-     Mdl.Code.usage 0.1
-  | `Repeat patt1 ->
-     Mdl.Code.usage usage_repeat
-     +. dl_patt dl_template ~ctx ~path:(any_item path) patt1
-  | #patt as patt ->
-     dl_patt_as_template (* Mdl.Code.usage 0.4 *)
-     +. dl_patt dl_template ~ctx ~path patt
-  | #expr as e ->
-     Mdl.Code.usage (0.5 -. usage_repeat)
-     +. dl_expr dl_template ~ctx ~path e)
+  aux ~ctx ~path t)
 
     
 let dl_data_given_patt
@@ -1505,7 +1522,8 @@ let grids_read_has_delta (gsr : grids_read) : bool =
 let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m =
     dl_template
-      ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~env_sig
+      ~ctx:{box_height=Grid.max_size; box_width=Grid.max_size}
       t in
   let| reads =
     let+| env, g = egrids in
@@ -1568,13 +1586,15 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
   (* takes model, input env+grid, output grids *)
   let dl_mi =
     dl_template
-      ~ctx:{env_sig=signature0; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~env_sig:signature0
+      ~ctx:{box_height=Grid.max_size; box_width=Grid.max_size}
       m.input_pattern in    
   let env_sig =
     signature_of_template m.input_pattern in
   let dl_mo =
     dl_template
-      ~ctx:{env_sig; box_height=Grid.max_size; box_width=Grid.max_size}
+      ~env_sig
+      ~ctx:{box_height=Grid.max_size; box_width=Grid.max_size}
       m.output_template in
   let| input_reads_reads =
     let+| {input; output} = pairs in
@@ -2014,6 +2034,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
   Grid.reset_memoized_functions ();
+  reset_dl_data ();
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
