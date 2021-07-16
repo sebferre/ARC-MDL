@@ -192,19 +192,26 @@ and path_role_frame ~ctx : revpath -> role_frame = function
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
 
+type var =
+  [ revpath
+  | `Index (* reference to current item index in For-loop *)
+  ]
+
 type 'a expr =
-  [ `Var of revpath
-  | `Plus of 'a * 'a
-  | `Minus of 'a * 'a
-  | `If of 'a * 'a * 'a
-  | `For of revpath * 'a (* path is a many-valued var *)
+  [ `Ref of revpath
+  | `Index (* Int *)
+  | `Plus of 'a * 'a (* (Int, Int) => Int *)
+  | `Minus of 'a * 'a (* (Int, Int) => Int *)
+  | `If of 'a * 'a * 'a (* (Bool, A, A) => A *)
+  | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
          
 type template =
   [ `U
   | `Repeat of template patt
+  | `For of revpath * template (* revpath is a many-valued ref *)
   | template patt
-  | template expr ]
+  | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
 
 type signature = (kind * revpath list) list (* map from kinds to path lists *)
 let signature0 = []
@@ -305,8 +312,15 @@ let rec string_of_data : data -> string = function
 
 let pp_data d = print_string (string_of_data d)
 
+let string_of_index = "$index"
+              
+let string_of_var : var -> string = function
+  | #revpath as p -> string_of_path p
+  | `Index -> string_of_index
+  
 let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
-  | `Var p -> "{" ^string_of_path p ^ "}"
+  | `Ref p -> string_of_path p
+  | `Index -> string_of_index
   | `Plus (a,b) ->
      string a ^ " + " ^ string b
   | `Minus (a,b) ->
@@ -315,16 +329,17 @@ let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
      "if " ^ string cond
      ^ " then " ^ string e1
      ^ " else " ^ string e2
-  | `For (p,e1) ->
-     "for {" ^ string_of_path p ^ "}: " ^ string e1
+  | `Indexing (e1,e2) ->
+     string e1 ^ "[" ^ string e2 ^ "]"
 
 (*let pp_expr e = print_string (string_of_expr e)*)
 
 let rec string_of_template : template -> string = function
   | `U -> "?"
   | `Repeat patt -> "repeat " ^ string_of_patt string_of_template patt
+  | `For (p,e1) -> "for {" ^ string_of_path p ^ "}: " ^ string_of_template e1
   | #patt as patt -> string_of_patt string_of_template patt
-  | #expr as e -> string_of_expr string_of_template e
+  | #expr as e -> "{" ^ string_of_expr string_of_template e ^ "}"
 
 let pp_template t = print_string (string_of_template t)
 
@@ -429,9 +444,9 @@ let find_template (p : revpath) (t : template) : template option =
        aux
          (function
           | `Repeat t1 -> find (t1 :> template) (* assuming p ~ `Item (None,`Root,_) *)
-          | #patt as patt_parent -> find_patt find p patt_parent
           | `For (_,t1) -> find t1 (* assuming p ~ `Item (None,`Root,_) *)
-          (* `U and other #expr not explorable *)
+          | #patt as patt_parent -> find_patt find p patt_parent
+          (* `U and #expr are not explorable *)
           | _ -> assert false)
          parent
   in
@@ -492,24 +507,21 @@ let fold_patt (fold : 'b -> revpath -> 'a -> 'b) (acc : 'b) (p : revpath) (patt 
 let rec fold_data (f : 'b -> revpath -> data -> 'b) (acc : 'b) (p : revpath) (d : data) : 'b =
   let acc = f acc p d in
   fold_patt (fold_data f) acc p d
-
-let fold_expr (fold : 'b -> revpath -> 'a -> 'b) (acc : 'b) (p : revpath) (e : 'a expr) : 'b =
-  match e with
-  | `Var _ -> acc
-  | `Plus _ | `Minus _ | `If _ -> acc (* not folding through arithmetics and conditional *)
-  | `For (p_many,t1) ->
-     let acc = fold acc (any_item p) t1 in
-     acc
   
 let rec fold_template (f : 'b -> revpath -> template -> 'b) (acc : 'b) (p : revpath) (t : template) : 'b =
   let acc = f acc p t in
   match t with
   | `U -> acc
   | `Repeat patt1 ->
-     let acc = f acc (any_item p) (patt1 :> template) in
-     fold_patt (fold_template f) acc (any_item p) patt1
+     let p1 = any_item p in
+     let acc = f acc p1 (patt1 :> template) in
+     fold_patt (fold_template f) acc p1 patt1
+  | `For (p_many,t1) ->
+     let p1 = any_item p in
+     let acc = f acc p1 t1 in
+     fold_template f acc p1 t1
   | #patt as patt -> fold_patt (fold_template f) acc p patt
-  | #expr as e -> fold_expr (fold_template f) acc p e
+  | #expr -> acc
        
 let size_of_data (d : data) : int =
   Common.prof "Model2.size_of_data" (fun () ->
@@ -788,8 +800,8 @@ let path_similarity ~ctx_path v = (* QUICK *)
   in
   aux [ctx_path] [v]
   
-let dl_var ~(ctx_path : revpath) (vars : revpath list) (x : revpath) : dl =
-  Common.prof "Model2.dl_var" (fun () ->
+let dl_path_among ~(ctx_path : revpath) (vars : revpath list) (x : revpath) : dl =
+  Common.prof "Model2.dl_path_among" (fun () ->
   (* DL of identifying x among vars, for use in scope of ctx_path *)
   let total_w, x_w =
     List.fold_left
@@ -805,9 +817,20 @@ let dl_var ~(ctx_path : revpath) (vars : revpath list) (x : revpath) : dl =
 let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
   let k = path_kind x in
   match List.assoc_opt k env_sig with
-  | Some vars -> dl_var ~ctx_path vars x
+  | Some vars -> dl_path_among ~ctx_path vars x
   | None -> Stdlib.infinity (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
-  
+
+(*let dl_var ~env_sig ~ctx_path x =
+  let usage_index =
+    match path_ctx ctx_path with
+    | Some _ -> 0.1 (* Index only available in For-loops *)
+    | None -> 0. in
+  match x with
+  | #revpath as p ->
+     Mdl.Code.usage (1. -. usage_index)
+     +. dl_path ~env_sig ~ctx_path p
+  | `Index -> Mdl.Code.usage usage_index *)
+          
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
@@ -824,9 +847,10 @@ let rec dl_expr
     | `Grid -> 0.
   in
   match e with
-  | `Var x ->
+  | `Ref p ->
      Mdl.Code.usage (1. -. usage_expr)
-     +. dl_path ~env_sig ~ctx_path:path x
+     +. dl_path ~env_sig ~ctx_path:path p
+  | `Index -> raise TODO
   | _ ->
      Mdl.Code.usage usage_expr
      +. (match k, e with
@@ -842,9 +866,7 @@ let rec dl_expr
             +. dl ~ctx e1 ~path
             +. dl ~ctx e2 ~path:p2
             
-         | `Layer, `For (p_many,e1) ->
-            dl_path ~env_sig ~ctx_path:path p_many
-            +. dl ~ctx e1 ~path:(any_item path)
+         | _, `Indexing _ -> raise TODO
          
          | _ -> assert false)
 
@@ -852,16 +874,10 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   Common.prof "Model2.dl_template" (fun () ->
   let rec aux ~ctx ~path t =
     let k = path_kind path in
-    let usage_repeat =
+    let usage_repeat, usage_for =
       match k with
-      | `Int -> 0.
-      | `Bool -> 0.
-      | `Color -> 0.
-      | `Mask -> 0.
-      | `Vec -> 0.
-      | `Shape -> 0.
-      | `Layer -> 0.1
-      | `Grid -> 0.
+      | `Layer -> 0.1, 0.25
+      | _ -> 0., 0.
     in
     match t with (* TODO: take path/kind into account, not all combinations are possible *)
     | `U ->
@@ -869,11 +885,15 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | `Repeat patt1 ->
        Mdl.Code.usage usage_repeat
        +. dl_patt aux ~ctx ~path:(any_item path) patt1
+    | `For (p_many,t1) ->
+       Mdl.Code.usage usage_for
+       +. dl_path ~env_sig ~ctx_path:path p_many
+       +. aux ~ctx ~path:(any_item path) t1
     | #patt as patt ->
        dl_patt_as_template (* Mdl.Code.usage 0.4 *)
        +. dl_patt aux ~ctx ~path patt
     | #expr as e ->
-       Mdl.Code.usage (0.5 -. usage_repeat)
+       Mdl.Code.usage (0.5 -. usage_repeat -. usage_for)
        +. dl_expr aux ~env_sig ~ctx ~path e
   in
   aux ~ctx ~path t)
@@ -919,6 +939,7 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
          dl_data_given_patt dl_data_given_template ~ctx ~path:(any_item path) patt1 item)
        items
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
+  | `For _, _ -> assert false (* should have been evaluated out *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
            
@@ -954,17 +975,25 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
     
 (* evaluation of expression and templates on environment data *)
 
-exception Unbound_var of revpath
+exception Unbound_var of var
 exception Invalid_expr of template expr
+exception Out_of_bound of template list * int
 let _ =
   Printexc.register_printer
     (function
-     | Unbound_var p -> Some ("unbound variable: " ^ string_of_path p)
+     | Unbound_var v -> Some ("unbound variable: " ^ string_of_var v)
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr string_of_template e)
+     | Out_of_bound (items,i) -> Some ("out of bound indexing: " ^ string_of_template (`Many (false,items)) ^ "[" ^ string_of_int i ^ "]")
      | _ -> None)
+  
+type apply_lookup = var -> data option
 
-type apply_lookup = revpath -> data option
-    
+let lookup_of_env (env : data) : apply_lookup =
+  fun v ->
+  match v with
+  | #revpath as p -> find_data p env
+  | `Index -> raise (Unbound_var v)
+
 let apply_patt
       (apply : lookup:apply_lookup -> revpath -> 'a -> 'b)
       ~(lookup : apply_lookup) (p : revpath) : 'a patt -> 'b patt = function
@@ -996,10 +1025,14 @@ let apply_expr_gen
           (apply : lookup:apply_lookup -> revpath -> 'a -> template)
           ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template = (* QUICK *)
   match e with
-  | `Var v ->
-     (match lookup v with
+  | `Ref p ->
+     (match lookup (p :> var) with
       | Some d -> (d :> template)
-      | None -> raise (Unbound_var v))
+      | None -> raise (Unbound_var (p :> var)))
+  | `Index as v ->
+     (match lookup (v :> var) with
+      | Some d -> (d :> template)
+      | None -> raise (Unbound_var (v :> var)))
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
@@ -1015,36 +1048,47 @@ let apply_expr_gen
          then apply ~lookup p e1
          else apply ~lookup p e2
       | _ -> raise (Invalid_expr e))
-  | `For (p_many,e1) ->
-     (match lookup p_many with
-      | Some (`Many (ordered,items)) ->
-         let lookup_item i =
-           fun p ->
-           match path_split_any_item p with
-           | Some (local,ctx) when ctx = p_many ->
-              let p_item = `Item (Some i, local, ctx) in (* pointing at the i-th item *)
-              lookup p_item
-           | _ -> lookup p in
-         let items_e1 =
-           List.mapi
-             (fun i _item -> apply ~lookup:(lookup_item i) (any_item p) e1) (* TODO: use directly item in lookup functions *)
-             items in
-         `Many (ordered, items_e1) (* TODO: how to decide on ordered? add to `For construct? *)
-      | _ -> raise (Unbound_var p_many))
+  | `Indexing (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with (* TODO: what should be 'p' for e2? index? *)
+      | `Many (ordered,items), `Int i ->
+         (match List.nth_opt items i with
+          | Some d -> d
+          | None -> raise (Out_of_bound (items,i)))
+      | _ -> raise (Invalid_expr e))
 
 let apply_expr apply ~(env : data) p e =
-  apply_expr_gen apply ~lookup:(fun p -> find_data p env) p e
+  apply_expr_gen apply ~lookup:(lookup_of_env env) p e
   
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template = (* QUICK *)
   match t with
   | `U -> `U
-  | `Repeat patt1 -> `Repeat (apply_patt apply_template_gen ~lookup (any_item p) patt1)
+  | `Repeat patt1 ->
+     `Repeat (apply_patt apply_template_gen ~lookup (any_item p) patt1)
+  | `For (p_many,e1) ->
+     (match lookup (p_many :> var) with
+      | Some (`Many (ordered,items)) ->
+         let lookup_item i =
+           function
+           | `Index -> Some (`Int i)
+           | #revpath as p ->
+              match path_split_any_item p with
+              | Some (local,ctx) when ctx = p_many ->
+                 let p_item = `Item (Some i, local, ctx) in (* pointing at the i-th item *)
+                 lookup p_item
+              | _ -> lookup p in
+         let items_e1 =
+           let p1 = any_item p in
+           List.mapi
+             (fun i _item -> apply_template_gen ~lookup:(lookup_item i) p1 e1) (* TODO: use directly item in lookup functions *)
+             items in
+         `Many (ordered, items_e1) (* TODO: how to decide on ordered? add to `For construct? *)
+      | _ -> raise (Unbound_var (p_many :> var)))
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
 
 let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,exn) Result.t =
   Common.prof "Model2.apply_template" (fun () ->
-  try Result.Ok (apply_template_gen ~lookup:(fun p -> find_data p env) p t)
+  try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) p t)
   with
   | (Unbound_var _ as exn) -> Result.Error exn) (* catching runtime error in expression eval *)
 (* TODO: remove path argument, seems useless *)
@@ -1058,6 +1102,7 @@ let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
   | `Repeat patt1 -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
                        (any_item p) patt1
+  | `For _ -> assert false (* should be eliminated by call to apply_template *)
   | #patt as patt -> apply_patt
                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
                        p patt
@@ -1197,6 +1242,7 @@ let rec parse_template
      assert (items <> []);
      let data = `Many (false, items) in
      Myseq.return (data,state)
+  | `For _ -> assert false
   | #patt as patt -> parse_patt patt
   | #expr -> assert false
 
@@ -1260,6 +1306,7 @@ let parse_vec t p (vi, vj : int * int) state = (* QUICK *)
     t
 
 let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
+  (* TODO: optimize *)
   Common.prof "Model2.state_minus_shape_gen" (fun () ->
   let new_mask = Grid.Mask.diff state.mask occ_mask in
   if Grid.Mask.equal new_mask state.mask
@@ -1694,9 +1741,8 @@ let rec insert_template (f : template option -> template) (p : revpath) (t : tem
               (match f (Some (t1 :> template)) with
                | #patt as new_t1 -> `Repeat new_t1
                | _ -> assert false)
-           | #patt as patt_parent -> (insert_patt f p patt_parent :> template)
            | `For (p_many,t1) -> `For (p_many, f (Some (t1 :> template)))
-           (*           | #expr as e_parent -> (insert_expr f p e_parent :> template) *)
+           | #patt as patt_parent -> (insert_patt f p patt_parent :> template)
            (* `U and other #expr are not explorable *)
            | _ -> assert false)
        parent t)
@@ -1828,8 +1874,9 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       grss in
   let tprio = (* priority among definitions according to def body, expressions first *)
     function
-    | `U -> 3
-    | `Repeat _ -> 2
+    | `U -> 4
+    | `Repeat _ -> 3
+    | `For _ -> 2
     | #patt -> 1
     | #expr -> 0 in
   let k_le_map =
@@ -1848,7 +1895,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                   List.fold_left (* WARNING: preserving order on u_vars *)
                     (fun rev_delta_defs_yes (p,k,t0) ->
                       let d = try List.assoc p u_val with _ -> assert false in
-                      let lt = [] in (* candidate def bodies *)
+                      let lt : (template * revpath option) list = [] in (* candidate def bodies *)
                       let lt =
                         match t0 with
                         | `U -> List.fold_right
@@ -1856,12 +1903,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                                   (root_template_of_data d) lt
                         | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
                       let lt =
-                        let aux lt =
-                          (try List.assoc k k_le_map with _ -> assert false) @ lt in 
                         match t0 with
-                        | `For _ -> aux lt
-                        | #expr -> lt (* not replacing expressions, except For *)
-                        | _ -> aux lt in
+                        | #expr -> lt (* not replacing expressions *)
+                        | _ -> (try List.assoc k k_le_map
+                                with _ -> assert false) @ lt in 
                       List.fold_left (* WARNING: preserving order on lt *)
                         (fun rev_delta_defs_yes (t,ctx) ->
                           if List.exists (* check if def already found *)
@@ -1910,11 +1955,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          Stdlib.compare (sum_dl1,sum_rank1,prio1) (sum_dl2,sum_rank2,prio2))
   |> Myseq.from_list
   |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
-and defs_check p k t ctx d env =
+and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d : data) env : bool =
   Common.prof "Model2.defs_check" (fun () ->
   match t with
   | `U -> assert false (* should not be used as def *)
   | `Repeat _ -> assert false (* should not be used as def *)
+  | `For _ -> assert false
   | #patt ->
      ( match d with
        | `Many (_,items) -> List.for_all (matches_template t) items
@@ -1942,45 +1988,45 @@ and defs_check p k t ctx d env =
 and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
-  let int_vars = signature_of_kind env_sig `Int in
+  let int_refs = signature_of_kind env_sig `Int in
   List.map
     (fun k ->
       let le = [] in
       let le =
         List.fold_left
-          (fun le v -> (`Var v, path_ctx v)::le) (* order does not matter *)
+          (fun le p -> (`Ref p, path_ctx p)::le) (* order does not matter *)
           le (signature_of_kind env_sig k) in
       let le =
         match k with
         | `Int ->
            List.fold_left
-             (fun le v ->
-               let v_ctx = path_ctx v in
+             (fun le p ->
+               let p_ctx = path_ctx p in
                Common.fold_for
                  (fun i le ->
-	           (`Plus (`Var v, `Int i), v_ctx)
-                   :: (`Minus (`Var v, `Int i), v_ctx)
+	           (`Plus (`Ref p, `Int i), p_ctx)
+                   :: (`Minus (`Ref p, `Int i), p_ctx)
                    :: le)
                  1 3 le)
-             le int_vars
+             le int_refs
         | _ -> le in
       let le =
         match k with
         | `Int ->
-           List.fold_left (fun le v1 ->
-               let v1_ctx = path_ctx v1 in
-               List.fold_left (fun le v2 ->
-                   let v2_ctx = path_ctx v2 in
-                   if v1_ctx = v2_ctx
+           List.fold_left (fun le p1 ->
+               let p1_ctx = path_ctx p1 in
+               List.fold_left (fun le p2 ->
+                   let p2_ctx = path_ctx p2 in
+                   if p1_ctx = p2_ctx
                    then
-                     let le = (`Plus (`Var v1, `Var v2), v1_ctx) :: le in
+                     let le = (`Plus (`Ref p1, `Ref p2), p1_ctx) :: le in
                      let le =
-                       if v1 = v2 then le (* this means 0 *)
-	               else (`Minus (`Var v1, `Var v2), v1_ctx) :: le in
+                       if p1 = p2 then le (* this means 0 *)
+	               else (`Minus (`Ref p1, `Ref p2), p1_ctx) :: le in
 	             le
                    else le) (* not same context *)
-                 le int_vars)
-             le int_vars
+                 le int_refs)
+             le int_refs
         | _ -> le in
       let le = List.rev le in (* reverse to put in order *)
       k, le)

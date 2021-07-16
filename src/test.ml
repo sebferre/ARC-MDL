@@ -16,7 +16,7 @@ let refine_degree = def_param "refine_degree" 20 string_of_int
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let task_timeout = ref 120
+let task_timeout = ref 60
 let learning_verbose = ref false
 let grid_viz = ref false
 
@@ -246,7 +246,7 @@ let solved_train_names = (* 23 tasks, 494s *)
     "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.7s *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=4.4s *)
     "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=10.2s *)
-    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=9.2s *)
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=9.2s. With collection: need access to color of item at position (i - 1) mod 3 *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=8.3s *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=40.8s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
@@ -306,11 +306,11 @@ let task_model =
                                       `Rectangle (`U,`U,`U,`U),
                                       `Nil)));
      output_template =
-       `Background (`Var (`Field (`Size,`Root)), `Var (`Field (`Color, `Root)),
+       `Background (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
                     `Insert (`Nil,
-                             `Var (`Field (`Layer (`Right `Root), `Root)),
+                             `Ref (`Field (`Layer (`Right `Root), `Root)),
                              `Insert (`Nil,
-                                      `Var (`Field (`Layer `Root, `Root)),
+                                      `Ref (`Field (`Layer `Root, `Root)),
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
@@ -319,13 +319,13 @@ let task_model =
                              `Rectangle (`U,`U,`U,`U),
                              `Nil));
      output_template =
-       `Background (`Var (`Field (`Size, `Field (`Layer `Root, `Root))),
-                    `Var (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
+       `Background (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
+                    `Ref (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
                     `Insert (`Nil,
                              `Rectangle (`Vec (`Int 0, `Int 0),
-                                         `Var (`Field (`Size, (`Field (`Layer `Root, `Root)))),
-                                         `Var (`Field (`Color, (`Field (`Layer `Root, `Root)))),
-                                         `Var (`Field (`Mask, (`Field (`Layer `Root, `Root))))),
+                                         `Ref (`Field (`Size, (`Field (`Layer `Root, `Root)))),
+                                         `Ref (`Field (`Color, (`Field (`Layer `Root, `Root)))),
+                                         `Ref (`Field (`Mask, (`Field (`Layer `Root, `Root))))),
                              `Nil))}; 
   ]
   
