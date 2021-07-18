@@ -105,9 +105,14 @@ type field =
   | `Size
   | `Mask
   | `Layer of ilist_revpath ]
+type arg = [
+  | `Plus1 | `Plus2
+  | `Minus1 | `Minus2
+  | `Indexing1 | `Indexing2 ]
 type revpath =
   [ `Root
   | `Field of field * revpath
+  | `Arg of arg * revpath
   | `Item of int option (* pos *) * revpath (* local *) * revpath (* ctx *) ]
 let path0 = `Root
 
@@ -122,6 +127,7 @@ let rec (++) p f =
 let rec path_parent : revpath -> revpath option = function
   | `Root -> None
   | `Field (f,p) -> Some p
+  | `Arg (a,p) -> Some p
   | `Item (i_opt,local,ctx) ->
      ( match path_parent local with
        | None -> Some ctx
@@ -152,11 +158,17 @@ let rec path_kind (p : revpath) : kind =
       | `Mask -> `Mask
       | (`Pos | `Size) -> `Vec
       | `Layer _ -> `Layer)
+  | `Arg (a,p1) ->
+     (match a with
+      | (`Plus1 | `Plus2 | `Minus1 | `Minus2) -> `Int
+      | `Indexing1 -> path_kind p1
+      | `Indexing2 -> `Int)
   | `Item (_,`Root,_) -> `Shape
   | `Item (_,local,_) -> path_kind local
 
 type role = (* same information as kind + contextual information *)
   [ `Int of [`I | `J] * role_vec
+  | `Index
   | `Color of role_frame
   | `Mask
   | `Vec of role_vec
@@ -178,6 +190,9 @@ let rec path_role ?(ctx = None) (p : revpath) : role =
   | `Field (`Pos, _) -> `Vec `Pos
   | `Field (`Size, p1) -> `Vec (`Size (path_role_frame ~ctx p1))
   | `Field (`Layer _, _) -> `Layer
+  | `Arg ((`Plus1 | `Plus2 | `Minus1 | `Minus2), p1) -> path_role p1
+  | `Arg (`Indexing1,p1) -> path_role p1
+  | `Arg (`Indexing2,p2) -> `Index
   | `Item (_,local,ctx) -> path_role ~ctx:(Some ctx) local
 and path_role_vec ~ctx : revpath -> role_vec = function
   | `Field (`Pos, _) -> `Pos
@@ -202,7 +217,6 @@ type 'a expr =
   | `Index (* Int *)
   | `Plus of 'a * 'a (* (Int, Int) => Int *)
   | `Minus of 'a * 'a (* (Int, Int) => Int *)
-  | `If of 'a * 'a * 'a (* (Bool, A, A) => A *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
          
@@ -259,9 +273,18 @@ let string_of_field : field -> string = function
   | `Mask -> "mask"
   | `Layer lp -> "layer[" ^ string_of_ilist_path lp ^ "]"
 
+let string_of_arg : arg -> string = function
+  | `Plus1 -> "plus1"
+  | `Plus2 -> "plus2"
+  | `Minus1 -> "minus1"
+  | `Minus2 -> "minus2"
+  | `Indexing1 -> "indexing1"
+  | `Indexing2 -> "indexing2"
+               
 let rec string_of_path : revpath -> string = function
   | `Root -> ""
   | `Field (f,p) -> string_of_path p ^ "." ^ string_of_field f
+  | `Arg (a,p) -> string_of_path p ^ ":" ^ string_of_arg a
   | `Item (None,`Root,ctx) -> string_of_path ctx ^ ".*"
   | `Item (None,local,ctx) -> string_of_path ctx ^ ".*" ^ string_of_path local
   | `Item (Some i,`Root,ctx) -> string_of_path ctx ^ "[" ^ string_of_int i ^ "]"
@@ -325,10 +348,6 @@ let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
      string a ^ " + " ^ string b
   | `Minus (a,b) ->
      string a ^ " - " ^ string b
-  | `If (cond,e1,e2) ->
-     "if " ^ string cond
-     ^ " then " ^ string e1
-     ^ " else " ^ string e2
   | `Indexing (e1,e2) ->
      string e1 ^ "[" ^ string e2 ^ "]"
 
@@ -412,6 +431,7 @@ let rec find_patt (find : 'a -> 'a option) (p : revpath) (patt_parent : 'a patt)
   match p, patt_parent with
   | `Root, _ -> assert false (* there should be no parent *)
   | `Field (f,_), _ -> find_field_patt find f patt_parent
+  | `Arg _, _ -> assert false
   | `Item (None,`Root,_), `Many (ordered,items) ->
      let lx_opt = option_list_bind items find in
      (match lx_opt with
@@ -571,6 +591,7 @@ let rec default_data_of_path (p : revpath) : data =
   | `Int (_, `Pos) -> `Int 0
   | `Int (_, `Size `Grid) -> `Int 10
   | `Int (_, `Size `Shape) -> `Int 2
+  | `Index -> `Int 0
   | `Color `Grid -> `Color Grid.black
   | `Color `Shape -> `Color Grid.no_color
   | `Mask -> `Mask None
@@ -680,7 +701,6 @@ let dl_ctx_of_data (d : data) : dl_ctx =
 
 let dl_patt_as_template = Mdl.Code.usage 0.4
 
-
 let dl_patt
       (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
       ~(ctx : dl_ctx) ~(path : revpath) (patt : 'a patt) : dl =
@@ -771,12 +791,14 @@ let dl_data, reset_dl_data =
 let path_similarity ~ctx_path v = (* QUICK *)
   let rec aux lp1' lp2' =
     match lp1', lp2' with
+    | [], [] -> 2.
     | `Root::lp1, _ -> aux lp1 lp2'
     | _, `Root::lp2 -> aux lp1' lp2
     | `Field (f1,p1)::lp1, `Field (f2,p2)::lp2 -> aux_field f1 f2 *. aux (p1::lp1) (p2::lp2)
     | `Field (`Layer _, p1)::lp1, [] -> 0.75 *. aux (p1::lp1) []
     | [], `Field (`Layer _, p2)::lp2 -> 0. *. aux [] (p2::lp2)
-    | [], [] -> 2.
+    | `Arg (_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
+    | _, `Arg _ -> assert false (* only ctx_path can use Arg *)
     | `Item (_,q1,ctx1)::lp1, `Item (_,q2,ctx2)::lp2 -> aux (q1::ctx1::lp1) (q2::ctx2::lp2)
     | `Item (_,q1,ctx1)::lp1, _ -> 0.75 *. aux (q1::ctx1::lp1) lp2'
     | _, `Item (_,q2,ctx2)::lp2 -> 0.5 *. aux lp1' (q2::ctx2::lp2)
@@ -830,70 +852,103 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
      Mdl.Code.usage (1. -. usage_index)
      +. dl_path ~env_sig ~ctx_path p
   | `Index -> Mdl.Code.usage usage_index *)
+
+type code_expr = (* dls must correspond to a valid prob distrib *)
+  { c_ref : dl;
+    c_index : dl;
+    c_plus : dl;
+    c_minus : dl;
+    c_indexing : dl }
+let code_expr0 =
+  { c_ref = infinity;
+    c_index = infinity;
+    c_plus = infinity;
+    c_minus = infinity;
+    c_indexing = infinity }
+
+let code_expr_by_kind : (kind * code_expr) list =
+  [ `Int, { code_expr0 with
+            c_ref = Mdl.Code.usage 0.5;
+            c_plus = Mdl.Code.usage 0.25;
+            c_minus = Mdl.Code.usage 0.25 };
+    `Bool, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Color, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Mask, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Vec, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Shape, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Layer, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Grid, code_expr0 ]
           
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
-  let usage_expr = (* 0. when no expression on kind *)
-    match k with
-    | `Int -> 0.5
-    | `Color -> 0.
-    | `Bool -> 0.
-    | `Mask -> 0.
-    | `Vec -> 0.
-    | `Shape -> 0.
-    | `Layer -> 0.5
-    | `Grid -> 0.
-  in
+  let code = List.assoc k code_expr_by_kind in
   match e with
   | `Ref p ->
-     Mdl.Code.usage (1. -. usage_expr)
+     code.c_ref
      +. dl_path ~env_sig ~ctx_path:path p
-  | `Index -> raise TODO
-  | _ ->
-     Mdl.Code.usage usage_expr
-     +. (match k, e with
-         | `Int, (`Plus (e1,e2) | `Minus (e1,e2)) ->
-            let rec make_p2 p = (* 2nd operand prefers a size to a position *)
-              match p with
-              | `Item (i_opt,q,ctx) ->
-                 let q2 = make_p2 q in
-                 `Item (i_opt,q2,ctx)
-              | _ -> p in
-            let p2 = make_p2 path in
-            Mdl.Code.usage 0.5 (* choice between Plus and Minus *)
-            +. dl ~ctx e1 ~path
-            +. dl ~ctx e2 ~path:p2
-            
-         | _, `Indexing _ -> raise TODO
-         
-         | _ -> assert false)
+  | `Index ->
+     code.c_index
+  | `Plus (e1,e2) ->
+     code.c_plus
+     +. dl ~ctx ~path:(`Arg (`Plus1,path)) e1
+     +. dl ~ctx ~path:(`Arg (`Plus2,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
+  | `Minus (e1,e2) ->
+     code.c_minus
+     +. dl ~ctx ~path:(`Arg (`Minus1,path)) e1
+     +. dl ~ctx ~path:(`Arg (`Minus2,path)) e2
+  | `Indexing (e1,e2) ->
+     code.c_indexing
+     +. dl ~ctx ~path:(`Arg (`Indexing1,path)) e1
+     +. dl ~ctx ~path:(`Arg (`Indexing2,path)) e2
 
+type code_template = (* dls must correspond to a valid prob distrib *)
+  { c_u : dl;
+    c_repeat : dl;
+    c_for : dl;
+    c_patt : dl;
+    c_expr : dl }
+let code_template0 =
+  { c_u = Mdl.Code.usage 0.1;
+    c_repeat = infinity;
+    c_for = infinity;
+    c_patt = dl_patt_as_template (* Mdl.Code.usage 0.4 *);
+    c_expr = 0.5 }
+
+let code_template_by_kind : (kind * code_template) list =
+  [ `Int, code_template0;
+    `Bool, code_template0;
+    `Color, code_template0;
+    `Mask, code_template0;
+    `Vec, code_template0;
+    `Shape, code_template0;
+    `Layer, { code_template0 with
+              c_repeat = Mdl.Code.usage 0.1;
+              c_for = Mdl.Code.usage 0.25;
+              c_expr = Mdl.Code.usage 0.15 };
+    `Grid, code_template0 ]    
+    
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
   Common.prof "Model2.dl_template" (fun () ->
   let rec aux ~ctx ~path t =
     let k = path_kind path in
-    let usage_repeat, usage_for =
-      match k with
-      | `Layer -> 0.1, 0.25
-      | _ -> 0., 0.
-    in
-    match t with (* TODO: take path/kind into account, not all combinations are possible *)
+    let code = List.assoc k code_template_by_kind in
+    match t with
     | `U ->
-       Mdl.Code.usage 0.1
+       code.c_u
     | `Repeat patt1 ->
-       Mdl.Code.usage usage_repeat
+       code.c_repeat
        +. dl_patt aux ~ctx ~path:(any_item path) patt1
     | `For (p_many,t1) ->
-       Mdl.Code.usage usage_for
+       code.c_for
        +. dl_path ~env_sig ~ctx_path:path p_many
        +. aux ~ctx ~path:(any_item path) t1
     | #patt as patt ->
-       dl_patt_as_template (* Mdl.Code.usage 0.4 *)
+       code.c_patt
        +. dl_patt aux ~ctx ~path patt
     | #expr as e ->
-       Mdl.Code.usage (0.5 -. usage_repeat -. usage_for)
+       code.c_expr
        +. dl_expr aux ~env_sig ~ctx ~path e
   in
   aux ~ctx ~path t)
@@ -1040,13 +1095,6 @@ let apply_expr_gen
   | `Minus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 - i2)
-      | _ -> raise (Invalid_expr e))
-  | `If (e0,e1,e2) ->
-     (match apply ~lookup `Root e0 with
-      | `Bool b ->
-         if b
-         then apply ~lookup p e1
-         else apply ~lookup p e2
       | _ -> raise (Invalid_expr e))
   | `Indexing (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with (* TODO: what should be 'p' for e2? index? *)
