@@ -358,7 +358,7 @@ let rec string_of_template : template -> string = function
   | `Repeat patt -> "repeat " ^ string_of_patt string_of_template patt
   | `For (p,e1) -> "for {" ^ string_of_path p ^ "}: " ^ string_of_template e1
   | #patt as patt -> string_of_patt string_of_template patt
-  | #expr as e -> "{" ^ string_of_expr string_of_template e ^ "}"
+  | #expr as e -> string_of_expr string_of_template e
 
 let pp_template t = print_string (string_of_template t)
 
@@ -798,7 +798,6 @@ let path_similarity ~ctx_path v = (* QUICK *)
     | `Field (`Layer _, p1)::lp1, [] -> 0.75 *. aux (p1::lp1) []
     | [], `Field (`Layer _, p2)::lp2 -> 0. *. aux [] (p2::lp2)
     | `Arg (_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
-    | _, `Arg _ -> assert false (* only ctx_path can use Arg *)
     | `Item (_,q1,ctx1)::lp1, `Item (_,q2,ctx2)::lp2 -> aux (q1::ctx1::lp1) (q2::ctx2::lp2)
     | `Item (_,q1,ctx1)::lp1, _ -> 0.75 *. aux (q1::ctx1::lp1) lp2'
     | _, `Item (_,q2,ctx2)::lp2 -> 0.5 *. aux lp1' (q2::ctx2::lp2)
@@ -867,16 +866,27 @@ let code_expr0 =
     c_indexing = infinity }
 
 let code_expr_by_kind : (kind * code_expr) list =
-  [ `Int, { code_expr0 with
-            c_ref = Mdl.Code.usage 0.5;
-            c_plus = Mdl.Code.usage 0.25;
-            c_minus = Mdl.Code.usage 0.25 };
+  [ `Int, { 
+            c_ref = Mdl.Code.usage 0.2;
+            c_index = Mdl.Code.usage 0.2; (* TODO: should it be restricted to some paths? *)
+            c_indexing = Mdl.Code.usage 0.2;
+            c_plus = Mdl.Code.usage 0.2;
+            c_minus = Mdl.Code.usage 0.2 };
     `Bool, { code_expr0 with c_ref = Mdl.Code.usage 1. };
-    `Color, { code_expr0 with c_ref = Mdl.Code.usage 1. };
-    `Mask, { code_expr0 with c_ref = Mdl.Code.usage 1. };
-    `Vec, { code_expr0 with c_ref = Mdl.Code.usage 1. };
-    `Shape, { code_expr0 with c_ref = Mdl.Code.usage 1. };
-    `Layer, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+    `Color, { code_expr0 with
+              c_ref = Mdl.Code.usage 0.5;
+              c_indexing = Mdl.Code.usage 0.5 };
+    `Mask, { code_expr0 with
+             c_ref = Mdl.Code.usage 0.5;
+             c_indexing = Mdl.Code.usage 0.5 };
+    `Vec, { code_expr0 with
+            c_ref = Mdl.Code.usage 0.5;
+            c_indexing = Mdl.Code.usage 0.5 };
+    `Shape, { code_expr0 with
+              c_ref = Mdl.Code.usage 0.5;
+              c_indexing = Mdl.Code.usage 0.5 };
+    `Layer, { code_expr0 with
+              c_ref = Mdl.Code.usage 1. };
     `Grid, code_expr0 ]
           
 let rec dl_expr
@@ -1096,11 +1106,21 @@ let apply_expr_gen
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 - i2)
       | _ -> raise (Invalid_expr e))
-  | `Indexing (e1,e2) ->
+  | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
+     (match lookup (ctx :> var), apply ~lookup p e2 with
+      | Some (`Many (ordered,items)), `Int i ->
+         (match List.nth_opt items i with
+          | Some item ->
+             (match find_data local item with
+              | Some d -> (d :> template)
+              | None -> raise (Invalid_expr e))
+          | None -> raise (Out_of_bound ((items :> template list),i)))
+      | _ -> raise (Invalid_expr e))
+  | `Indexing (e1,e2) -> (* TODO: optimize for e1 = `Ref (`Item _) *)
      (match apply ~lookup p e1, apply ~lookup p e2 with (* TODO: what should be 'p' for e2? index? *)
       | `Many (ordered,items), `Int i ->
          (match List.nth_opt items i with
-          | Some d -> d
+          | Some t -> t
           | None -> raise (Out_of_bound (items,i)))
       | _ -> raise (Invalid_expr e))
 
@@ -1115,19 +1135,19 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
   | `For (p_many,e1) ->
      (match lookup (p_many :> var) with
       | Some (`Many (ordered,items)) ->
-         let lookup_item i =
+         let lookup_index i = (* adding a binding for index *)
            function
            | `Index -> Some (`Int i)
-           | #revpath as p ->
+(*           | #revpath as p ->
               match path_split_any_item p with
               | Some (local,ctx) when ctx = p_many ->
                  let p_item = `Item (Some i, local, ctx) in (* pointing at the i-th item *)
-                 lookup p_item
-              | _ -> lookup p in
+                 lookup p_item *)
+           | p -> lookup p in
          let items_e1 =
            let p1 = any_item p in
            List.mapi
-             (fun i _item -> apply_template_gen ~lookup:(lookup_item i) p1 e1) (* TODO: use directly item in lookup functions *)
+             (fun i _item -> apply_template_gen ~lookup:(lookup_index i) p1 e1) (* TODO: use directly item in lookup functions *)
              items in
          `Many (ordered, items_e1) (* TODO: how to decide on ordered? add to `For construct? *)
       | _ -> raise (Unbound_var (p_many :> var)))
@@ -2037,23 +2057,28 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
   let int_refs = signature_of_kind env_sig `Int in
+  let make_ref (p : revpath) =
+    match p with
+    | `Item (None,local,ctx) -> `Indexing (`Ref p, `Index), Some ctx
+    | _ -> `Ref p, None
+  in
   List.map
     (fun k ->
       let le = [] in
       let le =
         List.fold_left
-          (fun le p -> (`Ref p, path_ctx p)::le) (* order does not matter *)
+          (fun le p -> make_ref p::le) (* order does not matter *)
           le (signature_of_kind env_sig k) in
       let le =
         match k with
         | `Int ->
            List.fold_left
              (fun le p ->
-               let p_ctx = path_ctx p in
+               let e1, p_ctx = make_ref p in
                Common.fold_for
                  (fun i le ->
-	           (`Plus (`Ref p, `Int i), p_ctx)
-                   :: (`Minus (`Ref p, `Int i), p_ctx)
+	           (`Plus (e1, `Int i), p_ctx)
+                   :: (`Minus (e1, `Int i), p_ctx)
                    :: le)
                  1 3 le)
              le int_refs
@@ -2062,15 +2087,15 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
         match k with
         | `Int ->
            List.fold_left (fun le p1 ->
-               let p1_ctx = path_ctx p1 in
+               let e1, p1_ctx = make_ref p1 in
                List.fold_left (fun le p2 ->
-                   let p2_ctx = path_ctx p2 in
+                   let e2, p2_ctx = make_ref p2 in
                    if p1_ctx = p2_ctx
                    then
-                     let le = (`Plus (`Ref p1, `Ref p2), p1_ctx) :: le in
+                     let le = (`Plus (e1, e2), p1_ctx) :: le in
                      let le =
                        if p1 = p2 then le (* this means 0 *)
-	               else (`Minus (`Ref p1, `Ref p2), p1_ctx) :: le in
+	               else (`Minus (e1, e2), p1_ctx) :: le in
 	             le
                    else le) (* not same context *)
                  le int_refs)
