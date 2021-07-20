@@ -163,7 +163,8 @@ let rec path_kind (p : revpath) : kind =
       | (`Plus1 | `Plus2 | `Minus1 | `Minus2) -> `Int
       | `Indexing1 -> path_kind p1
       | `Indexing2 -> `Int)
-  | `Item (_,`Root,_) -> `Shape
+  | `Item (_,`Root, `Field (`Layer _, _)) -> `Shape
+  | `Item (_,`Root, ctx) -> path_kind ctx
   | `Item (_,local,_) -> path_kind local
 
 type role = (* same information as kind + contextual information *)
@@ -182,8 +183,11 @@ and role_frame =
 
 let rec path_role ?(ctx = None) (p : revpath) : role =
   match p with
-  | `Root when ctx=None -> `Grid
-  | `Root -> `Shape
+  | `Root ->
+     (match ctx with
+      | None -> `Grid
+      | Some (`Field (`Layer _, _)) -> `Shape
+      | Some p -> path_role p)
   | `Field ((`I | `J as f), p1) -> `Int (f, path_role_vec ~ctx p1)
   | `Field (`Color, p1) -> `Color (path_role_frame ~ctx p1)
   | `Field (`Mask, _) -> `Mask
@@ -263,7 +267,24 @@ let string_of_kind : kind -> string = function
   | `Shape -> "shape"
   | `Layer -> "layer"
   | `Grid -> "grid"
-          
+
+let rec string_of_role = function
+  | `Int (`I, rv) -> "i/" ^ string_of_role_vec rv
+  | `Int (`J, rv) -> "j/" ^ string_of_role_vec rv
+  | `Index -> "index"
+  | `Color rf -> "color/" ^ string_of_role_frame rf
+  | `Mask -> "mask"
+  | `Vec rv -> "vec/" ^ string_of_role_vec rv
+  | `Shape -> "shape"
+  | `Layer -> "layer"
+  | `Grid -> "grid"
+and string_of_role_vec = function
+  | `Pos -> "pos"
+  | `Size rf -> "size/" ^ string_of_role_frame rf
+and string_of_role_frame = function
+  | `Shape -> "shape"
+  | `Grid -> "grid"
+           
 let string_of_field : field -> string = function
   | `I -> "i"
   | `J -> "j"
@@ -528,33 +549,34 @@ let rec fold_data (f : 'b -> revpath -> data -> 'b) (acc : 'b) (p : revpath) (d 
   let acc = f acc p d in
   fold_patt (fold_data f) acc p d
   
-let rec fold_template (f : 'b -> revpath -> template -> 'b) (acc : 'b) (p : revpath) (t : template) : 'b =
-  let acc = f acc p t in
+let rec fold_template (f : 'b -> revpath option -> revpath -> template -> 'b) (acc : 'b) (for_p : revpath option) (p : revpath) (t : template) : 'b =
+  let acc = f acc for_p p t in
   match t with
   | `U -> acc
   | `Repeat patt1 ->
      let p1 = any_item p in
-     let acc = f acc p1 (patt1 :> template) in
-     fold_patt (fold_template f) acc p1 patt1
+     let acc = f acc for_p p1 (patt1 :> template) in
+     fold_patt (fun acc p t -> fold_template f acc for_p p t) acc p1 patt1
   | `For (p_many,t1) ->
+     let for_p1 = Some p_many in
      let p1 = any_item p in
-     let acc = f acc p1 t1 in
-     fold_template f acc p1 t1
-  | #patt as patt -> fold_patt (fold_template f) acc p patt
+     let acc = f acc for_p1 p1 t1 in
+     fold_template f acc for_p1 p1 t1
+  | #patt as patt -> fold_patt (fun acc p t -> fold_template f acc for_p p t) acc p patt
   | #expr -> acc
        
 let size_of_data (d : data) : int =
   Common.prof "Model2.size_of_data" (fun () ->
   fold_data (fun res _ _ -> res+1) 0 path0 d)
 let size_of_template (t : template) : int =
-  fold_template (fun res _ _ -> res+1) 0 path0 t
+  fold_template (fun res _ _ _ -> res+1) 0 None path0 t
 
 let signature_of_template (t : template) : signature =
   Common.prof "Model2.signature_of_template" (fun () ->
   let ht = Hashtbl.create 13 in
   let () =
     fold_template
-      (fun () p t1 ->
+      (fun () for_p p t1 ->
         let k = path_kind p in
         let ps0 =
           match Hashtbl.find_opt ht k with
@@ -576,7 +598,7 @@ let signature_of_template (t : template) : signature =
             | Some ps -> ps in
           Hashtbl.replace ht `Int (p ++ `I :: p ++ `J :: ps0)
         ))
-      () path0 t in
+      () None path0 t in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
     ht [])
@@ -613,8 +635,8 @@ let rec root_template_of_data (d : data) : template list = (* QUICK *)
   | `Rectangle _ -> [`Rectangle (`U, `U, `U, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
-     List.sort_uniq Stdlib.compare
-       (List.concat (List.map root_template_of_data items))
+     let llt_items = List.map root_template_of_data items in
+     (d :> template) :: List.sort_uniq Stdlib.compare (List.concat llt_items)
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -740,7 +762,7 @@ let dl_patt
   | `Many (ordered,items) ->
      0. (* TODO: encode ordered when length > 1 *)
      +. Mdl.Code.list_plus
-          (fun item -> dl ~ctx item ~path:(any_item path)) (* exact item index does not matter here *)
+          (fun item -> dl ~ctx item ~path:(ith_item 0 path)) (* exact item index does not matter here *)
           items
 
   | `Background (size,color,layers) ->
@@ -1157,8 +1179,9 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
 let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,exn) Result.t =
   Common.prof "Model2.apply_template" (fun () ->
   try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) p t)
-  with
-  | (Unbound_var _ as exn) -> Result.Error exn) (* catching runtime error in expression eval *)
+  with (* catching runtime error in expression eval *)
+  | (Unbound_var _ as exn) -> Result.Error exn
+  | (Out_of_bound _ as exn) -> Result.Error exn)
 (* TODO: remove path argument, seems useless *)
 
 
@@ -1917,12 +1940,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   let u_vars =
     List.rev
       (fold_template
-         (fun res p t0 ->
+         (fun res for_p p t0 ->
            let k = path_kind p in
            if k <> `Grid
-           then (p,k,t0)::res
+           then (for_p,p,k,t0)::res
            else res)
-         [] path0 t) in
+         [] None path0 t) in
   let val_matrix =
     List.map
       (fun grs ->
@@ -1930,7 +1953,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         List.mapi
           (fun rank (env,gd,dl) ->
             let u_val =
-              List.map (fun (p,k,t0) ->
+              List.map (fun (for_p,p,k,t0) ->
                   match find_data p gd.data with
                   | Some d -> p, d
                   | None ->
@@ -1961,13 +1984,17 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               then
                 let rev_delta_defs_yes =
                   List.fold_left (* WARNING: preserving order on u_vars *)
-                    (fun rev_delta_defs_yes (p,k,t0) ->
+                    (fun rev_delta_defs_yes (for_p,p,k,t0) ->
                       let d = try List.assoc p u_val with _ -> assert false in
                       let lt : (template * revpath option) list = [] in (* candidate def bodies *)
                       let lt =
                         match t0 with
                         | `U -> List.fold_right
-                                  (fun t lt -> (t,None)::lt)
+                                  (fun t lt ->
+                                    match t, for_p with
+                                    | `Many (ordered,items), Some _ ->
+                                       (`Indexing (t, `Index), for_p)::lt
+                                    | _ -> (t,None)::lt)
                                   (root_template_of_data d) lt
                         | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
                       let lt =
@@ -2283,7 +2310,7 @@ let learn_model
     ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
       try
-        (*print_string "\t=> "; pp_refinement r; print_newline ();*)
+        (* print_string "\t=> "; pp_refinement r; print_newline (); *)
         Result.to_option
           (let| gprs = read_grid_pairs m pairs in
            let grsi, grso = split_grid_pairs_read gprs in
@@ -2291,6 +2318,7 @@ let learn_model
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
+         print_endline "ERROR while parsing examples with new model";
 	 print_endline (Printexc.to_string exn);
 	 pp_refinement r; print_newline ();
          pp_model m; print_newline ();
