@@ -247,6 +247,8 @@ let solved_train_names = (* 23 tasks, 494s *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=4.4s *)
     "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=10.2s *)
     "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=9.2s. With collection: need access to color of item at position (i - 1) mod 3 *)
+    (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
+    (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=8.3s *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=40.8s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
@@ -293,6 +295,9 @@ let maybe_train_names =
     "a61ba2ce.json"; (* pb: prefers expressions to constant integers for grid size and shape positions, accidental regularity in 2 examples *)
     "50cb2852.json"; (* pb: collection *)
     "54d82841.json"; (* pb: collection *)
+    "ce22a75a.json"; (* pb: 2nd example is not helping, having two examples like the first one makes it find the right model but it fails to parse the 4 points in test, parses only 3 *)
+    "a2fd1cf0.json"; (* TODO pb: collection of two rectangles, order-sensitive? hence failing to find relationship to the two points? *)
+    "7468f01a.json"; (* TODO pb: inserts an unspecified rectangle before repeat of unspecified rectangles, maybe problem with sequential parsing top-down *)
   ]
 
 let task_model =
