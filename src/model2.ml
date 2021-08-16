@@ -2112,71 +2112,59 @@ and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d
 and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
-  let int_refs = signature_of_kind env_sig `Int in
-  let make_ref (p : revpath) =
+  let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
     match path_ctx p with
-    | Some ctx -> `Indexing (`Ref p, `Index), Some ctx
-    | _ -> `Ref p, None
+    | None -> Myseq.return (`Ref p, None)
+    | Some ctx ->
+       Myseq.concat [
+           Myseq.return (`Indexing (`Ref p, `Index), Some ctx);
+           (let* i = Myseq.from_list [0; 1; 2] in
+            Myseq.return (`Indexing (`Ref p, `Int i), None)) ] in
+  let vars_rotation_of_path (p : revpath) : (template * revpath option) Myseq.t =
+    match path_ctx p with
+    | None -> Myseq.empty
+    | Some ctx ->
+       let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
+       Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx)
   in
   List.map
     (fun k ->
-      let le = [] in (* order does not matter *)
-      let le =
-        let all_refs = signature_of_kind env_sig k in
-        List.fold_left
-          (fun le p ->
-            let le = (* adding direct reference to path p *)
-              make_ref p::le in
-            match path_ctx p with
-            | None -> le
-            | Some ctx ->
-               (*let le = (* adding expressions for first three elements *)
-                 List.fold_left
-                   (fun le i -> (`Indexing (`Ref p, `Int i), None) :: le)
-                   le [0; 1; 2] in *)
-               let le = (* adding expressions for rotation-based indexing *)
-                 List.fold_left
-                   (fun le (k,n) ->
-                     (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) :: le)
-                   le [ (0,2); (1,2); (0,3); (1,3); (2,3) ] in
-               le)
-          le all_refs in
-      let le = (* adding expressions (p +/- cst) *)
-        match k with
-        | `Int ->
-           List.fold_left
-             (fun le p ->
-               let e1, p_ctx = make_ref p in
-               Common.fold_for
-                 (fun i le ->
-	           (`Plus (e1, `Int i), p_ctx)
-                   :: (`Minus (e1, `Int i), p_ctx)
-                   :: le)
-                 1 3 le)
-             le int_refs
-        | _ -> le in
-      let le = (* adding expressions (p1 +/- p2) *)
-        match k with
-        | `Int ->
-           List.fold_left (fun le p1 ->
-               let e1, p1_ctx = make_ref p1 in
-               List.fold_left (fun le p2 ->
-                   let e2, p2_ctx = make_ref p2 in
-                   if p1_ctx = p2_ctx
-                   then
-                     let le = (`Plus (e1, e2), p1_ctx) :: le in
-                     let le =
-                       if p1 = p2 then le (* this means 0 *)
-	               else (`Minus (e1, e2), p1_ctx) :: le in
-	             le
-                   else le) (* not same context *)
-                 le int_refs)
-             le int_refs
-        | _ -> le in
-      let le = List.rev le in (* reverse to put in order *)
-      k, le)
+      let ps = signature_of_kind env_sig k in
+      let sv = (* variables *)
+        Myseq.memoize
+          (let* p = Myseq.from_list ps in
+           vars_of_path p) in
+      let sv_rotation = (* variables with rotation-based indexing *)
+        let* p = Myseq.from_list ps in
+        vars_rotation_of_path p in
+      let se1 = (* e = v | v_rot *)
+        Myseq.concat [sv; sv_rotation] in
+      let se2 = (* e = v +/- cst *)
+        if k = `Int
+        then
+          let* v, ctx = sv in
+          let* n = Myseq.from_list [1; 2; 3] in
+          Myseq.cons (`Plus (v, `Int n), ctx)
+            (Myseq.cons (`Minus (v, `Int n), ctx)
+               Myseq.empty)
+        else Myseq.empty in
+      let se3 = (* e = v1 +/- v2 *)
+        if k = `Int
+        then
+          let* v1, ctx1 = sv in
+          let* v2, ctx2 = sv in
+          if ctx1 = ctx2
+          then
+            Myseq.cons (`Plus (v1, v2), ctx1)
+              (if v1 = v2 (* this is equivalent to 0 *)
+               then Myseq.empty
+               else Myseq.return (`Minus (v1, v2), ctx2))
+          else Myseq.empty
+        else Myseq.empty in
+      k,
+      Myseq.concat [se1; se2; se3]
+      |> Myseq.to_rev_list)
     all_kinds)
-
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
   (*let aux_repeat p = function
