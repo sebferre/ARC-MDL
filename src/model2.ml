@@ -1323,7 +1323,7 @@ let parse_repeat
           (let* items1, state1 = aux (i+1) parts0 state0 in
            Myseq.return (item0::items1, state1));
           
-          aux i parts0 state (* ignoring item0 *)
+          aux i parts0 state (* ignoring item0 *) (* TODO: parts0 too restrictive, item0-dependent *)
         ]
   in
   let res = aux 0 parts state in
@@ -1516,6 +1516,7 @@ let rec parse_shape =
         let next_rectangles =
           next_rectangles (* only rectangles included in remaining masks *)
           |> Myseq.filter (fun (r : Grid.rectangle) ->
+                 (* Grid.Mask.(is_subset r.mask state.mask)) in (* TEST: disjoint items *) *)
                  not Grid.Mask.(is_empty (inter r.mask state.mask))) in
         Myseq.return (data, Myseq.introspect next_rectangles, state))
       rectangles_next state)
@@ -2171,23 +2172,40 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
     | `Repeat _ -> Myseq.return (RSingle p)
     | `Point _ | `Rectangle _ -> Myseq.return (RRepeat p)
     | _ -> assert false in *)
-  let rec aux lp = function
+  let rec aux ~repeat ~(shape : template patt) lp = function
     | `Nil ->
-       let* shape = Myseq.from_list
-                      [`Point (`U, `U);
-                       `Rectangle (`U, `U, `U, `U)] in
-       Myseq.cons (RShape (`Field (`Layer lp, `Root), `Repeat shape))
-         (Myseq.cons (RShape (`Field (`Layer lp, `Root), (shape :> template)))
-            Myseq.empty)
-    | `Insert (above,shape,below) ->
+       let res = Myseq.return (RShape (`Field (`Layer lp, `Root), (shape :> template))) in
+       if repeat
+       then Myseq.cons (RShape (`Field (`Layer lp, `Root), `Repeat shape)) res
+       else res
+    | `Insert (above,_,below) ->
        Myseq.concat
          [ (*aux_repeat [`Layers lp] shape;*) (* TEST *)
-           aux (`Right lp) below; (* insert below first *)
-           aux (`Left lp) above ]
+           aux ~repeat ~shape (`Right lp) below; (* insert below first *)
+           aux ~repeat ~shape (`Left lp) above ]
     | _ -> assert false
   in
   match t with
-  | `Background (_,_,layers) -> aux `Root layers
+  | `Background (_,_,layers) ->
+     let any_point, any_rect, rep_any_point, rep_any_rect =
+       fold_ilist
+         (fun (ap,ar,rap,rar) lp layer ->
+           match layer with
+           | `Point (`U, `U) -> (true,ar,rap,rar)
+           | `Rectangle (`U, `U, `U, `U) -> (ap,true,rap,rar)
+           | `Repeat (`Point (`U, `U)) -> (ap,ar,true,rar)
+           | `Repeat (`Rectangle (`U, `U, `U, `U)) -> (ap,ar,rap,true)
+           | _ -> (ap,ar,rap,rar))
+         (false,false,false,false) `Root layers in
+     let sp =
+       if rep_any_point
+       then Myseq.empty
+       else aux ~repeat:(not any_point) ~shape:(`Point (`U, `U)) `Root layers in
+     let sr =
+       if rep_any_rect
+       then Myseq.empty
+       else aux ~repeat:(not any_rect) ~shape:(`Rectangle (`U, `U, `U, `U)) `Root layers in
+     Myseq.concat [sp; sr]
   | _ -> assert false
        
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
@@ -2393,15 +2411,25 @@ let learn_model
       if grid_viz then (
         List.iter2
           (fun reads_input reads_pair ->
-            match reads_input, reads_pair with
-            | (_,gdi,_)::_, ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
-              Grid.pp_grids
-                [grid_of_data gdi_knowing_o.data;
-                 grid_of_data gdo.data;
-                 grid_of_data gdi.data;
-                 Result.get_ok (write_grid ~env:gdi.data m.output_template)];
-              print_newline ()
-           | _ -> assert false)
+            match reads_pair with
+            | ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
+               let gi1 = grid_of_data gdi_knowing_o.data in
+               let go1 = grid_of_data gdo.data in
+               let res2 = (* searching for a parse able to generate an output *)
+                 let+|+ _, gdi2, _ = Result.Ok reads_input in
+                 let| go2 = write_grid ~env:gdi2.data m.output_template in
+                 Result.Ok [(gdi2,go2)] in
+               (match res2 with
+                | Result.Ok ((gdi2,go2)::_) ->
+                   let gi2 = grid_of_data gdi2.data in
+                   Grid.pp_grids [gi1; go1; gi2; go2]
+                | Result.Ok [] -> assert false
+                | Result.Error exn ->
+                   Grid.pp_grids [gi1; go1];
+                   print_endline "No output grid could be produced from a parsing of the input grid";
+                   print_endline (" => " ^ Printexc.to_string exn));
+               print_newline ()
+            | _ -> assert false)
           gpsr.input_reads gpsr.reads;
         Unix.sleepf 0.5);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)

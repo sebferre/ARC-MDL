@@ -97,17 +97,32 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
         if !training then (
           match train_test with
           | `TRAIN gpsr ->
+             print_endline "\n> Input and output best reading:";
              let reads_pair = try List.nth gpsr.reads (i-1) with _ -> assert false in
              let gri, gro, _ = try List.hd reads_pair with _ -> assert false in
              let envi, gdi, dli = gri in
              let envo, gdo, dlo = gro in
-             print_endline "\n> Input and output best reading:";
              Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
              Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
              if !grid_viz then
                Grid.pp_grids [Model.grid_of_data gdi.data;
                               Model.grid_of_data gdo.data]
           | `TEST -> ()
+        );
+        print_endline "\n> Best input readings:";
+        let input_reads =
+          match train_test with
+          | `TRAIN gpsr -> Result.Ok (List.nth gpsr.input_reads (i-1))
+          | `TEST -> Model.read_grid ~quota_diff:(!Model.max_nb_diff) ~env:Model.data0 m.Model.input_pattern input in
+        ( match input_reads with
+          | Result.Ok reads ->
+             Grid.pp_grids
+               (List.map
+                  (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
+                  reads);
+             print_newline ()
+          | Result.Error _ ->
+             print_endline "No input readings"
         );
         print_endline "\n> Output prediction from input (up to 3 trials):";
         let score, rank, label, _failed_derived_grids =
@@ -298,6 +313,7 @@ let maybe_train_names =
     "ce22a75a.json"; (* pb: 2nd example is not helping, having two examples like the first one makes it find the right model but it fails to parse the 4 points in test, parses only 3 *)
     "a2fd1cf0.json"; (* TODO pb: collection of two rectangles, order-sensitive? hence failing to find relationship to the two points? *)
     "7468f01a.json"; (* TODO pb: inserts an unspecified rectangle before repeat of unspecified rectangles, maybe problem with sequential parsing top-down *)
+    "e26a3af2.json"; (* pb: inserts unspecified rectangle in front of collection of unspecified rectangles. Should work with a single collection of rectangles + collection of points *)
   ]
 
 let task_model =
