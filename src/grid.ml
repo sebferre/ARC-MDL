@@ -681,12 +681,13 @@ let points_of_part ?(acc : point list = []) mask (part : part) : point list =
     else acc
 
 let points (g : t) (mask : Mask.t) (parts : part list) : point list =
+  Common.prof "Grid.points" (fun () ->
   parts
   |> List.fold_left
        (fun res part -> points_of_part ~acc:res mask part)
        []
   |> List.sort_uniq (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
-         Stdlib.compare (c1 = black, p1) (c2 = black, p2)) (* black points last *)
+         Stdlib.compare (c1 = black, p1) (c2 = black, p2))) (* black points last *)
 let points, reset_points =
   let f, reset =
     Common.memoize ~size:103
