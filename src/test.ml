@@ -116,13 +116,18 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
           | `TEST -> Model.read_grid ~quota_diff:(!Model.max_nb_diff) ~env:Model.data0 m.Model.input_pattern input in
         ( match input_reads with
           | Result.Ok reads ->
-             Grid.pp_grids
-               (List.map
-                  (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
-                  reads);
-             print_newline ()
+             List.iter
+               (fun (_,gdi,dli) ->
+                 Model.pp_grid_data gdi;
+                 Printf.printf "  (%.1f bits)\n" dli)
+               reads;
+             if !grid_viz then (
+               Grid.pp_grids
+                 (List.map
+                    (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
+                    reads))
           | Result.Error _ ->
-             print_endline "No input readings"
+             print_endline "(No input readings)"
         );
         print_endline "\n> Output prediction from input (up to 3 trials):";
         let score, rank, label, _failed_derived_grids =
