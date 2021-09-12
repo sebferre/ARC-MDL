@@ -11,6 +11,7 @@ let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* 
 let max_nb_shape_parse = def_param "max_nb_shape_parse" 64 string_of_int (* max nb of parses for a shape *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
+let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
 
 exception TODO
 
@@ -1525,8 +1526,8 @@ let rec parse_shape =
     (*print_endline "RECTANGLES";*)
     parse_repeat
       (fun (rect : Grid.rectangle) state ->
-        (*Grid.Mask.(is_subset rect.mask state.mask) (* TEST: disjoint items *)*)
-        not Grid.Mask.(is_empty (inter rect.mask state.mask))
+        Grid.Mask.(is_subset rect.mask state.mask) (* TEST: disjoint items *)
+      (*not Grid.Mask.(is_empty (inter rect.mask state.mask))*)
       )
       (fun i p_item rect state ->
         let* data, state = parse_rectangle pos size color mask p_item rect state in
@@ -2206,15 +2207,18 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
   match t with
   | `Background (_,_,layers) ->
      let any_point, any_rect, rep_any_point, rep_any_rect =
-       fold_ilist
-         (fun (ap,ar,rap,rar) lp layer ->
-           match layer with
-           | `Point (`U, `U) -> (true,ar,rap,rar)
-           | `Rectangle (`U, `U, `U, `U) -> (ap,true,rap,rar)
-           | `Repeat (`Point (`U, `U)) -> (ap,ar,true,rar)
-           | `Repeat (`Rectangle (`U, `U, `U, `U)) -> (ap,ar,rap,true)
-           | _ -> (ap,ar,rap,rar))
-         (false,false,false,false) `Root layers in
+       if !use_repeat
+       then
+         fold_ilist
+           (fun (ap,ar,rap,rar) lp layer ->
+             match layer with
+             | `Point (`U, `U) -> (true,ar,rap,rar)
+             | `Rectangle (`U, `U, `U, `U) -> (ap,true,rap,rar)
+             | `Repeat (`Point (`U, `U)) -> (ap,ar,true,rar)
+             | `Repeat (`Rectangle (`U, `U, `U, `U)) -> (ap,ar,rap,true)
+             | _ -> (ap,ar,rap,rar))
+           (false,false,false,false) `Root layers
+       else true, true, false, false in
      let sp =
        if rep_any_point
        then Myseq.empty
