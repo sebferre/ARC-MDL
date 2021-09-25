@@ -17,7 +17,7 @@ let refine_degree = def_param "refine_degree" 20 string_of_int
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
 let task_timeout = ref 60
-let learning_verbose = ref false
+let verbose = ref false
 let grid_viz = ref false
 
 (* === printing and checking functions === *)
@@ -109,26 +109,27 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                               Model.grid_of_data gdo.data]
           | `TEST -> ()
         );
-        print_endline "\n> Best input readings:";
-        let input_reads =
-          match train_test with
-          | `TRAIN gpsr -> Result.Ok (List.nth gpsr.input_reads (i-1))
-          | `TEST -> Model.read_grid ~quota_diff:(!Model.max_nb_diff) ~env:Model.data0 m.Model.input_pattern input in
-        ( match input_reads with
-          | Result.Ok reads ->
-             List.iter
-               (fun (_,gdi,dli) ->
-                 Model.pp_grid_data gdi;
-                 Printf.printf "  (%.1f bits)\n" dli)
-               reads;
-             if !grid_viz then (
-               Grid.pp_grids
-                 (List.map
-                    (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
-                    reads))
-          | Result.Error _ ->
-             print_endline "(No input readings)"
-        );
+        if !verbose then (
+          print_endline "\n> Best input readings:";
+          let input_reads =
+            match train_test with
+            | `TRAIN gpsr -> Result.Ok (List.nth gpsr.input_reads (i-1))
+            | `TEST -> Model.read_grid ~quota_diff:(!Model.max_nb_diff) ~env:Model.data0 m.Model.input_pattern input in
+          ( match input_reads with
+            | Result.Ok reads ->
+               List.iter
+                 (fun (_,gdi,dli) ->
+                   Model.pp_grid_data gdi;
+                   Printf.printf "  (%.1f bits)\n" dli)
+                 reads;
+               if !grid_viz then (
+                 Grid.pp_grids
+                   (List.map
+                      (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
+                      reads))
+            | Result.Error _ ->
+               print_endline "(No input readings)"
+          ));
         print_endline "\n> Output prediction from input (up to 3 trials):";
         let score, rank, label, _failed_derived_grids =
 	  match Model.apply_model m input with
@@ -188,7 +189,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
   let lm, timed_out =
     try
       Model.learn_model
-        ~verbose:(!training && !learning_verbose)
+        ~verbose:(!training && !verbose)
         ~grid_viz:(!grid_viz)
         ~timeout:(!task_timeout)
         ~init_model
@@ -247,11 +248,12 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 23 tasks, 494s *)
-  [ "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.7s *)
+let solved_train_names = (* 25 tasks, 327s *)
+  [ "08ed6ac7.json"; (* NEW 4 grey bars, colored in size order *)
+    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.7s *)
     "1cf80156.json"; (* crop on shape, runtime=1.3s *)
     "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 20s, timeout trying to explain everything *)
-    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=116.1s *)
+    "23581191.json"; (* FAIL 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=116.1s *)
     "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.6s *)
     "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=4.9s *)
     "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=31s *)
@@ -259,6 +261,7 @@ let solved_train_names = (* 23 tasks, 494s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=1.1s *)
     "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=8.3s *)
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.2s *)
+    "91714a58.json"; (* NEW finds the main rectangle in a cloud of points *)
     "a1570a43.json"; (* red shape moved into 4 green points, runtime=34s *)
     "a79310a0.json"; (* cyan shape, moving 1 pixel down, 0.5s *)
     "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=39.1s *)
@@ -270,14 +273,14 @@ let solved_train_names = (* 23 tasks, 494s *)
     (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
     (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=8.3s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=40.8s *)
+    "e48d4e1a.json"; (* FAIL colored cross moved according to height of grey rectangle at (0,9), runtime=40.8s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=88.5s *)
-    (*"7e0986d6.json"; (* collection of rectangles + noise points to be removed *)*)
   ]
 
 let maybe_train_names =
   [
+    "7e0986d6.json"; (* collection of rectangles + noise points to be removed *)
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "0b148d64.json"; (* crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)
     "d9fac9be.json"; (* pb: need for nested shapes, relative position. point with the other color than the 3x3 square. runtime=15.6s *)
@@ -287,7 +290,6 @@ let maybe_train_names =
     "bb43febb.json"; (* pb: need for nested shape, or at least favoring similar paths in a same shape, or transformations rather than arithmetics *)
     "1caeab9d.json"; (* pb: needs to refer to the "blue shape" in the collection *)
     "9565186b.json"; (* pb: MDL not enough to keep bigest shape (size vs mask), runtime=0.3s *)
-    "91714a58.json"; (* pb: prefers a shape one pixel larger than a full rectangle, in context of many noise points *)
     "928ad970.json"; (* pb: position next to borders on all sides, need more expressions, and also border as special mask, independent of size *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefer having a diff, segmentation pb? => add full grid for each color as part *)
     "496994bd.json"; (* pb: moving objects up to some obstacle *)
@@ -310,7 +312,6 @@ let maybe_train_names =
     "794b24be.json"; (* pb: need switch, [map from nb blue pixels to red fixed shape] *)
     "a68b268e.json"; (* pb: should define mask on sub-grid + full sub-grid shape, [4 shapes with fixed position and color, stacked in some order] *)
     "c0f76784.json";
-    "08ed6ac7.json";
     "f8ff0b80.json";
     "a61ba2ce.json"; (* pb: prefers expressions to constant integers for grid size and shape positions, accidental regularity in 2 examples *)
     "50cb2852.json"; (* pb: collection *)
@@ -489,7 +490,7 @@ chosen set (default)";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
      "-viz", Set grid_viz, "Show train grids, as understood by the model";
-     "-v", Set learning_verbose, "Verbose output for the learning phase";
+     "-v", Set verbose, "Verbose mode";
     ]
     (fun str -> ())
     "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz] [-v]";
