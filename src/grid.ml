@@ -377,6 +377,13 @@ let majority_colors (mask : Mask.t) (g : t) : color list =
     else ()
   done;
   !bcs)
+let majority_colors, reset_majority_colors =
+  let f, reset =
+    Common.memoize ~size:103
+      (fun (mask,g) ->
+        majority_colors mask g) in
+  let f = fun mask g -> f (mask,g) in
+  f, reset
             
 (* segmenting grids *)
 
@@ -857,6 +864,7 @@ let rectangles, reset_rectangles =
 
 
 let reset_memoized_functions () =
+  reset_majority_colors ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
   reset_rectangles ()
