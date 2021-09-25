@@ -1078,7 +1078,7 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
   Common.prof "Model2.dl_delta" (fun () ->
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. Mdl.Code.list_star
-       (fun (i,j,c) ->
+       (fun (i,j,c) -> (* TODO: optimize: hint, all points have the same DL ? *)
          dl_data ~ctx ~path:(any_item (`Field (`Layer `Root, `Root))) (* dummy path with kind Shape *)
            (`Point (`Vec (`Int i, `Int j), `Color c)))
        delta)
@@ -1092,12 +1092,14 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
 exception Unbound_var of var
 exception Invalid_expr of template expr
 exception Out_of_bound of template list * int
+exception Negative_integer
 let _ =
   Printexc.register_printer
     (function
      | Unbound_var v -> Some ("unbound variable: " ^ string_of_var v)
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr string_of_template e)
      | Out_of_bound (items,i) -> Some ("out of bound indexing: " ^ string_of_template (`Many (false,items)) ^ "[" ^ string_of_int i ^ "]")
+     | Negative_integer -> Some ("negative integer")
      | _ -> None)
   
 type apply_lookup = var -> data option
@@ -1153,7 +1155,10 @@ let apply_expr_gen
       | _ -> raise (Invalid_expr e))
   | `Minus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `Int i1, `Int i2 -> `Int (i1 - i2)
+      | `Int i1, `Int i2 ->
+         let i = i1 - i2 in
+         if i < 0 then raise Negative_integer;
+         `Int i
       | _ -> raise (Invalid_expr e))
   | `Modulo (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
@@ -1212,7 +1217,8 @@ let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,ex
   try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) p t)
   with (* catching runtime error in expression eval *)
   | (Unbound_var _ as exn) -> Result.Error exn
-  | (Out_of_bound _ as exn) -> Result.Error exn)
+  | (Out_of_bound _ as exn) -> Result.Error exn
+  | (Negative_integer  as exn) -> Result.Error exn)
 (* DO NOT remove path argument, useful in generate_template (through apply_patt) *)
 
 
