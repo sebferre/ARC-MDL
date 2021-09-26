@@ -177,6 +177,7 @@ type var =
 
 type 'a expr =
   [ `Ref of revpath
+  | `Zero (* Int, for positions at least *)
   | `Plus of 'a * 'a (* (Int, Int) => Int *)
   | `Minus of 'a * 'a (* (Int, Int) => Int *)
   | `Modulo of 'a * 'a (* (Int, Int) => Int *)
@@ -334,6 +335,7 @@ let string_of_var : var -> string = function
 let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
   | `Ref p -> string_of_path p
   | `Index -> string_of_index
+  | `Zero -> "(0)"
   | `Plus (a,b) ->
      string a ^ " + " ^ string b
   | `Minus (a,b) ->
@@ -935,6 +937,7 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
 type code_expr = (* dls must correspond to a valid prob distrib *)
   { c_ref : dl;
     c_index : dl;
+    c_zero : dl;
     c_plus : dl;
     c_minus : dl;
     c_modulo : dl;
@@ -942,6 +945,7 @@ type code_expr = (* dls must correspond to a valid prob distrib *)
 let code_expr0 =
   { c_ref = infinity;
     c_index = infinity;
+    c_zero = infinity;
     c_plus = infinity;
     c_minus = infinity;
     c_modulo = infinity;
@@ -952,8 +956,9 @@ let code_expr_by_kind : (kind * code_expr) list =
             c_ref = Mdl.Code.usage 0.2;
             c_index = Mdl.Code.usage 0.2; (* TODO: should it be restricted to some paths? *)
             c_indexing = Mdl.Code.usage 0.2;
-            c_plus = Mdl.Code.usage 0.15;
-            c_minus = Mdl.Code.usage 0.15;
+            c_zero = Mdl.Code.usage 0.1;
+            c_plus = Mdl.Code.usage 0.1;
+            c_minus = Mdl.Code.usage 0.1;
             c_modulo = Mdl.Code.usage 0.1 };
     `Bool, { code_expr0 with c_ref = Mdl.Code.usage 1. };
     `Color, { code_expr0 with
@@ -986,6 +991,8 @@ let rec dl_expr
      +. dl_path ~env_sig ~ctx_path:path p
   | `Index ->
      code.c_index
+  | `Zero ->
+     code.c_zero
   | `Plus (e1,e2) ->
      code.c_plus
      +. dl ~ctx ~path:(`Arg (`Plus1,path)) e1
@@ -1204,6 +1211,7 @@ let apply_expr_gen
      (match lookup (v :> var) with
       | Some d -> (d :> template)
       | None -> raise (Unbound_var (v :> var)))
+  | `Zero -> `Int 0
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
@@ -2219,6 +2227,10 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
       let sv_rotation = (* variables with rotation-based indexing *)
         let* p = Myseq.from_list ps in
         vars_rotation_of_path p in
+      let se0 = (* constant expressions *)
+        if k = `Int
+        then Myseq.return (`Zero, None)
+        else Myseq.empty in
       let se1 = (* e = v | v_rot *)
         Myseq.concat [sv; sv_rotation] in
       let se2 = (* e = v +/- cst *)
@@ -2244,8 +2256,8 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
           else Myseq.empty
         else Myseq.empty in
       k,
-      Myseq.concat [se1; se2; se3]
-      |> Myseq.to_rev_list)
+      Myseq.concat [se0; se1; se2; se3]
+      |> Myseq.to_list)
     all_kinds)
 
 let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
