@@ -92,10 +92,11 @@ type 'a patt =
   | `Color of Grid.color
   | `Mask of Grid.Mask.t option
   | `Vec of 'a * 'a (* i, j -> vec *)
-  | `Point of 'a * 'a (* pos, color -> shape *)
-  | `Rectangle of 'a * 'a * 'a * 'a (* pos, size, color, mask -> shape *)
+  | `Point of 'a (* color -> shape *)
+  | `Rectangle of 'a * 'a * 'a (* size, color, mask -> shape *)
+  | `PosShape of 'a * 'a (* pos, shape -> object *)
   | `Background of 'a * 'a * 'a ilist (* size, color, layers (top first) -> grid *)
-  | `Many of bool * 'a list (* many-valued data: ordered, values (shapes) *)
+  | `Many of bool * 'a list (* many-valued data: ordered, values (objects) *)
   ]
 
 type field =
@@ -105,6 +106,7 @@ type field =
   | `Color
   | `Size
   | `Mask
+  | `Shape
   | `Layer of ilist_revpath ]
 type arg = [
   | `Plus1 | `Plus2
@@ -146,9 +148,9 @@ let path_ctx (path : revpath) : revpath option =
   | _ -> None
 
 type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Layer | `Grid ]
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Object | `Layer | `Grid ]
 let all_kinds =
-  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Layer;  `Grid ]
+  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Object; `Layer;  `Grid ]
 
 type role = (* same information as kind + contextual information *)
   [ `Int of [`I | `J] * role_vec
@@ -157,6 +159,7 @@ type role = (* same information as kind + contextual information *)
   | `Mask
   | `Vec of role_vec
   | `Shape
+  | `Object
   | `Layer
   | `Grid ]
 and role_vec =
@@ -222,6 +225,7 @@ let string_of_kind : kind -> string = function
   | `Mask -> "mask"
   | `Vec -> "vector"
   | `Shape -> "shape"
+  | `Object -> "object"
   | `Layer -> "layer"
   | `Grid -> "grid"
 
@@ -233,6 +237,7 @@ let rec string_of_role = function
   | `Mask -> "mask"
   | `Vec rv -> "vec/" ^ string_of_role_vec rv
   | `Shape -> "shape"
+  | `Object -> "object"
   | `Layer -> "layer"
   | `Grid -> "grid"
 and string_of_role_vec = function
@@ -249,6 +254,7 @@ let string_of_field : field -> string = function
   | `Color -> "color"
   | `Size -> "size"
   | `Mask -> "mask"
+  | `Shape -> "shape"
   | `Layer lp -> "layer_" ^ string_of_ilist_path lp
 
 let string_of_arg : arg -> string = function
@@ -269,6 +275,10 @@ let rec string_of_path : revpath -> string = function
   | `Item (Some i,local,ctx) -> string_of_path ctx ^ "{" ^ string_of_path local ^ "}[" ^ string_of_int i ^ "]"
 
 let pp_path p = print_string (string_of_path p)
+let pp_path_list lp =
+  print_string "(";
+  List.iter (fun path -> pp_path path; print_string " in ") lp;
+  print_string ")"
 
 let rec string_of_ilist (string : 'a -> string) (l : 'a ilist) : string =
   let rec aux lp = function
@@ -290,14 +300,16 @@ let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
       | Some m -> Grid.Mask.to_string m)
   | `Vec (i,j) ->
      "(" ^ string i ^ "," ^ string j ^ ")"
-  | `Point (pos,color) ->
-     "a point at " ^ string pos
+  | `Point (color) ->
+     "a point"
      ^ " with color " ^ string color
-  | `Rectangle (pos,size,color,mask) ->
-     "a rectangle at " ^ string pos
+  | `Rectangle (size,color,mask) ->
+     "a rectangle"
      ^ " with size " ^ string size
      ^ " and color " ^ string color
      ^ " and mask " ^ string mask
+  | `PosShape (pos,shape) ->
+     string shape ^ " at " ^ string pos
   | `Background (size,color,layers) ->
      "a background with size " ^ string size
      ^ " and color " ^ string color
@@ -377,13 +389,14 @@ let rec path_kind (p : revpath) : kind =
       | `Color -> `Color
       | `Mask -> `Mask
       | (`Pos | `Size) -> `Vec
+      | `Shape -> `Shape
       | `Layer _ -> `Layer)
   | `Arg (a,p1) ->
      (match a with
       | (`Plus1 | `Plus2 | `Minus1 | `Minus2 | `Modulo1 | `Modulo2) -> `Int
       | `Indexing1 -> path_kind p1
       | `Indexing2 -> `Int)
-  | `Item (_,`Root, `Field (`Layer _, _)) -> `Shape
+  | `Item (_,`Root, `Field (`Layer _, _)) -> `Object
   | `Item (_,`Root, ctx) -> path_kind ctx
   | `Item (_,local,_) -> path_kind local
 
@@ -392,13 +405,14 @@ let rec path_role ?(ctx = None) (p : revpath) : role =
   | `Root ->
      (match ctx with
       | None -> `Grid
-      | Some (`Field (`Layer _, _)) -> `Shape
+      | Some (`Field (`Layer _, _)) -> `Object
       | Some p -> path_role ~ctx:None p) (* TODO: revise role of items of an explicit Many *)
   | `Field ((`I | `J as f), p1) -> `Int (f, path_role_vec ~ctx p1)
   | `Field (`Color, p1) -> `Color (path_role_frame ~ctx p1)
   | `Field (`Mask, _) -> `Mask
   | `Field (`Pos, _) -> `Vec `Pos
   | `Field (`Size, p1) -> `Vec (`Size (path_role_frame ~ctx p1))
+  | `Field (`Shape, _) -> `Shape
   | `Field (`Layer _, _) -> `Layer
   | `Arg ((`Plus1 | `Plus2 | `Minus1 | `Minus2 | `Modulo1 | `Modulo2), p1) -> path_role ~ctx p1
   | `Arg (`Indexing1,p1) -> path_role ~ctx p1
@@ -418,12 +432,9 @@ and path_role_vec ~ctx : revpath -> role_vec = function
      assert false
 and path_role_frame ~ctx : revpath -> role_frame = function
   | `Root when ctx = None -> `Grid
-  | `Root -> `Shape
-  | `Field (`Layer _, _) -> `Shape
+  | `Field (`Shape, _) -> `Shape
   | `Arg (`Indexing1,p1) -> path_role_frame ~ctx p1
   | p -> pp_path p; print_newline (); assert false
-       
-
   
 let find_ilist (lp : ilist_revpath) (l : 'a ilist) : 'a option = (* QUICK *)
   let rec aux lp =
@@ -442,16 +453,16 @@ let find_ilist (lp : ilist_revpath) (l : 'a ilist) : 'a option = (* QUICK *)
   | `Nil -> None
   | `Insert (_,elt,_) -> Some elt
 
-let find_field_patt (find : 'a -> 'a option) (f : field) (patt_parent : 'a patt) : 'a option = (* only using head field of p *)
+let rec find_field_patt (find : 'a -> 'a option) (f : field) (patt_parent : 'a patt) : 'a option = (* only using head field of p *)
   match f, patt_parent with
   | `I, `Vec (i,j) -> find i
-  | `J,`Vec (i,j) -> find j
-  | `Pos, `Point (pos,color) -> find pos
-  | `Color, `Point (pos,color) -> find color
-  | `Pos, `Rectangle (pos,size,color,mask) -> find pos
-  | `Size, `Rectangle (pos,size,color,mask) -> find size
-  | `Color, `Rectangle (pos,size,color,mask) -> find color
-  | `Mask, `Rectangle (pos,size,color,mask) -> find mask
+  | `J, `Vec (i,j) -> find j
+  | `Color, `Point (color) -> find color
+  | `Size, `Rectangle (size,color,mask) -> find size
+  | `Color, `Rectangle (size,color,mask) -> find color
+  | `Mask, `Rectangle (size,color,mask) -> find mask
+  | `Pos, `PosShape (pos,shape) -> find pos
+  | `Shape, `PosShape (pos,shape) -> find shape
   | `Size, `Background (size,color,layers) -> find size
   | `Color, `Background (size,color,layers) -> find color
   | `Layer lp, `Background (size,color,layers) ->
@@ -535,15 +546,17 @@ let fold_patt (fold : 'b -> revpath -> 'a -> 'b) (acc : 'b) (p : revpath) (patt 
      let acc = fold acc (p ++ `I) i in
      let acc = fold acc (p ++ `J) j in
      acc
-  | `Point (pos,color) ->
-     let acc = fold acc (p ++ `Pos) pos in
+  | `Point (color) ->
      let acc = fold acc (p ++ `Color) color in
      acc
-  | `Rectangle (pos,size,color,mask) ->
-     let acc = fold acc (p ++ `Pos) pos in
+  | `Rectangle (size,color,mask) ->
      let acc = fold acc (p ++ `Size) size in
      let acc = fold acc (p ++ `Color) color in
      let acc = fold acc (p ++ `Mask) mask in
+     acc
+  | `PosShape (pos,shape) ->
+     let acc = fold acc (p ++ `Pos) pos in
+     let acc = fold acc (p ++ `Shape) shape in
      acc
   | `Background (size,color,layers) ->
      let acc = fold acc (p ++ `Size) size in
@@ -623,22 +636,33 @@ let signature_of_kind (sg : signature) (k : kind) : revpath list =
   match List.assoc_opt k sg with
   | Some ps -> ps
   | None -> []
-  
-let rec default_data_of_path (p : revpath) : data =
+
+let default_pos = `Vec (`Int 0, `Int 0)
+let default_shape_color = `Color Grid.no_color
+let default_grid_color = `Color Grid.black
+let default_shape_size = `Vec (`Int 2, `Int 2)
+let default_grid_size = `Vec (`Int 10, `Int 10)
+let default_mask = `Mask None
+let default_shape = `Rectangle (default_shape_size, default_shape_color, default_mask)
+let default_object = `PosShape (default_pos, default_shape)
+let default_layer = default_object
+let default_grid = `Background (default_grid_size, default_grid_color, `Nil)
+let default_data_of_path (p : revpath) : data =
   match path_role p with
   | `Int (_, `Pos) -> `Int 0
   | `Int (_, `Size `Grid) -> `Int 10
   | `Int (_, `Size `Shape) -> `Int 2
   | `Index -> `Int 0
-  | `Color `Grid -> `Color Grid.black
-  | `Color `Shape -> `Color Grid.no_color
-  | `Mask -> `Mask None
-  | `Vec `Pos -> `Vec (`Int 0, `Int 0)
-  | `Vec (`Size `Grid) -> `Vec (`Int 10, `Int 10)
-  | `Vec (`Size `Shape) -> `Vec (`Int 2, `Int 2)
-  | `Shape -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
-  | `Layer -> `Rectangle (`Vec (`Int 0, `Int 0), `Vec (`Int 2, `Int 2), `Color Grid.no_color, `Mask None)
-  | `Grid -> `Background (`Vec (`Int 10, `Int 10), `Color Grid.black, `Nil)
+  | `Color `Grid -> default_grid_color
+  | `Color `Shape -> default_shape_color
+  | `Mask -> default_mask
+  | `Vec `Pos -> default_pos
+  | `Vec (`Size `Grid) -> default_grid_size
+  | `Vec (`Size `Shape) -> default_shape_size
+  | `Shape -> default_shape
+  | `Object -> default_object
+  | `Layer -> default_layer
+  | `Grid -> default_grid
 
 let rec root_template_of_data (d : data) : template list = (* QUICK *)
   match d with
@@ -647,8 +671,9 @@ let rec root_template_of_data (d : data) : template list = (* QUICK *)
     | `Color _
     | `Mask _ -> [(d :> template)]
   | `Vec _ -> [`Vec (`U, `U)]
-  | `Point _ -> [`Point (`U, `U)]
-  | `Rectangle _ -> [`Rectangle (`U, `U, `U, `U)]
+  | `Point _ -> [`Point (`U)]
+  | `Rectangle _ -> [`Rectangle (`U, `U, `U)]
+  | `PosShape _ -> [`PosShape (`U, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
      let llt_items = List.map root_template_of_data items in
@@ -669,11 +694,12 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   | `Mask m1, `Mask m2 when m1 = m2 -> true
   | `Vec (i1,j1), `Vec (i2,j2) ->
      matches_template i1 i2 && matches_template j1 j2
-  | `Point (pos1,color1), `Point (pos2,color2) ->
-     matches_template pos1 pos2 && matches_template color1 color2
-  | `Rectangle (pos1,size1,color1,mask1), `Rectangle (pos2,size2,color2,mask2) ->
-     matches_template pos1 pos2 && matches_template size1 size2
-     && matches_template color1 color2 && matches_template mask1 mask2
+  | `Point (color1), `Point (color2) ->
+     matches_template color1 color2
+  | `Rectangle (size1,color1,mask1), `Rectangle (size2,color2,mask2) ->
+     matches_template size1 size2 && matches_template color1 color2 && matches_template mask1 mask2
+  | `PosShape (pos1,shape1), `PosShape (pos2,shape2) ->
+     matches_template pos1 pos2 && matches_template shape1 shape2
   | `Background (size1,color1,layers1), `Background (size2,color2,layers2) ->
      matches_template size1 size2 && matches_template color1 color2
      && matches_ilist matches_template layers1 layers2
@@ -766,18 +792,19 @@ let dl_patt
      dl ~ctx i ~path:(path ++ `I)
      +. dl ~ctx j ~path:(path ++ `J)  
 
-  | `Point (pos,color) ->
-     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
-     +. Mdl.Code.usage 0.5
-     +. dl ~ctx pos ~path:(path ++ `Pos)
+  | `Point (color) ->
+     Mdl.Code.usage 0.5
      +. dl ~ctx color ~path:(path ++ `Color)
-  | `Rectangle (pos,size,color,mask) ->
-     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
-     +. Mdl.Code.usage 0.5
-     +. dl ~ctx pos ~path:(path ++ `Pos)
+  | `Rectangle (size,color,mask) ->
+     Mdl.Code.usage 0.5
      +. dl ~ctx size ~path:(path ++ `Size)
      +. dl ~ctx color ~path:(path ++ `Color)
      +. dl ~ctx mask ~path:(path ++ `Mask)
+
+  | `PosShape (pos,shape) ->
+     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
+     +. dl ~ctx pos ~path:(path ++ `Pos)
+     +. dl ~ctx shape ~path:(path ++ `Shape)
 
   | `Many (ordered,items) ->
      0. (* TODO: encode ordered when length > 1 *)
@@ -832,18 +859,23 @@ let dl_data, reset_dl_data =
 
 let path_similarity ~ctx_path v = (* QUICK *)
   let rec aux lp1' lp2' =
-    match lp1', lp2' with
+    match lp1', lp2' with (* TODO: generalize to better cope with extensions in a robust way *)
     | [], [] -> 2.
     | `Root::lp1, _ -> aux lp1 lp2'
     | _, `Root::lp2 -> aux lp1' lp2
+    | `Field (`Shape,p1)::lp1, ([] | `Field (`Layer _,_)::_) -> aux (p1::lp1) lp2'
+    | ([] | `Field (`Layer _,_)::_), `Field (`Shape,p2)::lp2 -> aux lp1' (p2::lp2)
     | `Field (f1,p1)::lp1, `Field (f2,p2)::lp2 -> aux_field f1 f2 *. aux (p1::lp1) (p2::lp2)
     | `Field (`Layer _, p1)::lp1, [] -> 0.75 *. aux (p1::lp1) []
-    | [], `Field (`Layer _, p2)::lp2 -> 0. *. aux [] (p2::lp2)
+    | [], `Field (`Layer _, p2)::lp2 -> 0.75 *. aux [] (p2::lp2)
     | `Arg (_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
     | `Item (_,q1,ctx1)::lp1, `Item (_,q2,ctx2)::lp2 -> aux (q1::ctx1::lp1) (q2::ctx2::lp2)
     | `Item (_,q1,ctx1)::lp1, _ -> 0.75 *. aux (q1::ctx1::lp1) lp2'
     | _, `Item (_,q2,ctx2)::lp2 -> 0.5 *. aux lp1' (q2::ctx2::lp2)
-    | _ -> assert false (* incompatible kinds *)
+    | _ ->
+       pp_path_list lp1'; print_string " ~ ";
+       pp_path_list lp2'; print_newline ();
+       assert false (* incompatible kinds *)
   and aux_field f1 f2 =
     match f1, f2 with
     | `I, `I -> 1.
@@ -856,8 +888,14 @@ let path_similarity ~ctx_path v = (* QUICK *)
     | `Pos, `Size -> 0.5
     | `Size, `Pos -> 0.5
     | `Size, `Size -> 1.
+    | `Shape, `Shape -> 1.
     | `Layer l1, `Layer l2 -> aux_ilist l1 l2
-    | _ -> assert false
+    | _ ->
+       print_string (string_of_field f1);
+       print_string " ~ ";
+       print_string (string_of_field f2);
+       print_newline ();
+       assert false
   and aux_ilist lp1 lp2 =
     if lp1 = lp2 then 1. else 0.8
   in
@@ -930,6 +968,9 @@ let code_expr_by_kind : (kind * code_expr) list =
     `Shape, { code_expr0 with
               c_ref = Mdl.Code.usage 0.5;
               c_indexing = Mdl.Code.usage 0.5 };
+    `Object, { code_expr0 with
+               c_ref = Mdl.Code.usage 0.5;
+               c_indexing = Mdl.Code.usage 0.5 };
     `Layer, { code_expr0 with
               c_ref = Mdl.Code.usage 1. };
     `Grid, code_expr0 ]
@@ -982,6 +1023,7 @@ let code_template_by_kind : (kind * code_template) list =
     `Mask, code_template0;
     `Vec, code_template0;
     `Shape, code_template0;
+    `Object, code_template0;
     `Layer, { code_template0 with
               c_repeat = Mdl.Code.usage 0.1;
               c_for = Mdl.Code.usage 0.25;
@@ -1023,14 +1065,15 @@ let dl_data_given_patt
   | `Vec (i,j), `Vec (di,dj) ->
      dl ~ctx i di ~path:(path ++ `I)
      +. dl ~ctx j dj ~path:(path ++ `J)
-  | `Point (pos,color), `Point (dpos,dcolor) ->
-     dl ~ctx pos dpos ~path:(path ++ `Pos)
-     +. dl ~ctx color dcolor ~path:(path ++ `Color)
-  | `Rectangle (pos,size,color,mask), `Rectangle (dpos,dsize,dcolor,dmask) ->
-     dl ~ctx pos dpos ~path:(path ++ `Pos)
-     +. dl ~ctx size dsize ~path:(path ++ `Size)
+  | `Point (color), `Point (dcolor) ->
+     dl ~ctx color dcolor ~path:(path ++ `Color)
+  | `Rectangle (size,color,mask), `Rectangle (dsize,dcolor,dmask) ->
+     dl ~ctx size dsize ~path:(path ++ `Size)
      +. dl ~ctx color dcolor ~path:(path ++ `Color)
      +. dl ~ctx mask dmask ~path:(path ++ `Mask)
+  | `PosShape (pos,shape), `PosShape (dpos,dshape) ->
+     dl ~ctx pos dpos ~path:(path ++ `Pos)
+     +. dl ~ctx shape dshape ~path:(path ++ `Shape)
   | `Background (size,color,layers), `Background (dsize,dcolor,dlayers) ->
      dl ~ctx size dsize ~path:(path ++ `Size)
      +. dl ~ctx color dcolor ~path:(path ++ `Color)
@@ -1045,7 +1088,7 @@ let dl_data_given_patt
        0. items ditems
   | _ -> assert false (* data inconsistent with pattern *)
     
-let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d : data) : dl = (* QUICK *)
+let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d : data) : dl = (* cannot be profiled because of indirect recursion *)
   match t, d with
   | `U, _ -> dl_data ~ctx ~path d
   | `Repeat patt1, `Many (false,items) ->
@@ -1056,7 +1099,7 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | `For _, _ -> assert false (* should have been evaluated out *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
-           
+              
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
   Common.prof "Model2.dl_diff" (fun () ->
   if diff = []
@@ -1075,7 +1118,7 @@ let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
          diff)
 
 let dl_delta_path = any_item (`Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
-let dl_delta_shape = `Point (`Vec (`Int 0, `Int 0), `Color Grid.blue) (* dummy point shape *)
+let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *)
 let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
   Common.prof "Model2.dl_delta" (fun () ->
   if delta = []
@@ -1128,14 +1171,15 @@ let apply_patt
   | `Vec (i,j) ->
      `Vec (apply ~lookup (p ++ `I) i,
            apply ~lookup (p ++ `J) j)
-  | `Point (pos,color) ->
-     `Point (apply ~lookup (p ++ `Pos) pos,
-             apply ~lookup (p ++ `Color) color)
-  | `Rectangle (pos,size,color,mask) ->
-     `Rectangle (apply ~lookup (p ++ `Pos) pos,
-                 apply ~lookup (p ++ `Size) size,
+  | `Point (color) ->
+     `Point (apply ~lookup (p ++ `Color) color)
+  | `Rectangle (size,color,mask) ->
+     `Rectangle (apply ~lookup (p ++ `Size) size,
                  apply ~lookup (p ++ `Color) color,
                  apply ~lookup (p ++ `Mask) mask)
+  | `PosShape (pos,shape) ->
+     `PosShape (apply ~lookup (p ++ `Pos) pos,
+                apply ~lookup (p ++ `Shape) shape)
   | `Background (size,color,layers) ->
      `Background (apply ~lookup (p ++ `Size) size,
                   apply ~lookup (p ++ `Color) color,
@@ -1268,9 +1312,9 @@ and draw_layers g = function
      draw_layer g layer;
      draw_layers g above
 and draw_layer g = function
-  | `Point (`Vec (`Int i, `Int j), `Color c) ->
+  | `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)) ->
      Grid.set_pixel g i j c
-  | `Rectangle (`Vec (`Int mini, `Int minj), `Vec (`Int h, `Int w), `Color c, `Mask m_opt) ->
+  | `PosShape (`Vec (`Int mini, `Int minj), `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask m_opt)) ->
      let maxi = mini + h - 1 in
      let maxj = minj + w - 1 in
      for i = mini to maxi do
@@ -1500,15 +1544,15 @@ let state_minus_rectangle state (rect : Grid.rectangle) =
 let rec parse_shape =
   let parse_point pos color p (i,j,c) state = (* QUICK *)
     let* dpos, state = parse_vec pos (p ++ `Pos) (i,j) state in
-    let* dcolor, state = parse_color color (p ++ `Color) c state in
-    Myseq.return (`Point (dpos,dcolor), state) in
+    let* dcolor, state = parse_color color (p ++ `Shape ++ `Color) c state in
+    Myseq.return (`PosShape (dpos, `Point (dcolor)), state) in
   let parse_rectangle pos size color mask p rect state = (* QUICK *)
     let open Grid in
     let* dpos, state = parse_vec pos (p ++ `Pos) (rect.offset_i,rect.offset_j) state in
-    let* dsize, state = parse_vec size (p ++ `Size) (rect.height,rect.width) state in
-    let* dcolor, state = parse_color color (p ++ `Color) rect.color state in
-    let* dmask, state = parse_mask mask (p ++ `Mask) rect.rmask state in
-    Myseq.return (`Rectangle (dpos,dsize,dcolor,dmask), state)
+    let* dsize, state = parse_vec size (p ++ `Shape ++ `Size) (rect.height,rect.width) state in
+    let* dcolor, state = parse_color color (p ++ `Shape ++ `Color) rect.color state in
+    let* dmask, state = parse_mask mask (p ++ `Shape ++ `Mask) rect.rmask state in
+    Myseq.return (`PosShape (dpos, `Rectangle (dsize,dcolor,dmask)), state)
   in
   let parse_all_points parts state = Myseq.prof "Model2.parse_all_points" (
     let* point = Myseq.from_list (Grid.points state.grid state.mask parts) in
@@ -1565,28 +1609,28 @@ let rec parse_shape =
        [parse_all_points parts state
         |> Myseq.map
              (fun ((i,j,c), state) ->
-               `Point (`Vec (`Int i, `Int j), `Color c),
+               `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                state);
         parse_all_rectangles parts state
         |> Myseq.map
              (fun (r,state) ->
                let open Grid in
-               `Rectangle (`Vec (`Int r.offset_i, `Int r.offset_j),
-                           `Vec (`Int r.height, `Int r.width),
-                           `Color r.color,
-                           `Mask r.rmask),
+               `PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
+                          `Rectangle (`Vec (`Int r.height, `Int r.width),
+                                      `Color r.color,
+                                      `Mask r.rmask)),
                state) ])
     ~parse_repeat:(
       function
-      | `Point (pos,color) ->
+      | `PosShape (pos, `Point (color)) ->
          parse_repeat_point pos color p parts state
-      | `Rectangle (pos,size,color,mask) ->
+      | `PosShape (pos, `Rectangle (size,color,mask)) ->
          parse_repeat_rectangle pos size color mask p parts state
       | _ -> assert false)
     ~parse_patt:(function
-      | `Point (pos,color) ->
+      | `PosShape (pos, `Point (color)) ->
          parse_single_point pos color p parts state
-      | `Rectangle (pos,size,color,mask) ->
+      | `PosShape (pos, `Rectangle (size,color,mask)) ->
          parse_single_rectangle pos size color mask p parts state
       | `Many (ordered,items) ->
          let* ditems, state =
@@ -1847,13 +1891,14 @@ let rec insert_patt (f : 'a option -> 'a) (p : revpath) (patt_parent : 'a patt) 
   | `Field (`I, _), `Vec (i,j) -> `Vec (f (Some i), j)
   | `Field (`J, _), `Vec (i,j) -> `Vec (i, f (Some j))
 
-  | `Field (`Pos, _), `Point (pos,color) -> `Point (f (Some pos), color)
-  | `Field (`Color, _), `Point (pos,color) -> `Point (pos, f (Some color))
+  | `Field (`Color, _), `Point (color) -> `Point (f (Some color))
 
-  | `Field (`Pos, _), `Rectangle (pos,size,color,mask) -> `Rectangle (f (Some pos), size, color, mask)
-  | `Field (`Size, _), `Rectangle (pos,size,color,mask) -> `Rectangle (pos, f (Some size), color, mask)
-  | `Field (`Color, _), `Rectangle (pos,size,color,layers) -> `Rectangle (pos, size, f (Some color), layers)
-  | `Field (`Mask, _), `Rectangle (pos,size,color,mask) -> `Rectangle (pos, size, color, f (Some mask))
+  | `Field (`Size, _), `Rectangle (size,color,mask) -> `Rectangle (f (Some size), color, mask)
+  | `Field (`Color, _), `Rectangle (size,color,layers) -> `Rectangle (size, f (Some color), layers)
+  | `Field (`Mask, _), `Rectangle (size,color,mask) -> `Rectangle (size, color, f (Some mask))
+
+  | `Field (`Pos, _), `PosShape (pos,shape) -> `PosShape (f (Some pos), shape)
+  | `Field (`Shape, _), `PosShape (pos,shape) -> `PosShape (pos, f (Some shape))
 
   | `Field (`Color, _), `Background (size,color,layers) -> `Background (size, f (Some color), layers)
   | `Field (`Size, _), `Background (size,color,layers) -> `Background (f (Some size), color, layers)
@@ -1909,7 +1954,7 @@ let rec insert_template (f : template option -> template) (p : revpath) (t : tem
 type grid_refinement =
   | RGridInit
   | RDef of revpath * template * revpath option (* many-ctx *) * bool (* partial: only true for some items if many items *)
-  | RShape of revpath * template (* shape *)
+  | RObject of revpath * template (* object *)
   | RRepeat of revpath
   | RSingle of revpath
 
@@ -1919,11 +1964,11 @@ let pp_grid_refinement = function
      print_string "DEF: "; pp_path p;
      print_string "="; pp_template t;
      if partial then print_string " (partial)"
-  | RShape (path,sh) ->
-     print_string "SHAPE at ";
+  | RObject (path,obj) ->
+     print_string "OBJECT at ";
      pp_path path;
      print_string ": ";
-     pp_template sh
+     pp_template obj
   | RRepeat path ->
      print_string "REPEAT at ";
      pp_path path
@@ -1965,12 +2010,12 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                        `For (p_many, insert_aux local t1)
                     | _ -> raise Refinement_no_change)
                    ctx )
-      | RShape (path,shape) ->
+      | RObject (path,obj) ->
          t
          |> insert_template
               (function
-               | Some x when x = shape -> raise Refinement_no_change
-               | _ -> shape)
+               | Some x when x = obj -> raise Refinement_no_change
+               | _ -> obj)
               path
          |> insert_template (fun _ -> `U) (`Field (`Color,`Root)) (* because background color is defined as remaining color after covering shapes *)
       | RRepeat path ->
@@ -2208,17 +2253,17 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
     | `Repeat _ -> Myseq.return (RSingle p)
     | `Point _ | `Rectangle _ -> Myseq.return (RRepeat p)
     | _ -> assert false in *)
-  let rec aux ~repeat ~(shape : template patt) lp = function
+  let rec aux ~repeat ~(obj : template patt) lp = function
     | `Nil ->
-       let res = Myseq.return (RShape (`Field (`Layer lp, `Root), (shape :> template))) in
+       let res = Myseq.return (RObject (`Field (`Layer lp, `Root), (obj :> template))) in
        if repeat
-       then Myseq.cons (RShape (`Field (`Layer lp, `Root), `Repeat shape)) res
+       then Myseq.cons (RObject (`Field (`Layer lp, `Root), `Repeat obj)) res
        else res
     | `Insert (above,_,below) ->
        Myseq.concat
          [ (*aux_repeat [`Layers lp] shape;*) (* TEST *)
-           aux ~repeat ~shape (`Right lp) below; (* insert below first *)
-           aux ~repeat ~shape (`Left lp) above ]
+           aux ~repeat ~obj (`Right lp) below; (* insert below first *)
+           aux ~repeat ~obj (`Left lp) above ]
     | _ -> assert false
   in
   match t with
@@ -2229,21 +2274,21 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
          fold_ilist
            (fun (ap,ar,rap,rar) lp layer ->
              match layer with
-             | `Point (`U, `U) -> (true,ar,rap,rar)
-             | `Rectangle (`U, `U, `U, `U) -> (ap,true,rap,rar)
-             | `Repeat (`Point (`U, `U)) -> (ap,ar,true,rar)
-             | `Repeat (`Rectangle (`U, `U, `U, `U)) -> (ap,ar,rap,true)
+             | `PosShape (`U, `Point (`U)) -> (true,ar,rap,rar)
+             | `PosShape (`U, `Rectangle (`U, `U, `U)) -> (ap,true,rap,rar)
+             | `Repeat (`PosShape (`U, `Point (`U))) -> (ap,ar,true,rar)
+             | `Repeat (`PosShape (`U, `Rectangle (`U, `U, `U))) -> (ap,ar,rap,true)
              | _ -> (ap,ar,rap,rar))
            (false,false,false,false) `Root layers
        else true, true, false, false in
      let sp =
        if rep_any_point
        then Myseq.empty
-       else aux ~repeat:(not any_point) ~shape:(`Point (`U, `U)) `Root layers in
+       else aux ~repeat:(not any_point) ~obj:(`PosShape (`U, `Point (`U))) `Root layers in
      let sr =
        if rep_any_rect
        then Myseq.empty
-       else aux ~repeat:(not any_rect) ~shape:(`Rectangle (`U, `U, `U, `U)) `Root layers in
+       else aux ~repeat:(not any_rect) ~obj:(`PosShape (`U, `Rectangle (`U, `U, `U))) `Root layers in
      Myseq.concat [sp; sr]
   | _ -> assert false
        

@@ -328,9 +328,9 @@ let task_model =
     {input_pattern =
        `Background (`U, `Color Grid.black,
                     `Insert (`Nil,
-                             `Rectangle (`U,`U,`U,`U),
+                             `PosShape (`U, `Rectangle (`U,`U,`U)),
                              `Insert (`Nil,
-                                      `Rectangle (`U,`U,`U,`U),
+                                      `PosShape (`U, `Rectangle (`U,`U,`U)),
                                       `Nil)));
      output_template =
        `Background (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
@@ -343,16 +343,14 @@ let task_model =
     {input_pattern =
        `Background (`U, `Color Grid.black,
                     `Insert (`Nil,
-                             `Rectangle (`U,`U,`U,`U),
+                             `PosShape (`U, `Rectangle (`U,`U,`U)),
                              `Nil));
      output_template =
        `Background (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
                     `Ref (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
                     `Insert (`Nil,
-                             `Rectangle (`Vec (`Int 0, `Int 0),
-                                         `Ref (`Field (`Size, (`Field (`Layer `Root, `Root)))),
-                                         `Ref (`Field (`Color, (`Field (`Layer `Root, `Root)))),
-                                         `Ref (`Field (`Mask, (`Field (`Layer `Root, `Root))))),
+                             `PosShape (`Vec (`Int 0, `Int 0),
+                                        `Ref (`Field (`Shape, `Field (`Layer `Root, `Root)))),
                              `Nil))}; 
   ]
   
