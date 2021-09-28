@@ -1963,8 +1963,8 @@ type grid_refinement =
   | RGridInit
   | RDef of revpath * template * revpath option (* many-ctx *) * bool (* partial: only true for some items if many items *)
   | RObject of revpath * template (* object *)
-  | RRepeat of revpath
-  | RSingle of revpath
+(*  | RRepeat of revpath
+  | RSingle of revpath *)
 
 let pp_grid_refinement = function
   | RGridInit -> ()
@@ -1977,12 +1977,12 @@ let pp_grid_refinement = function
      pp_path path;
      print_string ": ";
      pp_template obj
-  | RRepeat path ->
+(*  | RRepeat path ->
      print_string "REPEAT at ";
      pp_path path
   | RSingle path ->
      print_string "SINGLE at ";
-     pp_path path
+     pp_path path *)
 
 exception Refinement_no_change
 let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) =
@@ -2026,7 +2026,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                | _ -> obj)
               path
          |> insert_template (fun _ -> `U) (`Field (`Color,`Root)) (* because background color is defined as remaining color after covering shapes *)
-      | RRepeat path ->
+(*      | RRepeat path ->
          t
          |> insert_template
               (function
@@ -2039,7 +2039,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
               (function
                | Some (`Repeat patt) -> (patt :> template)
                | _ -> raise Refinement_no_change)
-              path
+              path *)
     in
 (*    print_string "New grid template: ";
     pp_template t;
@@ -2260,22 +2260,20 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
       |> Myseq.to_list)
     all_kinds)
 
-let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
+let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t = (* QUICK *)
   (*let aux_repeat p = function
     | `Repeat _ -> Myseq.return (RSingle p)
     | `Point _ | `Rectangle _ -> Myseq.return (RRepeat p)
     | _ -> assert false in *)
-  let rec aux ~repeat ~(obj : template patt) lp = function
+  let rec aux ~(objs : template list) lp = function
     | `Nil ->
-       let res = Myseq.return (RObject (`Field (`Layer lp, `Root), (obj :> template))) in
-       if repeat
-       then Myseq.cons (RObject (`Field (`Layer lp, `Root), `Repeat obj)) res
-       else res
+       let* obj = Myseq.from_list objs in
+       Myseq.return (RObject (`Field (`Layer lp, `Root), obj))
     | `Insert (above,_,below) ->
        Myseq.concat
          [ (*aux_repeat [`Layers lp] shape;*) (* TEST *)
-           aux ~repeat ~obj (`Right lp) below; (* insert below first *)
-           aux ~repeat ~obj (`Left lp) above ]
+           aux ~objs (`Right lp) below; (* insert below first *)
+           aux ~objs (`Left lp) above ]
     | _ -> assert false
   in
   match t with
@@ -2294,21 +2292,57 @@ let shape_refinements (t : template) : grid_refinement Myseq.t = (* QUICK *)
            (false,false,false,false) `Root layers
        else true, true, false, false in
      let sp =
-       if rep_any_point
-       then Myseq.empty
-       else aux ~repeat:(not any_point) ~obj:(`PosShape (`U, `Point (`U))) `Root layers in
+       let objs =
+         if rep_any_point
+         then []
+         else
+           let obj = `PosShape (`U, `Point (`U)) in
+           if any_point
+           then [obj]
+           else [obj; `Repeat obj] in
+       aux ~objs `Root layers in
      let sr =
-       if rep_any_rect
-       then Myseq.empty
-       else aux ~repeat:(not any_rect) ~obj:(`PosShape (`U, `Rectangle (`U, `U, `U))) `Root layers in
-     Myseq.concat [sp; sr]
+       let objs =
+         if rep_any_rect
+         then []
+         else
+           let obj = `PosShape (`U, `Rectangle (`U, `U, `U)) in
+           if any_rect
+           then [obj]
+           else [obj; `Repeat obj] in
+       aux ~objs `Root layers in
+     let ss =
+       let ps_shape = signature_of_kind env_sig `Shape in
+       Myseq.concat
+         (List.map
+            (fun p_shape ->
+              let obj = `PosShape (`U, `Ref p_shape) in
+              let obj =
+                match path_ctx p_shape with
+                | None -> obj
+                | Some p_many -> `For (p_many, obj) in
+              aux ~objs:[obj] `Root layers)
+            ps_shape) in
+     let so =
+       let ps_object = signature_of_kind env_sig `Object in
+       Myseq.concat
+         (List.map
+            (fun p_object ->
+              let obj = `Ref p_object in
+              let obj =
+                match path_ctx p_object with
+                | None -> obj
+                | Some p_many -> `For (p_many, obj) in
+              aux ~objs:[obj] `Root layers)
+            ps_object) in
+     Myseq.concat [so; ss; sr; sp]
   | _ -> assert false
-       
+
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.prof "Model2.grid_refinements" (
   Myseq.concat
     [defs_refinements ~env_sig t grss;
-     shape_refinements t]
+     shape_refinements ~env_sig t]
   |> Myseq.filter_map
        (fun r ->
          pp_grid_refinement r; print_newline (); (* TEST *)
@@ -2391,14 +2425,14 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
   let ref_shapis =
     if on_input && grids_read_has_delta gsri
     then
-      shape_refinements m.input_pattern
+      shape_refinements ~env_sig:signature0 m.input_pattern
       |> Myseq.filter_map
 	   (fun r -> apply_refinement (Rinput r) m)
     else Myseq.empty in
   let ref_shapos =
     if on_output && grids_read_has_delta gsro
     then
-      shape_refinements m.output_template
+      shape_refinements ~env_sig:envo_sig m.output_template
       |> Myseq.filter_map
 	   (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
