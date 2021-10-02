@@ -90,7 +90,7 @@ type 'a patt =
   [ `Bool of bool
   | `Int of int
   | `Color of Grid.color
-  | `Mask of Grid.Mask.t option
+  | `Mask of Grid.mask_model
   | `Vec of 'a * 'a (* i, j -> vec *)
   | `Point of 'a (* color -> shape *)
   | `Rectangle of 'a * 'a * 'a (* size, color, mask -> shape *)
@@ -290,15 +290,21 @@ let rec string_of_ilist (string : 'a -> string) (l : 'a ilist) : string =
        ^ aux (`Right lp) right
   in
   aux `Root l
-      
+
+let string_of_mask_model : Grid.mask_model -> string = function
+  | `Full -> "Full"
+  | `Border -> "Border"
+  | `EvenCheckboard -> "Even Checkboard"
+  | `OddCheckboard -> "Odd Checkboard"
+  | `PlusCross -> "+-cross"
+  | `TimesCross -> "x-cross"
+  | `Mask m -> Grid.Mask.to_string m
+                 
 let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
   | `Bool b -> if b then "true" else "false"
   | `Int i -> string_of_int i
   | `Color c -> Grid.name_of_color c
-  | `Mask m_opt ->
-     (match m_opt with
-      | None -> "full"
-      | Some m -> Grid.Mask.to_string m)
+  | `Mask m -> string_of_mask_model m
   | `Vec (i,j) ->
      "(" ^ string i ^ "," ^ string j ^ ")"
   | `Point (color) ->
@@ -644,7 +650,7 @@ let default_shape_color = `Color Grid.no_color
 let default_grid_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
-let default_mask = `Mask None
+let default_mask = `Mask `Full
 let default_shape = `Rectangle (default_shape_size, default_shape_color, default_mask)
 let default_object = `PosShape (default_pos, default_shape)
 let default_layer = default_object
@@ -734,12 +740,17 @@ let dl_background_color : Grid.color -> dl =
      if c > 0 && c < 10 (* 9 colors *)
      then Mdl.Code.usage 0.01
      else invalid_arg "Unexpected color"
-let dl_mask : Grid.Mask.t option -> dl =
+let dl_mask : Grid.mask_model -> dl =
   function
-  | None -> Mdl.Code.usage 0.5
-  | Some m ->
+  | `Full -> Mdl.Code.usage 0.5
+  | `Border -> Mdl.Code.usage 0.1
+  | `EvenCheckboard
+    | `OddCheckboard
+    | `PlusCross
+    | `TimesCross -> Mdl.Code.usage 0.025
+  | `Mask m ->
      let n = Grid.Mask.height m * Grid.Mask.width m in
-     Mdl.Code.usage 0.5 +. float n (* basic bitmap *)
+     Mdl.Code.usage 0.3 +. float n (* basic bitmap *)
      (* let missing = n - Grid.Mask.area m in
      Mdl.Code.usage 0.5
      +. Mdl.Code.universal_int_plus missing
@@ -1322,14 +1333,12 @@ and draw_layers g = function
 and draw_layer g = function
   | `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)) ->
      Grid.set_pixel g i j c
-  | `PosShape (`Vec (`Int mini, `Int minj), `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask m_opt)) ->
+  | `PosShape (`Vec (`Int mini, `Int minj), `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask m)) ->
      let maxi = mini + h - 1 in
      let maxj = minj + w - 1 in
      for i = mini to maxi do
        for j = minj to maxj do
-	 if (match m_opt with
-	     | None -> true
-	     | Some m -> Grid.Mask.mem (i-mini) (j-minj) m)
+	 if Grid.mask_model_mem h w (i-mini) (j-minj) m
 	 then Grid.set_pixel g i j c
        done;
      done
@@ -1505,13 +1514,16 @@ let parse_color t p (c : Grid.color) state = (* QUICK *)
       | _ -> Myseq.empty)
     t
   
-let parse_mask t p (m : Grid.Mask.t option) state = (* QUICK *)
+let parse_mask t p (ms : Grid.mask_model list) state = (* QUICK *)
   parse_template
-    ~parse_u:(Myseq.return (`Mask m, state))
+    ~parse_u:
+    (let* m = Myseq.from_list ms in
+     Myseq.return (`Mask m, state))
     ~parse_patt:(function
       | `Mask m0 ->
-         if m=m0 then Myseq.return (`Mask m, state)
+         if List.mem m0 ms then Myseq.return (`Mask m0, state)
          else if state.quota_diff > 0 then
+           let* m = Myseq.from_list ms in
            Myseq.return (`Mask m, add_diff p state)
          else Myseq.empty
       | _ -> Myseq.empty)
@@ -1559,7 +1571,7 @@ let rec parse_shape =
     let* dpos, state = parse_vec pos (p ++ `Pos) (rect.offset_i,rect.offset_j) state in
     let* dsize, state = parse_vec size (p ++ `Shape ++ `Size) (rect.height,rect.width) state in
     let* dcolor, state = parse_color color (p ++ `Shape ++ `Color) rect.color state in
-    let* dmask, state = parse_mask mask (p ++ `Shape ++ `Mask) rect.rmask state in
+    let* dmask, state = parse_mask mask (p ++ `Shape ++ `Mask) rect.mask_models state in
     Myseq.return (`PosShape (dpos, `Rectangle (dsize,dcolor,dmask)), state)
   in
   let parse_all_points parts state = Myseq.prof "Model2.parse_all_points" (
@@ -1619,15 +1631,15 @@ let rec parse_shape =
              (fun ((i,j,c), state) ->
                `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                state);
-        parse_all_rectangles parts state
-        |> Myseq.map
-             (fun (r,state) ->
-               let open Grid in
-               `PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
-                          `Rectangle (`Vec (`Int r.height, `Int r.width),
-                                      `Color r.color,
-                                      `Mask r.rmask)),
-               state) ])
+        (let* r, state = parse_all_rectangles parts state in
+         let open Grid in
+         let* m = Myseq.from_list r.mask_models in
+         Myseq.return
+           (`PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
+                       `Rectangle (`Vec (`Int r.height, `Int r.width),
+                                   `Color r.color,
+                                   `Mask m)),
+            state)) ])
     ~parse_repeat:(
       function
       | `PosShape (pos, `Point (color)) ->

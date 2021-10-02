@@ -291,7 +291,22 @@ module MaskZ =
     let width m = m.width
     let area m = Z.hamdist Z.zero m.bits
 
-    let to_string m = Z.format "%b" m.bits
+    let to_string m = (*Z.format "%b" m.bits*)
+      let bytes = Bytes.create (m.height * m.width + m.height - 1) in
+      let pos = ref 0 in
+      for i = 0 to m.height - 1 do
+        if i > 0 then (
+          Bytes.set bytes !pos '|';
+          incr pos
+        );
+        for j = 0 to m.width - 1 do
+          if Z.testbit m.bits (i * m.width + j)
+          then Bytes.set bytes !pos 'x'
+          else Bytes.set bytes !pos '.';
+          incr pos
+        done
+      done;
+      Bytes.to_string bytes
     let pp m = print_string (to_string m)
 		    
     let empty height width =
@@ -354,7 +369,16 @@ module MaskZ =
     
 module Mask = MaskZ
 
-
+type mask_model =
+  [ `Mask of Mask.t
+  | `Full (* all pixels on *)
+  | `Border (* width-1 border *)
+  | `EvenCheckboard
+  | `OddCheckboard
+  | `PlusCross
+  | `TimesCross
+  ]
+  
 (* mask-based computations on grids *)
 
 let majority_colors (mask : Mask.t) (g : t) : color list =
@@ -384,7 +408,48 @@ let majority_colors, reset_majority_colors =
         majority_colors mask g) in
   let f = fun mask g -> f (mask,g) in
   f, reset
-            
+
+let mask_model_mem h w i j = (* mask height and width, relative position (i,j) *)
+  function
+  | `Mask m -> Mask.mem i j m
+  | `Full -> true
+  | `Border -> i=0 || j=0 || i=h-1 || j=w-1
+  | `EvenCheckboard -> (i+j) mod 2 = 0
+  | `OddCheckboard -> (i+j) mod 2 = 1
+  | `PlusCross -> (i=h/2 || i=(h-1)/2) && (j=w/2 || j=(w-1)/2)
+  | `TimesCross -> assert (h=w); i=j || (h-1-i) = j
+
+let models_of_mask (m : Mask.t) : mask_model list =
+  let h, w = m.height, m.width in
+  let maxi, maxj = h - 1, w - 1 in
+  let full = ref true in
+  let border = ref true in
+  let even_cb = ref true in
+  let odd_cb = ref true in
+  let plus_cross = ref true in
+  let times_cross = ref (maxi = maxj) in
+  for i=0 to maxi do
+    for j=0 to maxj do (* reuse below Boolean expressions from 'mask_model_mem' *)
+      let pixel_on = Mask.mem i j m in
+      full := !full && pixel_on = true;
+      border := !border && pixel_on = (i=0 || j=0 || i=maxi || j=maxj);
+      even_cb := !even_cb && pixel_on = ((i+j) mod 2 = 0);
+      odd_cb := !odd_cb && pixel_on = ((i+j) mod 2 = 1);
+      plus_cross := !plus_cross && pixel_on = ((i=h/2 || i=maxi/2) && (j=w/2 || j=maxj/2));
+      times_cross := !times_cross && pixel_on = (i=j || (maxi-i) = j)
+    done
+  done;
+  let res = [] in
+  let res = if !full then `Full::res else res in
+  let res = if !border then `Border::res else res in
+  let res = if !even_cb then `EvenCheckboard::res else res in
+  let res = if !odd_cb then `OddCheckboard::res else res in
+  let res = if !plus_cross then `PlusCross::res else res in
+  let res = if !times_cross then `TimesCross::res else res in
+  let res = if res = [] then [`Mask m] else res in
+  res
+  
+             
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;
@@ -702,12 +767,12 @@ let points, reset_points =
         points g mask parts) in
   let f = fun g mask parts -> f (g,mask,parts) in
   f, reset
-						       
+
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: color;
 		   mask : Mask.t; (* covered pixels *)
-		   rmask : Mask.t option; (* relative mask: in rectangle box, None if full *)
+		   mask_models : mask_model list; (* mask models, relative to rectangle box *)
 		   delta : pixel list;
                    nb_explained_pixels : int }
 
@@ -752,7 +817,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
      done
    done;
    let res = [] in
-   let res = (* adding rectangle with rmask, without delta *)
+   let res = (* adding rectangle with specific mask model, without delta *)
      if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
      then
        let m =
@@ -767,7 +832,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
 	 offset_j = p.minj;
 	 color = p.color;
 	 mask = (!r_mask);
-	 rmask = Some m;
+	 mask_models = models_of_mask m;
 	 delta = [];
          nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
@@ -785,7 +850,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
 	 offset_j = p.minj;
 	 color = p.color;
 	 mask;
-	 rmask = None;
+	 mask_models = [`Full];
 	 delta = (!delta);
          nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
