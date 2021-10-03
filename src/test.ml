@@ -161,7 +161,9 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                         0, rank+1, "FAILURE", derived::failed_derived_grids )
                ))
                (0,1,"FAILURE",[]) gdi_derived_s
-	  | Result.Error msg -> 0, 0, "ERROR", [] in
+	  | Result.Error exn ->
+             print_endline (Printexc.to_string exn);
+             0, 0, "ERROR", [] in
         let tt = match train_test with `TRAIN _ -> "TRAIN" | `TEST -> "TEST" in
         let str_rank =
           if score = 0
@@ -248,7 +250,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 26 tasks, 318s for timeout=60s *)
+let solved_train_names = (* 27 tasks, 358s for timeout=60s *)
   [ "08ed6ac7.json"; (* NEW 4 grey bars, colored in size order, runtime=27.5s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=1.9s *)
     "1cf80156.json"; (* crop on shape, runtime=1.0s *)
@@ -274,6 +276,7 @@ let solved_train_names = (* 26 tasks, 318s for timeout=60s *)
     (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
     (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=6.4s *)
+    "be94b721.json"; (* 3 shapes (at least), selecting the biggest one *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=25.8s *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=5.8s *)
@@ -281,6 +284,7 @@ let solved_train_names = (* 26 tasks, 318s for timeout=60s *)
 
 let maybe_train_names =
   [
+    "ea786f4a.json"; (* pbs: missing black cross as part, chooses checkboard on example 1 *)
     "7e0986d6.json"; (* collection of rectangles + noise points to be removed *)
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "0b148d64.json"; (* crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)

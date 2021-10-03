@@ -1780,10 +1780,10 @@ let pp_grids_read title gsr =
   
 let grids_read_has_delta (gsr : grids_read) : bool =
   gsr.reads
-  |> List.for_all
+  |> List.exists (* NOT for_all: see be94 *)
        (fun egdls ->
          egdls
-         |> List.exists
+         |> List.exists (* NOT for_all: see e48d *)
               (fun (_env, (gd : grid_data), _dl) ->
                 gd.delta <> []))
 
