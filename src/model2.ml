@@ -515,7 +515,7 @@ let find_template (p : revpath) (t : template) : template option =
   Common.prof "Model2.find_template" (fun () ->
   let rec aux find p =
     match path_parent p with
-    | None -> Some t
+    | None -> find t
     | Some parent ->
        aux
          (function
@@ -547,73 +547,79 @@ let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c) (acc : 'c) (lp :
      acc
   | _ -> invalid_arg "Model2.fold2_ilist: inconsistent ilists"
        
-let fold_patt (fold : 'b -> revpath -> 'a -> 'b) (acc : 'b) (p : revpath) (patt : 'a patt) : 'b =
+let fold_patt (fold : 'b -> revpath -> 'a -> 'a list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (patt : 'a patt) (patt_ancestry : 'a list) : 'b =
   match patt with
   | `Bool _ | `Int _ | `Color _ | `Mask _ -> acc
   | `Vec (i,j) ->
-     let acc = fold acc (p ++ `I) i in
-     let acc = fold acc (p ++ `J) j in
+     let acc = fold acc (p ++ `I) i patt_ancestry in
+     let acc = fold acc (p ++ `J) j patt_ancestry in
      acc
   | `Point (color) ->
-     let acc = fold acc (p ++ `Color) color in
+     let acc = fold acc (p ++ `Color) color patt_ancestry in
      acc
   | `Rectangle (size,color,mask) ->
-     let acc = fold acc (p ++ `Size) size in
-     let acc = fold acc (p ++ `Color) color in
-     let acc = fold acc (p ++ `Mask) mask in
+     let acc = fold acc (p ++ `Size) size patt_ancestry in
+     let acc = fold acc (p ++ `Color) color patt_ancestry in
+     let acc = fold acc (p ++ `Mask) mask patt_ancestry in
      acc
   | `PosShape (pos,shape) ->
-     let acc = fold acc (p ++ `Pos) pos in
-     let acc = fold acc (p ++ `Shape) shape in
+     let acc = fold acc (p ++ `Pos) pos patt_ancestry in
+     let acc = fold acc (p ++ `Shape) shape patt_ancestry in
      acc
   | `Background (size,color,layers) ->
-     let acc = fold acc (p ++ `Size) size in
-     let acc = fold acc (p ++ `Color) color in
+     let acc = fold acc (p ++ `Size) size patt_ancestry in
+     let acc = fold acc (p ++ `Color) color patt_ancestry in
      let acc =
        fold_ilist
          (fun acc lp shape ->
-           fold acc (p ++ `Layer lp) shape)
+           fold acc (p ++ `Layer lp) shape patt_ancestry)
          acc `Root layers in
      acc
   | `Many (ordered,items) ->
      let _, acc =
        List.fold_left
-         (fun (i,acc) item -> i+1, fold acc (ith_item i p) item)
+         (fun (i,acc) item -> i+1, fold acc (ith_item i p) item patt_ancestry )
          (0,acc) items in
      acc
 
-let rec fold_data (f : 'b -> revpath -> data -> 'b) (acc : 'b) (p : revpath) (d : data) : 'b =
-  let acc = f acc p d in
-  fold_patt (fold_data f) acc p d
+let rec fold_data (f : 'b -> revpath -> data -> data list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (d : data) (ancestry : data list) : 'b =
+  let acc = f acc p d ancestry in
+  fold_patt (fold_data f) acc p d (d::ancestry)
   
-let rec fold_template (f : 'b -> revpath option -> revpath -> template -> 'b) (acc : 'b) (for_p : revpath option) (p : revpath) (t : template) : 'b =
-  let acc = f acc for_p p t in
+let rec fold_template (f : 'b -> revpath option -> revpath -> template -> template list (* ancestry *) -> 'b) (acc : 'b) (for_p : revpath option) (p : revpath) (t : template) (ancestry : template list) : 'b =
+  let acc = f acc for_p p t ancestry in
+  let t_ancestry = t::ancestry in
   match t with
   | `U -> acc
   | `Repeat patt1 ->
      let p1 = any_item p in
-     let acc = f acc for_p p1 (patt1 :> template) in
-     fold_patt (fun acc p t -> fold_template f acc for_p p t) acc p1 patt1
+     let acc = f acc for_p p1 (patt1 :> template) t_ancestry in
+     fold_patt
+       (fun acc p t anc -> fold_template f acc for_p p t anc)
+       acc p1 patt1 ((patt1 :> template)::t_ancestry)
   | `For (p_many,t1) ->
      let for_p1 = Some p_many in
      let p1 = any_item p in
-     let acc = f acc for_p1 p1 t1 in
-     fold_template f acc for_p1 p1 t1
-  | #patt as patt -> fold_patt (fun acc p t -> fold_template f acc for_p p t) acc p patt
+     let acc = f acc for_p1 p1 t1 t_ancestry in
+     fold_template f acc for_p1 p1 t1 t_ancestry
+  | #patt as patt ->
+     fold_patt
+       (fun acc p t anc -> fold_template f acc for_p p t anc)
+       acc p patt t_ancestry
   | #expr -> acc
        
 let size_of_data (d : data) : int =
   Common.prof "Model2.size_of_data" (fun () ->
-  fold_data (fun res _ _ -> res+1) 0 path0 d)
+  fold_data (fun res _ _ _ -> res+1) 0 path0 d [])
 let size_of_template (t : template) : int =
-  fold_template (fun res _ _ _ -> res+1) 0 None path0 t
+  fold_template (fun res _ _ _ _ -> res+1) 0 None path0 t []
 
 let signature_of_template (t : template) : signature =
   Common.prof "Model2.signature_of_template" (fun () ->
   let ht = Hashtbl.create 13 in
   let () =
     fold_template
-      (fun () for_p p t1 ->
+      (fun () for_p p t1 anc1 ->
         let k = path_kind p in
         let ps0 =
           match Hashtbl.find_opt ht k with
@@ -635,7 +641,7 @@ let signature_of_template (t : template) : signature =
             | Some ps -> ps in
           Hashtbl.replace ht `Int (p ++ `I :: p ++ `J :: ps0)
         ))
-      () None path0 t in
+      () None path0 t [] in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
     ht [])
@@ -2071,12 +2077,20 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   let u_vars =
     List.rev
       (fold_template
-         (fun res for_p p t0 ->
+         (fun res for_p p t0 anc0 ->
            let k = path_kind p in
-           if k <> `Grid
+           let definable_var =
+             match k with
+             | `Grid -> false (* not grids *)
+(* too much ad'hoc, sometimes good, sometimes bad
+             | `Vec, `Rectangle (_, _, `U)::_ -> false (* not sizes of rectangle with unknown mask *)
+             | `Int, `Vec _::`Rectangle (_, _, `U)::_ -> false (* idem *) 
+ *)
+             | _ -> true in
+           if definable_var
            then (for_p,p,k,t0)::res
            else res)
-         [] None path0 t) in
+         [] None path0 t []) in
   let val_matrix =
     List.map
       (fun grs ->

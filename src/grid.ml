@@ -912,12 +912,13 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    lr @ res)
       res v_sets in
   let res =
-    List.sort
-      (fun rect1 rect2 ->
-        Stdlib.compare (* black last, decreasing nb_explained_pixels *)
-          (rect1.color = black, - rect1.nb_explained_pixels, rect1)
-          (rect2.color = black, - rect2.nb_explained_pixels, rect2))
-      res in
+    res
+    |> List.sort
+         (fun rect1 rect2 ->
+           Stdlib.compare (* black last, decreasing nb_explained_pixels *)
+             (rect1.color = black, - rect1.nb_explained_pixels, rect1)
+             (rect2.color = black, - rect2.nb_explained_pixels, rect2))
+  in
   res)
 let rectangles, reset_rectangles =
   let f, reset =
