@@ -1394,16 +1394,16 @@ let filter_parts_with_mask ~new_mask parts =
     parts)
   
 let rec parse_ilist
-          (parse_elt : 'a -> ilist_revpath -> 'b -> parse_state -> (data * parse_state) Myseq.t)
-          (l : 'a ilist) (lp : ilist_revpath) (x : 'b) (state : parse_state)
+          (parse_elt : 'a -> ilist_revpath -> parse_state -> (data * parse_state) Myseq.t)
+          (l : 'a ilist) (lp : ilist_revpath) (state : parse_state)
       : (data ilist * parse_state) Myseq.t =
   match l with
   | `Nil ->
      Myseq.return (`Nil, state)
   | `Insert (left,elt,right) ->
-     let* dleft, state = parse_ilist parse_elt left (`Left lp) x state in
-     let* delt, state = parse_elt elt lp x state in
-     let* dright, state = parse_ilist parse_elt right (`Right lp) x state in
+     let* dleft, state = parse_ilist parse_elt left (`Left lp) state in
+     let* delt, state = parse_elt elt lp state in
+     let* dright, state = parse_ilist parse_elt right (`Right lp) state in
      let dl = `Insert (dleft, delt, dright) in
      Myseq.return (dl, state)
      
@@ -1580,24 +1580,24 @@ let rec parse_shape =
     let* dmask, state = parse_mask mask (p ++ `Shape ++ `Mask) rect.mask_models state in
     Myseq.return (`PosShape (dpos, `Rectangle (dsize,dcolor,dmask)), state)
   in
-  let parse_all_points parts state = Myseq.prof "Model2.parse_all_points" (
-    let* point = Myseq.from_list (Grid.points state.grid state.mask parts) in
+  let parse_all_points state = Myseq.prof "Model2.parse_all_points" (
+    let* point = Myseq.from_list (Grid.points state.grid state.mask state.parts) in
     let* state = Myseq.from_option (state_minus_point state point) in
     Myseq.return (point, state)) in
-  let parse_all_rectangles parts state = Myseq.prof "Model2.parse_all_rectangles" (
-    let* rect = Myseq.from_list (Grid.rectangles state.grid state.mask parts) in
+  let parse_all_rectangles state = Myseq.prof "Model2.parse_all_rectangles" (
+    let* rect = Myseq.from_list (Grid.rectangles state.grid state.mask state.parts) in
     let* state = Myseq.from_option (state_minus_rectangle state rect) in
     Myseq.return (rect, state))
   in
-  let parse_single_point pos color p parts state = Myseq.prof "Model2.parse_single_point" (
-    let* point, state = parse_all_points parts state in
+  let parse_single_point pos color p state = Myseq.prof "Model2.parse_single_point" (
+    let* point, state = parse_all_points state in
     parse_point pos color p point state) in
-  let parse_single_rectangle pos size color mask p parts state = Myseq.prof "Model2.parse_single_rectangle" (
-    let* rect, state = parse_all_rectangles parts state in
+  let parse_single_rectangle pos size color mask p state = Myseq.prof "Model2.parse_single_rectangle" (
+    let* rect, state = parse_all_rectangles state in
     parse_rectangle pos size color mask p rect state)
   in
-  let parse_repeat_point pos color p parts state = Myseq.prof "Model2.parse_repeat_point" (
-    let points = Grid.points state.grid state.mask parts in
+  let parse_repeat_point pos color p state = Myseq.prof "Model2.parse_repeat_point" (
+    let points = Grid.points state.grid state.mask state.parts in
     (*print_endline "POINTS";*)
     parse_repeat
       (fun (i,j,c) state -> Grid.Mask.mem i j state.mask)
@@ -1608,8 +1608,8 @@ let rec parse_shape =
                       delta = state.delta } in
         Myseq.return (data, state))
       p points state) in
-  let parse_repeat_rectangle pos size color mask p parts state = Myseq.prof "Model2.parse_repeat_rectangle" (
-    let rectangles = Grid.rectangles state.grid state.mask parts in
+  let parse_repeat_rectangle pos size color mask p state = Myseq.prof "Model2.parse_repeat_rectangle" (
+    let rectangles = Grid.rectangles state.grid state.mask state.parts in
     (*print_endline "RECTANGLES";*)
     parse_repeat
       (fun (rect : Grid.rectangle) state ->
@@ -1627,17 +1627,17 @@ let rec parse_shape =
         Myseq.return (data, state))
       p rectangles state)
   in
-  fun t p (parts : Grid.part list) state ->
+  fun t p state ->
   Myseq.prof "Model2.parse_shape"
   (parse_template
     ~parse_u:
     (Myseq.concat
-       [parse_all_points parts state
+       [parse_all_points state
         |> Myseq.map
              (fun ((i,j,c), state) ->
                `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                state);
-        (let* r, state = parse_all_rectangles parts state in
+        (let* r, state = parse_all_rectangles state in
          let open Grid in
          let* m = Myseq.from_list r.mask_models in
          Myseq.return
@@ -1649,20 +1649,20 @@ let rec parse_shape =
     ~parse_repeat:(
       function
       | `PosShape (pos, `Point (color)) ->
-         parse_repeat_point pos color p parts state
+         parse_repeat_point pos color p state
       | `PosShape (pos, `Rectangle (size,color,mask)) ->
-         parse_repeat_rectangle pos size color mask p parts state
+         parse_repeat_rectangle pos size color mask p state
       | _ -> assert false)
     ~parse_patt:(function
       | `PosShape (pos, `Point (color)) ->
-         parse_single_point pos color p parts state
+         parse_single_point pos color p state
       | `PosShape (pos, `Rectangle (size,color,mask)) ->
-         parse_single_rectangle pos size color mask p parts state
+         parse_single_rectangle pos size color mask p state
       | `Many (ordered,items) ->
          let* ditems, state =
            parse_many
              (fun i item state ->
-               parse_shape (item :> template) (ith_item i p) state.parts state)
+               parse_shape (item :> template) (ith_item i p) state)
              items state in
          Myseq.return (`Many (ordered,ditems),state)
       | _ -> assert false)
@@ -1678,9 +1678,9 @@ let parse_grid t p (g : Grid.t) state =
      | `Background (size,color,layers) ->
         let* dlayers, state =
           parse_ilist
-            (fun shape lp parts state ->
-              parse_shape shape (p ++ `Layer lp) parts state)
-            layers `Root state.parts state in
+            (fun shape lp state ->
+              parse_shape shape (p ++ `Layer lp) state)
+            layers `Root state in
         let* dsize, state = parse_vec size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
 	  match Grid.majority_colors state.mask g with
