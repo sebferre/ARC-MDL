@@ -85,6 +85,38 @@ let rec map_ilist (f : ilist_revpath -> 'a -> 'b) (lp : ilist_revpath) (l : 'a i
      let right = map_ilist f (`Right lp) right in
      `Insert (left,elt,right)
 
+let rec fold_ilist (f : 'b -> ilist_revpath -> 'a -> 'b) (acc : 'b) (lp : ilist_revpath) (l : 'a ilist) : 'b =
+  match l with
+  | `Nil -> acc
+  | `Insert (left,elt,right) ->
+     let acc = fold_ilist f acc (`Left lp) left in
+     let acc = f acc lp elt in
+     let acc = fold_ilist f acc (`Right lp) right in
+     acc
+       
+let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c) (acc : 'c) (lp : ilist_revpath) (l1 : 'a ilist) (l2 : 'b ilist) : 'c =
+  match l1, l2 with
+  | `Nil, `Nil -> acc
+  | `Insert (left1,elt1,right1), `Insert (left2,elt2,right2) ->
+     let acc = fold2_ilist f acc (`Left lp) left1 left2 in
+     let acc = f acc lp elt1 elt2 in
+     let acc = fold2_ilist f acc (`Right lp) right1 right2 in
+     acc
+  | _ -> invalid_arg "Model2.fold2_ilist: inconsistent ilists"
+            
+let rec fill_ilist_with_rev_list il l = (* QUICK *)
+  (* replacing elements in il with elements in l, taken in reverse order *)
+  (* first element goes rightmost, last element leftmost *)
+  match il with
+  | `Nil -> l, `Nil
+  | `Insert (left,_,right) ->
+     let l, right' = fill_ilist_with_rev_list right l in
+     match l with
+     | [] -> assert false
+     | x::l ->
+        let l, left' = fill_ilist_with_rev_list left l in
+        l, `Insert (left', x, right')
+
 (* type definitions for data, expressions, templates *)
     
 type 'a patt =
@@ -529,25 +561,6 @@ let find_template (p : revpath) (t : template) : template option =
   in
   aux (fun x -> Some x) p)
 
-let rec fold_ilist (f : 'b -> ilist_revpath -> 'a -> 'b) (acc : 'b) (lp : ilist_revpath) (l : 'a ilist) : 'b =
-  match l with
-  | `Nil -> acc
-  | `Insert (left,elt,right) ->
-     let acc = fold_ilist f acc (`Left lp) left in
-     let acc = f acc lp elt in
-     let acc = fold_ilist f acc (`Right lp) right in
-     acc
-       
-let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c) (acc : 'c) (lp : ilist_revpath) (l1 : 'a ilist) (l2 : 'b ilist) : 'c =
-  match l1, l2 with
-  | `Nil, `Nil -> acc
-  | `Insert (left1,elt1,right1), `Insert (left2,elt2,right2) ->
-     let acc = fold2_ilist f acc (`Left lp) left1 left2 in
-     let acc = f acc lp elt1 elt2 in
-     let acc = fold2_ilist f acc (`Right lp) right1 right2 in
-     acc
-  | _ -> invalid_arg "Model2.fold2_ilist: inconsistent ilists"
-       
 let fold_patt (fold : 'b -> revpath -> 'a -> 'a list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (patt : 'a patt) (patt_ancestry : 'a list) : 'b =
   match patt with
   | `Bool _ | `Int _ | `Color _ | `Mask _ -> acc
@@ -1692,74 +1705,60 @@ let parse_layers layers p state : (data ilist * parse_state) Myseq.t =
   Myseq.prof "Model2.parse_layers" (
   if layers = `Nil
   then Myseq.return (`Nil, state)
-  else
-  let n, rev_l_pld = (* nb of layers, list of parse-layer-data, in reverse *)
-    fold_ilist
-      (fun (n,revl) lp layer ->
-        n+1,
-        { parse = parse_shape layer (p ++ `Layer lp);
-          iterators = [] }
-        ::revl)
-      (0,[]) `Root layers in
-  let arr_pld = Array.of_list (List.rev rev_l_pld) in
-  let rec ilist_of_rev_list l il = (* QUICK *)
-    (* replacing elements in il with elements in l, taken in reverse order *)
-    (* first element goes rightmost, last element leftmost *)
-    match il with
-    | `Nil -> l, `Nil
-    | `Insert (left,_,right) ->
-       let l, right' = ilist_of_rev_list l right in
-       match l with
-       | [] -> assert false
-       | x::l ->
-          let l, left' = ilist_of_rev_list l left in
-          l, `Insert (left', x, right')
-  in
-  let rec aux k = (* k is the relexation level, 0 means choose first match on al layers *)
-    (fun () ->
-      let all_empty = ref true in
-      if k = 0 then (
-        let pld0 = arr_pld.(0) in
-        let seq0 =
-          let* d0, state0 = pld0.parse state in
-          Myseq.return ([d0], state0) in
-        arr_pld.(0).iterators <- [new iterator seq0]
-      );
-      for i = 1 to n-1 do
-        let pld = arr_pld.(i) in
-        arr_pld.(i-1).iterators
-        |> List.iter
-             (fun iter1 ->
-               match iter1#pop with
-               | None -> ()
-               | Some (rev_ld1,state1) ->
-                  all_empty := false;
-                  let new_seq =
-                    let* d2, state2 = pld.parse state1 in
-                    Myseq.return (d2::rev_ld1, state2) in
-                  pld.iterators <- new iterator new_seq :: pld.iterators)
-      done;
-      let seq_k =
-        List.fold_left
-          (fun res iter ->
-            (fun () ->
-              match iter#pop with
-              | None -> res ()
-              | Some (rev_ld, state) ->
-                 let l, dlayers = ilist_of_rev_list rev_ld layers in
-                 assert (l = []);
-                 Myseq.cons (dlayers,state) res ()))
-          Myseq.empty arr_pld.(n-1).iterators in
-      match seq_k () with
-      | Myseq.Nil ->
-         if !all_empty
-         then Myseq.Nil
-         else aux (k+1) ()
-      | Myseq.Cons (x,next) ->
-         Myseq.Cons (x, Myseq.concat [next; aux (k+1)]))
-  in
-  aux 0)
-
+  else (
+    let n, rev_l_pld = (* nb of layers, list of parse-layer-data, in reverse *)
+      fold_ilist
+        (fun (n,revl) lp layer ->
+          n+1,
+          { parse = parse_shape layer (p ++ `Layer lp);
+            iterators = [] }
+          ::revl)
+        (0,[]) `Root layers in
+    let arr_pld : parse_layer_data array = Array.of_list (List.rev rev_l_pld) in
+    let rec aux k = (* k is the relexation level, 0 means choose first match on al layers *)
+      (fun () ->
+        let all_empty = ref true in
+        if k = 0 then (
+          let pld0 = arr_pld.(0) in
+          let seq0 =
+            let* d0, state0 = pld0.parse state in
+            Myseq.return ([d0], state0) in
+          arr_pld.(0).iterators <- [new iterator seq0]
+        );
+        for i = 1 to n-1 do
+          let pld = arr_pld.(i) in
+          arr_pld.(i-1).iterators
+          |> List.iter
+               (fun iter1 ->
+                 match iter1#pop with
+                 | None -> ()
+                 | Some (rev_ld1,state1) ->
+                    all_empty := false;
+                    let new_seq =
+                      let* d2, state2 = pld.parse state1 in
+                      Myseq.return (d2::rev_ld1, state2) in
+                    pld.iterators <- new iterator new_seq :: pld.iterators)
+        done;
+        let seq_k =
+          List.fold_left
+            (fun res iter ->
+              (fun () ->
+                match iter#pop with
+                | None -> res ()
+                | Some (rev_ld, state) ->
+                   let l, dlayers = fill_ilist_with_rev_list layers rev_ld in
+                   assert (l = []);
+                   Myseq.cons (dlayers,state) res ()))
+            Myseq.empty arr_pld.(n-1).iterators in
+        match seq_k () with
+        | Myseq.Nil ->
+           if !all_empty
+           then Myseq.Nil
+           else aux (k+1) ()
+        | Myseq.Cons (x,next) ->
+           Myseq.Cons (x, Myseq.concat [next; aux (k+1)]))
+    in
+    aux 0))
              
 let parse_grid t p (g : Grid.t) state =
   Myseq.prof "Model2.parse_grid"
