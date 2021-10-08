@@ -6,7 +6,7 @@ let def_param name v to_str =
   ref v
    
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" 512 string_of_int (* max nb of considered grid parses *)
+let max_nb_parse = def_param "max_nb_parse" 64 string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_nb_shape_parse = def_param "max_nb_shape_parse" 64 string_of_int (* max nb of parses for a shape *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
@@ -55,7 +55,8 @@ let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
         match option_list_bind lx1 f with
         | None -> None
         | Some ly1 -> Some (y::ly1)
-               
+                    
+
 (** Part 1: grids *)
 
 (* common data structures *)
@@ -1394,18 +1395,22 @@ let filter_parts_with_mask ~new_mask parts =
     parts)
   
 let rec parse_ilist
-          (parse_elt : 'a -> ilist_revpath -> parse_state -> (data * parse_state) Myseq.t)
-          (l : 'a ilist) (lp : ilist_revpath) (state : parse_state)
-      : (data ilist * parse_state) Myseq.t =
-  match l with
-  | `Nil ->
-     Myseq.return (`Nil, state)
-  | `Insert (left,elt,right) ->
-     let* dleft, state = parse_ilist parse_elt left (`Left lp) state in
-     let* delt, state = parse_elt elt lp state in
-     let* dright, state = parse_ilist parse_elt right (`Right lp) state in
-     let dl = `Insert (dleft, delt, dright) in
-     Myseq.return (dl, state)
+          (parse_elt : 'a -> ilist_revpath -> 'b -> (data * 'b) Myseq.t)
+          (l : 'a ilist) (lp : ilist_revpath) (acc : 'b)
+        : (data ilist * 'b) Myseq.t =
+  let rec aux l lp acc =
+    match l with
+    | `Nil ->
+       Myseq.return (`Nil, acc)
+    | `Insert (left,elt,right) ->
+       let lp_left, lp_right = `Left lp, `Right lp in
+       let* dleft, acc = aux left lp_left acc in
+       let* delt, acc = parse_elt elt lp acc in
+       let* dright, acc = aux right lp_right acc in
+       let dl = `Insert (dleft, delt, dright) in
+       Myseq.return (dl, acc) in
+  Myseq.prof "Model2.parse_ilist"
+    (aux l lp acc)
      
 let parse_repeat
       (valid_part : 'a -> parse_state -> bool)
@@ -1667,8 +1672,95 @@ let rec parse_shape =
          Myseq.return (`Many (ordered,ditems),state)
       | _ -> assert false)
     t
-  |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
+   |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
+
+class ['a] iterator (seq : 'a Myseq.t) =
+object
+  val mutable s = seq
+  method pop : 'a option =
+    let open Myseq in
+    match s () with
+    | Nil -> None
+    | Cons (x,next) -> s <- next; Some x
+end
   
+type parse_layer_data (* pld *) =
+  { parse : parse_state -> (data * parse_state) Myseq.t;
+    mutable iterators : (data list * parse_state) iterator list }
+  
+let parse_layers layers p state : (data ilist * parse_state) Myseq.t =
+  Myseq.prof "Model2.parse_layers" (
+  if layers = `Nil
+  then Myseq.return (`Nil, state)
+  else
+  let n, rev_l_pld = (* nb of layers, list of parse-layer-data, in reverse *)
+    fold_ilist
+      (fun (n,revl) lp layer ->
+        n+1,
+        { parse = parse_shape layer (p ++ `Layer lp);
+          iterators = [] }
+        ::revl)
+      (0,[]) `Root layers in
+  let arr_pld = Array.of_list (List.rev rev_l_pld) in
+  let rec ilist_of_rev_list l il = (* QUICK *)
+    (* replacing elements in il with elements in l, taken in reverse order *)
+    (* first element goes rightmost, last element leftmost *)
+    match il with
+    | `Nil -> l, `Nil
+    | `Insert (left,_,right) ->
+       let l, right' = ilist_of_rev_list l right in
+       match l with
+       | [] -> assert false
+       | x::l ->
+          let l, left' = ilist_of_rev_list l left in
+          l, `Insert (left', x, right')
+  in
+  let rec aux k = (* k is the relexation level, 0 means choose first match on al layers *)
+    (fun () ->
+      let all_empty = ref true in
+      if k = 0 then (
+        let pld0 = arr_pld.(0) in
+        let seq0 =
+          let* d0, state0 = pld0.parse state in
+          Myseq.return ([d0], state0) in
+        arr_pld.(0).iterators <- [new iterator seq0]
+      );
+      for i = 1 to n-1 do
+        let pld = arr_pld.(i) in
+        arr_pld.(i-1).iterators
+        |> List.iter
+             (fun iter1 ->
+               match iter1#pop with
+               | None -> ()
+               | Some (rev_ld1,state1) ->
+                  all_empty := false;
+                  let new_seq =
+                    let* d2, state2 = pld.parse state1 in
+                    Myseq.return (d2::rev_ld1, state2) in
+                  pld.iterators <- new iterator new_seq :: pld.iterators)
+      done;
+      let seq_k =
+        List.fold_left
+          (fun res iter ->
+            (fun () ->
+              match iter#pop with
+              | None -> res ()
+              | Some (rev_ld, state) ->
+                 let l, dlayers = ilist_of_rev_list rev_ld layers in
+                 assert (l = []);
+                 Myseq.cons (dlayers,state) res ()))
+          Myseq.empty arr_pld.(n-1).iterators in
+      match seq_k () with
+      | Myseq.Nil ->
+         if !all_empty
+         then Myseq.Nil
+         else aux (k+1) ()
+      | Myseq.Cons (x,next) ->
+         Myseq.Cons (x, Myseq.concat [next; aux (k+1)]))
+  in
+  aux 0)
+
+             
 let parse_grid t p (g : Grid.t) state =
   Myseq.prof "Model2.parse_grid"
   (parse_template
@@ -1676,11 +1768,7 @@ let parse_grid t p (g : Grid.t) state =
     ~parse_patt:
     (function
      | `Background (size,color,layers) ->
-        let* dlayers, state =
-          parse_ilist
-            (fun shape lp state ->
-              parse_shape shape (p ++ `Layer lp) state)
-            layers `Root state in
+        let* dlayers, state = parse_layers layers p state in
         let* dsize, state = parse_vec size (p ++ `Size) (g.height,g.width) state in
         let bc = (* background color *)
 	  match Grid.majority_colors state.mask g with
