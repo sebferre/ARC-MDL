@@ -17,8 +17,10 @@ exception TODO
 
 (* binders and syntactic sugar *)
         
-let ( let| ) res f = Result.bind res f
-let ( let* ) seq f = seq |> Myseq.flat_map f
+let ( let| ) res f = Result.bind res f [@@inline]
+let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
+let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
+let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
 
 let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
   match lx with
@@ -55,8 +57,26 @@ let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
         match option_list_bind lx1 f with
         | None -> None
         | Some ly1 -> Some (y::ly1)
-                    
 
+let concat_rev_list_seq (revl : 'a list) (seq : 'a Myseq.t) : 'a Myseq.t =
+  (* generates elements in revl in reverse, then elements from seq *)
+  (fun () ->
+    List.fold_left
+      (fun seq x -> Myseq.cons x seq)
+      seq revl
+      ()) [@@inline]
+
+class ['a] iterator (seq : 'a Myseq.t) =
+(* turns a sequence into a stateful iterator *)
+object
+  val mutable s = seq
+  method pop : 'a option =
+    let open Myseq in
+    match s () with
+    | Nil -> None
+    | Cons (x,next) -> s <- next; Some x
+end
+  
 (** Part 1: grids *)
 
 (* common data structures *)
@@ -1138,8 +1158,7 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> assert false (* should have been evaluated out *)
               
-let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
-  Common.prof "Model2.dl_diff" (fun () ->
+let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
   then 0.
   else
@@ -1153,19 +1172,18 @@ let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl =
              | None -> assert false in
            dl_data_size
            +. dl_data ~ctx d1 ~path:p1)
-         diff)
+         diff
 
 let dl_delta_path = any_item (`Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
 let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *)
-let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl =
-  Common.prof "Model2.dl_delta" (fun () ->
+let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
   if delta = []
   then 0.
   else (* assuming dl_data is constant over point shapes *)
     let n = List.length delta in
     -. 1. (* some normalization to get 0 for empty grid data *)
     +. Mdl.Code.universal_int_star n
-    +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape)
+    +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape
   (*
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. Mdl.Code.list_star
@@ -1399,15 +1417,14 @@ let add_delta_with_mask ~mask delta new_delta =
       else delta)
     delta new_delta
   
-let filter_parts_with_mask ~new_mask parts =
-  Common.prof "Model2.filter_parts_with_mask" (fun () ->
+let filter_parts_with_mask ~new_mask parts = (* QUICK *)
   List.filter
     (fun p ->
       not (Grid.Mask.is_empty
 	     (Grid.Mask.inter p.Grid.pixels new_mask)))
-    parts)
+    parts
   
-let rec parse_ilist
+let rec parse_ilist (* deprecated by parse_layers *)
           (parse_elt : 'a -> ilist_revpath -> 'b -> (data * 'b) Myseq.t)
           (l : 'a ilist) (lp : ilist_revpath) (acc : 'b)
         : (data ilist * 'b) Myseq.t =
@@ -1566,7 +1583,7 @@ let parse_vec t p (vi, vj : int * int) state = (* QUICK *)
 
 let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
   (* TODO: optimize *)
-  Common.prof "Model2.state_minus_shape_gen" (fun () ->
+  (*  Common.prof "Model2.state_minus_shape_gen" (fun () -> *)
   let new_mask = Grid.Mask.diff state.mask occ_mask in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
@@ -1576,7 +1593,7 @@ let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
 	mask = new_mask;
         delta = add_delta_with_mask ~mask:state.mask state.delta occ_delta;
 	parts = filter_parts_with_mask ~new_mask state.parts } in
-    Some new_state)
+    Some new_state
 let state_minus_point state (i,j,c) =
   let nb_explained_pixels = 1 in
   let occ_delta = [] in
@@ -1687,26 +1704,16 @@ let rec parse_shape =
     t
    |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
 
-class ['a] iterator (seq : 'a Myseq.t) =
-object
-  val mutable s = seq
-  method pop : 'a option =
-    let open Myseq in
-    match s () with
-    | Nil -> None
-    | Cons (x,next) -> s <- next; Some x
-end
-  
 type parse_layer_data (* pld *) =
-  { parse : parse_state -> (data * parse_state) Myseq.t;
-    mutable iterators : (data list * parse_state) iterator list }
+  { parse : parse_state -> (data * parse_state) Myseq.t; (* parser for this layer *)
+    mutable iterators : (data list * parse_state) iterator list } (* for each choice of parsed data for the above layers, an iterator for each parsed data of the current layer *)
   
 let parse_layers layers p state : (data ilist * parse_state) Myseq.t =
   Myseq.prof "Model2.parse_layers" (
   if layers = `Nil
   then Myseq.return (`Nil, state)
   else (
-    let n, rev_l_pld = (* nb of layers, list of parse-layer-data, in reverse *)
+    let n, rev_l_pld = (* nb of layers, list of parse_layer_data, in reverse *)
       fold_ilist
         (fun (n,revl) lp layer ->
           n+1,
@@ -1714,52 +1721,54 @@ let parse_layers layers p state : (data ilist * parse_state) Myseq.t =
             iterators = [] }
           ::revl)
         (0,[]) `Root layers in
+    (* array of parse_layer_data, index by layer rank, 0 is top-most layer, n-1 is bottom-most *)
     let arr_pld : parse_layer_data array = Array.of_list (List.rev rev_l_pld) in
-    let rec aux k = (* k is the relexation level, 0 means choose first match on al layers *)
-      (fun () ->
-        let all_empty = ref true in
-        if k = 0 then (
-          let pld0 = arr_pld.(0) in
-          let seq0 =
-            let* d0, state0 = pld0.parse state in
-            Myseq.return ([d0], state0) in
-          arr_pld.(0).iterators <- [new iterator seq0]
-        );
-        for i = 1 to n-1 do
-          let pld = arr_pld.(i) in
-          arr_pld.(i-1).iterators
-          |> List.iter
-               (fun iter1 ->
-                 match iter1#pop with
-                 | None -> ()
-                 | Some (rev_ld1,state1) ->
-                    all_empty := false;
-                    let new_seq =
-                      let* d2, state2 = pld.parse state1 in
-                      Myseq.return (d2::rev_ld1, state2) in
-                    pld.iterators <- new iterator new_seq :: pld.iterators)
-        done;
-        let seq_k =
-          List.fold_left
-            (fun res iter ->
-              (fun () ->
-                match iter#pop with
-                | None -> res ()
-                | Some (rev_ld, state) ->
-                   let l, dlayers = fill_ilist_with_rev_list layers rev_ld in
-                   assert (l = []);
-                   Myseq.cons (dlayers,state) res ()))
-            Myseq.empty arr_pld.(n-1).iterators in
-        match seq_k () with
-        | Myseq.Nil ->
-           if !all_empty
-           then Myseq.Nil
-           else aux (k+1) ()
-        | Myseq.Cons (x,next) ->
-           Myseq.Cons (x, Myseq.concat [next; aux (k+1)]))
+    (* initialization *)
+    let pld0 = arr_pld.(0) in
+    let iter0 =
+      new iterator
+        (let* d0, state0 = pld0.parse state in
+         Myseq.return ([d0], state0)) in
+    (*pld0.iterators <- [iter0]; (* unnecessary *) *)
+    (* recursion through layers [i] *)
+    let rec aux_i all_empty k i : (data list * parse_state) iterator Myseq.t =
+      let pld = arr_pld.(i) in
+      if i = 0
+      then
+        Myseq.return iter0
+      else
+        concat_rev_list_seq
+          pld.iterators
+          (let*? iter1 = aux_i all_empty k (i-1) in
+           match iter1#pop with
+           | None -> None
+           | Some (rev_ld1,state1) ->
+              let new_iter =
+                new iterator
+                  (let*! d2, state2 = pld.parse state1 in
+                   d2::rev_ld1, state2) in
+              pld.iterators <- new_iter :: pld.iterators;
+              all_empty := false;
+              Some new_iter) in
+    (* generation of layers parsed data, starting at relaxation level *) 
+    let rec aux_n k : (data ilist * parse_state) Myseq.t =
+      let all_empty = ref true in (* to know if there was any iterator or solution generated for this [k] *)
+      Myseq.append
+        (let*? iter = aux_i all_empty k (n-1) in
+         match iter#pop with (* QUICK *)
+         | None -> None
+         | Some (rev_ld, state) ->
+            let l, dlayers = fill_ilist_with_rev_list layers rev_ld in
+            assert (l = []);
+            all_empty := false;
+            Some (dlayers, state))
+        (fun () ->
+          if !all_empty
+          then Myseq.Nil
+          else aux_n (k+1) ())
     in
-    aux 0))
-             
+    aux_n 0))
+    
 let parse_grid t p (g : Grid.t) state =
   Myseq.prof "Model2.parse_grid"
   (parse_template
