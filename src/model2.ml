@@ -1503,13 +1503,13 @@ let parse_many
   aux 0 state items (* TODO: apply slice to the keep only the first parse? *)
 
 let rec parse_template
-          ~(parse_u : (data * parse_state) Myseq.t)
+          ~(parse_u : unit -> (data * parse_state) Myseq.t)
           ?(parse_repeat : template patt -> (data list * parse_state) Myseq.t = fun _ -> assert false)
           ~(parse_patt : template patt -> (data * parse_state) Myseq.t)
           (t : template)
         : (data * parse_state) Myseq.t =
   match t with
-  | `U -> parse_u
+  | `U -> parse_u ()
   | `Repeat patt1 ->
      let* items, state = parse_repeat patt1 in
      assert (items <> []);
@@ -1521,7 +1521,7 @@ let rec parse_template
 
 let parse_bool t p (b : bool) state = (* QUICK *)
   parse_template
-    ~parse_u:(Myseq.return (`Bool b, state))
+    ~parse_u:(fun () -> Myseq.return (`Bool b, state))
     ~parse_patt:(function
       | `Bool b0 ->
          if b=b0 then Myseq.return (`Bool b, state)
@@ -1533,7 +1533,7 @@ let parse_bool t p (b : bool) state = (* QUICK *)
 
 let parse_int t p (i : int) state = (* QUICK *)
   parse_template
-    ~parse_u:(Myseq.return (`Int i, state))
+    ~parse_u:(fun () -> Myseq.return (`Int i, state))
     ~parse_patt:(function
       | `Int i0 ->
          if i=i0 then Myseq.return (`Int i, state)
@@ -1545,7 +1545,7 @@ let parse_int t p (i : int) state = (* QUICK *)
 
 let parse_color t p (c : Grid.color) state = (* QUICK *)
   parse_template
-    ~parse_u:(Myseq.return (`Color c, state))
+    ~parse_u:(fun () -> Myseq.return (`Color c, state))
     ~parse_patt:(function
       | `Color c0 ->
          if c=c0 then Myseq.return (`Color c, state)
@@ -1558,8 +1558,9 @@ let parse_color t p (c : Grid.color) state = (* QUICK *)
 let parse_mask t p (ms : Grid.mask_model list) state = (* QUICK *)
   parse_template
     ~parse_u:
-    (let* m = Myseq.from_list ms in
-     Myseq.return (`Mask m, state))
+    (fun () ->
+      let* m = Myseq.from_list ms in
+      Myseq.return (`Mask m, state))
     ~parse_patt:(function
       | `Mask m0 ->
          if List.mem m0 ms then Myseq.return (`Mask m0, state)
@@ -1572,7 +1573,7 @@ let parse_mask t p (ms : Grid.mask_model list) state = (* QUICK *)
 
 let parse_vec t p (vi, vj : int * int) state = (* QUICK *)
   parse_template
-    ~parse_u:(Myseq.return (`Vec (`Int vi, `Int vj), state))
+    ~parse_u:(fun () -> Myseq.return (`Vec (`Int vi, `Int vj), state))
     ~parse_patt:(function
       | `Vec (i,j) ->
          let* di, state = parse_int i (p ++ `I) vi state in
@@ -1582,8 +1583,7 @@ let parse_vec t p (vi, vj : int * int) state = (* QUICK *)
     t
 
 let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
-  (* TODO: optimize *)
-  (*  Common.prof "Model2.state_minus_shape_gen" (fun () -> *)
+  Common.prof "Model2.state_minus_shape_gen" (fun () ->
   let new_mask = Grid.Mask.diff state.mask occ_mask in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
@@ -1593,7 +1593,7 @@ let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
 	mask = new_mask;
         delta = add_delta_with_mask ~mask:state.mask state.delta occ_delta;
 	parts = filter_parts_with_mask ~new_mask state.parts } in
-    Some new_state
+    Some new_state)
 let state_minus_point state (i,j,c) =
   let nb_explained_pixels = 1 in
   let occ_delta = [] in
@@ -1625,11 +1625,15 @@ let rec parse_shape =
     Myseq.return (rect, state))
   in
   let parse_single_point pos color p state = Myseq.prof "Model2.parse_single_point" (
-    let* point, state = parse_all_points state in
-    parse_point pos color p point state) in
+    let* point = Myseq.from_list (Grid.points state.grid state.mask state.parts) in
+    let* dpoint, state = parse_point pos color p point state in
+    let* state = Myseq.from_option (state_minus_point state point) in
+    Myseq.return (dpoint, state)) in
   let parse_single_rectangle pos size color mask p state = Myseq.prof "Model2.parse_single_rectangle" (
-    let* rect, state = parse_all_rectangles state in
-    parse_rectangle pos size color mask p rect state)
+    let* rect = Myseq.from_list (Grid.rectangles state.grid state.mask state.parts) in
+    let* drect, state = parse_rectangle pos size color mask p rect state in
+    let* state = Myseq.from_option (state_minus_rectangle state rect) in
+    Myseq.return (drect, state))
   in
   let parse_repeat_point pos color p state = Myseq.prof "Model2.parse_repeat_point" (
     let points = Grid.points state.grid state.mask state.parts in
@@ -1666,21 +1670,22 @@ let rec parse_shape =
   Myseq.prof "Model2.parse_shape"
   (parse_template
     ~parse_u:
-    (Myseq.concat
-       [parse_all_points state
-        |> Myseq.map
-             (fun ((i,j,c), state) ->
-               `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
-               state);
-        (let* r, state = parse_all_rectangles state in
-         let open Grid in
-         let* m = Myseq.from_list r.mask_models in
-         Myseq.return
-           (`PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
-                       `Rectangle (`Vec (`Int r.height, `Int r.width),
-                                   `Color r.color,
-                                   `Mask m)),
-            state)) ])
+    (fun () ->
+      Myseq.concat
+        [parse_all_points state
+         |> Myseq.map
+              (fun ((i,j,c), state) ->
+                `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
+                state);
+         (let* r, state = parse_all_rectangles state in
+          let open Grid in
+          let* m = Myseq.from_list r.mask_models in
+          Myseq.return
+            (`PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
+                        `Rectangle (`Vec (`Int r.height, `Int r.width),
+                                    `Color r.color,
+                                    `Mask m)),
+             state)) ])
     ~parse_repeat:(
       function
       | `PosShape (pos, `Point (color)) ->
@@ -1703,7 +1708,7 @@ let rec parse_shape =
       | _ -> assert false)
     t
    |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
-
+  
 type parse_layer_data (* pld *) =
   { parse : parse_state -> (data * parse_state) Myseq.t; (* parser for this layer *)
     mutable iterators : (data list * parse_state) iterator list } (* for each choice of parsed data for the above layers, an iterator for each parsed data of the current layer *)
@@ -1772,7 +1777,7 @@ let parse_layers layers p state : (data ilist * parse_state) Myseq.t =
 let parse_grid t p (g : Grid.t) state =
   Myseq.prof "Model2.parse_grid"
   (parse_template
-    ~parse_u:(Myseq.empty)
+    ~parse_u:(fun () -> Myseq.empty)
     ~parse_patt:
     (function
      | `Background (size,color,layers) ->
