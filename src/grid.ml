@@ -794,7 +794,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
 let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = (* QUICK *)
-   let h, w, p_color = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color in
+   let h, w, p_color, p_pixels = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color, p.pixels in
    let _area = h * w in
    let r_mask = ref (Mask.copy p.pixels) in (* rectangle mask *)
    let valid_area = ref 0 in (* area of r_mask *)
@@ -805,7 +805,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
        let c = g.matrix.{i,j} in
        if Mask.mem i j mask (* pixel (i,j) in rectangle box, not yet explained *)
        then
-         if c = p_color (* this pixel has the expected color *)
+         if c = p_color && Mask.mem i j p_pixels (* this pixel is in part and has the expected color *)
          then (
 	   r_mask := Mask.add_in_place i j !r_mask; (* included in rectangle mask *)
            incr valid_area;

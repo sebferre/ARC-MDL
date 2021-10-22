@@ -340,7 +340,7 @@ let maybe_train_names =
     "794b24be.json"; (* pb: need switch, [map from nb blue pixels to red fixed shape] *)
     "a68b268e.json"; (* pb: should define mask on sub-grid + full sub-grid shape, [4 shapes with fixed position and color, stacked in some order] *)
     "c0f76784.json"; (* pb: tolerate missing element (which could be hidden), including in training examples, i.e. tolerate exception in model refinements *)
-    "f8ff0b80.json"; (* pb: output points not compressive enough *) 
+    "f8ff0b80.json"; (* TODO pb: output points not compressive enough *) 
     "50cb2852.json"; (* pb: collection *)
     "54d82841.json"; (* pb: collection *)
     "ce22a75a.json"; (* pb: 2nd example is not helping, having two examples like the first one makes it find the right model but it fails to parse the 4 points in test, parses only 3 *)
