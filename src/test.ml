@@ -16,7 +16,7 @@ let refine_degree = def_param "refine_degree" 20 string_of_int
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let task_timeout = ref 60
+let task_timeout = ref 30
 let verbose = ref false
 let grid_viz = ref false
 
@@ -77,7 +77,7 @@ let print_l_task_model name task model =
 	 
 (* === monitoring learning === *)
 
-type measures = (string * [`Tasks|`Bits|`MRR] * float) list
+type measures = (string * [`Tasks|`Bits|`MRR|`Seconds] * float) list
 
 let print_measures count ms =
   List.iter
@@ -85,7 +85,8 @@ let print_measures count ms =
      match t with
      | `Tasks -> Printf.printf "%s = %.2f tasks (%.2f%%)\n" a v (100. *. v /. float count)
      | `Bits -> Printf.printf "%s = %.1f bits (%.1f bits/task)\n" a v (v /. float count)
-     | `MRR -> Printf.printf "%s = %.2f\n" a (v /. float count))
+     | `MRR -> Printf.printf "%s = %.2f\n" a (v /. float count)
+     | `Seconds -> Printf.printf "%s = %.1f sec (%.1f sec/task)\n" a v (v /. float count))
     ms;
   print_newline ()
 
@@ -188,57 +189,59 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
        
 let print_learned_model ~init_model ~refine_degree name task : measures =
   Common.prof "Test.print_learned_model" (fun () ->
-  let lm, timed_out =
-    try
-      Model.learn_model
-        ~verbose:(!training && !verbose)
-        ~grid_viz:(!grid_viz)
-        ~timeout:(!task_timeout)
-        ~init_model
-        ~beam_width:(!beam_width) ~refine_degree
-        task.train (*gis_test gos*)
-    with exn ->
+  let runtime, res =
+    Common.chrono (fun () ->
+        Model.learn_model
+          ~verbose:(!training && !verbose)
+          ~grid_viz:(!grid_viz)
+          ~timeout:(!task_timeout)
+          ~init_model
+          ~beam_width:(!beam_width) ~refine_degree
+          task.train)
+  in
+  match res with
+  | Common.Exn exn ->
       print_endline (Printexc.to_string exn);
       Printexc.print_backtrace stdout;
-      [], false
-  in
-  if timed_out && !training then print_endline "TIMEOUT";
-  match lm with
-  | [] ->
-     print_endline "Error: no learned model";
-     let ms =
-       [ "bits-train-error", `Bits, 0.;
-	 "acc-train-micro", `Tasks, 0.;
-	 "acc-train-macro", `Tasks, 0.;
-         "acc-train-mrr", `MRR, 0.;
-	 "acc-test-micro", `Tasks, 0.;
-	 "acc-test-macro", `Tasks, 0.;
-         "acc-test-mrr", `MRR, 0.;
-       ] in
-     ms     
-  | ((_,m), (gpsr, gsri, gsro), l)::_ ->
-     print_endline "\n# Learned model:";
-     Model.pp_model m;
-     print_newline ();
-     let ldo = print_l_md gpsr in
-     print_endline "\n# train input/output grids";
-     let micro_train, macro_train, mrr_train =
-       score_learned_model name m (`TRAIN gpsr) task.train in
-     print_endline "\n# Test input/output grids";
-     let micro_test, macro_test, mrr_test =
-       score_learned_model name m (`TEST) task.test in
-     print_endline "\n# Performance measures on task";
-     let ms =
-       [ "bits-train-error", `Bits, ldo;
-	 "acc-train-micro", `Tasks, micro_train;
-	 "acc-train-macro", `Tasks, macro_train;
-         "acc-train-mrr", `MRR, mrr_train;
-	 "acc-test-micro", `Tasks, micro_test;
-	 "acc-test-macro", `Tasks, macro_test;
-         "acc-test-mrr", `MRR, mrr_test;
-       ] in
-     print_measures 1 ms;
-     ms)
+      let ms =
+        [ "runtime-learning", `Seconds, runtime;
+          "bits-train-error", `Bits, 0.; (* dummy value *)
+	  "acc-train-micro", `Tasks, 0.;
+	  "acc-train-macro", `Tasks, 0.;
+          "acc-train-mrr", `MRR, 0.;
+	  "acc-test-micro", `Tasks, 0.;
+	  "acc-test-macro", `Tasks, 0.;
+          "acc-test-mrr", `MRR, 0.;
+        ] in
+      ms    
+  | Common.Val (lm, timed_out) ->
+     if timed_out && !training then print_endline "TIMEOUT";
+     match lm with
+     | [] -> assert false
+     | ((_,m), (gpsr, gsri, gsro), l)::_ ->
+        print_endline "\n# Learned model:";
+        Model.pp_model m;
+        print_newline ();
+        let ldo = print_l_md gpsr in
+        print_endline "\n# train input/output grids";
+        let micro_train, macro_train, mrr_train =
+          score_learned_model name m (`TRAIN gpsr) task.train in
+        print_endline "\n# Test input/output grids";
+        let micro_test, macro_test, mrr_test =
+          score_learned_model name m (`TEST) task.test in
+        print_endline "\n# Performance measures on task";
+        let ms =
+          [ "runtime-learning", `Seconds, runtime;
+            "bits-train-error", `Bits, ldo;
+	    "acc-train-micro", `Tasks, micro_train;
+	    "acc-train-macro", `Tasks, macro_train;
+            "acc-train-mrr", `MRR, mrr_train;
+	    "acc-test-micro", `Tasks, micro_test;
+	    "acc-test-macro", `Tasks, macro_test;
+            "acc-test-mrr", `MRR, mrr_test;
+          ] in
+        print_measures 1 ms;
+        ms)
      
 (* === solved/candidate training tasks === *)
 		      
@@ -250,36 +253,36 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 27 tasks, 190s for timeout=60s, max_nb_parses=64 *)
-  [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=21.8s *)
-    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=1.6s *)
-    "1cf80156.json"; (* crop on shape, runtime=0.4s *)
+let solved_train_names = (* 27 tasks, 126s for timeout=30s, max_nb_parses=64 *)
+  [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=19.2s *)
+    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=0.8s *)
+    "1cf80156.json"; (* crop on shape, runtime=0.1s *)
     "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 1s, timeout trying to explain everything *)
-    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=14.1s *)
-    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.4s *)
-    "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=0.6s *)
-    "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=2.5s *)
-    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=3.1s *)
+    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=11.9s *)
+    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.2s *)
+    "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=0.4s *)
+    "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=2.0s *)
+    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=0.4s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=0.5s *)
-    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=2.1s *)
+    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=1.7s *)
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.1s *)
-    "7e0986d6.json"; (* NEW collection of rectangles + noise points to be removed, runtime=28.4s *)
-    "a1570a43.json"; (* red shape moved into 4 green points, runtime=10.7s *)
-    "a61ba2ce.json"; (* NEW 4 corners, they join as a small square, runtime=5.6s *)
-    "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.1s *)
-    "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=5.3s *)
-    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.5s *)
-    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.4s *)
-    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.9s *)
-    "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=3.6s *)
-    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=3.6s. With collection: need access to color of item at position (i - 1) mod 3 *)
+    "7e0986d6.json"; (* NEW collection of rectangles + noise points to be removed, runtime=17.8s *)
+    "a1570a43.json"; (* red shape moved into 4 green points, runtime=8.2s *)
+    "a61ba2ce.json"; (* NEW 4 corners, they join as a small square, runtime=4.2s *)
+    "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.0s *)
+    "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=4.8s *)
+    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.3s *)
+    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.3s *)
+    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.5s *)
+    "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=2.2s *)
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=3.2s. With collection: need access to color of item at position (i - 1) mod 3 *)
     (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
     (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
-    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=6.9s *)
-    "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=1.7s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=11.9s *)
-    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.2s *)
-    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=4.9s *)
+    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=6.3s *)
+    "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=1.3s *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=10.0s *)
+    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.1s *)
+    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=1.4s *)
   ]
 
 let nogen_train_names = (* tasks that succeeds on examples but fail on test cases *)
