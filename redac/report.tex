@@ -699,8 +699,9 @@ the following lemma.
 
 \begin{definition}[grid writing]
   Let $m$ be a grid model. Function ${\it write}_m(\varepsilon)$ takes
-  an environment as input, and returns a grid as output.
-  \[ {\it write}_m(\varepsilon) = \{ g \mid m_\varepsilon = {\it
+  an environment as input, and returns a parse tree and a grid as
+  output.
+  \[ {\it write}_m(\varepsilon) = \{ (\pi,g) \mid m_\varepsilon = {\it
       apply}(m,\varepsilon), \pi = {\it generate}(m_\varepsilon), g =
     {\it draw}(\pi) \} \]
 \end{definition}
@@ -710,7 +711,9 @@ Figure~\ref{fig:write} gives a schematic description of the {\em
 applied to the input environment, in order to resolve any expression
 that the model may contain. The resulting model is then used to
 generate a grid parse tree, by instantiating the unknowns, from which
-a concrete grid can be drawn.
+a concrete grid can be drawn. The parse tree is output in addition to
+the grid in order to provide an explanation of how the grid was
+generated.
 
 
 \subsection{Task Models: Prediction and Training}
@@ -791,7 +794,30 @@ parse tree~$\pi^o$ and an output grid delta~$\delta^o$.
 %
 The two grid parse trees and the two grid deltas collectively form a
 lossless description of the two grids according to the task model.
- 
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.6\textwidth]{fig/create.pdf}
+  \caption{Creation mode: writing input and output grids in chain}
+  \label{fig:create}
+\end{figure}
+
+\paragraph{}
+It is also possible to {\em create} new examples for the task, i.e. to
+create both the input and output grids from nothing else than the
+input and output grid models.
+
+\[{\it create}_M() = \{ (g^i,g^o) \mid (\pi^i,g^i) \in {\it write}_{m^i}({\it nil}), (\pi^o,g^o) \in {\it write}_{m^o}(\pi^i) \} \]
+
+Figure~\ref{fig:create} gives a schematic description of the creation
+mode. The input grid model is used to write the input grid given an
+empty environment. The parse tree of the input grid is then used as an
+environment for the output grid model to generate an output grid that
+is consistent with the input grid. The process is highly
+non-deterministic as in general many grids can be generated for a
+given input grid model. Indeed, it generally contains several unknowns.
+
 
 %%%
 \section{Learning Task Models}
