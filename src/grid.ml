@@ -478,6 +478,23 @@ let pp_parts (g : t) (ps : part list) : unit =
   print_newline ();*)
   pp_grids (g :: List.map (part_as_grid g) ps)
 
+let part_of_pixel ~height ~width i j c =
+  { mini = i; maxi = i;
+    minj = j; maxj = j;
+    color = c;
+    pixels = Mask.singleton height width i j;
+    nb_pixels = 1 }
+
+let merge_parts_2 p1 p2 =
+  assert (p1.color = p2.color);
+  { mini = min p1.mini p2.mini;
+    maxi = max p1.maxi p2.maxi;
+    minj = min p1.minj p2.minj;
+    maxj = max p1.maxj p2.maxj;
+    color = p1.color;
+    pixels = Mask.union p1.pixels p2.pixels;
+    nb_pixels = p1.nb_pixels + p2.nb_pixels }
+  
 let merge_parts (ps : part list) : part = (* QUICK *)
   match ps with
   | [] -> invalid_arg "Grid.merge_parts: empty list"
@@ -495,21 +512,8 @@ let merge_parts (ps : part list) : part = (* QUICK *)
 	 ps1 in
      { mini; maxi; minj; maxj; color = p1.color;
        nb_pixels; pixels = (!pixels) }
-			      
-module PixelsMerge =
-  struct
-    type t =
-      | Pixel of int * int
-      | Merge of t * t
-    let rec fold (f : 'a -> int -> int -> 'a) (acc : 'a) (pm : t) : 'a =
-      match pm with
-      | Pixel (i,j) -> f acc i j
-      | Merge (pm1,pm2) ->
-	 let acc1 = fold f acc pm1 in
-	 let acc2 = fold f acc1 pm2 in
-	 acc2
-  end
 
+     
 module Skyline = (* min-skyline of coordinates *)
   struct
     type t = (int * int) list (* (x,y) list *)
@@ -661,20 +665,20 @@ let split_part (part : part) : part list =
 let segment_by_color (g : t) : part list =
   Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
-  let fm : (int * int, color * PixelsMerge.t) Find_merge.hashtbl =
+  let fm : (int * int, part) Find_merge.hashtbl =
     new Find_merge.hashtbl
-	~init_val:(no_color, PixelsMerge.Pixel (-1,-1))
-	~merge_val:
-	(fun (c1,pm1) (c2,pm2) ->
-	 assert (c1 = c2);
-	 (c1, PixelsMerge.Merge (pm1,pm2)))
+      ~init_val:{ mini = h; maxi = 0;
+                  minj = w; maxj = 0;
+                  color = no_color;
+                  pixels = Mask.empty h w;
+                  nb_pixels = 0 }
+      ~merge_val:merge_parts_2
   in
   let mat = g.matrix in
   (* setting initial val of each pixel *)
   for i = 0 to h-1 do
     for j = 0 to w-1 do
-      let coord = (i,j) in
-      fm#replace coord (mat.{i,j}, PixelsMerge.Pixel (i,j))
+      fm#replace (i,j) (part_of_pixel ~height:h ~width:w i j mat.{i,j})
     done
   done;
   (* merging adjacent pixels with same color *)
@@ -696,29 +700,16 @@ let segment_by_color (g : t) : part list =
   done;
   (* collecting parts *)
   fm#fold
-    (fun _ (c,ph) res ->
-     let pixels = ref (Mask.empty h w) in
-     let mini, maxi, minj, maxj, nb_pixels =
-       PixelsMerge.fold
-	 (fun (mini, maxi, minj, maxj, nb_pixels) i j ->
-	  pixels := Mask.add_in_place i j !pixels;
-	  min mini i, max maxi i,
-	  min minj j, max maxj j,
-	  nb_pixels + 1)
-	 (h, -1, w, -1, 0)
-	 ph in
-     if mini=0 && maxi=h-1 && minj=0 && maxj=w-1 && c=black (* ignoring black background *)
-     then res
-     else
-       let part =
-         { mini; maxi;
-	   minj; maxj;
-	   color = c;
-	   nb_pixels;
-	   pixels = (!pixels) } in
-       part :: split_part part @ res)
+    (fun _ part res ->
+      if part.mini=0 && part.maxi=h-1
+         && part.minj=0 && part.maxj=w-1
+         && part.color=black
+     then res (* ignoring black background *)
+     else part :: split_part part @ res)
     [])
-
+let segment_by_color, reset_segment_by_color =
+  Common.memoize ~size:203 segment_by_color
+  
 
 (* locating shapes *)
 
@@ -930,6 +921,7 @@ let rectangles, reset_rectangles =
 
 
 let reset_memoized_functions () =
+  reset_segment_by_color ();
   reset_majority_colors ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
