@@ -2603,6 +2603,7 @@ let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
 let learn_model
       ?(verbose = false)
       ?(grid_viz = false)
+      ?(pause = 0.)
       ~timeout
       ~init_model
       ~beam_width ~refine_degree
@@ -2688,7 +2689,7 @@ let learn_model
                print_newline ()
             | _ -> assert false)
           gpsr.input_reads gpsr.reads;
-        Unix.sleepf 0.5);
+        Unix.sleepf pause);
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;

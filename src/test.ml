@@ -19,6 +19,7 @@ let start_rank = ref max_int
 let task_timeout = ref 30
 let verbose = ref false
 let grid_viz = ref false
+let pause = ref 0.
 
 (* === printing and checking functions === *)
 
@@ -194,6 +195,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
         Model.learn_model
           ~verbose:(!training && !verbose)
           ~grid_viz:(!grid_viz)
+          ~pause:(!pause)
           ~timeout:(!task_timeout)
           ~init_model
           ~beam_width:(!beam_width) ~refine_degree
@@ -215,7 +217,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
         ] in
       ms    
   | Common.Val (lm, timed_out) ->
-     if timed_out && !training then print_endline "TIMEOUT";
+     if timed_out then print_endline "TIMEOUT";
      match lm with
      | [] -> assert false
      | ((_,m), (gpsr, gsri, gsro), l)::_ ->
@@ -518,8 +520,9 @@ chosen set (default)";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
      "-viz", Set grid_viz, "Show train grids, as understood by the model";
+     "-pause", Set_float pause, "Time delay (in seconds, default=0.0) at each step during learning, useful in combination with -viz";
      "-v", Set verbose, "Verbose mode";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz] [-v]";
+    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz [-pause T]] [-v]";
   main_tasks !dir !names !checker
