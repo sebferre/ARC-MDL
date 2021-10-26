@@ -50,6 +50,7 @@
 \newcommand{\mathsc}[1]{\textrm{\sc #1}}
 
 \newcommand{\nat}{\mathbb{N}}
+\newcommand{\binder}[2]{\underset{#2}{#1}}
 
 \sloppy
 
@@ -245,7 +246,7 @@ test examples.
 
 AI, machine learning, structured prediction...
 
-Programming by demonstration...
+Programming by demonstration, program synthesis, ...
 
 MDL work...
 
@@ -279,12 +280,19 @@ model in order to generate an output grid.
 \begin{datatype}
   {\it Pair} \is {\bf InOut}(in: {\it Grid}, out: {\it Grid})
   \\
-  {\it Grid} \is {\bf Grid}(size: {\it Vector},\ color: C,\ layers: list({\it Shape}))
+  {\it Grid} \is {\bf Grid}(size: {\it Vector},\ color: C,\ layers: list({\it Object}))
   \\
-  {\it Shape} \is {\bf Point}(pos: {\it Vector},\ color: C)
-  \altis {\bf Rectangle}(pos: {\it Vector},\ size: {\it Vector},\ color: C,\ mask: {\it MK})
+  {\it Object} \is {\bf PosShape}(pos: {\it Vector},\ shape: {\it Shape})
+  \\
+  {\it Shape} \is {\bf Point}(color: C)
+  \altis {\bf Rectangle}(size: {\it Vector},\ color: C,\ mask: {\it Mask})
   \\
   {\it Vector} \is {\bf Vec}(i: \nat,\ j: \nat)
+  \\
+  {\it Mask} \is {\bf Bitmap}(bitmap: M)
+  \altis {\bf Full} \alter {\bf Border}
+  \altis {\bf EvenCheckboard} \alter {\bf OddCheckboard}
+  \altis {\bf PlusCross} \alter {\bf TimesCross}
 \end{datatype}
 \end{center}
 \caption{Datatypes used in grid models and grid data}
@@ -292,57 +300,60 @@ model in order to generate an output grid.
 \end{figure}
 
 \paragraph{Version 2.}
-The main component of our grid models is {\em shapes}. Indeed, ARC
-grids can often be read as various shapes over a background. Shapes
-can have nested shapes, be adjacent or overlap with other shapes. Each
-shape has a number of attributes (e.g., height, width, position, and
-color for rectangles; position and color for points). Each shape
-attribute may be constant (e.g., the shape is always red) or variable
-across the examples.
+The main component of our grid models is {\em objects}. Indeed, ARC
+grids can often be read as objects with various shapes over a
+background. Objects can be disconnected, nested or overlap each
+other. Each object has a position and a shape.
 
-\KILL{Given a shape, parsing a grid consists in finding its instances in the
-grid, if any, and to return corresponding values for its variable
-attributes. In contrast, generating a grid requires values for the
-variable attributes as input in order to generate a shape instance in
-the grid.}
+A shape has a color, and either it is a point, or it fits into a
+rectangular box of some size. In the latter case, the precise shape is
+specified by a mask that can be a custom bitmap or one of a few
+pre-defined regular shapes. The position of objects is relative to the
+top-left cell of the shape. Each object attribute (e.g., position,
+size, color) may be constant (e.g., the shape is always red) or
+variable across the examples.
 
 We define our models as templates over data structures representing
 concrete pairs of grids. Figure~\ref{fig:patterns} defines those data
-structure with algebraic data types for pairs, grids, shapes, and
-vectors (2D positions and sizes). They use primitive types for natural
-numbers ($\nat$), colors ($C$), and 2D bitmaps we call {\em masks}
-(${\it MK}$). Uppercase names in bold are called {\em constructors}, and the
-lowercase names of constructor arguments are called {\em fields}.
+structure with algebraic data types for gird pairs, grids, objects,
+shapes, masks, and vectors (2D positions and sizes). They use
+primitive types for natural numbers ($\nat$), colors ($C$), and 2D
+bitmaps (${\it M}$). Uppercase names in bold are called {\em
+  constructors}, and the lowercase names of constructor arguments are
+called {\em fields}.
 
 A task is made of two grids, one for the input grid, and another for
 the output grid.
 %
 Each grid is described as a stack of layers on top of a background,
-each layer being made of a single shape. The background has a size (a
+each layer being made of a single object. The background has a size (a
 2D vector), and a color.
 %
-A shape is either a point, described by its position and color; or a
-rectangle, described by its position, size, color, and mask. That mask
-allows to account for irregular shapes, and indicates which pixels in
-the rectangle box actually belong to the shape (other pixels can be
-seen as transparent).
+An object is a shape at some position. A shape is either a point,
+described by its color; or a rectangle, described by its size, color,
+and mask. That mask allows to account for regular and irregular
+shapes, and indicates which pixels in the rectangle box actually
+belong to the shape (other pixels can be seen as transparent).
+%
+A mask can be a custom bitmap or one of a few common regular shapes:
+full rectangle, rectangle border, checkboards, and centered crosses.
 %
 A data structure describing the first train pair in Figure~\ref{fig:task}
 is:
 \[\begin{array}{l}
     {\bf InOut}( \\
     \quad {\bf Grid}({\bf Vec}(12,13), black,\\
-    \quad \quad [{\bf Rectangle}({\bf Vec}(2,4), {\bf Vec}(2,2), yellow, full),\\
-    \quad \quad ~{\bf Rectangle}({\bf Vec}(1,3), {\bf Vec}(4,4), red, full)]), \\
+    \quad \quad [{\bf PosShape}({\bf Vec}(2,4), {\bf Rectangle}({\bf Vec}(2,2), yellow, {\bf Full})),\\
+    \quad \quad ~{\bf PosShape}({\bf Vec}(1,3), {\bf Rectangle}({\bf Vec}(4,4), red, {\bf Full})])), \\
     \quad {\bf Grid}({\bf Vec}(4,4), yellow, \\
-    \quad \quad [{\bf Rectangle}({\bf Vec}(1,1), {\bf Vec}(2,2), red, full)])).
+    \quad \quad [{\bf PosShape}({\bf Vec}(1,1), {\bf Rectangle}({\bf Vec}(2,2), red, {\bf Full})]))).
   \end{array} \]
-Mask $full$ denotes a mask where all pixels in the rectangle box are on.
+%Mask ${\bf Full}$ denotes a mask where all pixels in the rectangle box are on.
 
 A {\em path} in a data structure is a sequence of fields that goes
 from the root of the data structure to some sub-structure. In the
 above example, path~$in.size.j$ refers to the input grid width, which
-is $13$; path~$out.layers[0].color$ refers to the color of the top
+is $13$; path~$out.layers[0].shape.color$ refers to the color of the top
 shape in the output grid. which is $red$; and path~$in.layers[1].pos$
 refers to the position of the bottom shape in the input grid, which is
 ${\bf Vec}(1,3)$. Given a data structure~$d$ and a path~$p$, the
@@ -358,23 +369,25 @@ that any data structure of the expected type can fit in. For example,
 a grid model that matches all input grids in Figure~\ref{fig:task} is:
 \[\begin{array}{l}
     {\bf Grid}({\bf Vec}(12,?), black,\\
-    \quad [{\bf Rectangle}(?, ?, ?, ?),\\
-    \quad ~{\bf Rectangle}(?, ?, ?, full)])
+    \quad [{\bf PosShape}(?, {\bf Rectangle}(?, ?, ?)),\\
+    \quad ~{\bf PosShape}(?, {\bf Rectangle}(?, ?, {\bf Full}))])
   \end{array}\]
 %
 It matches grids with 12 rows and a black background, and two stacked
 rectangles of any position, any size, and any color. The top rectangle
-may have any mask, while the bottom rectangle is full. The purpose of
-parsing is to fill in the holes, replacing unknowns with data
-structures such that the whole resulting data structure correctly
+may have any mask, while the bottom rectangle should be full. The
+purpose of parsing is to fill in the holes, replacing unknowns with
+data structures such that the whole resulting data structure correctly
 describes a grid or a pair of grids.
 %
 An {\em unknown path} is a path in the model that leads to an
 unknown. The unknown paths in the above grid model are: $size$,
-$layers[0].pos$, $layers[0].size$, $layers[0].color$, $layers[1].pos$,
-$layers[1].size$, $layers[1].color$. The set of unknown paths of a
-model~$M$ is denoted by~$U(M)$.
-%
+$layers[0].pos$, $layers[0].shape.size$, $layers[0].shape.color$,
+$layers[0].shape.mask$, $layers[1].pos$, $layers[1].shape.size$,
+$layers[1].shape.color$. The set of unknown paths of a model~$m$ is
+denoted by~$U(m)$.
+
+%% in code, patterns are rather called templates
 A data structure that may contain unknowns is called a {\em
   pattern}. A data structure is said {\em ground} if it contains no
 unknown. Given a ground data structure~$d$ and a pattern~$p$, the
@@ -388,7 +401,7 @@ An {\em expression} defines part of the data structure as the result
 of a computation over some input data structure, which we call the
 {\em environment}. Expressions are made of primitive values,
 constructors, operators/functions, and variables. In Version~2, the
-only operators are addition and substraction over natural numbers,
+only operators are zero, addition and substraction over natural numbers,
 they are used to compute the position and size of grids and shapes.
 Variables are references to parts of the environment. A convenient way
 to refer to such parts is to use {\em paths} in the environment data
@@ -409,24 +422,24 @@ unknowns for the input grid, and expressions for the output grid:
 \[\begin{array}{l}
     {\bf InOut}( \\
     \quad {\bf Grid}({\bf Vec}(12,?), black,\\
-    \quad \quad [~{\bf Rectangle}({\bf Vec}(?,?), {\bf Vec}(?, ?), ?, full),\\
-    \quad \quad ~~{\bf Rectangle}({\bf Vec}(?,?), {\bf Vec}(?, ?), ?, full)~]), \\
-    \quad {\bf Grid}(layers[1].size, layers[0].color, \\
-    \quad \quad [~ {\bf Rectangle}(\\
-    \quad \quad \quad {\bf Vec}(layers[0].i - layers[1].i, layers[0].j - layers[1].j), \\
-    \quad \quad \quad layers[0].size, layers[1].color, full) ~])).
+    \quad \quad [~{\bf PosShape}({\bf Vec}(?,?), {\bf Rectangle}({\bf Vec}(?, ?), ?, {\bf Full})),\\
+    \quad \quad ~~{\bf PosShape}({\bf Vec}(?,?), {\bf Rectangle}({\bf Vec}(?, ?), ?, {\bf Full})~])), \\
+    \quad {\bf Grid}(layers[1].shape.size, layers[0].shape.color, \\
+    \quad \quad [~ {\bf PosShape}(\\
+    \quad \quad \quad \quad {\bf Vec}(layers[0].pos.i - layers[1].pos.i,\ layers[0].pos.j - layers[1].pos.j), \\
+    \quad \quad \quad \quad {\bf Rectangle}(layers[0].size,\ layers[1].color,\ {\bf Full})) ~])).
   \end{array} \]
 
 In words, this models says: ``find two stacked full rectangles on a
 black background in the input grid, then generate an output grid,
 whose size is the same as the bottom shape, and whose background color
-is the color of the top shape, and finally add a full rectangle shape
-whose size is the same as the top shape, whose color is the same as
-the bottom shape, and whose position is the difference between the top
+is the color of the top shape, and finally add a full rectangle whose
+size is the same as the top shape, whose color is the same as the
+bottom shape, and whose position is the difference between the top
 shape position and the bottom shape position (relative position).''
 
 A model is {\em well-formed} if it is well-typed (constructor
-arguments, operator operand types, etc,), and if all variables are
+arguments, operator operand types, etc.), and if all variables are
 valid paths in the environment data. More specifically, a task model
 is well-formed if the input grid model contains no variable, and if
 all variables in the output grid model are valid paths in the input
@@ -449,14 +462,17 @@ to capture all the information in the original data.
 We first consider grid models, where data is a grid. An analogy can be
 made with formal languages and grammars. In this analogy, grids are
 sentences, grid models are grammars, and data according to the model
-is the parse tree. A parse tree explains how the grammar generates
-the sentence. Here, data structures as defined in
+is the parse tree. A parse tree explains how the grammar generates the
+sentence. Here, data structures as defined in
 Figure~\ref{fig:patterns} play the role of parse trees for grid
 models, they are {\em grid parse trees} and we denote them with the
 greek letter~$\pi$. A grid parse tree, the data according to the
 model, is a data structure that instantiates the grid model by
 replacing expressions by their value, and unknowns by values such that
-the resulting data structure correctly describes the grid.
+the resulting data structure correctly describes the grid. The
+description length will only count the data structures that
+instantiate the unknowns because the rest of the parse tree is already
+known from the model.
 
 For input grid~$g^i_k$ ($k$-th example), $\pi^i_k$ denotes one
 possible grid parse tree according to some fixed input grid
@@ -493,17 +509,19 @@ into acount such differences to penalize them.
 
 As an illustration, let us consider the following (incomplete) input
 grid model for the task in Figure~\ref{fig:task}:
-\[ {\bf Grid}(?, black, [\ {\bf Rectangle}(?,?,?,full)\ ]). \] There
+\[ {\bf Grid}(?, black, [\ {\bf PosShape}(?, {\bf Rectangle}(?,?,{\bf Full}))\ ]). \] There
 are mainly two ``data according to the model'' for the first input
 grid~$g^i_1$ (the upper index is $i$ for input grids and $o$ for
 output grids, the lower index identifies the example):
 \begin{enumerate}
 \item matching the outer red rectangle\\
-  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black, [\ {\bf Rectangle}({\bf Vec}(1,3), {\bf Vec}(4,4), red, {\it full})\ ])$\\
+  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black,$\\
+  \hspace*{2cm} $[\ {\bf PosShape}({\bf Vec}(1,3), {\bf Rectangle}({\bf Vec}(4,4), red, {\bf Full}))\ ])$\\
   $\delta^i_1 = \{ (2,4,yellow), (2,5,yellow), (3,4,yellow), (3,5,yellow) \}$
 
 \item matching the inner yellow rectangle\\
-  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black, [\ {\bf Rectangle}({\bf Vec}(2,4), {\bf Vec}(2,2), yellow, {\it full})\ ])$\\
+  $\pi^i_1 = {\bf Grid}({\bf Vec}(12,13), black,$\\
+  \hspace*{2cm} $[\ {\bf PosShape}({\bf Vec}(2,4), {\bf Rectangle}({\bf Vec}(2,2), yellow, {\bf Full}))\ ])$\\
   $\delta^i_1 = \{ (1,3,red), (1,4,red), (1,5,red), (1,6,red), (2,3,red), (2,6,red), (3,3,red), ...\}$
 \end{enumerate}
 The first solution looks better because it has a much smaller grid
@@ -549,15 +567,17 @@ into a grid.
 \paragraph{Version 2.} Given a grid parse tree~$\pi$ as specified in
 Figure~\ref{fig:patterns}, the grid ${\it draw}(\pi)$ is obtained by
 first generating a grid with the specified size and background color,
-and then layers are drawn on that grid, bottom up. Each layer, either
+and then layers are drawn on that grid, bottom-up. Each layer, either
 a point or a rectangle, is drawn in the obvious way. For a point
-${\bf Point}({\bf Vec}(i,j),c)$, the cell at position~$(i,j)$ is set
-to color~$c$. For a rectangle
-${\bf Rectangle}({\bf Vec}(i,j),{\bf Vec}(h,w),c,m)$, each cell at
-position $(i+x,j+y)$, for any $x \in [0,h[$ and $y \in [0,w[$, is set
-to color~$c$ if the relative position~$(x,y)$ belongs to mask~$m$.
+${\bf PosShape}({\bf Vec}(i,j), {\bf Point}(c))$, the cell at
+position~$(i,j)$ is set to color~$c$. For a rectangle
+${\bf PosShape}({\bf Vec}(i,j), {\bf Rectangle}({\bf Vec}(h,w),c,m))$,
+each cell at position $(i+x,j+y)$, for any $x \in [0,h[$ and
+$y \in [0,w[$, is set to color~$c$ if the relative position~$(x,y)$
+belongs to mask~$m$.
 
-\paragraph{}The second function applies a grid model to an
+\paragraph{}
+The second function applies a grid model to an
 environment, resolving references to it, and replacing expressions by
 their evaluation result.
 
@@ -573,8 +593,8 @@ their evaluation result.
 \end{definition}
 
 \paragraph{Version 2.} Environments are grid parse trees, and
-variables are paths into them. There are only two operators, plus and
-minus, and they are evaluated in the usual way on integer values.
+variables are paths into them. There are only three operators -- zero, plus,
+minus -- and they are evaluated in the usual way on integer values.
 
 \paragraph{}
 We also define two non-deterministic functions that produce grid parse
@@ -595,22 +615,37 @@ function.
 Parsing is decomposed in three stages. First, the grid is partitioned
 into contiguous monocolor regions.
 %
-Second, shapes are looked for as single parts or as unions of parts to
-cover the case where some shapes are overlaped by other shapes. When a
-shape is not a point or a full rectangle, two shapes are considered:
-one shape with a full mask, considering the missing cells as noise on
-top of the rectangle; another shape with a mask containing the cells
-in the rectangle box that have the same color. 
+Second, objects are looked for as single parts or as unions of parts
+to cover the case where some objects are overlaped by other
+objects. Small parts (less than 5 covered cells) are also considered
+as adjacent individual points. When an object's shape is not a point
+or a full rectangle, two shapes are considered: one shape with a full
+mask, considering the missing cells as noise on top of the rectangle;
+and another shape with a mask containing the cells in the rectangle
+box that belong to the object and have the same color. A regular mask
+is used when possible (e.g., borders, crosses), otherwise a bitmap is
+used.
 %
-Third, matching superpositions of shapes are looked for according to
-the model. Candidate shapes are considered in a fixed ordering that
-includes some heuristics. Black shapes are considered last because
-black is often the background color. Then, shapes are considered in
-dereasing number of covered cells. Beyond those heuristics, a total
-ordering is defined because it makes experiments more reproducible,
-and also because it helps disambiguate some situations. For instance,
-if the model contains several point shapes, they will be matched to
-points in the grid from left to right, top-down.
+Third, matching superpositions of objects are looked for according to
+the grid model. For each layer, candidate objects are considered in a
+fixed ordering that includes some simple heuristics. Black objects are
+considered last because black is often the background color. Then,
+objects are considered in decreasing number of covered cells. Beyond
+those heuristics, a total ordering is defined because it makes
+experiments more reproducible, and also because it helps disambiguate
+some situations. For instance, if the model contains several points,
+they will be matched to points in the grid from left to right,
+top-down.
+%
+Layers are parsed top-down. When done in a naive recursive way, the
+search space is not be explored in fair way. Indeed, the second
+candidate object for the frst layer is only considered when all
+candidates have been considered for the other layers in combination
+with the first candidate object for the first layer. Defining the rank
+of a parse tree for all layers as the sum of the rank of the chosen
+candidate object of each layer, we explore the search space in
+increasing rank to favor the first candidate objects across all
+layers. This improvement was introduced in Version~2.2.
 
 As an example of parsing, the test input grid in Figure~\ref{fig:task}
 has three contiguous parts: the light blue one, the green one, and the
@@ -627,11 +662,11 @@ sense that a sequence of grid parse trees is produced. We use the
 description lengths as defined below to order this sequence from the
 shorter DL to the longer DL. Indeed, the shorter the DL, the more
 plausible the grid parse tree is. Because of combinatorial problems in
-the parsing process, we use various bounds: maximum number of concrete
-shapes for a given shape in the model, maximum number of produced grid
-parse trees before sorting them, and maximum number of grid parse
-trees actually returned. Relative to approximate parsing, we also
-bound the number of differences w.r.t. the model.
+the parsing process, we use various bounds: maximum number of
+candidate objects for a given layer in the model, maximum number of
+produced grid parse trees before sorting them, and maximum number of
+grid parse trees actually returned. Relative to approximate parsing,
+we also bound the number of differences w.r.t. the model.
 
 \paragraph{}
 The second function corresponds to generation, where the grid parse
@@ -649,8 +684,9 @@ values. It makes it very unlikely to generate the right output grid by
 chance but it helps to visualize the intermediate states of the
 learning process. The default position is $(0,0)$, the default size is
 $(10,10)$ for grids, and $(2,2)$ for rectangles, the default color is
-black, the default mask is the full mask, the default shape is a
-rectangle with default values in each field.
+black for grids and grey for shapes, the default mask is the full
+mask, the default shape is a rectangle with default values in each
+field.
 
 
 \subsection{Reading and Writing a Grid with a Grid Model}
@@ -716,7 +752,7 @@ the grid in order to provide an explanation of how the grid was
 generated.
 
 
-\subsection{Task Models: Prediction and Training}
+\subsection{Task Models: Prediction, Training, and Creation}
 \label{training:predicting}
 
 % TODO: schema showing the information flow
@@ -852,35 +888,65 @@ lengths of its two grid models.
 We detail the description length of grid models below. The
 description length of the task data~$D = E$ is the sum of the
 description length of each example.
-\[ L(D|M) = L(E|M) = \alpha \sum_{(g^i,g^o) \in E} L(g^i,g^o|M) \]
+\[ L(D|M) = L(E|M) = \alpha \sum_{(g^i,g^o) \in E} L(g^i|M) + L(g^o|M) \]
 %
 Factor~$\alpha$ equals~10 by default to give more weights to the data,
 relative to the model, and hence allow the learning of more complex
 models. Indeed, ARC tasks have a very low number of examples (3 on
 average).
 
-The description length of a pair of grids, according to a task model,
-is based on the chained reading of the two grids. It boils down to
-description lengths of grid parse trees and grid deltas. As reading
-grids is non-deterministic, we define the description length as the
-minimum DL over all readings, thus choosing the ``best'' reading.
-\[\begin{array}{ll}
-    L(g^i,g^o|M) = {\it min}\ \{ & L(\pi^i|m^i) + L(\delta^i|\pi^i) + L(\pi^o|{\it apply}(m^o,\pi^i)) + L(\delta^o|\pi^o)\\
-                             & \mid (\pi^i,\delta^i,\pi^o,\delta^o) \in {\it train}_M(g^i,g^o)\ \}
-  \end{array}\]
-
-Note that the description lengths~$L(\pi|m)$ of grid parse trees~$\pi$
-are relative to the grid model~$m$ (if necessary, applied to its
-environment). Indeed, we only need to encode the parts of the grid
+The description length of each grid, according to a task model, is
+based on the chained reading of the pair of grids. First, the
+description length of a grid relative to a given reading boils down to
+description lengths of the grid parse tree and the grid delta.
+\[ L(g|m,\varepsilon,\pi,\delta) = L(\pi|{\it apply}(m,\varepsilon)) +
+  L(\delta|\pi) \]
+%
+Note that the description lengths of the grid parse
+tree~$\pi$ is relative to the grid model~$m$ applied to its
+environment. Indeed, we only need to encode the parts of the grid
 parse tree that are unknown in the grid model or that differ from the
 grid model. Its detailed definition depends on the definition of grid
 models.
+%
+The description length of a grid delta~$\delta$ is relative to a grid
+parse tree~$\pi$. This is valid as the grid parse tree is encoded
+before the delta, and is therefore available when encoding the grid
+delta. Its detailed definition also slightly depends on grid models.
 
-The description length~$L(\delta|\pi)$ of a grid delta~$\delta$ is
-relative to a grid parse tree~$\pi$. This is valid as the grid parse
-tree is encoded before the delta, and is therefore available when
-encoding the grid delta. Its detailed definition also slightly depends
-on grid models.
+Then, we define the absolute description length of input grids and
+output grids by choosing the ``best reading'', i.e. the chained
+reading that minimizes the cumulated DL of both grids.
+\begin{align*}
+  L(g^i|M) & = L(g^i|m^i,{\it nil},\pi^i_*,\delta^i_*) \\
+  L(g^o|M) & = L(g^o|m^o,\pi^i_*,\pi^o_*,\delta^o_*) \\
+  & \textrm{where~} (\pi^i_*,\delta^i_*,\pi^o_*,\delta^o_*) =\\
+  & \quad \binder{\operatorname{argmin}}{(\pi^i,\delta^i,\pi^o,
+  \delta^o) \in {\it train}_M(g^i,g^o)} L(g^i|m^i,{\it nil},\pi^i,\delta^i) + L(g^o|m^o,\pi^i,\pi^o,\delta^o)
+%
+%    L(g^i,g^o|M) = {\it Min}\ \{ & L(\pi^i|m^i) + L(\delta^i|\pi^i) + L(\pi^o|{\it apply}(m^o,\pi^i)) + L(\delta^o|\pi^o)\\
+%                             & \mid (\pi^i,\delta^i,\pi^o,\delta^o) \in {\it train}_M(g^i,g^o)\ \}
+\end{align*}
+
+We also introduce normalized definitions of description
+lengths~$\hat{L}$. Indeed, input and output grids may have very
+different sizes (e.g., the output grid has a single cell), and this
+can hinder the learning of a grid model for the smaller grid. Our
+normalization gives the same weight to the input grids and to the
+output grids, taking the initial model~$M_0$ as a point of reference.
+We therefore define $\lambda^i$ and $\lambda^o$ as respectively the
+input and output contributions to $L(M_0,D) = \lambda^i + \lambda^o$.
+\begin{align*}
+    \lambda^i = L(m^i_0) + \alpha \sum_{(g^i,g^o) \in E} L(g^i|M_0) \\
+    \lambda^o = L(m^o_0) + \alpha \sum_{(g^i,g^o) \in E} L(g^o|M_0)
+\end{align*}
+From there, we define normalized description lengths as follows.
+\begin{align*}
+  \hat{L}(M,D) = \hat{L}(M) + \hat{L}(D|M) \\
+  \hat{L}(M) = \frac{1}{\lambda^i}L(m^i) + \frac{1}{\lambda^o}L(m^o) \\
+  \hat{L}(D|M) = \alpha \sum_{(g^i,g^o) \in E} \frac{1}{\lambda^i}L(g^i|M) + \frac{1}{\lambda^o}L(g^o|M) \\
+\end{align*}
+As the learning strategy only selects models giving shorter and shorter description lengths, the normalized description~$\hat{L}(M,D)$ is in the interval~$[0,2]$, and the contribution of each part (input and output) is in the interval~$[0,1]$.
 
 When defining description lengths for grid models and grid parse
 trees, we assume a few basic description lengths for elementary types:
@@ -917,31 +983,25 @@ color~$c$, $L(c) = -\log P_{BC}(c)$. \KILL{We then define the
   description length of background colors $L_{BC}(c)$ as
   $L_{P_{bc}}(c)$.}
 %
-As the mask of a rectangle is a bitmap, we simply define its
-description length as its number of bits, i.e. its height times its
-width, which are known from the rectangle size. However, as it is
-common to have full masks for pure rectangles, we use a bit to encode
-whether the mask is full or not, and we then encode the bitmap only if
-it is not full.
-\[ L(mask|h,w) = \left\{
-  \begin{array}{l@{\quad}l}
-    1 & \textrm{when the mask bitmap is full} \\
-    1 + hw & \textrm{otherwise} \\
-  \end{array}\right. \]
-When the rectangle size is not known, e.g. in a model with unknowns, a
-constant bitmap cannot be specified and the only possible value is the
-full mask.
+The description length of a rectangular bitmap is simply defined as
+its number of cells: $L(m) = height(m) \times width(m)$.
 
 {\em Algebraic types.} For each algebraic datatype (${\it Grid}$,
-${\it Shape}$, ${\it Vector}$), each constructor determines which
-fields are to be encoded. Therefore, it suffices to encode the choice
-of a constructor among the constructors of the datatype, in addition
-to the encoding of the fields. For datatypes~${\it Grid}$ and
-${\it Vector}$, there is a single constructor, hence there is no
-choice to be made. Hence, $L({\bf Grid}) = L({\bf Vec}) = 0$. For
+${\it Object}$, ${\it Shape}$, ${\it Vector}$, ${\it Mask}$), each
+constructor determines which fields are to be encoded. Therefore, it
+suffices to encode the choice of a constructor among the constructors
+of the datatype, in addition to the encoding of the fields. For
+datatypes~${\it Grid}$, ${\it Object}$, and ${\it Vector}$, there is a
+single constructor, hence there is no choice to be made. Hence,
+$L({\bf Grid}) = L({\bf Object}) = L({\bf Vec}) = 0$. For
 datatype~${\it Shape}$, there are two constructors, to which we give a
 uniform distribution. Hence,
-$L({\bf Point}) = L({\bf Rectangle}) = -\log 0.5 = 1$.
+$L({\bf Point}) = L({\bf Rectangle}) = -\log 0.5 = 1$.  For
+datatype~${\it Shape}$, there are 7 constructors, to which we give the
+following distribution:
+$P_{\it Shape} = \{ {\bf Bitmap}: 0.3,\ {\bf Full}: 0.5,\ {\bf Border}: 0.1,\ {\bf
+  EvenCheckboard}: 0.025,\ {\bf OddCheckboard}: 0.025,\ {\bf PlusCross}:
+0.025,\ {\bf TimesCross}: 0.025 \}$.
 %
 For a given constructor, the encoding of some field may depend on
 other fields, thus inducing an ordering of fields. This is the case
@@ -956,21 +1016,19 @@ Grids have a list of shapes. The encoding of a list starts with the
 universal encoding of the length of the list, followed by the encoding
 of the list elements.
 
-{\em Expressions.} There are three kinds of expressions (with
-distribution~$P_e$): primitive values and constructors ($P_e = 0.25$,
-2 bits), function applications ($P_e = 0.25$, 2 bits), and variables
-($P_e = 0.5$, 1 bit). Primitive values and constructors are encoded as
-described above. Functions are encoded along a uniform distribution
-over the functions whose result type is the expected type. The
-expected type is determined by the syntactic context of the
-expression: e.g., a color if it is the color field of the grid or a
-shape, an integer if it is a component of the position of a shape, or
-an operand of an arithmetic operator. Currently, there are only two
-functions, addition and substraction, both with result type
-${\it int}$. Variables are encoded according to the environment
-signature, i.e. the set of variables that are available in the
-environment, grouped by data type. A variable is encoded according to
-a probability distribution over the environment variables of same
+{\em Expressions.} There are two kinds of expressions (with
+distribution~$P_e$): function (or operator) applications ($P_e = 0.5$,
+1 bit), and variables ($P_e = 0.5$, 1 bit). Functions are encoded
+along a uniform distribution over the functions whose result type is
+the expected type. The expected type is determined by the syntactic
+context of the expression: e.g., a color if it is the color field of
+the grid or a shape, an integer if it is a component of the position
+of a shape, or an operand of an arithmetic operator. Currently, there
+are only three functions -- zero, addition, and substraction -- all
+with result type ${\it int}$. Variables are encoded according to the
+environment signature, i.e. the set of variables that are available in
+the environment, grouped by data type. A variable is encoded according
+to a probability distribution over the environment variables of same
 type. In order to distinguish between the same-type variables, we
 define the probability distribution as the softmax of the similarities
 between the paths of those variables with the expression path. This
@@ -979,12 +1037,13 @@ is prefered to defining it as a function of a shape width or a shape
 position.
 
 {\em Templates.} There are three kinds of templates (with
-distribution~$P_t$): primitive value and constructors ($P_t = 0.4$,
+distribution~$P_t$): primitive values and constructors ($P_t = 0.4$,
 1.3 bits), expressions ($P_t = 0.5$, 1 bit), and unknowns
-($P_t = 0.1$, 3.3 bits). In a template, each field of a constructor is
-a template, thus allowing unknowns and expressions at any place. In
-practice, we never use unknowns for whole grid models, and for whole
-shapes. Expressions are given the higher probability because they
+($P_t = 0.1$, 3.3 bits). Each field of a constructor and each argument
+of a function is a template, thus allowing in principle arbitrary
+mixing of values, constructors, functions, and unknowns. In Version~2,
+we never use unknowns for grids, objects, shapes, and function
+arguments. Expressions are given higher probability because they
 explain some part of the grid parse tree from the
 environment. unknowns are given the lower probability because they
 correspond to unexplained parts.
@@ -1006,7 +1065,7 @@ approximate parsing.
 \item[(a)] About the unknowns, a fixed ordering can be derived from
   the model. Therefore, it is enough to concatenate the encodings of
   the grid parse subtrees that correspond to each unknown.
-\item[(b)] About the differing parts, we have no apriori information,
+\item[(b)] About the differing parts, we have no a priori information,
   neither on their number, nor on their location in the grid parse
   tree. We first encode their number with universal encoding. We then
   encode each differing part by encoding its location in the grid
@@ -1018,12 +1077,12 @@ improved in several ways. First, some differences are more likely than
 others: e.g., a different rectangle width vs a completely different
 shape. Second, not all subsets of locations make sense as a difference
 location should not be inside another difference location as it would
-entail to encode twice the same part.
+entail to encode the same part twice.
 
 {\em Grid delta} ($L(\delta|\pi)$). For comparability with grid models and grid parse
 trees, we encode a grid delta~$\delta$ as a set of points.  The
 description length of a grid delta is hence defined as:
-\[ L(\delta|\pi) = L_\nat(|\delta|) + \sum_{(i,j,c) \in \delta} L({\bf Point}({\bf Vec}(i,j),c)|{\it draw}(\pi)). \]
+\[ L(\delta|\pi) = L_\nat(|\delta|) + \sum_{(i,j,c) \in \delta} L({\bf PosShape}({\bf Vec}(i,j), {\bf Point}(c))|{\it draw}(\pi)). \]
 %
 Note that the description length of points is made relative to the
 grid drawn from the grid parse tree. In particular, this makes the
@@ -1147,42 +1206,42 @@ encoding for integers when bounds are known for the attribute value
 
 \begin{table}[t]
   \centering
-  \caption{Comparison of description lengths of the initial model (left) and the solution model given above (right).}
-  \begin{minipage}{0.4\textwidth}
+  \caption{Comparison of description lengths of the initial model (top) and the solution model given above (bottom).}
+%  \begin{minipage}{0.45\textwidth}
     \begin{center}
-      \begin{tabular}{|l||r|r||r|}
+      \begin{tabular}{|l||r|r||r|r|}
     \hline
-          & $L(M)$ & $L(D|M)$ & $L(M,D)$ \\
-    \hline
-    \hline
-    input & 9.0 & 9984.0 & 9993.0 \\
-    \hline
-    output & 9.0 & 1634.7 & 1643.7 \\
+          & $L(M)$ & $L(D|M)$ & $L(M,D)$ & $\hat{L}(M,D)$ \\
     \hline
     \hline
-    chained & 18.0 & 11618.7 & 11636.7 \\
+    input & 9.0 & 10645.0 & 10653.9 & 1.000 \\
+    \hline
+    output & 9.0 & 1714.0 & 1723.0 & 1.000 \\
+    \hline
+    \hline
+    chained & 17.9 & 12359.0 & 12376.9 & 2.000 \\
     \hline
       \end{tabular}
     \end{center}
-  \end{minipage}
-\hfill
-\begin{minipage}{0.4\textwidth}
+%  \end{minipage}
+%\hfill
+%\begin{minipage}{0.45\textwidth}
   \begin{center}
-    \begin{tabular}{|l||r|r||r|}
+    \begin{tabular}{|l||r|r||r|r|}
     \hline
-      & $L(M)$ & $L(D|M)$ & $L(M,D)$ \\
-    \hline
-    \hline
-    input & 68.9 & 1711.3 & 1780.2 \\
-    \hline
-    output & 50.6 & 0.0 & 50.6 \\
+      & $L(M)$ & $L(D|M)$ & $L(M,D)$ & $\hat{L}(M,D)$ \\
     \hline
     \hline
-    chained & 119.5 & 1711.3 & 1830.8 \\
+    input & 73.5 & 1711.3 & 1784.9 & 0.168 \\
+    \hline
+    output & 53.9 & 0.0 & 53.9 & 0.031 \\
+    \hline
+    \hline
+    chained & 127.4 & 1711.3 & 1838.7 & 0.199 \\
     \hline
     \end{tabular}
   \end{center}
-\end{minipage}
+%\end{minipage}
 \label{tab:dl:example}
 \end{table}
 
@@ -1242,7 +1301,7 @@ starting with an initial model, in search for the best model, i.e. the
 most compressive model. Given a class of models, a search strategy is
 therefore entirely specified by:
 \begin{enumerate}
-\item an initial model~$M_o$ ({\em initial model}), generally the
+\item an initial model~$M_0$ ({\em initial model}), generally the
   simplest one;
 \item and a function~$R$ mapping each model~$M$ to an ordered
   list~$M_1, M_2, \ldots$ of refined models ({\em refinements}),
@@ -1273,16 +1332,22 @@ models, reduced to a background with unknown size and color, and no
 shape layer.
 \[ {\bf InOut}({\bf Grid}(?,?,[\ ]), {\bf Grid}(?,?,[\ ])) \]
 
-Two kinds of refinements are used: (1) the addition of a shape to a
-grid model (input or output), and (2) the replacement of a part of a
+Two kinds of refinements are used: (1) the addition of a new object to
+a grid model (input or output), and (2) the replacement of a part of a
 template (typically some unknown) by another template (typically a
 value or an expression).
 %
-When adding a shape, its kind -- point or rectangle -- is fixed but
-all its fields are left unspecified. The added shape template is
-therefore either ${\bf Point}(?,?)$ or ${\bf Rectangle}(?,?,?,?)$.  If
-there is already a non-empty list of shapes, the new shape can be
-inserted at any position in the list, from bottom to top.
+In the first kind of refinement, the new object can be inserted at any
+position in the list of layers. The inserted object can be a fully
+unspecified point or rectangle: ${\bf PosShape}(?, {\bf Point}(?))$ or
+${\bf PosShape}(?, {\bf Rectangle}(?,?,?))$. In the output grid model,
+the inserted object can also be an object or a shape from the input
+grid model, using paths as variables to reference them: $p_{object}$
+or ${\bf PosShape}(?, p_{shape})$. Indeed, it is common for the output
+grid to reuse shapes from the input grid, either at the same position
+or at a different position to be determined. Inserting such references
+to the input grid is not necessary because they could be learned from
+unspecified objects but they accelerate learning.
 
 The second kind of refinements enables to replace part of a model at
 path~$p$ by a template~$t$. The replacing template is either a {\em
@@ -1296,7 +1361,7 @@ In this version, we only consider patterns made of a single primitive
 value or a single constructor with all fields being unknowns; and we
 only consider expressions on integers with a form among $x$, $x+c$,
 $x-c$, $x+y$, $x-y$, for any environment variables~$x,y$, and any
-constant integer~$c$.
+constant integer~$c \in \{1,2,3\}$.
 %
 When the replaced part~$p$ is an unknown, it enables to make the model
 more specific to the task. When the replaced part is a pattern in the
@@ -1310,8 +1375,8 @@ be the current model. We generate the following refinements:
 \begin{enumerate}
 \item An input unknown at~$p \in U(m^i)$ can be replaced by
   pattern~$t$ if
-\[ \forall (g^i_k,g^o_k) \in E: \exists (\pi^i_k,\delta^i_k) \in {\it
-    read}_{m^i}(nil,g^i_k): \pi^i_k.p \sim t \]
+\[ \forall (g^i_k,g^o_k) \in E: \exists (\pi^i_k,\delta^i_k,\pi^o_k,\delta^o_k) \in {\it
+    train}_M(g^i_k,g^o_k): \pi^i_k.p \sim t \]
 %
 \item An output unknown at~$p \in U(m^o)$ can be replaced by
 pattern~$t$ if
@@ -1330,64 +1395,67 @@ expressions, the ordering is: $x$, $x-c$, $x+c$, $x-y$, $x+y$.
 
 The sequence of compressive refinements that leads to the above model
 about task in Figure~\ref{fig:task} is shown in the table below. The
-description length includes both the model and the data, and both the
-input grid and the output grid. It is the description length reached
-after applying the refinement. Each refinement is described as an
-equality between a model path (left-hand side) and a template
-(right-hand side). Refinements defining a layer by a shape actually
-inserts a new layer for that shape.
+normalized description length is the one reached after applying the
+refinement. Each refinement is described as an equality between a
+model path (left-hand side) and a template (right-hand
+side). Refinements defining a layer by a shape actually insert a new
+layer for that shape.
 
 \begin{center}
   \begin{tabular}{|r|r|l|}
     \hline
-    step & $L(M,D)$ & refinement \\
+    step & $\hat{L}(M,D)$ & refinement \\
     \hline
-    1 & 4461.6 & $in.layer[1] = {\bf Rectangle}(?,?,?,?)$ \\
-    2 & 4047.2 & $out.size = layer[1].size$ \\
-    3 & 3650.4 & $in.layer[0] = {\bf Rectangle}(?,?,?,?)$ \\
-    4 & 3352.6 & $out.layer[0] = {\bf Rectangle}(?,?,?,?)$ \\
-    5 & 3114.6 & $out.color = in.layer[0].color$ \\
-    6 & 2896.4 & $out.layer[0].size = in.layer[0].size$ \\
-    7 & 2757.0 & $out.layer[0].color = in.layer[1].color$ \\
-    8 & 2686.3 & $out.layer[0].mask = full$ \\
-    9 & 2615.7 & $in.layer[0].mask = full$ \\
-    10 & 2545.0 & $in.layer[1].mask = full$ \\
-    11 & 2499.4 & $in.color = black$ \\
-    12 & 2464.4	& $out.layer[0].pos = {\bf Vec}(?,?)$ \\
-    13 & 2374.4	& $out.layer[0].pos.i = in.layer[0].pos.i - in.layer[1].pos.i$ \\
-    14 & 2284.5	& $out.layer[0].pos.j = in.layer[0].pos.j - in.layer[1].pos.j$ \\
-    15 & 2249.5	& $in.size = {\bf Vec}(?,?)$ \\
-    16 & 1970.9	& $in.size.i=12$ \\
-    17 & 1935.9	& $in.layer[0].pos = {\bf Vec}(?,?)$ \\
-    18 & 1900.9	& $in.layer[0].size = {\bf Vec}(?,?)$ \\
-    19 & 1865.9	& $in.layer[1].pos = {\bf Vec}(?,?)$ \\
-    20 & 1830.8	& $in.layer[1].size = {\bf Vec}(?,?)$ \\
+    0 & 2.000 & \\
+    1 & 1.272 & $in.layer[1] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    2 & 1.031 & $out.size = layer[1].shape.size$ \\
+    3 & 0.814 & $out.layer[0] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    4 & 0.732 & $out.layer[0].shape.color = in.layer[1].shape.color$ \\
+    5 & 0.688 & $in.layer[0] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    6 & 0.549 & $out.color = in.layer[0].shape.color$ \\
+    7 & 0.423 & $out.layer[0].shape.size = in.layer[0].shape.size$ \\
+    8 & 0.381 & $out.layer[0].shape.mask = in.layer[0].shape.mask$ \\
+    9 & 0.361 & $out.layer[0].shape.pos = {\bf Vec}(?,?)$ \\
+    10 & 0.310 & $out.layer[0].shape.pos.i = in.layer[0].shape.pos.i - in.layer[1].shape.pos.i$ \\
+    11 & 0.259 & $out.layer[0].shape.pos.j = in.layer[0].shape.pos.j - in.layer[1].shape.pos.j$ \\
+    12 & 0.252 & $in.layer[0].shape.mask = {\bf Full}$ \\
+    13 & 0.246 & $in.layer[1].shape.mask = {\bf Full}$ \\
+    14 & 0.241 & $in.color = black$ \\
+    15 & 0.238 & $in.size = {\bf Vec}(?,?)$ \\
+    16 & 0.212 & $in.size.i = 12$ \\
+    17 & 0.209 & $in.layer[0].shape.pos = {\bf Vec}(?,?)$ \\
+    18 & 0.205 & $in.layer[0].shape.size = {\bf Vec}(?,?)$ \\
+    19 & 0.202 & $in.layer[1].shape.pos = {\bf Vec}(?,?)$ \\
+    20 & 0.199 & $in.layer[1].shape.size = {\bf Vec}(?,?)$ \\
     \hline
   \end{tabular}
 \end{center}
 
-At steps 1 and 3, two rectangle shapes are introduced in the input.
-At step 4, a rectangle shape is introduced in the output. Combined
+At steps 1 and 5, two rectangle objects are introduced in the input.
+At step 3, a rectangle object is introduced in the output. Combined
 with the background grid, this is enough to cover all cells in both
-grids. As of step 4, there are therefore empty grid deltas.
+grids. As of step 5, there are therefore empty grid deltas.
 %
-At steps 2 and 5, the size and color of the output grid are
-respectively equated to the bottom input shape ($in.layer[1].size$)
-and to the top input shape ($in.layer[0].color$). At steps 6 and 7,
-the size and color of the output shape are equated to respectively to
-the top input shape ($in.layer[0].size$), and to the bottom input
-shape ($in.layer[1].color$). At this stage, only the position of the
-output shape remains to be specified.
+At steps 2 and 6, the size and color of the output grid are
+respectively equated to the bottom input shape
+($in.layer[1].shape.size$) and to the top input shape
+($in.layer[0].shape.color$). At steps 4 and 7, the size and color of
+the output shape are equated to respectively to the top input shape
+($in.layer[0].shape.size$), and to the bottom input shape
+($in.layer[1].shape.color$). At step 8, the mask of the ouput shape is
+equated to the mask of the top input shape (always ${\bf Full}$ in the
+examples). At this stage, only the position of the output shape remains
+to be specified.
 %
-Steps 8-10 finds that all shapes are {\em full} rectangles. Step 11
-finds that the input background color is black.
-%
-Steps 12-14 expand the output shape position as a vector, and find the
+Steps 9-11 expand the output shape position as a vector, and find the
 expressions that define those positions, here differences between the
 top input shape and the bottom input shape.
 %
 At this stage, the model has solved the task as it can correctly
 generate the output grid for any input grid.
+%
+Steps 12-13 finds that all input shapes are {\em full}
+rectangles. Step 14 finds that the input background color is black.
 %
 The other steps expand the remaining positions and sizes as vectors,
 and find that all input grids have 12 rows. The latter is an
@@ -1424,7 +1492,8 @@ the test instance as it has 14 rows.
     v2.1 & 2021-09-12 & ~10~ & 60s & 32s & ~36 / 44.9~ & ~27 / 27.5~ & 43s & ~8 / 12.5~ & ~7 / 7.0~ \\
     v2.1 & 2021-09-12 & ~10~ & 120s & 52s & ~38 / 46.9~ & ~28 / 28.5~ & 77s & ~10 / 14.0~ & ~8 / 8.5~ \\
     \hline
-    v2.2 & 2021-10-11 & ~10~ & 30s & 15s & ~44 / 52.5~ & ~30 / 30.5~ & 21s & ~9 / 13.2 & ~7 / 7.0~ \\
+%    v2.2 & 2021-10-11 & ~10~ & 30s & 15s & ~44 / 52.5~ & ~30 / 30.5~ & 21s & ~9 / 13.2 & ~7 / 7.0~ \\
+    v2.2 & 2021-10-22 & ~10~ & 30s & 14s & ~41 / 50.1~ & ~29 / 29.5~ & 20s & ~8 / 12.7 & ~6 / 6.5~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -1641,6 +1710,37 @@ instances. Here are some causes for the lack of generalization:
 \item there is an invariance by grid rotation or grid transposition
   (e.g., {\tt 4522001f}).
 \end{itemize}
+
+
+\paragraph{Version 2.2.} This version brings only a few changes to the
+model but it significantly improves the efficiency of parsing grids,
+which is the major cost of learning a model. Table~\ref{tab:eval}
+shows that we achieve similar results in 30s as we did in 120s. The
+limit of the number of parse trees per grid was lowered from 512 down
+to 64 thanks to a better parsing strategy for stacks of layers.
+
+For the record, the main changes relative to Version~2 are the following:
+\begin{itemize}
+\item distinction between shapes and objects to better represent object moves,
+\item richer set of masks (borders, checkboards, and crosses),
+\item zero as a nullary operator to avoid expressions like $e_1 - e_2$,
+\item small parts can be seen as adjacent points,
+\item better strategy when parsing a stack of layers,
+\item normalized description length to balance inputs and outputs w.r.t. grid size,
+\item insertion of input shapes and objects into the output model,
+\item optimizations to reduce timeout.
+\end{itemize}
+
+The 7 newly solved training tasks w.r.t. Version~2 at 60s are: {\tt
+  08ed6ac7}, {\tt 23581191}, {\tt 72ca375d}*, {\tt 7e0986d6}, {\tt
+  a61ba2ce}, {\tt be94b721}, {\tt ddf7fa4f}*. In the two tasks with a
+star, the learned model is not precise enough but because the system
+is allowed three attempts and there are only a few reading
+alternatives, it finds the correct answer (without really
+understanding why). For example, in task~{\tt 72ca375d}, the input
+grid has three objects, and the output grid has only one of them, the
+one that has a symmetry. Our system only understands that the output
+selects an input object, and makes an attempt for each object.
 
 
 %%%
