@@ -138,7 +138,51 @@ let rec fill_ilist_with_rev_list il l = (* QUICK *)
         l, `Insert (left', x, right')
 
 (* type definitions for data, expressions, templates *)
-    
+
+(*
+class virtual func ~name ~arity =
+object
+  method name : string = name
+  method arity : int = arity
+  method virtual to_string : string list -> string
+  method virtual kind : kind
+  method virtual arg_kind : parent_kind:(unit -> kind) -> int -> kind
+  method virtual arg_role : parent_role:(unit -> role) -> int -> role
+  method virtual apply : template list -> template
+end
+ *)
+        
+type kind =
+  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Object | `Layer | `Grid ]
+let all_kinds =
+  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Object; `Layer;  `Grid ]
+
+type role = (* same information as kind + contextual information *)
+  [ `Int of [`I | `J] * role_vec
+  | `Index
+  | `Color of role_frame
+  | `Mask
+  | `Vec of role_vec
+  | `Shape
+  | `Object
+  | `Layer
+  | `Grid ]
+and role_vec =
+  [ `Pos | `Size of role_frame ]
+and role_frame =
+  [ `Shape | `Grid ]
+
+let kind_of_role : role -> kind = function
+  | `Int _ -> `Int
+  | `Index -> `Int
+  | `Color _ -> `Color
+  | `Mask -> `Mask
+  | `Vec _ -> `Vec
+  | `Shape -> `Shape
+  | `Object -> `Object
+  | `Layer -> `Layer
+  | `Grid -> `Grid
+  
 type 'a patt =
   [ `Bool of bool
   | `Int of int
@@ -161,15 +205,10 @@ type field =
   | `Mask
   | `Shape
   | `Layer of ilist_revpath ]
-type arg = [
-  | `Plus1 | `Plus2
-  | `Minus1 | `Minus2
-  | `Modulo1 | `Modulo2
-  | `Indexing1 | `Indexing2 ]
 type revpath =
   [ `Root
   | `Field of field * revpath
-  | `Arg of arg * revpath
+  | `Arg of int * role option * revpath (* if no role, parent role *)
   | `Item of int option (* pos *) * revpath (* local *) * revpath (* ctx *) ]
 let path0 = `Root
 
@@ -184,7 +223,7 @@ let rec (++) p f =
 let rec path_parent : revpath -> revpath option = function
   | `Root -> None
   | `Field (f,p) -> Some p
-  | `Arg (a,p) -> Some p
+  | `Arg (i,role_opt,p) -> Some p
   | `Item (i_opt,local,ctx) ->
      ( match path_parent local with
        | None -> Some ctx
@@ -199,26 +238,6 @@ let path_ctx (path : revpath) : revpath option =
   match path with
   | `Item (None,local,ctx) -> Some ctx
   | _ -> None
-
-type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Object | `Layer | `Grid ]
-let all_kinds =
-  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Object; `Layer;  `Grid ]
-
-type role = (* same information as kind + contextual information *)
-  [ `Int of [`I | `J] * role_vec
-  | `Index
-  | `Color of role_frame
-  | `Mask
-  | `Vec of role_vec
-  | `Shape
-  | `Object
-  | `Layer
-  | `Grid ]
-and role_vec =
-  [ `Pos | `Size of role_frame ]
-and role_frame =
-  [ `Shape | `Grid ]
 
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
@@ -311,20 +330,10 @@ let string_of_field : field -> string = function
   | `Shape -> "shape"
   | `Layer lp -> "layer_" ^ string_of_ilist_path lp
 
-let string_of_arg : arg -> string = function
-  | `Plus1 -> "plus1"
-  | `Plus2 -> "plus2"
-  | `Minus1 -> "minus1"
-  | `Minus2 -> "minus2"
-  | `Modulo1 -> "modulo1"
-  | `Modulo2 -> "modulo2"
-  | `Indexing1 -> "indexing1"
-  | `Indexing2 -> "indexing2"
-               
 let rec string_of_path : revpath -> string = function
   | `Root -> "^"
   | `Field (f,p) -> string_of_path p ^ "." ^ string_of_field f
-  | `Arg (a,p) -> string_of_path p ^ ":" ^ string_of_arg a
+  | `Arg (i,role_opt,p) -> string_of_path p ^ "." ^ string_of_int i
   | `Item (None,local,ctx) -> string_of_path ctx ^ "{" ^ string_of_path local ^ "}"
   | `Item (Some i,local,ctx) -> string_of_path ctx ^ "{" ^ string_of_path local ^ "}[" ^ string_of_int i ^ "]"
 
@@ -452,11 +461,8 @@ let rec path_kind (p : revpath) : kind =
       | (`Pos | `Size) -> `Vec
       | `Shape -> `Shape
       | `Layer _ -> `Layer)
-  | `Arg (a,p1) ->
-     (match a with
-      | (`Plus1 | `Plus2 | `Minus1 | `Minus2 | `Modulo1 | `Modulo2) -> `Int
-      | `Indexing1 -> path_kind p1
-      | `Indexing2 -> `Int)
+  | `Arg (i,None,p1) -> path_kind p1
+  | `Arg (i, Some role, p1) -> kind_of_role role
   | `Item (_,`Root, `Field (`Layer _, _)) -> `Object
   | `Item (_,`Root, ctx) -> path_kind ctx
   | `Item (_,local,_) -> path_kind local
@@ -475,9 +481,8 @@ let rec path_role ?(ctx = None) (p : revpath) : role =
   | `Field (`Size, p1) -> `Vec (`Size (path_role_frame ~ctx p1))
   | `Field (`Shape, _) -> `Shape
   | `Field (`Layer _, _) -> `Layer
-  | `Arg ((`Plus1 | `Plus2 | `Minus1 | `Minus2 | `Modulo1 | `Modulo2), p1) -> path_role ~ctx p1
-  | `Arg (`Indexing1,p1) -> path_role ~ctx p1
-  | `Arg (`Indexing2,p2) -> `Index
+  | `Arg (i, None, p1) -> path_role ~ctx p1
+  | `Arg (i, Some role, p1) -> role
   | `Item (_,local,ctx) -> path_role ~ctx:(Some ctx) local
 and path_role_vec ~ctx : revpath -> role_vec = function
   | `Root ->
@@ -486,7 +491,7 @@ and path_role_vec ~ctx : revpath -> role_vec = function
       | Some p -> path_role_vec ~ctx:None p)
   | `Field (`Pos, _) -> `Pos
   | `Field (`Size, p1) -> `Size (path_role_frame ~ctx p1)
-  | `Arg (`Indexing1,p1) -> path_role_vec ~ctx p1
+  | `Arg (i, None, p1) -> path_role_vec ~ctx p1
   | `Item (_,local,ctx) -> path_role_vec ~ctx:(Some ctx) local
   | p ->
      pp_path p; print_newline ();
@@ -494,7 +499,7 @@ and path_role_vec ~ctx : revpath -> role_vec = function
 and path_role_frame ~ctx : revpath -> role_frame = function
   | `Root when ctx = None -> `Grid
   | `Field (`Shape, _) -> `Shape
-  | `Arg (`Indexing1,p1) -> path_role_frame ~ctx p1
+  | `Arg (i, None, p1) -> path_role_frame ~ctx p1
   | p -> pp_path p; print_newline (); assert false
   
 let find_ilist (lp : ilist_revpath) (l : 'a ilist) : 'a option = (* QUICK *)
@@ -921,7 +926,7 @@ let path_similarity ~ctx_path v = (* QUICK *)
     | `Field (f1,p1)::lp1, `Field (f2,p2)::lp2 -> aux_field f1 f2 *. aux (p1::lp1) (p2::lp2)
     | `Field (`Layer _, p1)::lp1, [] -> 0.75 *. aux (p1::lp1) []
     | [], `Field (`Layer _, p2)::lp2 -> 0.75 *. aux [] (p2::lp2)
-    | `Arg (_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
+    | `Arg (_,_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
     | `Item (_,q1,ctx1)::lp1, `Item (_,q2,ctx2)::lp2 -> aux (q1::ctx1::lp1) (q2::ctx2::lp2)
     | `Item (_,q1,ctx1)::lp1, _ -> 0.75 *. aux (q1::ctx1::lp1) lp2'
     | _, `Item (_,q2,ctx2)::lp2 -> 0.5 *. aux lp1' (q2::ctx2::lp2)
@@ -1046,20 +1051,20 @@ let rec dl_expr
      code.c_zero
   | `Plus (e1,e2) ->
      code.c_plus
-     +. dl ~ctx ~path:(`Arg (`Plus1,path)) e1
-     +. dl ~ctx ~path:(`Arg (`Plus2,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
   | `Minus (e1,e2) ->
      code.c_minus
-     +. dl ~ctx ~path:(`Arg (`Minus1,path)) e1
-     +. dl ~ctx ~path:(`Arg (`Minus2,path)) e2
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `Modulo (e1,e2) ->
      code.c_modulo
-     +. dl ~ctx ~path:(`Arg (`Modulo1,path)) e1
-     +. dl ~ctx ~path:(`Arg (`Modulo2,path)) e2
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `Indexing (e1,e2) ->
      code.c_indexing
-     +. dl ~ctx ~path:(`Arg (`Indexing1,path)) e1
-     +. dl ~ctx ~path:(`Arg (`Indexing2,path)) e2
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some `Index, path)) e2
 
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_u : dl;
