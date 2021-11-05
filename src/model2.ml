@@ -16,6 +16,11 @@ let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use t
 exception TODO
 
 (* binders and syntactic sugar *)
+
+let ( %* ) = Myseq.empty
+let ( !* ) = Myseq.return
+let ( ** ) = Myseq.cons
+let ( @* ) = fun seq1 seq2 -> Myseq.concat [seq1; seq2]
         
 let ( let| ) res f = Result.bind res f [@@inline]
 let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
@@ -2347,51 +2352,50 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
     | None -> Myseq.empty
     | Some ctx ->
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
-       Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx)
-  in
-  List.map
-    (fun k ->
-      let ps = signature_of_kind env_sig k in
-      let sv = (* variables *)
-        Myseq.memoize
-          (let* p = Myseq.from_list ps in
-           vars_of_path p) in
-      let sv_rotation = (* variables with rotation-based indexing *)
-        let* p = Myseq.from_list ps in
-        vars_rotation_of_path p in
-      let se0 = (* constant expressions *)
-        if k = `Int
-        then Myseq.return (`Zero, None)
-        else Myseq.empty in
-      let se1 = (* e = v | v_rot *)
-        Myseq.concat [sv; sv_rotation] in
-      let se2 = (* e = v +/- cst *)
-        if k = `Int
-        then
-          let* v, ctx = sv in
-          let* n = Myseq.from_list [1; 2; 3] in
-          Myseq.cons (`Plus (v, `Int n), ctx)
-            (Myseq.cons (`Minus (v, `Int n), ctx)
-               Myseq.empty)
-        else Myseq.empty in
-      let se3 = (* e = v1 +/- v2 *)
-        if k = `Int
-        then
-          let* v1, ctx1 = sv in
-          let* v2, ctx2 = sv in
-          if ctx1 = ctx2
-          then
-            Myseq.cons (`Plus (v1, v2), ctx1)
-              (if v1 = v2 (* this is equivalent to 0 *)
-               then Myseq.empty
-               else Myseq.return (`Minus (v1, v2), ctx2))
-          else Myseq.empty
-        else Myseq.empty in
-      k,
-      Myseq.concat [se0; se1; se2; se3]
-      |> Myseq.to_list)
-    all_kinds)
-
+       Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in
+  let kind_vars =
+    List.map
+      (fun k ->
+        let ps = signature_of_kind env_sig k in
+        let sv = (* variables *)
+          Myseq.memoize
+            (let* p = Myseq.from_list ps in
+             vars_of_path p) in
+        let sv_rotation = (* variables with rotation-based indexing *)
+          let* p = Myseq.from_list ps in
+          vars_rotation_of_path p in
+        k, (sv, sv_rotation))
+      all_kinds in
+  let int_var, int_var_rotation = List.assoc `Int kind_vars in
+  let kind_exprs =
+    List.map
+      (fun (k, (sv,sv_rotation)) ->
+        let exprs =
+          match k with
+          | `Int ->
+             Myseq.concat [
+                 !* (`Zero, None);
+                 sv;
+                 sv_rotation;
+                 (let* v, ctx = int_var in
+                  let* n = Myseq.from_list [1;2;3] in
+                  (`Plus (v, `Int n), ctx)
+                  ** (`Minus (v, `Int n), ctx)
+                  ** ( %* ));
+                 (let* v1, ctx1 = int_var in
+                  let* v2, ctx2 = int_var in
+                  if ctx1 = ctx2
+                  then (`Plus (v1, v2), ctx1)
+                       ** (if v1 = v2 (* this is equivalent to 0 *)
+                           then ( %* )
+                           else !* (`Minus (v1, v2), ctx2))
+                  else ( %* )) ]
+          | _ -> Myseq.concat [sv; sv_rotation]
+        in
+        k, Myseq.to_list exprs)
+      kind_vars in
+  kind_exprs)
+  
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t = (* QUICK *)
   (*let aux_repeat p = function
     | `Repeat _ -> Myseq.return (RSingle p)
