@@ -254,10 +254,17 @@ type var =
 
 type 'a expr =
   [ `Ref of revpath
-  | `Zero (* Int, for positions at least *)
-  | `Plus of 'a * 'a (* (Int, Int) => Int *)
-  | `Minus of 'a * 'a (* (Int, Int) => Int *)
-  | `Modulo of 'a * 'a (* (Int, Int) => Int *)
+  | `ZeroInt | `ZeroVec (* Int, Vec *)
+  | `Plus of 'a * 'a (* on Int, Vec *)
+  | `Minus of 'a * 'a (* on Int, Vec *)
+  | `Modulo of 'a * 'a (* on Int *)
+  | `ScaleUp of 'a * int (* on Int, Vec *)
+  | `ScaleDown of 'a * int (* on Int, Vec *)
+  | `Corner of 'a * 'a (* on Vec *)
+  | `Average of 'a list (* on Vec *)
+  | `Norm of 'a (* Vec -> Int *)
+  | `Diag1 of 'a * int (* Vec -> Int *)
+  | `Diag2 of 'a * int (* Vec -> Int *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
@@ -404,17 +411,35 @@ let string_of_index = "$index"
 let string_of_var : var -> string = function
   | #revpath as p -> string_of_path p
   | `Index -> string_of_index
+
+let string_apply (func : string) (args : string list) : string =
+  func ^ "(" ^ String.concat ", " args ^ ")"
   
 let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
   | `Ref p -> string_of_path p
   | `Index -> string_of_index
-  | `Zero -> "(0)"
+  | `ZeroInt -> "'0"
+  | `ZeroVec -> "'(0,0)"
   | `Plus (a,b) ->
      string a ^ " + " ^ string b
   | `Minus (a,b) ->
      string a ^ " - " ^ string b
   | `Modulo (a,b) ->
      string a ^ " % " ^ string b
+  | `ScaleUp (a,k) ->
+     string a ^ " * " ^ string_of_int k
+  | `ScaleDown (a,k) ->
+     string a ^ " / " ^ string_of_int k
+  | `Corner (a,b) ->
+     string_apply "corner" [string a; string b]
+  | `Average (la) ->
+     string_apply "average" (List.map string la)
+  | `Norm a ->
+     "|" ^ string a ^ "|"
+  | `Diag1 (a,k) ->
+     string_apply "diag1" [string a; string_of_int k]
+  | `Diag2 (a,k) ->
+     string_apply "diag2" [string a; string_of_int k]
   | `Indexing (e1,e2) ->
      string e1 ^ "[" ^ string e2 ^ "]"
 
@@ -921,8 +946,9 @@ let dl_data, reset_dl_data =
   f, reset
 
 let path_similarity ~ctx_path v = (* QUICK *)
+  (* TODO: revise in depth, make generic, care about expressions mixing various kinds *)
   let rec aux lp1' lp2' =
-    match lp1', lp2' with (* TODO: generalize to better cope with extensions in a robust way *)
+    match lp1', lp2' with
     | [], [] -> 2.
     | `Root::lp1, _ -> aux lp1 lp2'
     | _, `Root::lp2 -> aux lp1' lp2
@@ -930,12 +956,18 @@ let path_similarity ~ctx_path v = (* QUICK *)
     | ([] | `Field (`Layer _,_)::_), `Field (`Shape,p2)::lp2 -> aux lp1' (p2::lp2)
     | `Field (f1,p1)::lp1, `Field (f2,p2)::lp2 -> aux_field f1 f2 *. aux (p1::lp1) (p2::lp2)
     | `Field (`Layer _, p1)::lp1, [] -> 0.75 *. aux (p1::lp1) []
+    | `Field (_,p1)::lp1, [] -> 0.5 *. aux (p1::lp1) []
     | [], `Field (`Layer _, p2)::lp2 -> 0.75 *. aux [] (p2::lp2)
+    | [], `Field (_,p2)::lp2 -> 0.5 *. aux [] (p2::lp2)
     | `Arg (_,_,p1)::lp1, _ -> aux (p1::lp1) lp2' (* TODO: should be refined *)
     | `Item (_,q1,ctx1)::lp1, `Item (_,q2,ctx2)::lp2 -> aux (q1::ctx1::lp1) (q2::ctx2::lp2)
     | `Item (_,q1,ctx1)::lp1, _ -> 0.75 *. aux (q1::ctx1::lp1) lp2'
     | _, `Item (_,q2,ctx2)::lp2 -> 0.5 *. aux lp1' (q2::ctx2::lp2)
     | _ ->
+       print_string "similarity goal: ";
+       pp_path ctx_path; print_string " ~ ";
+       pp_path v; print_newline ();
+       print_string "failing sub-goal: ";
        pp_path_list lp1'; print_string " ~ ";
        pp_path_list lp2'; print_newline ();
        assert false (* incompatible kinds *)
@@ -953,12 +985,12 @@ let path_similarity ~ctx_path v = (* QUICK *)
     | `Size, `Size -> 1.
     | `Shape, `Shape -> 1.
     | `Layer l1, `Layer l2 -> aux_ilist l1 l2
-    | _ ->
-       print_string (string_of_field f1);
+    | _ -> 0.1 (* incompatible kind may happen because of expressions mixing diff. kinds *)
+(*       print_string (string_of_field f1);
        print_string " ~ ";
        print_string (string_of_field f2);
        print_newline ();
-       assert false
+       assert false *)
   and aux_ilist lp1 lp2 =
     if lp1 = lp2 then 1. else 0.8
   in
@@ -1002,6 +1034,13 @@ type code_expr = (* dls must correspond to a valid prob distrib *)
     c_plus : dl;
     c_minus : dl;
     c_modulo : dl;
+    c_scaleup : dl;
+    c_scaledown : dl;
+    c_corner : dl;
+    c_average : dl;
+    c_norm : dl;
+    c_diag1 : dl;
+    c_diag2 : dl;
     c_indexing : dl }
 let code_expr0 =
   { c_ref = infinity;
@@ -1010,18 +1049,31 @@ let code_expr0 =
     c_plus = infinity;
     c_minus = infinity;
     c_modulo = infinity;
+    c_scaleup = infinity;
+    c_scaledown = infinity;
+    c_corner = infinity;
+    c_average = infinity;
+    c_norm = infinity;
+    c_diag1 = infinity;
+    c_diag2 = infinity;
     c_indexing = infinity }
 
 let code_expr_by_kind : (kind * code_expr) list =
-  [ `Int, { 
+  [ `Int, { code_expr0 with
             c_ref = Mdl.Code.usage 0.2;
             c_index = Mdl.Code.usage 0.2; (* TODO: should it be restricted to some paths? *)
-            c_indexing = Mdl.Code.usage 0.2;
-            c_zero = Mdl.Code.usage 0.1;
-            c_plus = Mdl.Code.usage 0.1;
-            c_minus = Mdl.Code.usage 0.1;
-            c_modulo = Mdl.Code.usage 0.1 };
-    `Bool, { code_expr0 with c_ref = Mdl.Code.usage 1. };
+            c_indexing = Mdl.Code.usage 0.1;
+            c_zero = Mdl.Code.usage 0.05;
+            c_plus = Mdl.Code.usage 0.05;
+            c_minus = Mdl.Code.usage 0.05;
+            c_modulo = Mdl.Code.usage 0.05;
+            c_scaleup = Mdl.Code.usage 0.05;
+            c_scaledown = Mdl.Code.usage 0.05;
+            c_norm = Mdl.Code.usage 0.05;
+            c_diag1 = Mdl.Code.usage 0.05;
+            c_diag2 = Mdl.Code.usage 0.05; };
+    `Bool, { code_expr0 with
+             c_ref = Mdl.Code.usage 1. };
     `Color, { code_expr0 with
               c_ref = Mdl.Code.usage 0.5;
               c_indexing = Mdl.Code.usage 0.5 };
@@ -1029,8 +1081,15 @@ let code_expr_by_kind : (kind * code_expr) list =
              c_ref = Mdl.Code.usage 0.5;
              c_indexing = Mdl.Code.usage 0.5 };
     `Vec, { code_expr0 with
-            c_ref = Mdl.Code.usage 0.5;
-            c_indexing = Mdl.Code.usage 0.5 };
+            c_ref = Mdl.Code.usage 0.2;
+            c_indexing = Mdl.Code.usage 0.1;
+            c_zero = Mdl.Code.usage 0.1;
+            c_plus = Mdl.Code.usage 0.1;
+            c_minus = Mdl.Code.usage 0.1;
+            c_scaleup = Mdl.Code.usage 0.1;
+            c_scaledown = Mdl.Code.usage 0.1;
+            c_corner = Mdl.Code.usage 0.1;
+            c_average = Mdl.Code.usage 0.1 };
     `Shape, { code_expr0 with
               c_ref = Mdl.Code.usage 0.5;
               c_indexing = Mdl.Code.usage 0.5 };
@@ -1052,7 +1111,7 @@ let rec dl_expr
      +. dl_path ~env_sig ~ctx_path:path p
   | `Index ->
      code.c_index
-  | `Zero ->
+  | `ZeroInt | `ZeroVec ->
      code.c_zero
   | `Plus (e1,e2) ->
      code.c_plus
@@ -1066,6 +1125,34 @@ let rec dl_expr
      code.c_modulo
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
+  | `ScaleUp (e1,k) ->
+     code.c_scaleup
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. Mdl.Code.universal_int_plus k
+  | `ScaleDown (e1,k) ->
+     code.c_scaledown
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. Mdl.Code.universal_int_plus k
+  | `Corner (e1,e2) ->
+     code.c_corner
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2
+  | `Average le1 ->
+     code.c_average
+     +. Mdl.Code.universal_int_plus (List.length le1)
+     +. Mdl.sum le1
+          (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
+  | `Norm e1 ->
+     code.c_norm
+     +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+  | `Diag1 (e1,k) ->
+     code.c_diag1
+     +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+     +. Mdl.Code.universal_int_plus k
+  | `Diag2 (e1,k) ->
+     code.c_diag2
+     +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+     +. Mdl.Code.universal_int_plus k
   | `Indexing (e1,e2) ->
      code.c_indexing
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1210,7 +1297,9 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
 (* evaluation of expression and templates on environment data *)
 
 exception Unbound_var of var
-exception Invalid_expr of template expr
+exception Invalid_expr of template expr (* this expression is ill-formed or ill-typed *)
+exception Undefined_result of string (* to ignore parses where some expression is undefined *)
+(* special cases of undefined result *)
 exception Out_of_bound of template list * int
 exception Negative_integer
 let _ =
@@ -1218,6 +1307,7 @@ let _ =
     (function
      | Unbound_var v -> Some ("unbound variable: " ^ string_of_var v)
      | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr string_of_template e)
+     | Undefined_result msg -> Some ("undefined expression: " ^ msg)
      | Out_of_bound (items,i) -> Some ("out of bound indexing: " ^ string_of_template (`Many (false,items)) ^ "[" ^ string_of_int i ^ "]")
      | Negative_integer -> Some ("negative integer")
      | _ -> None)
@@ -1270,21 +1360,68 @@ let apply_expr_gen
      (match lookup (v :> var) with
       | Some d -> (d :> template)
       | None -> raise (Unbound_var (v :> var)))
-  | `Zero -> `Int 0
+  | `ZeroInt -> `Int 0
+  | `ZeroVec -> `Vec (`Int 0, `Int 0)
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1+i2), `Int (j1+j2))
       | _ -> raise (Invalid_expr e))
   | `Minus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `Int i1, `Int i2 ->
-         let i = i1 - i2 in
+      | `Int i1, `Int i2 -> `Int (i1-i2)
+(*         let i = i1 - i2 in
          if i < 0 then raise Negative_integer;
-         `Int i
+         `Int i *)
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1-i2), `Int (j1-j2))
       | _ -> raise (Invalid_expr e))
   | `Modulo (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 mod i2)
+      | _ -> raise (Invalid_expr e))
+  | `ScaleUp (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Int i1 -> `Int (i1 * k)
+      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 * k), `Int (j1 * k))
+      | _ -> raise (Invalid_expr e))
+  | `ScaleDown (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Int i1 ->
+         if i1 mod k = 0
+         then `Int (i1 / k)
+         else raise (Undefined_result "ScaleDown: not an integer")
+      | `Vec (`Int i1, `Int j1) ->
+         if i1 mod k = 0 && j1 mod k = 0
+         then `Vec (`Int (i1 / k), `Int (j1 / k))
+         else raise (Undefined_result "ScaleDown: not an integer")                          
+      | _ -> raise (Invalid_expr e))
+  | `Corner (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Vec (`Int i1,_), `Vec (_, `Int j2) -> `Vec (`Int i1, `Int j2)
+      | _ -> raise (Invalid_expr e))
+  | `Average le1 ->
+     le1
+     |> List.map (fun e1 -> apply ~lookup p e1)
+     |> List.fold_left
+          (fun (n,sumi,sumj) -> function
+            | `Vec (`Int i, `Int j) -> (n+1, sumi+i, sumj+j)
+            | _ -> raise (Invalid_expr e))
+          (0, 0, 0)
+     |> (fun (n,sumi,sumj) ->
+      if sumi mod n = 0 && sumj mod n = 0
+      then `Vec (`Int (sumi / n), `Int (sumj / n))
+      else raise (Undefined_result "Average: not an integer"))
+  | `Norm e1 ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int i, `Int j) -> `Int (i+j)
+      | _ -> raise (Invalid_expr e))
+  | `Diag1 (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int i, `Int j) -> `Int ((i+j) mod k)
+      | _ -> raise (Invalid_expr e))
+  | `Diag2 (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int i, `Int j) -> `Int ((i-j) mod k)
       | _ -> raise (Invalid_expr e))
   | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
      (match lookup (ctx :> var), apply ~lookup p e2 with
@@ -1339,6 +1476,7 @@ let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,ex
   try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) p t)
   with (* catching runtime error in expression eval *)
   | (Unbound_var _ as exn) -> Result.Error exn
+  | (Undefined_result _ as exn) -> Result.Error exn
   | (Out_of_bound _ as exn) -> Result.Error exn
   | (Negative_integer  as exn) -> Result.Error exn)
 (* DO NOT remove path argument, useful in generate_template (through apply_patt) *)
@@ -2367,6 +2505,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
         k, (sv, sv_rotation))
       all_kinds in
   let int_var, int_var_rotation = List.assoc `Int kind_vars in
+  let vec_var, vec_var_rotation = List.assoc `Vec kind_vars in
   let kind_exprs =
     List.map
       (fun (k, (sv,sv_rotation)) ->
@@ -2374,7 +2513,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
           match k with
           | `Int ->
              Myseq.concat [
-                 !* (`Zero, None);
+                 !* (`ZeroInt, None);
                  sv;
                  sv_rotation;
                  (let* v, ctx = int_var in
@@ -2382,14 +2521,45 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                   (`Plus (v, `Int n), ctx)
                   ** (`Minus (v, `Int n), ctx)
                   ** ( %* ));
+                 (let* v, ctx = int_var in
+                  let* n = Myseq.from_list [2;3] in
+                  (`ScaleUp (v, n), ctx)
+                  ** (`ScaleDown (v, n), ctx)
+                  ** ( %* ));
                  (let* v1, ctx1 = int_var in
                   let* v2, ctx2 = int_var in
                   if ctx1 = ctx2
-                  then (`Plus (v1, v2), ctx1)
-                       ** (if v1 = v2 (* this is equivalent to 0 *)
-                           then ( %* )
-                           else !* (`Minus (v1, v2), ctx2))
-                  else ( %* )) ]
+                  then (if v1 < v2 then !* (`Plus (v1, v2), ctx1) else ( %* ))
+                       @* (if v1 <> v2 then !* (`Minus (v1, v2), ctx1) else ( %* ))
+                  else ( %* ));
+                 (let* v, ctx = vec_var in
+                  (`Norm v, ctx)
+                  ** ( %* ));
+                 (let* v, ctx = vec_var in
+                  let* k = Myseq.from_list [2;3] in
+                  (`Diag1 (v,k), ctx)
+                  ** (`Diag2 (v,k), ctx)
+                  ** ( %* ))
+               ]
+          | `Vec ->
+             Myseq.concat [
+                 !* (`ZeroVec, None);
+                 sv;
+                 sv_rotation;
+                 (let* v, ctx = int_var in
+                  let* n = Myseq.from_list [2;3] in
+                  (`ScaleUp (v, n), ctx)
+                  ** (`ScaleDown (v, n), ctx)
+                  ** ( %* ));
+                 (let* v1, ctx1 = vec_var in
+                  let* v2, ctx2 = vec_var in
+                  if ctx1 = ctx2
+                  then (if v1 < v2 then !* (`Plus (v1, v2), ctx1) else ( %* ))
+                       @* (if v1 <> v2 then !* (`Minus (v1, v2), ctx1) else ( %* ))
+                       @* (if v1 <> v2 then !* (`Corner (v1,v2), ctx1) else ( %* ))
+                       @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
+                  else ( %* ))
+               ]
           | _ -> Myseq.concat [sv; sv_rotation]
         in
         k, Myseq.to_list exprs)

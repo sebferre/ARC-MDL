@@ -10,7 +10,7 @@ let def_param name v to_str =
   ref v
              
 let beam_width = def_param "beam_width" 1 string_of_int
-let refine_degree = def_param "refine_degree" 20 string_of_int
+let refine_degree = def_param "refine_degree" 100 (* TEST 20 *) string_of_int
 
 (* === command line options === *)
              
@@ -352,6 +352,7 @@ let maybe_train_names =
     "a2fd1cf0.json"; (* TODO pb: collection of two rectangles, order-sensitive? hence failing to find relationship to the two points? *)
     "7468f01a.json"; (* TODO pb: inserts an unspecified rectangle before repeat of unspecified rectangles, maybe problem with sequential parsing top-down *)
     "e26a3af2.json"; (* pb: inserts unspecified rectangle in front of collection of unspecified rectangles. Should work with a single collection of rectangles + collection of points *)
+    "e859"; (* collections of small shapes, black, to be colored as a function of area *)
   ]
 
 let task_model =
