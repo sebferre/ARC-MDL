@@ -1027,134 +1027,88 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
      +. dl_path ~env_sig ~ctx_path p
   | `Index -> Mdl.Code.usage usage_index *)
 
-type code_expr = (* dls must correspond to a valid prob distrib *)
-  { c_ref : dl;
-    c_index : dl;
-    c_zero : dl;
-    c_plus : dl;
-    c_minus : dl;
-    c_modulo : dl;
-    c_scaleup : dl;
-    c_scaledown : dl;
-    c_corner : dl;
-    c_average : dl;
-    c_norm : dl;
-    c_diag1 : dl;
-    c_diag2 : dl;
-    c_indexing : dl }
-let code_expr0 =
-  { c_ref = infinity;
-    c_index = infinity;
-    c_zero = infinity;
-    c_plus = infinity;
-    c_minus = infinity;
-    c_modulo = infinity;
-    c_scaleup = infinity;
-    c_scaledown = infinity;
-    c_corner = infinity;
-    c_average = infinity;
-    c_norm = infinity;
-    c_diag1 = infinity;
-    c_diag2 = infinity;
-    c_indexing = infinity }
-
-let code_expr_by_kind : (kind * code_expr) list =
-  [ `Int, { code_expr0 with
-            c_ref = Mdl.Code.usage 0.2;
-            c_index = Mdl.Code.usage 0.2; (* TODO: should it be restricted to some paths? *)
-            c_indexing = Mdl.Code.usage 0.1;
-            c_zero = Mdl.Code.usage 0.05;
-            c_plus = Mdl.Code.usage 0.05;
-            c_minus = Mdl.Code.usage 0.05;
-            c_modulo = Mdl.Code.usage 0.05;
-            c_scaleup = Mdl.Code.usage 0.05;
-            c_scaledown = Mdl.Code.usage 0.05;
-            c_norm = Mdl.Code.usage 0.05;
-            c_diag1 = Mdl.Code.usage 0.05;
-            c_diag2 = Mdl.Code.usage 0.05; };
-    `Bool, { code_expr0 with
-             c_ref = Mdl.Code.usage 1. };
-    `Color, { code_expr0 with
-              c_ref = Mdl.Code.usage 0.5;
-              c_indexing = Mdl.Code.usage 0.5 };
-    `Mask, { code_expr0 with
-             c_ref = Mdl.Code.usage 0.5;
-             c_indexing = Mdl.Code.usage 0.5 };
-    `Vec, { code_expr0 with
-            c_ref = Mdl.Code.usage 0.2;
-            c_indexing = Mdl.Code.usage 0.1;
-            c_zero = Mdl.Code.usage 0.1;
-            c_plus = Mdl.Code.usage 0.1;
-            c_minus = Mdl.Code.usage 0.1;
-            c_scaleup = Mdl.Code.usage 0.1;
-            c_scaledown = Mdl.Code.usage 0.1;
-            c_corner = Mdl.Code.usage 0.1;
-            c_average = Mdl.Code.usage 0.1 };
-    `Shape, { code_expr0 with
-              c_ref = Mdl.Code.usage 0.5;
-              c_indexing = Mdl.Code.usage 0.5 };
-    `Object, { code_expr0 with
-               c_ref = Mdl.Code.usage 0.5;
-               c_indexing = Mdl.Code.usage 0.5 };
-    `Layer, { code_expr0 with
-              c_ref = Mdl.Code.usage 1. };
-    `Grid, code_expr0 ]
-          
+let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excluding Ref *)
+  (* according to a uniform distribution *)
+  let uniform_among (l : [`X] expr list) = Mdl.Code.uniform (List.length l) in
+  [ `Int, uniform_among [
+              `ZeroInt;
+              `Plus (`X,`X); `Minus (`X,`X); `Modulo (`X,`X);
+              `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
+              `Index; `Indexing (`X,`X) ];
+    `Bool, infinity;
+    `Color, infinity;
+    `Mask, uniform_among [
+               `Indexing (`X,`X) ];
+    `Vec, uniform_among [
+              `ZeroVec;
+              `Plus (`X,`X); `Minus (`X,`X);
+              `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `Corner (`X,`X); `Average [`X;`X];
+              `Indexing (`X,`X) ];
+    `Shape, uniform_among [
+                `Indexing (`X,`X) ];
+    `Object, uniform_among [
+                 `Indexing (`X,`X) ];
+    `Layer, infinity;
+    `Grid, infinity;    
+  ]
+  
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
-  let code = List.assoc k code_expr_by_kind in
+  let code_expr = 1. (* Mdl.Code.usage 0.5 *) +. List.assoc k code_expr_by_kind in
   match e with
   | `Ref p ->
-     code.c_ref
+     1. (* Mdl.Code.usage 0.5 *)
      +. dl_path ~env_sig ~ctx_path:path p
   | `Index ->
-     code.c_index
+     code_expr
   | `ZeroInt | `ZeroVec ->
-     code.c_zero
+     code_expr
   | `Plus (e1,e2) ->
-     code.c_plus
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
   | `Minus (e1,e2) ->
-     code.c_minus
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `Modulo (e1,e2) ->
-     code.c_modulo
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `ScaleUp (e1,k) ->
-     code.c_scaleup
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_plus k
   | `ScaleDown (e1,k) ->
-     code.c_scaledown
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_plus k
   | `Corner (e1,e2) ->
-     code.c_corner
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `Average le1 ->
-     code.c_average
+     code_expr
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
           (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
   | `Norm e1 ->
-     code.c_norm
+     code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
   | `Diag1 (e1,k) ->
-     code.c_diag1
+     code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
      +. Mdl.Code.universal_int_plus k
   | `Diag2 (e1,k) ->
-     code.c_diag2
+     code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
      +. Mdl.Code.universal_int_plus k
   | `Indexing (e1,e2) ->
-     code.c_indexing
+     code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some `Index, path)) e2
 
