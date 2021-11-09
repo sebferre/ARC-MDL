@@ -803,7 +803,7 @@ let dl_nat : int -> dl =
 let dl_int_pos ~bound : int -> dl = (* all positions are alike *)
   fun i -> Mdl.Code.uniform bound
 let dl_int_size ~bound : int -> dl = (* longer lengths cover more pixels *)
-  fun i -> Mdl.Code.universal_int_plus i
+  fun i -> Mdl.Code.universal_int_plus i (* TODO: would uniform be better ? would avoid bias to smaller shapes *)
 let dl_int_index : int -> dl =
   fun i -> Mdl.Code.universal_int_star i
 let dl_color : Grid.color -> dl =
@@ -1032,36 +1032,44 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
   let uniform_among (l : [`X] expr list) = Mdl.Code.uniform (List.length l) in
   [ `Int, uniform_among [
               `ZeroInt;
+              `Ref `Root;
               `Plus (`X,`X); `Minus (`X,`X); `Modulo (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
               `Index; `Indexing (`X,`X) ];
-    `Bool, infinity;
-    `Color, infinity;
+    `Bool, uniform_among [
+             `Ref `Root ];
+    `Color, uniform_among [
+              `Ref `Root ];
     `Mask, uniform_among [
+               `Ref `Root;
                `Indexing (`X,`X) ];
     `Vec, uniform_among [
               `ZeroVec;
+              `Ref `Root;
               `Plus (`X,`X); `Minus (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Corner (`X,`X); `Average [`X;`X];
               `Indexing (`X,`X) ];
     `Shape, uniform_among [
+                `Ref `Root;
                 `Indexing (`X,`X) ];
     `Object, uniform_among [
-                 `Indexing (`X,`X) ];
-    `Layer, infinity;
-    `Grid, infinity;    
+               `Ref `Root;
+               `Indexing (`X,`X) ];
+    `Layer, uniform_among [
+              `Ref `Root ];
+    `Grid, infinity;
   ]
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
-  let code_expr = 1. (* Mdl.Code.usage 0.5 *) +. List.assoc k code_expr_by_kind in
+  let code_expr = List.assoc k code_expr_by_kind in
   match e with
   | `Ref p ->
-     1. (* Mdl.Code.usage 0.5 *)
+     code_expr
      +. dl_path ~env_sig ~ctx_path:path p
   | `Index ->
      code_expr
@@ -2772,7 +2780,7 @@ let learn_model
              Printf.printf "\t?? %.3f\t" lmd;
              pp_refinement r; print_newline ();
 (*
-	     Printf.printf "\t\tl = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;
+	     Printf.printf "\t\tl = %.3f = %.3f + %.3f = (%.3f + %.3f) + (%.3f + %.3f)\n" lmd lm ld lmi lmo ldi ldo;
              print_endline " ===> all reads for first example";
              List.hd gpsr.reads
              |> List.iter
@@ -2782,7 +2790,18 @@ let learn_model
                     pp_data d_o; print_newline ();
                     Printf.printf "\tdl=%.1f\n" dl);
              print_newline ()
- *)
+             print_endline " ===> best read for all examples";
+             gpsr.reads
+             |> List.iter
+                  (fun read ->
+                    List.hd read
+                    |> (fun ((_,{data=d_i},dl_i), (_, {data=d_o}, dl_o), dl) ->
+                     print_endline " --- some read ---";
+                     pp_data d_i; print_newline ();
+                     pp_data d_o; print_newline ();
+                     Printf.printf "\tdl=%.3f\n" dl));
+             print_newline ();
+  *)
            );
 	   flush stdout;
            lmd)
