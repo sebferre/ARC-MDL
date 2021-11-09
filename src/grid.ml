@@ -345,6 +345,10 @@ module MaskZ =
       { m1 with bits = Z.logand m1.bits m2.bits }
     let diff m1 m2 =
       { m1 with bits = Z.logand m1.bits (Z.lognot m2.bits) }
+    let diff_sym m1 m2 =
+      { m1 with bits = Z.logxor m1.bits m2.bits }
+    let compl m1 =
+      { m1 with bits = Z.lognot m1.bits }
 
     let iter f m =
       for i = 0 to m.height - 1 do
@@ -665,6 +669,7 @@ let split_part (part : part) : part list =
 let segment_by_color (g : t) : part list =
   Common.prof "Grid.segment_by_color" (fun () ->
   let h, w = g.height, g.width in
+  let hw = h * w in    
   let fm : (int * int, part) Find_merge.hashtbl =
     new Find_merge.hashtbl
       ~init_val:{ mini = h; maxi = 0;
@@ -703,7 +708,7 @@ let segment_by_color (g : t) : part list =
     (fun _ part res ->
       if part.mini=0 && part.maxi=h-1
          && part.minj=0 && part.maxj=w-1
-         && part.color=black
+         && part.color=black && 2 * part.nb_pixels - 1 > hw
      then res (* ignoring black background *)
      else part :: split_part part @ res)
     [])
