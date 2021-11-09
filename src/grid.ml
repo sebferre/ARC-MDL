@@ -291,6 +291,9 @@ module MaskZ =
     let width m = m.width
     let area m = Z.hamdist Z.zero m.bits
 
+    let same_size m1 m2 =
+      m1.height = m2.height && m1.width = m2.width
+               
     let to_string m = (*Z.format "%b" m.bits*)
       let bytes = Bytes.create (m.height * m.width + m.height - 1) in
       let pos = ref 0 in

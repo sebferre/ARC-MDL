@@ -265,6 +265,11 @@ type 'a expr =
   | `Norm of 'a (* Vec -> Int *)
   | `Diag1 of 'a * int (* Vec -> Int *)
   | `Diag2 of 'a * int (* Vec -> Int *)
+  | `LogAnd of 'a * 'a (* on Mask *)
+  | `LogOr of 'a * 'a (* on Mask *)
+  | `LogXOr of 'a * 'a (* on Mask *)
+  | `LogAndNot of 'a * 'a (* on Mask *)
+  | `LogNot of 'a (* on Mask *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
@@ -417,7 +422,6 @@ let string_apply (func : string) (args : string list) : string =
   
 let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
   | `Ref p -> string_of_path p
-  | `Index -> string_of_index
   | `ZeroInt -> "'0"
   | `ZeroVec -> "'(0,0)"
   | `Plus (a,b) ->
@@ -440,6 +444,12 @@ let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
      string_apply "diag1" [string a; string_of_int k]
   | `Diag2 (a,k) ->
      string_apply "diag2" [string a; string_of_int k]
+  | `LogAnd (a,b) -> string a ^ " and " ^ string b
+  | `LogOr (a,b) -> string a ^ " or " ^ string b
+  | `LogXOr (a,b) -> string a ^ " xor " ^ string b
+  | `LogAndNot (a,b) -> string a ^ " and not " ^ string b
+  | `LogNot (a) -> "not " ^ string a
+  | `Index -> string_of_index
   | `Indexing (e1,e2) ->
      string e1 ^ "[" ^ string e2 ^ "]"
 
@@ -1043,6 +1053,8 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
               `Ref `Root ];
     `Mask, uniform_among [
                `Ref `Root;
+               `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
+               `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ];
     `Vec, uniform_among [
               `ZeroVec;
@@ -1115,6 +1127,13 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
      +. Mdl.Code.universal_int_plus k
+  | `LogAnd (e1,e2) | `LogOr (e1,e2) | `LogXOr (e1,e2) | `LogAndNot (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2
+  | `LogNot e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1384,6 +1403,52 @@ let apply_expr_gen
   | `Diag2 (e1,k) ->
      (match apply ~lookup p e1 with
       | `Vec (`Int i, `Int j) -> `Int ((i-j) mod k)
+      | _ -> raise (Invalid_expr e))
+  | `LogAnd (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Mask m1, `Mask m2 ->
+         (match m1, m2 with
+          | `Full, _ -> `Mask m2
+          | _, `Full -> `Mask m1
+          | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
+             `Mask (`Mask (Grid.Mask.inter bm1 bm2))
+          | _ -> raise (Undefined_result "LogAnd: undefined"))
+      | _ -> raise (Invalid_expr e))
+  | `LogOr (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Mask m1, `Mask m2 ->
+         (match m1, m2 with
+          | `Full, _ -> `Mask `Full
+          | _, `Full -> `Mask `Full
+          | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
+             `Mask (`Mask (Grid.Mask.union bm1 bm2))
+          | _ -> raise (Undefined_result "LogOr: undefined"))
+      | _ -> raise (Invalid_expr e))
+  | `LogXOr (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Mask m1, `Mask m2 ->
+         (match m1, m2 with
+          | `Full, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
+          | `Mask bm1, `Full -> `Mask (`Mask (Grid.Mask.compl bm1))
+          | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
+             `Mask (`Mask (Grid.Mask.diff_sym bm1 bm2))
+          | _ -> raise (Undefined_result "LogXOr: undefined"))
+      | _ -> raise (Invalid_expr e))
+  | `LogAndNot (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Mask m1, `Mask m2 ->
+         (match m1, m2 with
+          | `Full, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
+          | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
+             `Mask (`Mask (Grid.Mask.diff bm1 bm2))
+          | _ -> raise (Undefined_result "LogAndNot: undefined"))
+      | _ -> raise (Invalid_expr e))
+  | `LogNot e1 ->
+     (match apply ~lookup p e1 with
+      | `Mask m1 ->
+         (match m1 with
+          | `Mask bm1 -> `Mask (`Mask (Grid.Mask.compl bm1))
+          | _ -> raise (Undefined_result "LogNot: undefined"))
       | _ -> raise (Invalid_expr e))
   | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
      (match lookup (ctx :> var), apply ~lookup p e2 with
@@ -2468,6 +2533,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
       all_kinds in
   let int_var, int_var_rotation = List.assoc `Int kind_vars in
   let vec_var, vec_var_rotation = List.assoc `Vec kind_vars in
+  let mask_var, mask_var_rotation = List.assoc `Mask kind_vars in
   let kind_exprs =
     List.map
       (fun (k, (sv,sv_rotation)) ->
@@ -2522,6 +2588,22 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                        @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
                   else ( %* ))
                ]
+          | `Mask ->
+             Myseq.concat [
+                 sv;
+                 sv_rotation;
+                 (let* v1, ctx1 = mask_var in
+                  let* v2, ctx2 = mask_var in
+                  if ctx1 = ctx2
+                  then (`LogAnd (v1,v2), ctx1)
+                       ** (`LogOr (v1,v2), ctx1)
+                       ** (`LogXOr (v1,v2), ctx1)
+                       ** (`LogAndNot (v1,v2), ctx1)
+                       ** ( %* )
+                  else ( %* ));
+                  (let* v, ctx = mask_var in
+                   !* (`LogNot v, ctx))
+                 ]
           | _ -> Myseq.concat [sv; sv_rotation]
         in
         k, Myseq.to_list exprs)
