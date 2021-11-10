@@ -385,6 +385,15 @@ type mask_model =
   | `PlusCross
   | `TimesCross
   ]
+
+let mask_model_area ~height ~width = function
+  | `Mask bm -> Mask.area bm
+  | `Full -> height * width
+  | `Border -> 2 * (height + width) - 4
+  | `EvenCheckboard -> (height * width + 1) / 2
+  | `OddCheckboard -> height * width / 2
+  | `PlusCross -> height + width - 1
+  | `TimesCross -> height + width - (height mod 2)
   
 (* mask-based computations on grids *)
 

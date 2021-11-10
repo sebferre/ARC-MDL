@@ -270,6 +270,13 @@ type 'a expr =
   | `LogXOr of 'a * 'a (* on Mask *)
   | `LogAndNot of 'a * 'a (* on Mask *)
   | `LogNot of 'a (* on Mask *)
+  | `Area of 'a (* on Shape *)
+  | `Left of 'a (* on Object *)
+  | `Right of 'a (* on Object *)
+  | `Center of 'a (* on Object *)
+  | `Top of 'a (* on Object *)
+  | `Bottom of 'a (* on Object *)
+  | `Middle of 'a (* on Object *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
@@ -449,6 +456,13 @@ let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
   | `LogXOr (a,b) -> string a ^ " xor " ^ string b
   | `LogAndNot (a,b) -> string a ^ " and not " ^ string b
   | `LogNot (a) -> "not " ^ string a
+  | `Area a -> string_apply "area" [string a]
+  | `Left a -> string_apply "left" [string a]
+  | `Right a -> string_apply "right" [string a]
+  | `Center a -> string_apply "center" [string a]
+  | `Top a -> string_apply "top" [string a]
+  | `Bottom a -> string_apply "bottom" [string a]
+  | `Middle a -> string_apply "middle" [string a]
   | `Index -> string_of_index
   | `Indexing (e1,e2) ->
      string e1 ^ "[" ^ string e2 ^ "]"
@@ -1043,6 +1057,9 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
   [ `Int, uniform_among [
               `ZeroInt;
               `Ref `Root;
+              `Area `X;
+              `Left `X; `Right `X; `Center `X;
+              `Top `X; `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); `Modulo (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
@@ -1067,8 +1084,8 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
                 `Ref `Root;
                 `Indexing (`X,`X) ];
     `Object, uniform_among [
-               `Ref `Root;
-               `Indexing (`X,`X) ];
+                 `Ref `Root;
+                 `Indexing (`X,`X) ];
     `Layer, uniform_among [
               `Ref `Root ];
     `Grid, infinity;
@@ -1134,6 +1151,11 @@ let rec dl_expr
   | `LogNot e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+  | `Area e1 ->
+     code_expr +. dl ~ctx ~path:(`Arg (1, Some `Shape, path)) e1
+  | `Left e1 | `Right e1 | `Center e1
+    | `Top e1 | `Bottom e1 | `Middle e1 ->
+     code_expr +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1449,6 +1471,48 @@ let apply_expr_gen
          (match m1 with
           | `Mask bm1 -> `Mask (`Mask (Grid.Mask.compl bm1))
           | _ -> raise (Undefined_result "LogNot: undefined"))
+      | _ -> raise (Invalid_expr e))
+  | `Area e1 ->
+     (match apply ~lookup p e1 with
+      | `Point _ -> `Int 1
+      | `Rectangle (`Vec (`Int height, `Int width), _, `Mask m) ->
+         `Int (Grid.mask_model_area ~height ~width m)
+      | _ -> raise (Invalid_expr e))
+  | `Left e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (_, `Int j), `Rectangle _) -> `Int j
+      | `PosShape _ -> raise (Undefined_result "Left: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `Right e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (_, `Int j), `Rectangle (`Vec (_, `Int w), _, _)) -> `Int (j+w-1)
+      | `PosShape _ -> raise (Undefined_result "Right: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `Center e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (_, `Int j), `Rectangle (`Vec (_, `Int w), _, _)) ->
+         if w mod 2 = 0
+         then raise (Undefined_result "Center: no center, even width")
+         else `Int (j + w/2 + 1)
+      | `PosShape _ -> raise (Undefined_result "Center: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `Top e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (`Int i, _), `Rectangle _) -> `Int i
+      | `PosShape _ -> raise (Undefined_result "Top: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `Bottom e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (`Int i, _), `Rectangle (`Vec (`Int h, _), _, _)) -> `Int (i+h-1)
+      | `PosShape _ -> raise (Undefined_result "Bottom: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `Middle e1 ->
+     (match apply ~lookup p e1 with
+      | `PosShape (`Vec (`Int i, _), `Rectangle (`Vec (`Int h, _), _, _)) ->
+         if h mod 2 = 0
+         then raise (Undefined_result "Middle: no middle, even height")
+         else `Int (i + h/2 + 1)
+      | `PosShape _ -> raise (Undefined_result "Middle: not a rectangle")
       | _ -> raise (Invalid_expr e))
   | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
      (match lookup (ctx :> var), apply ~lookup p e2 with
@@ -2534,6 +2598,8 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
   let int_var, int_var_rotation = List.assoc `Int kind_vars in
   let vec_var, vec_var_rotation = List.assoc `Vec kind_vars in
   let mask_var, mask_var_rotation = List.assoc `Mask kind_vars in
+  let shape_var, shape_var_rotation = List.assoc `Shape kind_vars in
+  let object_var, object_var_rotation = List.assoc `Object kind_vars in
   let kind_exprs =
     List.map
       (fun (k, (sv,sv_rotation)) ->
@@ -2544,6 +2610,16 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                  !* (`ZeroInt, None);
                  sv;
                  sv_rotation;
+                 (let* v, ctx = shape_var in
+                  !* (`Area v, ctx));
+                 (let* v, ctx = object_var in
+                  (* Left v already accessible via position *)
+                  (`Right v, ctx) 
+                  ** (`Center v, ctx)
+                  (* Pos v already accessible via position *)
+                  ** (`Bottom v, ctx)
+                  ** (`Middle v, ctx)
+                  ** ( %* ));
                  (let* v, ctx = int_var in
                   let* n = Myseq.from_list [1;2;3] in
                   (`Plus (v, `Int n), ctx)

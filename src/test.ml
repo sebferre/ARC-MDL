@@ -321,6 +321,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
     "6b9890af.json"; (* TODO pb: need for scale-invariant masks/bitmaps *)
     "ea786f4a.json"; (* pbs: missing black cross as part, chooses checkboard on example 1 *)
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
