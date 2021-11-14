@@ -821,6 +821,8 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
 type dl = Mdl.bits
 let dl0 = 0.
 
+let dl_round dl = Float.round (dl *. 1e9) /. 1e9
+        
 let dl_bool : bool -> dl =
   fun b -> 1.
 let dl_nat : int -> dl =
@@ -2081,7 +2083,8 @@ let read_grid
       let dl_data = dl_data_given_template ~ctx t data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
-      dl_data +. dl_diff +. dl_delta) in
+      (* rounding before sorting to absorb float error accumulation *)
+      dl_round (dl_data +. dl_diff +. dl_delta)) in
     let gd = {data; diff=state.diff; delta=state.delta} in
     Myseq.return (env, gd, dl) in
   let l_parses =
@@ -2944,7 +2947,7 @@ let learn_model
                     print_endline " --- some read ---";
                     pp_data d_i; print_newline ();
                     pp_data d_o; print_newline ();
-                    Printf.printf "\tdl=%.1f\n" dl);
+                    Printf.printf "\tdl=%.6f\n" dl);
              print_newline ()
               
              print_endline " ===> best read for all examples";
