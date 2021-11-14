@@ -74,6 +74,7 @@ let concat_rev_list_seq (revl : 'a list) (seq : 'a Myseq.t) : 'a Myseq.t =
 class ['a] iterator (seq : 'a Myseq.t) =
 (* turns a sequence into a stateful iterator *)
 object
+  (* TODO: record when empty to optimize repeating pops when empty *)
   val mutable s = seq
   method pop : 'a option =
     let open Myseq in
@@ -1053,10 +1054,10 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
 
 let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
-  let uniform_among (l : [`X] expr list) = Mdl.Code.uniform (List.length l) in
+  let uniform_among (l : [`X] expr list) =
+    if l = [] then infinity else Mdl.Code.uniform (List.length l) in
   [ `Int, uniform_among [
               `ZeroInt;
-              `Ref `Root;
               `Area `X;
               `Left `X; `Right `X; `Center `X;
               `Top `X; `Bottom `X; `Middle `X;
@@ -1064,30 +1065,23 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
               `Index; `Indexing (`X,`X) ];
-    `Bool, uniform_among [
-             `Ref `Root ];
-    `Color, uniform_among [
-              `Ref `Root ];
+    `Bool, uniform_among [];
+    `Color, uniform_among [];
     `Mask, uniform_among [
-               `Ref `Root;
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ];
     `Vec, uniform_among [
               `ZeroVec;
-              `Ref `Root;
               `Plus (`X,`X); `Minus (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Corner (`X,`X); `Average [`X;`X];
               `Indexing (`X,`X) ];
     `Shape, uniform_among [
-                `Ref `Root;
                 `Indexing (`X,`X) ];
     `Object, uniform_among [
-                 `Ref `Root;
                  `Indexing (`X,`X) ];
-    `Layer, uniform_among [
-              `Ref `Root ];
+    `Layer, uniform_among [];
     `Grid, infinity;
   ]
   
@@ -1097,9 +1091,7 @@ let rec dl_expr
   let k = path_kind path in
   let code_expr = List.assoc k code_expr_by_kind in
   match e with
-  | `Ref p ->
-     code_expr
-     +. dl_path ~env_sig ~ctx_path:path p
+  | `Ref p -> assert false
   | `Index ->
      code_expr
   | `ZeroInt | `ZeroVec ->
@@ -1166,13 +1158,15 @@ type code_template = (* dls must correspond to a valid prob distrib *)
     c_repeat : dl;
     c_for : dl;
     c_patt : dl;
+    c_ref : dl;
     c_expr : dl }
 let code_template0 =
   { c_u = Mdl.Code.usage 0.1;
     c_repeat = infinity;
     c_for = infinity;
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.4 *);
-    c_expr = 0.5 }
+    c_ref = 0.25;
+    c_expr = 0.25 }
 
 let code_template_by_kind : (kind * code_template) list =
   [ `Int, code_template0;
@@ -1184,8 +1178,9 @@ let code_template_by_kind : (kind * code_template) list =
     `Object, code_template0;
     `Layer, { code_template0 with
               c_repeat = Mdl.Code.usage 0.1;
-              c_for = Mdl.Code.usage 0.25;
-              c_expr = Mdl.Code.usage 0.15 };
+              c_for = Mdl.Code.usage 0.2;
+              c_ref = Mdl.Code.usage 0.1;
+              c_expr = Mdl.Code.usage 0.1 };
     `Grid, code_template0 ]    
     
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
@@ -1206,6 +1201,9 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | #patt as patt ->
        code.c_patt
        +. dl_patt aux ~ctx ~path patt
+    | `Ref p ->
+       code.c_ref
+       +. dl_path ~env_sig ~ctx_path:path p
     | #expr as e ->
        code.c_expr
        +. dl_expr aux ~env_sig ~ctx ~path e
@@ -2948,6 +2946,7 @@ let learn_model
                     pp_data d_o; print_newline ();
                     Printf.printf "\tdl=%.1f\n" dl);
              print_newline ()
+              
              print_endline " ===> best read for all examples";
              gpsr.reads
              |> List.iter
