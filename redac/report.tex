@@ -144,15 +144,15 @@ mining, classification, and clustering tasks~\cite{KRIMP2011}.
 %
 A major difference with those work is that the model to be learned
 needs not only explain the data but also be able to perform a
-prediction, here the output grid from the input grid.
+structured prediction, here the output grid from the input grid.
 %
-At this stage (Version~2), we consider rather simple models that have
+At this stage (Version~2.2), we consider rather simple models that have
 no chance to cover a large proportion of ARC tasks: single-color
 points and shapes, and basic arithmetic of positions and sizes. Our
 prime objective is to demonstrate the effectiveness of an MDL-based
 approach to the ARC challenge, and hopefully to AGI. Our approach
-succeeds on 25/400 training tasks and 6/400 evaluation tasks, with a
-learning timeout of 1min only per task. We find such a result quite
+succeeds on 29/400 training tasks and 6/400 evaluation tasks, with a
+learning timeout of 30s only per task. We find such a result quite
 encouraging given the difficulty of the problem. Moreover, the
 successful tasks are quite diverse, and the learned model is often
 close to the simplest model for the task (in the chosen class of
@@ -170,6 +170,42 @@ process, which boils down to defining description lengths and model
 refinements. Section~\ref{eval} reports on the evaluation of our
 approch on training and evaluation ARC tasks, as well as on the
 learned models for a few tasks.
+
+%%%
+\section{Related Work}
+\label{related}
+
+This work is related to three domains, all part of the field of
+Artificial Intelligence: {\em structured prediction} (as a sub-domain
+of machine learning), {\em programming by example}, and the {\em
+  Minimum Description Length (MDL)} principle.
+
+% AI, machine learning, structured prediction...
+{\em Structure prediction} is the sub-domain of supervised machine
+learning where the outputs to predict are structured objects rather
+than scalar values (discrete or
+numeric)~\cite{ReviewStructPred,dietterich2008structured}. The output
+grids of the ARC challenge are an example. Other common and recent
+examples are found in natural language processing (NLP) and generative
+media. Examples in NLP are parsing (predicting a parse
+tree)~\cite{PredParseTree} or machine translation (predicting a word
+sequence)~\cite{MachTransl}. Examples in generative media often use
+generative adversarial networks (GAN) to generate photo-realistic
+images, music songs or texts~\cite{GAN_App}. However, the previous
+examples are not part of supervised machine learning because there is
+not one (or a few) correct answer, the generated output ``only'' has
+to be realistic to human perception. Structured prediction appears to
+be mostly applied to sequences. Indeed, predicting a sequence of
+symbols can be decomposed into repeatedly predicting the next
+symbol. We could not find work predicting grid structures similar to
+ARC grids.
+
+
+Programming by example, ILP, ...
+
+MDL work...
+
+
 
 %%%
 \section{Defining ARC Tasks}
@@ -206,7 +242,7 @@ Figure~\ref{fig:task}).
   Coordinates range from~$(0,0)$ to~$(h-1,w-1)$.
 \end{definition}
 
-In ARC, grids have a size from (1,1) to (30,30).
+In ARC, grids have a size from $1 \times 1$ to $30 \times 30$.
 
 \begin{definition}[example] 
   An {\em example} is a pair of grids~$e = (g^i,g^o)$, where $g^i$ is called
@@ -239,18 +275,6 @@ the system.
 %
 Each task has generally between 2 and 4 train examples, and 1 or 2
 test examples.
-
-%%%
-\section{Related Work}
-\label{related}
-
-AI, machine learning, structured prediction...
-
-Programming by demonstration, program synthesis, ...
-
-MDL work...
-
-
 
 %%%
 \section{Modelling ARC Tasks in Two-Parts MDL}
@@ -1746,6 +1770,11 @@ selects an input object, and makes an attempt for each object.
 %%%
 \section{Conclusion and Perspectives}
 \label{conclu}
+
+TODO: Lessons from this first proposal. Given only a small subset of common priors, results are encouraging. Confirms dificulty of the challenge, and suggests that generalization difficulty of eval tasks is higher than for train tasks.
+
+Limits of the current proposal and main axes of research: multiplicity/repetitions/iterations, other priors listed by Chollet. Greedy MDL may not be enough.
+% without revealing too much details!
 
 \bibliographystyle{splncs}
 \bibliography{/local/ferre/recherche/biblio/bib}
