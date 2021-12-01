@@ -58,7 +58,7 @@
 
 \begin{document}
 
-\title{An MDL-based Approach to the ARC Challenge}
+\title{First Steps of an Approach to the ARC Challenge based on Descriptive Grid Models and the Minimum Description Length Principle}
 
 \author{Sébastien Ferré}
 
@@ -69,6 +69,25 @@
 \maketitle
 
 \begin{abstract}
+  The Abstraction and Reasoning Corpus (ARC) was recently introduced
+  by François Chollet as a tool to measure broad intelligence in both
+  humans and machines. It is very challenging, and the best approach
+  in a Kaggle competition could only solve 20\% of the tasks, relying
+  on brute-force search for chains of hand-crafted transformations.
+  %
+  In this paper, we present the first steps exploring an approach
+  based on descriptive grid models and the Minimum Description Length
+  (MDL) principle. The grid models describe the contents of a grid,
+  and support both parsing grids and generating grids. The MDL
+  principle is used to guide the search for good models, i.e. models
+  that compress the grids the most.
+  %
+  We report on our progress over a year, improving on the general
+  approach and the models. Out of the 400 training tasks, our
+  performance increased from 5 to 29 solved tasks, only using 30s
+  computation time per task. Our approach not only predicts the output
+  grids, but also outputs an intelligible model and explanations for
+  how the model was incrementally built.
 \end{abstract}
 
 %% keywords
@@ -92,7 +111,7 @@ Reasoning Corpus) challenge introduced by François Chollet as a tool
 to measure intelligence, both human and artificial~\cite{Chollet2019}.
 ARC was introduced in order to foster research on Artificial General
 Intelligence (AGI)~\cite{Goertzel2014agi}, and to move from
-system-centric generalization to developer-specific
+system-centric generalization to developer-aware
 generalization. The latter enables a system to ``handle situations
 that neither the system nor the developer of the system have
 encountered before''. For instance, a system trained to recognize cats
@@ -135,76 +154,60 @@ data are much simpler than real-life data like photos or texts. We
 think that this helps to focus on the core features of intelligence
 rather than on scalability issues.
 
+A kaggle
+competition\footnote{\url{https://www.kaggle.com/c/abstraction-and-reasoning-challenge}}
+was organized in Spring 2020 to challenge the robustness of ARC as a
+measure of intelligence, and to see what could be achieved with
+state-of-the-art techniques. The winner's solution manages to solve
+20\% over 100 (secret) evaluation tasks, which is already a remarkable
+performance. However, it is based on the brute-force search for chains
+of grid transformations, chosen from a hand-crafted set of 142
+elementary transformations. This can hardly scale to larger sets of
+tasks, and as the author admits: ``Unfortunately, I don't feel like my
+solution itself brings us closer to AGI.'' Another competitor used a
+similar domain-specific language based on transformations, and
+grammatical evolution to search the program
+space~\cite{Fischer2020}. Their approach solves 3\% of the Kaggle
+tasks, and 7.68\% over the 400 training tasks.
+
 Our approach is based on the MDL (Minimum Description Length)
 principle~\cite{Rissanen1978,Grunwald2019} according to which {\em ``the best
 model for some data is the one that compresses the most the data''}.
 %
 The MDL principle has already been applied successfully to pattern
-mining, classification, and clustering tasks~\cite{KRIMP2011}.
+mining of various data structures (transactions~\cite{KRIMP2011},
+sequences~\cite{sqs2012}, relational databases~\cite{rdb_krimp2009},
+or graphs~\cite{BarCelFer2020ida}), as well as
+classification~\cite{ProLee2020}.
 %
 A major difference with those work is that the model to be learned
 needs not only explain the data but also be able to perform a
 structured prediction, here the output grid from the input grid.
 %
-At this stage (Version~2.2), we consider rather simple models that have
-no chance to cover a large proportion of ARC tasks: single-color
+At this stage (Version~2.2), we consider rather simple models that
+have no chance to cover a large proportion of ARC tasks: single-color
 points and shapes, and basic arithmetic of positions and sizes. Our
 prime objective is to demonstrate the effectiveness of an MDL-based
 approach to the ARC challenge, and hopefully to AGI. Our approach
-succeeds on 29/400 training tasks and 6/400 evaluation tasks, with a
-learning timeout of 30s only per task. We find such a result quite
-encouraging given the difficulty of the problem. Moreover, the
-successful tasks are quite diverse, and the learned model is often
-close to the simplest model for the task (in the chosen class of
-models).
+succeeds on 29/400 (7.25\%) training tasks and 6/400 (1.5\%)
+evaluation tasks, with a learning timeout of 30s only per task. We
+find such a result quite encouraging given the difficulty of the
+problem. Moreover, the solved tasks are quite diverse, and the
+learned model is often close to the simplest model for the task (in
+the chosen class of models).
 
 This report is organized as follows. Section~\ref{arc} gives a formal
-definition of ARC grids and tasks. Section~\ref{related} discusses
+definition of ARC grids and tasks. \HIDE{Section~\ref{related} discusses
 related work on artificial intelligence, in particular structured
 prediction, AGI, or programming by demonstration; it also presents the
 MDL principle and some of its applications to AI and knowledge
-discovery. Section~\ref{modelling} explains our modelling of the ARC
+discovery.} Section~\ref{modelling} explains our modelling of the ARC
 tasks in the framework of two-parts MDL, in particular our class of
 models. Section~\ref{learning} describes the MDL-based learning
 process, which boils down to defining description lengths and model
 refinements. Section~\ref{eval} reports on the evaluation of our
 approch on training and evaluation ARC tasks, as well as on the
 learned models for a few tasks.
-
-%%%
-\section{Related Work}
-\label{related}
-
-This work is related to three domains, all part of the field of
-Artificial Intelligence: {\em structured prediction} (as a sub-domain
-of machine learning), {\em programming by example}, and the {\em
-  Minimum Description Length (MDL)} principle.
-
-% AI, machine learning, structured prediction...
-{\em Structure prediction} is the sub-domain of supervised machine
-learning where the outputs to predict are structured objects rather
-than scalar values (discrete or
-numeric)~\cite{ReviewStructPred,dietterich2008structured}. The output
-grids of the ARC challenge are an example. Other common and recent
-examples are found in natural language processing (NLP) and generative
-media. Examples in NLP are parsing (predicting a parse
-tree)~\cite{PredParseTree} or machine translation (predicting a word
-sequence)~\cite{MachTransl}. Examples in generative media often use
-generative adversarial networks (GAN) to generate photo-realistic
-images, music songs or texts~\cite{GAN_App}. However, the previous
-examples are not part of supervised machine learning because there is
-not one (or a few) correct answer, the generated output ``only'' has
-to be realistic to human perception. Structured prediction appears to
-be mostly applied to sequences. Indeed, predicting a sequence of
-symbols can be decomposed into repeatedly predicting the next
-symbol. We could not find work predicting grid structures similar to
-ARC grids.
-
-
-Programming by example, ILP, ...
-
-MDL work...
-
 
 
 %%%
@@ -277,6 +280,42 @@ Each task has generally between 2 and 4 train examples, and 1 or 2
 test examples.
 
 %%%
+\HIDE{
+\section{Related Work}
+\label{related}
+
+This work is related to three domains, all part of the field of
+Artificial Intelligence: {\em structured prediction} (as a sub-domain
+of machine learning), {\em programming by example}, and the {\em
+  Minimum Description Length (MDL)} principle.
+
+% AI, machine learning, structured prediction...
+{\em Structure prediction} is the sub-domain of supervised machine
+learning where the outputs to predict are structured objects rather
+than scalar values (discrete or
+numeric)~\cite{ReviewStructPred,dietterich2008structured}. The output
+grids of the ARC challenge are an example. Other common and recent
+examples are found in natural language processing (NLP) and generative
+media. Examples in NLP are parsing (predicting a parse
+tree)~\cite{PredParseTree} or machine translation (predicting a word
+sequence)~\cite{MachTransl}. Examples in generative media often use
+generative adversarial networks (GAN) to generate photo-realistic
+images, music songs or texts~\cite{GAN_App}. However, the previous
+examples are not part of supervised machine learning because there is
+not one (or a few) correct answer, the generated output ``only'' has
+to be realistic to human perception. Structured prediction appears to
+be mostly applied to sequences. Indeed, predicting a sequence of
+symbols can be decomposed into repeatedly predicting the next
+symbol. We could not find work predicting grid structures similar to
+ARC grids.
+
+
+Programming by example, ILP, ...
+
+MDL work...
+}%HIDE
+
+%%%
 \section{Modelling ARC Tasks in Two-Parts MDL}
 \label{modelling}
 
@@ -295,6 +334,10 @@ two models as follows. The input grid model is used to {\em parse} the
 input grid, which produces some information that characterizes the
 input grid. Then, that parsing information is fed into the output grid
 model in order to generate an output grid.
+
+In the following, paragraphs starting with {\em Version~X} are
+specific to that version, in contrast to other paragraphs that are
+generic.
 
 \subsection{Models}
 \label{model}
@@ -1736,7 +1779,7 @@ instances. Here are some causes for the lack of generalization:
 \end{itemize}
 
 
-\paragraph{Version 2.2.} This version brings only a few changes to the
+\paragraph{Versions 2.1, 2.2.} This version brings only a few changes to the
 model but it significantly improves the efficiency of parsing grids,
 which is the major cost of learning a model. Table~\ref{tab:eval}
 shows that we achieve similar results in 30s as we did in 120s. The
@@ -1747,7 +1790,7 @@ For the record, the main changes relative to Version~2 are the following:
 \begin{itemize}
 \item distinction between shapes and objects to better represent object moves,
 \item richer set of masks (borders, checkboards, and crosses),
-\item zero as a nullary operator to avoid expressions like $e_1 - e_2$,
+\item zero as a nullary operator to avoid expressions like $e_1 - e_1$,
 \item small parts can be seen as adjacent points,
 \item better strategy when parsing a stack of layers,
 \item normalized description length to balance inputs and outputs w.r.t. grid size,
@@ -1768,15 +1811,117 @@ selects an input object, and makes an attempt for each object.
 
 
 %%%
-\section{Conclusion and Perspectives}
+\section{Discussion and Perspectives}
 \label{conclu}
 
-TODO: Lessons from this first proposal. Given only a small subset of common priors, results are encouraging. Confirms dificulty of the challenge, and suggests that generalization difficulty of eval tasks is higher than for train tasks.
+%TODO: evaluation tasks harder
 
-Limits of the current proposal and main axes of research: multiplicity/repetitions/iterations, other priors listed by Chollet. Greedy MDL may not be enough.
-% without revealing too much details!
+We have demonstrated that combining descriptive grid models and the
+MDL principle is a viable and encouraging approach to the ARC
+challenge. In contrast to other approaches, it focuses on the contents
+of grids rather than on transformations from input grids to output
+grids. Actually, our learning algorithm does not even try to predict
+the output grid from the input grid, only to find a short joint
+description of the pair of grids, only assuming that the output grid
+may depend on the input grid. Prediction of the output grid only comes
+as a by-product. The learned model can also be used to create new
+examples. We think it makes our approach more robust and scalable, and
+more cognitively plausible.
 
-\bibliographystyle{splncs}
-\bibliography{/local/ferre/recherche/biblio/bib}
+The progress through the different versions has more to do with
+improvements in the general approach than with the class of
+models. Indeed, the model has not changed much from the first version
+(stacks of points and boxed shapes over a colored background, plus
+very simple arithmetics). The key to improvements is {\em
+  flexibility}. Flexibility lies mostly in the parsing procedure
+through non-determinism and approximation. To tackle the complexity
+coming from those, the MDL principle appears as essentiel to select
+the most plausible parsings, i.e. those that have the shortest
+description length. The MDL principle is therefore used at two levels:
+at a low level for parsing grids, and at a high level for choosing
+model refinements.
+
+We were surprised to see that results on the evaluation tasks are much
+lower than on the training tasks. The same observation has been made
+previously~\cite{Fischer2020}. We refrained to look at the evaluation
+tasks, as advised by the ARC designer, to avoid the inclusion of
+ARC-specific priors in our approach. We suspect that the evaluation
+tasks have larger or more complex grids because the runtime per task
+is higher. We also suspect that they require more difficult
+generalizations as this is a key factor of the measure of intelligence
+proposed by F. Chollet.
+
+We are confident that our approach can solve many more tasks because
+the current grid models are quite simple. First, only a few of the
+core human priors are covered. Second, a number of tasks involve
+relatively simple whole-grid transformations (e.g. rotations,
+symmetries). Those are typically the tasks that are solved by
+transformation-based approaches but are not yet solvable by our
+model. Another important limit is when a grid contains a
+variable-sized collection of objects, each of which must be treated in
+the same way. This requires some form of loop in the model.
+
+
+%\bibliographystyle{splncs}
+%\bibliography{/local/ferre/recherche/biblio/bib}
+
+\begin{thebibliography}{10}
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\urlprefix}{URL }
+
+\bibitem{BarCelFer2020ida}
+Bariatti, F., Cellier, P., Ferr{\'{e}}, S.: Graphmdl: Graph pattern selection
+  based on minimum description length. In: Berthold, M.R., Feelders, A.,
+  Krempl, G. (eds.) Advances in Intelligent Data Analysis - 18th International
+  Symposium on Intelligent Data Analysis, {IDA}. LNCS, vol. 12080, pp. 54--66.
+  Springer (2020), \url{https://doi.org/10.1007/978-3-030-44584-3\_5}
+
+\bibitem{Chollet2019}
+Chollet, F.: On the measure of intelligence. arXiv preprint arXiv:1911.01547
+  (2019)
+
+\bibitem{dietterich2008structured}
+Dietterich, T.G., Domingos, P., Getoor, L., Muggleton, S., Tadepalli, P.:
+  Structured machine learning: the next ten years. Machine Learning  73(1),
+  3--23 (2008)
+
+\bibitem{Fischer2020}
+Fischer, R., Jakobs, M., M\"{u}cke, S., Morik, K.: Solving {Abstract}
+  {Reasoning} {Tasks} with {Grammatical} {Evolution}. In: {LWDA}. pp. 6--10.
+  CEUR-WS 2738 (2020)
+
+\bibitem{Goertzel2014agi}
+Goertzel, B.: Artificial general intelligence: concept, state of the art, and
+  future prospects. Journal of Artificial General Intelligence  5(1), ~1 (2014)
+
+\bibitem{Grunwald2019}
+Gr{\"u}nwald, P., Roos, T.: Minimum description length revisited. arXiv
+  preprint arXiv:1908.08484  (2019)
+
+\bibitem{rdb_krimp2009}
+Koopman, A., Siebes, A.: Characteristic {Relational} {Patterns}. In: {ACM}
+  {SIGKDD} {Int.} {Conf.} {Knowledge} {Discovery} and {Data} {Mining}. pp.
+  437--446. {KDD} '09, ACM (2009)
+
+\bibitem{ProLee2020}
+Proen\, {c}a, H.M., van Leeuwen, M.: Interpretable multiclass classification by
+  {MDL}-based rule lists. Information Sciences  512,  1372--1393 (Feb 2020),
+  \url{https://www.sciencedirect.com/science/article/pii/S0020025519310138}
+
+\bibitem{Rissanen1978}
+Rissanen, J.: Modeling by shortest data description. Automatica  14(5),
+  465--471 (1978)
+
+\bibitem{sqs2012}
+Tatti, N., Vreeken, J.: The long and the short of it: {Summarising} event
+  sequences with serial episodes. In: Int. Conf. on Knowledge Discovery and
+  Data Mining (KDD). pp. 462--470. ACM (2012)
+
+\bibitem{KRIMP2011}
+Vreeken, J., Van~Leeuwen, M., Siebes, A.: Krimp: mining itemsets that compress.
+  Data Mining and Knowledge Discovery  23(1),  169--214 (2011)
+
+\end{thebibliography}
+
 
 \end{document}
