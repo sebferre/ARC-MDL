@@ -159,10 +159,36 @@ end
  *)
         
 type kind =
-  [ `Int | `Bool | `Color | `Mask | `Vec | `Shape | `Object | `Layer | `Grid ]
-let all_kinds =
-  [ `Int;  `Bool;  `Color;  `Mask;  `Vec;  `Shape;  `Object; `Layer;  `Grid ]
+  Int | Bool | Color | Mask | Vec | Shape | Object | Layer | Grid
+let all_kinds : kind list =
+  [ Int;  Bool;  Color;  Mask;  Vec;  Shape;  Object; Layer;  Grid ]
 
+module KindMap =
+  struct
+    type 'a t = 'a array (* indices over kinds *)
+
+    let make ~int ~bool ~color ~mask ~vec ~shape ~object_ ~layer ~grid : 'a t =
+      [| int; bool; color; mask; vec; shape; object_; layer; grid |]
+
+    let init (f : kind -> 'a) : 'a t =
+      [| f Int; f Bool; f Color; f Mask; f Vec; f Shape; f Object; f Layer; f Grid |]
+
+    let find (k : kind) (map : 'a t) : 'a =
+      map.((Obj.magic k : int))
+
+    let map (f : kind -> 'a -> 'b) (map : 'a t) : 'b t =
+      Array.mapi
+        (fun i v -> f (Obj.magic i : kind) v)
+        map
+
+    let fold_left (f : 'b -> kind -> 'a -> 'b) (init : 'b) (map : 'a t) : 'b =
+      let res = ref init in
+      for i = 0 to Array.length map - 1 do
+        res := f !res (Obj.magic i : kind) map.(i)
+      done;
+      !res
+  end
+  
 type role = (* same information as kind + contextual information *)
   [ `Int of [`I | `J] * role_vec
   | `Index
@@ -179,15 +205,15 @@ and role_frame =
   [ `Shape | `Grid ]
 
 let kind_of_role : role -> kind = function
-  | `Int _ -> `Int
-  | `Index -> `Int
-  | `Color _ -> `Color
-  | `Mask -> `Mask
-  | `Vec _ -> `Vec
-  | `Shape -> `Shape
-  | `Object -> `Object
-  | `Layer -> `Layer
-  | `Grid -> `Grid
+  | `Int _ -> Int
+  | `Index -> Int
+  | `Color _ -> Color
+  | `Mask -> Mask
+  | `Vec _ -> Vec
+  | `Shape -> Shape
+  | `Object -> Object
+  | `Layer -> Layer
+  | `Grid -> Grid
   
 type 'a patt =
   [ `Bool of bool
@@ -317,15 +343,15 @@ let rec string_of_ilist_path : ilist_revpath -> string =
   | `Right p -> string_of_ilist_path p ^ "1"
 
 let string_of_kind : kind -> string = function
-  | `Bool -> "bool"
-  | `Int -> "int"
-  | `Color -> "color"
-  | `Mask -> "mask"
-  | `Vec -> "vector"
-  | `Shape -> "shape"
-  | `Object -> "object"
-  | `Layer -> "layer"
-  | `Grid -> "grid"
+  | Bool -> "bool"
+  | Int -> "int"
+  | Color -> "color"
+  | Mask -> "mask"
+  | Vec -> "vector"
+  | Shape -> "shape"
+  | Object -> "object"
+  | Layer -> "layer"
+  | Grid -> "grid"
 
 let rec string_of_role = function
   | `Int (`I, rv) -> "i/" ^ string_of_role_vec rv
@@ -507,18 +533,18 @@ let pp_grid_data gd =
 
 let rec path_kind (p : revpath) : kind =
   match p with
-  | `Root -> `Grid
+  | `Root -> Grid
   | `Field (f,_) ->
      (match f with
-      | (`I | `J) -> `Int
-      | `Color -> `Color
-      | `Mask -> `Mask
-      | (`Pos | `Size) -> `Vec
-      | `Shape -> `Shape
-      | `Layer _ -> `Layer)
+      | (`I | `J) -> Int
+      | `Color -> Color
+      | `Mask -> Mask
+      | (`Pos | `Size) -> Vec
+      | `Shape -> Shape
+      | `Layer _ -> Layer)
   | `Arg (i,None,p1) -> path_kind p1
   | `Arg (i, Some role, p1) -> kind_of_role role
-  | `Item (_,`Root, `Field (`Layer _, _)) -> `Object
+  | `Item (_,`Root, `Field (`Layer _, _)) -> Object
   | `Item (_,`Root, ctx) -> path_kind ctx
   | `Item (_,local,_) -> path_kind local
 
@@ -728,12 +754,12 @@ let signature_of_template (t : template) : signature =
              p_trd::p_snd::p_fst::p::ps0
           | _ -> p::ps0 in
         Hashtbl.replace ht k ps;
-        if k = `Vec && t1 = `U then (
+        if k = Vec && t1 = `U then (
           let ps0 =
-            match Hashtbl.find_opt ht `Int with
+            match Hashtbl.find_opt ht Int with
             | None -> []
             | Some ps -> ps in
-          Hashtbl.replace ht `Int (p ++ `I :: p ++ `J :: ps0)
+          Hashtbl.replace ht Int (p ++ `I :: p ++ `J :: ps0)
         ))
       () None path0 t [] in
   Hashtbl.fold
@@ -1054,11 +1080,12 @@ let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
      +. dl_path ~env_sig ~ctx_path p
   | `Index -> Mdl.Code.usage usage_index *)
 
-let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excluding Ref *)
+let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
   let uniform_among (l : [`X] expr list) =
     if l = [] then infinity else Mdl.Code.uniform (List.length l) in
-  [ `Int, uniform_among [
+  KindMap.make
+    ~int:(uniform_among [
               `ZeroInt;
               `Area `X;
               `Left `X; `Right `X; `Center `X;
@@ -1066,32 +1093,31 @@ let code_expr_by_kind : (kind * Mdl.bits) list = (* code of expressions, excludi
               `Plus (`X,`X); `Minus (`X,`X); `Modulo (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
-              `Index; `Indexing (`X,`X) ];
-    `Bool, uniform_among [];
-    `Color, uniform_among [];
-    `Mask, uniform_among [
+              `Index; `Indexing (`X,`X) ])
+    ~bool:(uniform_among [])
+    ~color:(uniform_among [])
+    ~mask:(uniform_among [
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
-               `Indexing (`X,`X) ];
-    `Vec, uniform_among [
+               `Indexing (`X,`X) ])
+    ~vec:(uniform_among [
               `ZeroVec;
               `Plus (`X,`X); `Minus (`X,`X);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Corner (`X,`X); `Average [`X;`X];
-              `Indexing (`X,`X) ];
-    `Shape, uniform_among [
-                `Indexing (`X,`X) ];
-    `Object, uniform_among [
-                 `Indexing (`X,`X) ];
-    `Layer, uniform_among [];
-    `Grid, infinity;
-  ]
+              `Indexing (`X,`X) ])
+    ~shape:(uniform_among [
+                `Indexing (`X,`X) ])
+    ~object_:(uniform_among [
+                 `Indexing (`X,`X) ])
+    ~layer:(uniform_among [])
+    ~grid:(uniform_among [])
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
-  let code_expr = List.assoc k code_expr_by_kind in
+  let code_expr = KindMap.find k code_expr_by_kind in
   match e with
   | `Ref p -> assert false
   | `Index ->
@@ -1171,26 +1197,27 @@ let code_template0 =
     c_ref = 0.25;
     c_expr = 0.25 }
 
-let code_template_by_kind : (kind * code_template) list =
-  [ `Int, code_template0;
-    `Bool, code_template0;
-    `Color, code_template0;
-    `Mask, code_template0;
-    `Vec, code_template0;
-    `Shape, code_template0;
-    `Object, code_template0;
-    `Layer, { code_template0 with
-              c_repeat = Mdl.Code.usage 0.1;
-              c_for = Mdl.Code.usage 0.2;
-              c_ref = Mdl.Code.usage 0.1;
-              c_expr = Mdl.Code.usage 0.1 };
-    `Grid, code_template0 ]    
+let code_template_by_kind : code_template KindMap.t =
+  KindMap.make
+    ~int:code_template0
+    ~bool:code_template0
+    ~color:code_template0
+    ~mask:code_template0
+    ~vec:code_template0
+    ~shape:code_template0
+    ~object_:code_template0
+    ~layer:{ code_template0 with
+      c_repeat = Mdl.Code.usage 0.1;
+      c_for = Mdl.Code.usage 0.2;
+      c_ref = Mdl.Code.usage 0.1;
+      c_expr = Mdl.Code.usage 0.1 }
+    ~grid:code_template0
     
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
   Common.prof "Model2.dl_template" (fun () ->
   let rec aux ~ctx ~path t =
     let k = path_kind path in
-    let code = List.assoc k code_template_by_kind in
+    let code = KindMap.find k code_template_by_kind in
     match t with
     | `U ->
        code.c_u
@@ -2423,7 +2450,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            let k = path_kind p in
            let definable_var =
              match k with
-             | `Grid -> false (* not grids *)
+             | Grid -> false (* not grids *)
 (* too much ad'hoc, sometimes good, sometimes bad
              | `Vec, `Rectangle (_, _, `U)::_ -> false (* not sizes of rectangle with unknown mask *)
              | `Int, `Vec _::`Rectangle (_, _, `U)::_ -> false (* idem *) 
@@ -2487,7 +2514,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                       let lt =
                         match t0 with
                         | #expr -> lt (* not replacing expressions *)
-                        | _ -> (try List.assoc k k_le_map
+                        | _ -> (try KindMap.find k k_le_map
                                 with _ -> assert false) @ lt in 
                       List.fold_left (* WARNING: preserving order on lt *)
                         (fun rev_delta_defs_yes (t,ctx) ->
@@ -2567,7 +2594,7 @@ and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d
               | _, `Many _ -> false
               | t1, t2 -> t1 = t2)
           | Result.Error _, _ -> false ) )
-and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
+and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
   let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
@@ -2585,7 +2612,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
        Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in
   let kind_vars =
-    List.map
+    KindMap.init
       (fun k ->
         let ps = signature_of_kind env_sig k in
         let sv = (* variables *)
@@ -2595,19 +2622,18 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
         let sv_rotation = (* variables with rotation-based indexing *)
           let* p = Myseq.from_list ps in
           vars_rotation_of_path p in
-        k, (sv, sv_rotation))
-      all_kinds in
-  let int_var, int_var_rotation = List.assoc `Int kind_vars in
-  let vec_var, vec_var_rotation = List.assoc `Vec kind_vars in
-  let mask_var, mask_var_rotation = List.assoc `Mask kind_vars in
-  let shape_var, shape_var_rotation = List.assoc `Shape kind_vars in
-  let object_var, object_var_rotation = List.assoc `Object kind_vars in
+        (sv, sv_rotation))  in
+  let int_var, int_var_rotation = KindMap.find Int kind_vars in
+  let vec_var, vec_var_rotation = KindMap.find Vec kind_vars in
+  let mask_var, mask_var_rotation = KindMap.find Mask kind_vars in
+  let shape_var, shape_var_rotation = KindMap.find Shape kind_vars in
+  let object_var, object_var_rotation = KindMap.find Object kind_vars in
   let kind_exprs =
-    List.map
-      (fun (k, (sv,sv_rotation)) ->
+    KindMap.map
+      (fun k (sv,sv_rotation) ->
         let exprs =
           match k with
-          | `Int ->
+          | Int ->
              Myseq.concat [
                  !* (`ZeroInt, None);
                  sv;
@@ -2647,7 +2673,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                   ** (`Diag2 (v,k), ctx)
                   ** ( %* ))
                ]
-          | `Vec ->
+          | Vec ->
              Myseq.concat [
                  !* (`ZeroVec, None);
                  sv;
@@ -2666,7 +2692,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                        @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
                   else ( %* ))
                ]
-          | `Mask ->
+          | Mask ->
              Myseq.concat [
                  sv;
                  sv_rotation;
@@ -2684,7 +2710,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                  ]
           | _ -> Myseq.concat [sv; sv_rotation]
         in
-        k, Myseq.to_list exprs)
+        Myseq.to_list exprs)
       kind_vars in
   kind_exprs)
   
@@ -2740,7 +2766,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
            else [obj; `Repeat obj] in
        aux ~objs `Root layers in
      let ss =
-       let ps_shape = signature_of_kind env_sig `Shape in
+       let ps_shape = signature_of_kind env_sig Shape in
        Myseq.concat
          (List.map
             (fun p_shape ->
@@ -2752,7 +2778,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               aux ~objs:[obj] `Root layers)
             ps_shape) in
      let so =
-       let ps_object = signature_of_kind env_sig `Object in
+       let ps_object = signature_of_kind env_sig Object in
        Myseq.concat
          (List.map
             (fun p_object ->
