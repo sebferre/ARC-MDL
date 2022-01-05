@@ -1149,7 +1149,8 @@ let rec dl_expr
      code_expr +. dl ~ctx ~path:(`Arg (1, Some `Shape, path)) e1
   | `Left e1 | `Right e1 | `Center e1
     | `Top e1 | `Bottom e1 | `Middle e1 ->
-     code_expr +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -2617,7 +2618,7 @@ and defs_expressions ~env_sig : (kind * (template * revpath option) list) list =
                   (* Left v already accessible via position *)
                   (`Right v, ctx) 
                   ** (`Center v, ctx)
-                  (* Pos v already accessible via position *)
+                  (* Top v already accessible via position *)
                   ** (`Bottom v, ctx)
                   ** (`Middle v, ctx)
                   ** ( %* ));

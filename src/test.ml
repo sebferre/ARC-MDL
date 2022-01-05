@@ -321,6 +321,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
     "6b9890af.json"; (* TODO pb: need for scale-invariant masks/bitmaps *)
     "ea786f4a.json"; (* pbs: missing black cross as part, chooses checkboard on example 1 *)
