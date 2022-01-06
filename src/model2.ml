@@ -174,7 +174,7 @@ module KindMap =
       [| f Int; f Bool; f Color; f Mask; f Vec; f Shape; f Object; f Layer; f Grid |]
 
     let find (k : kind) (map : 'a t) : 'a =
-      map.((Obj.magic k : int))
+      map.((Obj.magic k : int)) [@@inline]
 
     let map (f : kind -> 'a -> 'b) (map : 'a t) : 'b t =
       Array.mapi
@@ -188,6 +188,8 @@ module KindMap =
       done;
       !res
   end
+
+let ( .&() ) map k = KindMap.find k map [@@inline]
   
 type role = (* same information as kind + contextual information *)
   [ `Int of [`I | `J] * role_vec
@@ -1117,7 +1119,7 @@ let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   let k = path_kind path in
-  let code_expr = KindMap.find k code_expr_by_kind in
+  let code_expr = code_expr_by_kind.&(k) in
   match e with
   | `Ref p -> assert false
   | `Index ->
@@ -2597,7 +2599,7 @@ and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d
 and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
-  let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
+  (*let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
     match path_ctx p with
     | None -> Myseq.return (`Ref p, None)
     | Some ctx ->
@@ -2610,8 +2612,8 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
     | None -> Myseq.empty
     | Some ctx ->
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
-       Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in
-  let kind_vars =
+       Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in *)
+  (* let kind_vars =
     KindMap.init
       (fun k ->
         let ps = signature_of_kind env_sig k in
@@ -2622,97 +2624,134 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
         let sv_rotation = (* variables with rotation-based indexing *)
           let* p = Myseq.from_list ps in
           vars_rotation_of_path p in
-        (sv, sv_rotation))  in
-  let int_var, int_var_rotation = KindMap.find Int kind_vars in
-  let vec_var, vec_var_rotation = KindMap.find Vec kind_vars in
-  let mask_var, mask_var_rotation = KindMap.find Mask kind_vars in
-  let shape_var, shape_var_rotation = KindMap.find Shape kind_vars in
-  let object_var, object_var_rotation = KindMap.find Object kind_vars in
+        (sv, sv_rotation)) in *)
+  let kind_paths =
+    KindMap.init
+      (fun k ->
+        signature_of_kind env_sig k
+        |> Myseq.from_list
+        |> Myseq.memoize) in
+  let kind_vars =
+    kind_paths
+    |> KindMap.map
+         (fun k sp ->
+           Myseq.memoize
+             (let* p = sp in
+              match path_ctx p with
+              | None -> Myseq.return (`Ref p, None)
+              | Some ctx ->
+                 Myseq.concat [
+                     Myseq.return (`Indexing (`Ref p, `Index), Some ctx);
+                     (let* i = Myseq.from_list [0; 1; 2] in
+                      Myseq.return (`Indexing (`Ref p, `Int i), None)) ])) in
+  let kind_feats =
+    kind_vars
+    |> KindMap.map
+      (fun k sv ->
+        match k with
+        | Int ->
+           Myseq.concat [
+               sv;
+               (*sv_rotation;*)
+               (let* v, ctx = kind_vars.&(Shape) in
+                !* (`Area v, ctx));
+               (let* v, ctx = kind_vars.&(Object) in
+                (* Left v already accessible via position *)
+                (`Right v, ctx) 
+                ** (`Center v, ctx)
+                (* Top v already accessible via position *)
+                ** (`Bottom v, ctx)
+                ** (`Middle v, ctx)
+                ** ( %* ));
+               (let* v, ctx = kind_vars.&(Vec) in
+                (`Norm v, ctx)
+                ** ( %* ));
+               (let* v, ctx = kind_vars.&(Vec) in
+                let* k = Myseq.from_list [2;3] in
+                (`Diag1 (v,k), ctx)
+                ** (`Diag2 (v,k), ctx)
+                ** ( %* ))
+             ]
+        | Vec ->
+           Myseq.concat [
+               sv;
+               (*sv_rotation;*)
+               (let* v1, ctx1 = kind_vars.&(Vec) in
+                let* v2, ctx2 = kind_vars.&(Vec) in
+                if ctx1 = ctx2
+                then (if v1 <> v2 then !* (`Corner (v1,v2), ctx1) else ( %* ))
+                     @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
+                else ( %* ))
+             ]
+        | Mask ->
+           Myseq.concat [
+               sv;
+               (*sv_rotation;*)
+             ]
+        | _ -> sv (* Myseq.concat [sv; sv_rotation] *)
+      ) in
   let kind_exprs =
-    KindMap.map
-      (fun k (sv,sv_rotation) ->
-        let exprs =
-          match k with
-          | Int ->
-             Myseq.concat [
-                 !* (`ZeroInt, None);
-                 sv;
-                 sv_rotation;
-                 (let* v, ctx = shape_var in
-                  !* (`Area v, ctx));
-                 (let* v, ctx = object_var in
-                  (* Left v already accessible via position *)
-                  (`Right v, ctx) 
-                  ** (`Center v, ctx)
-                  (* Top v already accessible via position *)
-                  ** (`Bottom v, ctx)
-                  ** (`Middle v, ctx)
-                  ** ( %* ));
-                 (let* v, ctx = int_var in
-                  let* n = Myseq.from_list [1;2;3] in
-                  (`Plus (v, `Int n), ctx)
-                  ** (`Minus (v, `Int n), ctx)
-                  ** ( %* ));
-                 (let* v, ctx = int_var in
-                  let* n = Myseq.from_list [2;3] in
-                  (`ScaleUp (v, n), ctx)
-                  ** (`ScaleDown (v, n), ctx)
-                  ** ( %* ));
-                 (let* v1, ctx1 = int_var in
-                  let* v2, ctx2 = int_var in
-                  if ctx1 = ctx2
-                  then (if v1 < v2 then !* (`Plus (v1, v2), ctx1) else ( %* ))
-                       @* (if v1 <> v2 then !* (`Minus (v1, v2), ctx1) else ( %* ))
-                  else ( %* ));
-                 (let* v, ctx = vec_var in
-                  (`Norm v, ctx)
-                  ** ( %* ));
-                 (let* v, ctx = vec_var in
-                  let* k = Myseq.from_list [2;3] in
-                  (`Diag1 (v,k), ctx)
-                  ** (`Diag2 (v,k), ctx)
-                  ** ( %* ))
-               ]
-          | Vec ->
-             Myseq.concat [
-                 !* (`ZeroVec, None);
-                 sv;
-                 sv_rotation;
-                 (let* v, ctx = int_var in
-                  let* n = Myseq.from_list [2;3] in
-                  (`ScaleUp (v, n), ctx)
-                  ** (`ScaleDown (v, n), ctx)
-                  ** ( %* ));
-                 (let* v1, ctx1 = vec_var in
-                  let* v2, ctx2 = vec_var in
-                  if ctx1 = ctx2
-                  then (if v1 < v2 then !* (`Plus (v1, v2), ctx1) else ( %* ))
-                       @* (if v1 <> v2 then !* (`Minus (v1, v2), ctx1) else ( %* ))
-                       @* (if v1 <> v2 then !* (`Corner (v1,v2), ctx1) else ( %* ))
-                       @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
-                  else ( %* ))
-               ]
-          | Mask ->
-             Myseq.concat [
-                 sv;
-                 sv_rotation;
-                 (let* v1, ctx1 = mask_var in
-                  let* v2, ctx2 = mask_var in
-                  if ctx1 = ctx2
-                  then (`LogAnd (v1,v2), ctx1)
-                       ** (`LogOr (v1,v2), ctx1)
-                       ** (`LogXOr (v1,v2), ctx1)
-                       ** (`LogAndNot (v1,v2), ctx1)
-                       ** ( %* )
-                  else ( %* ));
-                  (let* v, ctx = mask_var in
-                   !* (`LogNot v, ctx))
-                 ]
-          | _ -> Myseq.concat [sv; sv_rotation]
-        in
-        Myseq.to_list exprs)
-      kind_vars in
-  kind_exprs)
+    kind_feats
+    |> KindMap.map
+      (fun k sf ->
+        match k with
+        | Int ->
+           Myseq.concat [
+               !* (`ZeroInt, None);
+               sf;
+               (let* f, ctx = kind_feats.&(Int) in
+                let* n = Myseq.from_list [1;2;3] in
+                (`Plus (f, `Int n), ctx)
+                ** (`Minus (f, `Int n), ctx)
+                ** ( %* ));
+               (let* f, ctx = kind_feats.&(Int) in
+                let* n = Myseq.from_list [2;3] in
+                (`ScaleUp (f, n), ctx)
+                ** (`ScaleDown (f, n), ctx)
+                ** ( %* ));
+               (let* f1, ctx1 = kind_feats.&(Int) in
+                let* f2, ctx2 = kind_feats.&(Int) in
+                if ctx1 = ctx2
+                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1) else ( %* ))
+                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1) else ( %* ))
+                else ( %* ));
+             ]
+        | Vec ->
+           Myseq.concat [
+               !* (`ZeroVec, None);
+               sf;
+               (let* f, ctx = kind_feats.&(Int) in
+                let* n = Myseq.from_list [2;3] in
+                (`ScaleUp (f, n), ctx)
+                ** (`ScaleDown (f, n), ctx)
+                ** ( %* ));
+               (let* f1, ctx1 = kind_feats.&(Vec) in
+                let* f2, ctx2 = kind_feats.&(Vec) in
+                if ctx1 = ctx2
+                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1) else ( %* ))
+                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1) else ( %* ))
+                else ( %* ))
+             ]
+        | Mask ->
+           Myseq.concat [
+               sf;
+               (let* f1, ctx1 = kind_feats.&(Mask) in
+                let* f2, ctx2 = kind_feats.&(Mask) in
+                if ctx1 = ctx2
+                then (`LogAnd (f1,f2), ctx1)
+                     ** (`LogOr (f1,f2), ctx1)
+                     ** (`LogXOr (f1,f2), ctx1)
+                     ** (`LogAndNot (f1,f2), ctx1)
+                     ** ( %* )
+                else ( %* ));
+               (let* f, ctx = kind_feats.&(Mask) in
+                !* (`LogNot f, ctx))
+             ]
+        | _ -> sf
+      ) in
+  KindMap.map
+    (fun k se -> Myseq.to_list se)
+    kind_exprs)
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t = (* QUICK *)
   (*let aux_repeat p = function
