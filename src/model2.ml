@@ -1356,6 +1356,7 @@ let lookup_of_env (env : data) : apply_lookup =
 let apply_patt
       (apply : lookup:apply_lookup -> revpath -> 'a -> 'b)
       ~(lookup : apply_lookup) (p : revpath) : 'a patt -> 'b patt = function
+  (* SHOULD NOT use [p] *)
   | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
   | `Vec (i,j) ->
      `Vec (apply ~lookup (p ++ `I) i,
@@ -1384,6 +1385,7 @@ let apply_patt
 let apply_expr_gen
           (apply : lookup:apply_lookup -> revpath -> 'a -> template)
           ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template = (* QUICK *)
+  (* SHOULD NOT use [p] *)
   match e with
   | `Ref p ->
      (match lookup (p :> var) with
@@ -1562,10 +1564,11 @@ let apply_expr_gen
           | None -> raise (Out_of_bound (items,i)))
       | _ -> raise (Invalid_expr e))
 
-let apply_expr apply ~(env : data) p e =
-  apply_expr_gen apply ~lookup:(lookup_of_env env) p e
+let apply_expr apply ~(env : data) e =
+  apply_expr_gen apply ~lookup:(lookup_of_env env) `Root e
   
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template = (* QUICK *)
+  (* SHOULD NOT use [p] *)
   match t with
   | `U -> `U
   | `Repeat patt1 ->
@@ -1592,9 +1595,9 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
 
-let rec apply_template ~(env : data) (p : revpath) (t : template) : (template,exn) Result.t =
+let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
   Common.prof "Model2.apply_template" (fun () ->
-  try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) p t)
+  try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
   with (* catching runtime error in expression eval *)
   | (Unbound_var _ as exn) -> Result.Error exn
   | (Undefined_result _ as exn) -> Result.Error exn
@@ -1655,7 +1658,7 @@ and draw_layer g = function
 
 
 let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
-  let| t' = apply_template ~env `Root t in
+  let| t' = apply_template ~env t in
   let d = generate_template `Root t' in
   let g = grid_of_data d in
   List.iter
@@ -2099,7 +2102,7 @@ let read_grid
       ~(env : data) (t : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
   Common.prof "Model2.read_grid" (fun () ->
-  let| t = apply_template ~env `Root t in (* reducing expressions *)
+  let| t = apply_template ~env t in (* reducing expressions *)
   let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
@@ -2506,13 +2509,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            let d = try PMap.find p u_val with _ -> assert false in
            (env,d,dl,rank))
   in
-  let rec find_dl_rank p k t ctx data : (Mdl.bits * int) option = (* proper QUICK *)
+  let rec find_dl_rank t ctx data : (Mdl.bits * int) option = (* proper QUICK *)
     match data with
     | [] -> None
     | (env,d,dl,rank)::rem ->
-       if defs_check p k t ctx d env
+       if defs_check ~env t ctx d
        then Some (dl,rank)
-       else find_dl_rank p k t ctx rem
+       else find_dl_rank t ctx rem
   in
   let module TMap = (* mappings from defining templates *)
     Map.Make
@@ -2541,7 +2544,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                                    (`Indexing (t, `Index), for_p)
                                 | _ -> (t,None) in
                               if not (TMap.mem t_ctx res)
-                                 && defs_check p k t ctx d env (* TODO: superfluous? *)
+                                 && defs_check ~env t ctx d (* TODO: superfluous? *)
                               then TMap.add t_ctx (dl, rank, tprio t) res
                               else res)
                             res)
@@ -2554,7 +2557,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                 k_le_map.&(k)
                 |> List.fold_left
                      (fun res (t,ctx) ->
-                       match find_dl_rank p k t ctx data_fst with
+                       match find_dl_rank t ctx data_fst with
                        | None -> res
                        | Some (dl,rank) -> (t,ctx,dl,rank, tprio t)::res)
                      []) in
@@ -2579,7 +2582,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                     lt_score
                     |> List.filter_map
                          (fun (t,ctx,dl0,rank0,prio0) ->
-                           match find_dl_rank p k t ctx data with
+                           match find_dl_rank t ctx data with
                            | None -> None
                            | Some (dl1,rank1) -> Some (t, ctx, dl0 +. dl1, rank0 + rank1, prio0)) in
                   if lt_score = []
@@ -2603,7 +2606,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          Stdlib.compare (sum_dl1,sum_rank1,prio1) (sum_dl2,sum_rank2,prio2))
   |> Myseq.from_list
   |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
-and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d : data) env : bool =
+and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   Common.prof "Model2.defs_check" (fun () ->
   match t with
   | `U -> assert false (* should not be used as def *)
@@ -2623,7 +2626,7 @@ and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d
      ( match e_opt with
        | None -> false
        | Some e ->
-          match apply_template ~env p (e :> template), (d :> template) with
+          match apply_template ~env (e :> template), (d :> template) with
           | Result.Ok t1, t2 ->
              (match t1, t2 with
               | `Many (ordered1,items1), `Many (ordered2,items2) ->
