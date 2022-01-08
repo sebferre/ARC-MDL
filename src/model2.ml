@@ -2443,9 +2443,9 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
      raise exn) (* does not seem to occur any more *)
 
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
-  Myseq.prof "Model2.defs_refinements" (
+  Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
-  let u_vars =
+  let u_vars = (* QUICK *)
     List.rev
       (fold_template
          (fun res for_p p t0 anc0 ->
@@ -2462,23 +2462,30 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            then (for_p,p,k,t0)::res
            else res)
          [] None path0 t []) in
-  let val_matrix =
+  let module PMap = (* mappings from defining templates *)
+    Map.Make
+      (struct
+        type t = revpath
+        let compare = Stdlib.compare
+      end) in
+  let reads_matrix = Common.prof "Model2.defs_refinements/val_matrix" (fun () ->
     List.map
       (fun grs ->
         assert (grs <> []); (* otherwise, should be parse failure *)
         List.mapi
           (fun rank (env,gd,dl) ->
             let u_val =
-              List.map (fun (for_p,p,k,t0) ->
+              List.fold_left
+                (fun res (for_p,p,k,t0) ->
                   match find_data p gd.data with
-                  | Some d -> p, d
+                  | Some d -> PMap.add p d res
                   | None ->
                      pp_path p; print_string ": "; pp_data gd.data; print_newline ();
                      assert false)
-                u_vars in
+                PMap.empty u_vars in
             env, u_val, dl, rank)
           grs)
-      grss in
+      grss) in
   let tprio = (* priority among definitions according to def body, expressions first *)
     function
     | `U -> 4
@@ -2488,78 +2495,108 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     | #expr -> 0 in
   let k_le_map =
     defs_expressions ~env_sig in
-  let _, defs =
-    List.fold_left (* iteration through examples *)
-      (fun (first_ex,defs_yes) reads_ex ->
-        let _, defs_yes, _ =
-          List.fold_left (* iteration through example read *)
-            (fun (first_ex,defs_yes,defs_maybe) (env, u_val, dl, rank) ->
-              (* defs_yes: defs valid according to previous examples, and previous reads on current example *)
-              (* defs_maybe: defs valid according to previous examples, but not in previous reads on current example, undefined on first example *)
-              if first_ex (* on first example *)
-              then
-                let rev_delta_defs_yes =
-                  List.fold_left (* WARNING: preserving order on u_vars *)
-                    (fun rev_delta_defs_yes (for_p,p,k,t0) ->
-                      let d = try List.assoc p u_val with _ -> assert false in
-                      let lt : (template * revpath option) list = [] in (* candidate def bodies *)
-                      let lt =
-                        match t0 with
-                        | `U -> List.fold_right
-                                  (fun t lt ->
-                                    match t, for_p with
-                                    | `Many (ordered,items), Some _ ->
-                                       (`Indexing (t, `Index), for_p)::lt
-                                    | _ -> (t,None)::lt)
-                                  (root_template_of_data d) lt
-                        | _ -> lt in (* expressions have priority on patts, which have priority on `U *)
-                      let lt =
-                        match t0 with
-                        | #expr -> lt (* not replacing expressions *)
-                        | _ -> (try KindMap.find k k_le_map
-                                with _ -> assert false) @ lt in 
-                      List.fold_left (* WARNING: preserving order on lt *)
-                        (fun rev_delta_defs_yes (t,ctx) ->
-                          if List.exists (* check if def already found *)
-                               (fun (_,_,_,p0,_,t0,ctx0) -> p0=p && t0=t && ctx0=ctx)
-                               defs_yes
-                             || not (defs_check p k t ctx d env)
-                          then rev_delta_defs_yes
-                          else (dl, rank, tprio t, p, k, t, ctx) :: rev_delta_defs_yes)
-                        rev_delta_defs_yes
-                        lt
-                    )
-                    []
-                    u_vars
-                in
-                let defs_yes = List.rev_append rev_delta_defs_yes defs_yes in
-                (first_ex,defs_yes,defs_maybe)
-              else
-                let rev_new_defs_yes, rev_defs_maybe =
-                  List.fold_left (* WARNING: preserving orer on defs_yes and defs_maybe *)
-                    (fun (rev_new_defs_yes,rev_defs_maybe) (sum_dl,sum_rank,prio,p,k,t,ctx as def) ->
-                      let d = try List.assoc p u_val with _ -> assert false in
-                      if defs_check p k t ctx d env
-                      then
-                        let rev_new_defs_yes = (sum_dl +. dl, sum_rank + rank, prio, p, k, t, ctx) :: rev_new_defs_yes in
-                        (rev_new_defs_yes, rev_defs_maybe)
-                      else
-                        let rev_defs_maybe = def :: rev_defs_maybe in (* kept for remaining reads *)
-                        (rev_new_defs_yes, rev_defs_maybe)
-                    )
-                    ([],[])
-                    defs_maybe
-                in
-                let defs_yes = List.rev_append rev_new_defs_yes defs_yes in
-                let defs_maybe = List.rev rev_defs_maybe in
-                (first_ex,defs_yes,defs_maybe)
-            )
-            (first_ex,[],defs_yes) (* defs_yes at previous example is used as defs_maybe for checking *)
-            reads_ex in
-        false, defs_yes (* the remaining defs_maybe is trashed, they're non-valid defs *)
-      )
-      (true,[])
-      val_matrix in
+  let reads_fst, reads_others = (* reads for first example, other examples *)
+    match reads_matrix with
+    | x::l -> x, l
+    | [] -> assert false in
+  let data_of_reads_path reads (p : revpath) = (* QUICK *)
+    reads
+    |> List.map
+         (fun (env,u_val,dl,rank) ->
+           let d = try PMap.find p u_val with _ -> assert false in
+           (env,d,dl,rank))
+  in
+  let rec find_dl_rank p k t ctx data : (Mdl.bits * int) option = (* proper QUICK *)
+    match data with
+    | [] -> None
+    | (env,d,dl,rank)::rem ->
+       if defs_check p k t ctx d env
+       then Some (dl,rank)
+       else find_dl_rank p k t ctx rem
+  in
+  let module TMap = (* mappings from defining templates *)
+    Map.Make
+      (struct
+        type t = template * revpath option
+        let compare = Stdlib.compare
+      end) in
+  (* defs from first example *)
+  let defs = Common.prof "Model2.defs_refinements/first" (fun () ->
+    u_vars
+    |> List.filter_map
+         (fun (for_p,p,k,t0) ->
+           let data_fst = data_of_reads_path reads_fst p in
+           let tmap_score_patt =
+             match t0 with
+             | `U -> Common.prof "Model2.defs_refinements/patterns" (fun () ->
+                data_fst
+                |> List.fold_left
+                     (fun res (env,d,dl,rank) ->
+                       root_template_of_data d
+                       |> List.fold_left
+                            (fun res t ->
+                              let (t, ctx as t_ctx) =
+                                match t, for_p with
+                                | `Many (ordered,items), Some _ ->
+                                   (`Indexing (t, `Index), for_p)
+                                | _ -> (t,None) in
+                              if not (TMap.mem t_ctx res)
+                                 && defs_check p k t ctx d env (* TODO: superfluous? *)
+                              then TMap.add t_ctx (dl, rank, tprio t) res
+                              else res)
+                            res)
+                     TMap.empty)
+             | _ -> TMap.empty in
+           let lt_score_expr =
+             match t0 with
+             | #expr -> []
+             | _ -> Common.prof "Model2.defs_refinements/expr" (fun () ->
+                k_le_map.&(k)
+                |> List.fold_left
+                     (fun res (t,ctx) ->
+                       match find_dl_rank p k t ctx data_fst with
+                       | None -> res
+                       | Some (dl,rank) -> (t,ctx,dl,rank, tprio t)::res)
+                     []) in
+           let lt_score =
+             TMap.fold
+               (fun (t,ctx) (dl,rank,prio) res ->
+                 (t,ctx,dl,rank,prio)::res)
+               tmap_score_patt lt_score_expr in
+           if lt_score = []
+           then None
+           else Some (p,k,lt_score))) in
+  (* checking defs w.r.t. other examples *)
+  let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
+    reads_others
+    |> List.fold_left
+         (fun defs reads ->
+           defs
+           |> List.filter_map
+                (fun (p,k,lt_score) ->
+                  let data = data_of_reads_path reads p in
+                  let lt_score =
+                    lt_score
+                    |> List.filter_map
+                         (fun (t,ctx,dl0,rank0,prio0) ->
+                           match find_dl_rank p k t ctx data with
+                           | None -> None
+                           | Some (dl1,rank1) -> Some (t, ctx, dl0 +. dl1, rank0 + rank1, prio0)) in
+                  if lt_score = []
+                  then None
+                  else Some (p,k,lt_score)))
+         defs) in
+  (* flattening defs as a list *)
+  let defs = (* QUICK *)
+    defs
+    |> List.fold_left
+         (fun res (p,k,lt_score) ->
+           List.fold_left
+             (fun res (t,ctx,dl,rank,prio) ->
+               (dl,rank,prio,p,k,t,ctx)::res)
+             res lt_score)
+         [] in
+  (* sorting defs, and returning them as a sequence *)
   defs
   |> List.stable_sort (* increasing DL, increasing rank sum *)
        (fun (sum_dl1,sum_rank1,prio1,_,_,_,_) (sum_dl2,sum_rank2,prio2,_,_,_,_) ->
@@ -2599,7 +2636,8 @@ and defs_check (p : revpath) (k : kind) (t : template) (ctx : revpath option) (d
 and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
-  (*let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
+  (* TODO: recover rotational vars
+  let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
     match path_ctx p with
     | None -> Myseq.return (`Ref p, None)
     | Some ctx ->
@@ -2613,18 +2651,6 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
     | Some ctx ->
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
        Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in *)
-  (* let kind_vars =
-    KindMap.init
-      (fun k ->
-        let ps = signature_of_kind env_sig k in
-        let sv = (* variables *)
-          Myseq.memoize
-            (let* p = Myseq.from_list ps in
-             vars_of_path p) in
-        let sv_rotation = (* variables with rotation-based indexing *)
-          let* p = Myseq.from_list ps in
-          vars_rotation_of_path p in
-        (sv, sv_rotation)) in *)
   let kind_paths =
     KindMap.init
       (fun k ->
@@ -2753,7 +2779,8 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
     (fun k se -> Myseq.to_list se)
     kind_exprs)
   
-let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t = (* QUICK *)
+let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
+  Common.prof "Model2.shape_refinements" (fun () ->
   (*let aux_repeat p = function
     | `Repeat _ -> Myseq.return (RSingle p)
     | `Point _ | `Rectangle _ -> Myseq.return (RRepeat p)
@@ -2829,7 +2856,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               aux ~objs:[obj] `Root layers)
             ps_object) in
      Myseq.concat [so; ss; sr; sp]
-  | _ -> assert false
+  | _ -> assert false)
 
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.prof "Model2.grid_refinements" (
@@ -2884,6 +2911,7 @@ let pp_refinement = function
   | Routput r -> print_string "OUT "; pp_grid_refinement r
 
 let apply_refinement (r : refinement) (m : model) : (refinement * model) option =
+  Common.prof "Model2.apply_refinement" (fun () ->
   match r with
   | RInit -> None
   | Rinput gr ->
@@ -2891,11 +2919,11 @@ let apply_refinement (r : refinement) (m : model) : (refinement * model) option 
      |> Option.map (fun (_,t) -> r, {m with input_pattern = t})
   | Routput gr ->
      apply_grid_refinement gr m.output_template
-     |> Option.map (fun (_,t) -> r, {m with output_template = t})
+     |> Option.map (fun (_,t) -> r, {m with output_template = t}))
                  
 let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   =
-  Myseq.prof "Model2.model_refinements" (
+  Common.prof "Model2.model_refinements" (fun () ->
   let on_input = true
     (*match last_r with
     | RInit -> true
@@ -2929,9 +2957,10 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
       |> Myseq.filter_map
 	   (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
-  Myseq.concat
-    [ref_shapos; ref_shapis; ref_defos; ref_defis]
-      )
+  Myseq.prof "Model2.model_refinements/seq" (
+      Myseq.concat
+        [ref_shapos; ref_shapis; ref_defos; ref_defis]
+    ))
 
 let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
   Common.prof "Model2.dl_model_data" (fun () ->
@@ -2985,7 +3014,8 @@ let learn_model
     ~m0:(RInit, init_model)
     ~data:(fun (r,m) ->
       try
-        (* print_string "\t=> "; pp_refinement r; print_newline (); *)
+        (*if verbose then (
+          print_string "\t=> "; pp_refinement r; print_newline ()); *)
         Result.to_option
           (let| gprs = read_grid_pairs m pairs in
            let grsi, grso = split_grid_pairs_read gprs in
@@ -3071,6 +3101,7 @@ let learn_model
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
-      model_refinements r m gsri gsro))
+      let refs = model_refinements r m gsri gsro in
+      refs))
 
 
