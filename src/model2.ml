@@ -1627,12 +1627,12 @@ let _ = Printexc.register_printer
               Some ("the data does not represent a valid grid specification:\n" ^ string_of_data d)
            | _ -> None)
           
-let rec grid_of_data : data -> Grid.t = function
-  | `Background (`Vec (`Int h, `Int w), `Color c, l) ->
+let rec grid_of_data : data -> (Grid.t, exn) Result.t = function
+  | `Background (`Vec (`Int h, `Int w), `Color c, l) when h>0 && w>0 ->
      let g = Grid.make h w c in
-     draw_layers g l;
-     g
-  | d -> raise (Invalid_data_as_grid d)
+     (try draw_layers g l; Result.Ok g
+      with exn -> Result.Error exn)
+  | d -> Result.Error (Invalid_data_as_grid d)
 and draw_layers g = function
   | `Nil -> ()
   | `Insert (above, layer, below) ->
@@ -1642,7 +1642,7 @@ and draw_layers g = function
 and draw_layer g = function
   | `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)) ->
      Grid.set_pixel g i j c
-  | `PosShape (`Vec (`Int mini, `Int minj), `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask m)) ->
+  | `PosShape (`Vec (`Int mini, `Int minj), `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask m)) when h>0 && w>0 ->
      let maxi = mini + h - 1 in
      let maxj = minj + w - 1 in
      for i = mini to maxi do
@@ -1655,11 +1655,16 @@ and draw_layer g = function
      items |> List.rev |> List.iter (draw_layer g)
   | d -> raise (Invalid_data_as_grid d)
 
+let undefined_grid = Grid.make 1 1 Grid.no_color
+let grid_of_data_failsafe d =
+  match grid_of_data d with
+  | Result.Ok g -> g
+  | Result.Error _ -> undefined_grid
 
 let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
   let| t' = apply_template ~env t in
   let d = generate_template `Root t' in
-  let g = grid_of_data d in
+  let| g = grid_of_data d in
   List.iter
     (fun (i,j,c) -> Grid.set_pixel g i j c)
     delta;
@@ -3003,7 +3008,7 @@ let learn_model
     : ((refinement * model) * (grid_pairs_read * grids_read * grids_read) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
-  let norm_dl_model_data = make_norm_dl_model_data () in      
+  let norm_dl_model_data = make_norm_dl_model_data () in
   Mdl.Strategy.beam
     ~timeout
     ~beam_width
@@ -3076,15 +3081,15 @@ let learn_model
           (fun reads_input reads_pair ->
             match reads_pair with
             | ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
-               let gi1 = grid_of_data gdi_knowing_o.data in
-               let go1 = grid_of_data gdo.data in
+               let gi1 = grid_of_data_failsafe gdi_knowing_o.data in
+               let go1 = grid_of_data_failsafe gdo.data in
                let res2 = (* searching for a parse able to generate an output *)
                  let+|+ _, gdi2, _ = Result.Ok reads_input in
                  let| go2 = write_grid ~env:gdi2.data m.output_template in
                  Result.Ok [(gdi2,go2)] in
                (match res2 with
                 | Result.Ok ((gdi2,go2)::_) ->
-                   let gi2 = grid_of_data gdi2.data in
+                   let gi2 = grid_of_data_failsafe gdi2.data in
                    Grid.pp_grids [gi1; go1; gi2; go2]
                 | Result.Ok [] -> assert false
                 | Result.Error exn ->

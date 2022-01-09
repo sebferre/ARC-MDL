@@ -107,8 +107,8 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
              Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
              Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
              if !grid_viz then
-               Grid.pp_grids [Model.grid_of_data gdi.data;
-                              Model.grid_of_data gdo.data]
+               Grid.pp_grids [Model.grid_of_data_failsafe gdi.data;
+                              Model.grid_of_data_failsafe gdo.data]
           | `TEST -> ()
         );
         if !verbose then (
@@ -127,7 +127,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                if !grid_viz then (
                  Grid.pp_grids
                    (List.map
-                      (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
+                      (fun (_,gdi,_) -> Model.grid_of_data_failsafe gdi.Model.data)
                       reads))
             | Result.Error _ ->
                print_endline "(No input readings)"
@@ -148,7 +148,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                    Printf.printf ">> Trial %d\n" rank;
                    if !training then (
                      Model.pp_grid_data gdi;
-                     if !grid_viz then Grid.pp_grids [Model2.grid_of_data gdi.data]
+                     if !grid_viz then Grid.pp_grids [Model2.grid_of_data_failsafe gdi.data]
                    );
 	           ( match Grid.diff derived output with
 		     | None ->
@@ -255,36 +255,39 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 27 tasks, 126s for timeout=30s, max_nb_parses=64 *)
-  [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=19.2s *)
-    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=0.8s *)
+let solved_train_names = (* 29 tasks, ~190.5s for timeout=30s, max_nb_parses=64, max_refs=100 *)
+  [ "08ed6ac7.json"; (* NEED MORE TIME - 4 grey bars, colored in size order, runtime=37.5s *)
+    "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=1.0s *)
     "1cf80156.json"; (* crop on shape, runtime=0.1s *)
-    "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 1s, timeout trying to explain everything *)
-    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=11.9s *)
-    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.2s *)
-    "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=0.4s *)
-    "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=2.0s *)
-    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=0.4s *)
+    "1f85a75f.json"; (* crop of a shape among a random
+ cloud of points. runtime about 1s, timeout trying to explain everything, runtime=TIMEOUT *)
+    "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=20.3s *)
+    "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.3s *)
+    "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=1.2s *)
+    "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=2.4s *)
+    "5521c0d9.json"; (* three rectangles moving up by their height, runtime=1.8s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=0.5s *)
-    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=1.7s *)
+    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=4.2s *)
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.1s *)
-    "7e0986d6.json"; (* NEW collection of rectangles + noise points to be removed, runtime=17.8s *)
-    "a1570a43.json"; (* red shape moved into 4 green points, runtime=8.2s *)
-    "a61ba2ce.json"; (* NEW 4 corners, they join as a small square, runtime=4.2s *)
-    "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.0s *)
-    "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=4.8s *)
-    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.3s *)
-    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.3s *)
-    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.5s *)
-    "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=2.2s *)
-    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=3.2s. With collection: need access to color of item at position (i - 1) mod 3 *)
+    "7e0986d6.json"; (* NEED MORE TIME collection of rectangles + noise points to be removed, runtime=60.0 *)
+    "a1570a43.json"; (* red shape moved into 4 green points, runtime=11.1s *)
+    "a61ba2ce.json"; (* WRONG EXPR -  4 corners, they join as a small square, runtime=22.2s *)
+    "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.1s *)
+    "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=6.8s *)
+    "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.4s *)
+    "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.4s *)
+    "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.7s *)
+    "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=4.1s *)
+    "bda2d7a6.json"; (* WRONG EXPR - nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=6.4s. With collection: need access to color of item at position (i - 1) mod 3 *)
     (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
     (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
-    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=6.3s *)
-    "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=1.3s *)
-    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=10.0s *)
-    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.1s *)
-    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=1.4s *)
+    "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=3.3s *)
+    "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=1.6s *)
+    "d631b094.json"; (* NEW any colored shape, output 1 x area grid with same color, runtime=0.2s *)
+    "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=16.6s *)
+    "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.2s *)
+    "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=5.9s *)
+    "ea786f4a.json"; (* NEW black point in a colored grid, produce same-size same-color grid with a full-grid x-cross black shape at (0,0), runtime=0.1s *)
   ]
 
 let nogen_train_names = (* tasks that succeeds on examples but fail on test cases *)
