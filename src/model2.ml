@@ -1092,9 +1092,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Area `X;
               `Left `X; `Right `X; `Center `X;
               `Top `X; `Bottom `X; `Middle `X;
-              `Plus (`X,`X); `Minus (`X,`X); `Modulo (`X,`X);
+              `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
               `ScaleUp (`X,2); `ScaleDown (`X,2);
-              `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);
+              `Norm `X; (*`Diag1 (`X,2); `Diag2 (`X,2);*)
               `Index; `Indexing (`X,`X) ])
     ~bool:(uniform_among [])
     ~color:(uniform_among [])
@@ -2694,11 +2694,13 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
                (let* v, ctx = kind_vars.&(Vec) in
                 (`Norm v, ctx)
                 ** ( %* ));
+(* Diag1/2 should be used as switch for colors, or other categorical attribute
                (let* v, ctx = kind_vars.&(Vec) in
                 let* k = Myseq.from_list [2;3] in
                 (`Diag1 (v,k), ctx)
                 ** (`Diag2 (v,k), ctx)
                 ** ( %* ))
+                *)
              ]
         | Vec ->
            Myseq.concat [
