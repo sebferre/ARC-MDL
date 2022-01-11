@@ -802,19 +802,25 @@ let default_data_of_path (p : revpath) : data =
   | `Layer -> default_layer
   | `Grid -> default_grid
 
-let rec root_template_of_data (d : data) : template list = (* QUICK *)
+let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (* QUICK *)
   match d with
-  | `Bool _
-    | `Int _
-    | `Color _
-    | `Mask _ -> [(d :> template)]
+  | `Bool _ -> []
+  | `Int i ->
+     if in_output (* && i >= 1 && i <= 3 *)
+     then [(d :> template)]
+     else [] (* position- and size-invariance of inputs *)
+  | `Color _ ->
+     if in_output
+     then [(d :> template)]
+     else [] (* color-invariance of inputs *)
+  | `Mask _ -> [(d :> template)] (* masks can be seen as patterns *)
   | `Vec _ -> [`Vec (`U, `U)]
   | `Point _ -> [`Point (`U)]
   | `Rectangle _ -> [`Rectangle (u_vec, `U, `U)]
   | `PosShape _ -> [`PosShape (u_vec, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
-     let llt_items = List.map root_template_of_data items in
+     let llt_items = List.map (root_template_of_data ~in_output) items in
      (d :> template) :: List.sort_uniq Stdlib.compare (List.concat llt_items)
 
 let matches_ilist (matches : 'a -> 'b -> bool)
@@ -1092,8 +1098,8 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~int:(uniform_among [
               `ZeroInt;
               `Area `X;
-              `Left `X; `Right `X; `Center `X;
-              `Top `X; `Bottom `X; `Middle `X;
+              (*`Left `X; *) `Right `X; `Center `X;
+              (*`Top `X; *) `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Norm `X; (*`Diag1 (`X,2); `Diag2 (`X,2);*)
@@ -2454,6 +2460,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
   assert (grss <> []);
+  let in_output = (env_sig <> []) in    
   let u_vars = (* QUICK *)
     List.rev
       (fold_template
@@ -2505,8 +2512,6 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     | `For _ -> 2
     | #patt -> 1
     | #expr -> 0 in
-  let k_le_map =
-    defs_expressions ~env_sig in
   let reads_fst, reads_others = (* reads for first example, other examples *)
     match reads_matrix with
     | x::l -> x, l
@@ -2539,7 +2544,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                 |> List.fold_left
                      (fun res (env,u_val,dl,rank) ->
                        let d = try PMap.find p u_val with _ -> assert false in
-                       root_template_of_data d
+                       root_template_of_data ~in_output d
                        |> List.fold_left
                             (fun res t ->
                               let (t, ctx as t_ctx) =
@@ -2561,7 +2566,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
              tmap_score_patt defs)
          defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
-    k_le_map
+    defs_expressions ~env_sig
     |> KindMap.fold_left
          (fun defs ke le ->
            le
@@ -2641,6 +2646,8 @@ and defs_check_match (t_opt : template option) (d : data) : bool = (* QUICK *)
 and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
+  if env_sig = [] then KindMap.init (fun k -> []) (* we are in the input model *)
+  else (
   (* TODO: recover rotational vars
   let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
     match path_ctx p with
@@ -2726,7 +2733,7 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
              ]
         | _ -> sv (* Myseq.concat [sv; sv_rotation] *)
       ) in
-  let kind_exprs =
+  let kind_exprs = (* actually, expressions and constants *)
     kind_feats
     |> KindMap.map
       (fun k sf ->
@@ -2795,7 +2802,7 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
       ) in
   KindMap.map
     (fun k se -> Myseq.to_list se)
-    kind_exprs)
+    kind_exprs))
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->

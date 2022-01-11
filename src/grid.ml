@@ -22,6 +22,8 @@ let no_color = 10
 
 let nb_color = 10
 
+let all_colors = [0; 1; 2; 3; 4; 5; 6; 7; 8; 9]
+             
 let name_of_color : color -> string =
   function
   | 0 -> "black"
