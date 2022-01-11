@@ -2122,7 +2122,9 @@ let read_grid
                 parts = Grid.segment_by_color g;
                 grid = g } in
   let parses =
-    let* data, state = parse_grid t path0 g state in
+    let* qdiff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
+    let* data, state = parse_grid t path0 g {state with quota_diff = qdiff} in (* parse with this quota *)
+    let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
       let dl_data = dl_data_given_template ~ctx t data in
