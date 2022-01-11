@@ -792,9 +792,9 @@ let rectangle_as_grid (g : t) (r : rectangle) : t =
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
       if Mask.mem i j r.mask then
-	match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
+	(*match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
 	| Some (_,_,c) -> set_pixel gr i j c
-	| None -> set_pixel gr i j col
+	| None ->*) set_pixel gr i j col
     done
   done;
   gr
