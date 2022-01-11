@@ -317,6 +317,8 @@ type template =
   | template patt
   | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
 
+let u_vec : template = `Vec (`U, `U)
+
 type signature = (kind * revpath list) list (* map from kinds to path lists *)
 let signature0 = []
   
@@ -808,8 +810,8 @@ let rec root_template_of_data (d : data) : template list = (* QUICK *)
     | `Mask _ -> [(d :> template)]
   | `Vec _ -> [`Vec (`U, `U)]
   | `Point _ -> [`Point (`U)]
-  | `Rectangle _ -> [`Rectangle (`U, `U, `U)]
-  | `PosShape _ -> [`PosShape (`U, `U)]
+  | `Rectangle _ -> [`Rectangle (u_vec, `U, `U)]
+  | `PosShape _ -> [`PosShape (u_vec, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
      let llt_items = List.map root_template_of_data items in
@@ -2193,7 +2195,7 @@ type model = (* input->output models *)
   }
 
 let init_template =
-  `Background (`U, `U, `Nil)
+  `Background (u_vec, `U, `Nil)
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -2545,8 +2547,9 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                                 | `Many (ordered,items), Some _ ->
                                    (`Indexing (t, `Index), for_p)
                                 | _ -> (t,None) in
-                              if not (TMap.mem t_ctx res)
-                                 && defs_check ~env t ctx d (* TODO: superfluous? *)
+                              if t <> t0 (* a different pattern *)
+                                 && not (TMap.mem t_ctx res) (* that was not already seen *)
+                                        (* && defs_check ~env t ctx d (* and that checks. true by construction *) *)
                               then TMap.add t_ctx (dl, rank, tprio t) res
                               else res)
                             res)
@@ -2554,7 +2557,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
              | _ -> TMap.empty in
            TMap.fold
              (fun (t,ctx) (dl,rank,prio) defs ->
-               (dl,rank,prio,p,k,t,ctx)::defs)
+               (dl,rank,prio,1,p,k,t,ctx)::defs)
              tmap_score_patt defs)
          defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
@@ -2563,7 +2566,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          (fun defs ke le ->
            le
            |> List.fold_left
-                (fun defs (t,ctx) ->
+                (fun defs (t,ctx,tsize) ->
                   let data_fst =
                     reads_fst
                     |> List.map
@@ -2583,7 +2586,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                            match data_opt with
                            | None -> defs
                            | Some (_,_,dl,rank) ->
-                              (dl, rank, tprio t, p, k, t, ctx)::defs)
+                              (dl, rank, tprio t, tsize, p, k, t, ctx)::defs)
                        defs)
                 defs)
          defs) in
@@ -2594,19 +2597,19 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          (fun defs reads ->
            defs
            |> List.filter_map
-                (fun (dl0,rank0,prio,p,k,t,ctx) ->
+                (fun (dl0,rank0,prio,tsize,p,k,t,ctx) ->
                   match find_dl_rank t ctx p reads with
                   | None -> None
-                  | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, p, k, t, ctx)))
+                  | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, k, t, ctx)))
          defs) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
   |> List.stable_sort (* increasing DL, increasing rank sum *)
-       (fun (sum_dl1,sum_rank1,prio1,_,_,_,_) (sum_dl2,sum_rank2,prio2,_,_,_,_) ->
-         Stdlib.compare (sum_dl1,sum_rank1,prio1) (sum_dl2,sum_rank2,prio2))
+       (fun (sum_dl1,sum_rank1,prio1,tsize1,_,_,_,_) (sum_dl2,sum_rank2,prio2,tsize2,_,_,_,_) ->
+         Stdlib.compare (sum_dl1,sum_rank1,prio1,tsize1) (sum_dl2,sum_rank2,prio2,tsize2))
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
+  |> Myseq.map (fun (_,_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   let t_opt = defs_check_apply ~env t ctx in
   defs_check_match t_opt d
@@ -2635,7 +2638,7 @@ and defs_check_match (t_opt : template option) (d : data) : bool = (* QUICK *)
           List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *) *)
        | _, `Many (_,items) -> List.for_all (matches_template t) items
        | _ -> matches_template t d )
-and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
+and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () ->
   (* TODO: recover rotational vars
@@ -2666,12 +2669,12 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
            Myseq.memoize
              (let* p = sp in
               match path_ctx p with
-              | None -> Myseq.return (`Ref p, None)
+              | None -> Myseq.return (`Ref p, None, 1)
               | Some ctx ->
                  Myseq.concat [
-                     Myseq.return (`Indexing (`Ref p, `Index), Some ctx);
+                     Myseq.return (`Indexing (`Ref p, `Index), Some ctx, 2);
                      (let* i = Myseq.from_list [0; 1; 2] in
-                      Myseq.return (`Indexing (`Ref p, `Int i), None)) ])) in
+                      Myseq.return (`Indexing (`Ref p, `Int i), None, 2)) ])) in
   let kind_feats =
     kind_vars
     |> KindMap.map
@@ -2681,18 +2684,19 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
            Myseq.concat [
                sv;
                (*sv_rotation;*)
-               (let* v, ctx = kind_vars.&(Shape) in
-                !* (`Area v, ctx));
-               (let* v, ctx = kind_vars.&(Object) in
+               (let* v1, ctx1, size1 = kind_vars.&(Shape) in
+                !* (`Area v1, ctx1, 1+size1));
+               (let* v1, ctx1, size1 = kind_vars.&(Object) in
+                let size = 1+size1 in
                 (* Left v already accessible via position *)
-                (`Right v, ctx) 
-                ** (`Center v, ctx)
+                (`Right v1, ctx1, size) 
+                ** (`Center v1, ctx1, size)
                 (* Top v already accessible via position *)
-                ** (`Bottom v, ctx)
-                ** (`Middle v, ctx)
+                ** (`Bottom v1, ctx1, size)
+                ** (`Middle v1, ctx1, size)
                 ** ( %* ));
-               (let* v, ctx = kind_vars.&(Vec) in
-                (`Norm v, ctx)
+               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
+                (`Norm v1, ctx1, 1+size1)
                 ** ( %* ));
 (* Diag1/2 should be used as switch for colors, or other categorical attribute
                (let* v, ctx = kind_vars.&(Vec) in
@@ -2706,11 +2710,13 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
            Myseq.concat [
                sv;
                (*sv_rotation;*)
-               (let* v1, ctx1 = kind_vars.&(Vec) in
-                let* v2, ctx2 = kind_vars.&(Vec) in
+               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
+                let* v2, ctx2, size2 = kind_vars.&(Vec) in
                 if ctx1 = ctx2
-                then (if v1 <> v2 then !* (`Corner (v1,v2), ctx1) else ( %* ))
-                     @* (if v1 < v2 then !* (`Average [v1;v2], ctx1) else ( %* ))
+                then
+                  let size = 1+size1+size2 in
+                  (if v1 <> v2 then !* (`Corner (v1,v2), ctx1, size) else ( %* ))
+                  @* (if v1 < v2 then !* (`Average [v1;v2], ctx1, size) else ( %* ))
                 else ( %* ))
              ]
         | Mask ->
@@ -2727,55 +2733,63 @@ and defs_expressions ~env_sig : (template * revpath option) list KindMap.t =
         match k with
         | Int ->
            Myseq.concat [
-               !* (`ZeroInt, None);
+               !* (`ZeroInt, None, 1);
                sf;
-               (let* f, ctx = kind_feats.&(Int) in
+               (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [1;2;3] in
-                (`Plus (f, `Int n), ctx)
-                ** (`Minus (f, `Int n), ctx)
+                let size = 1 + size1 + 1 in
+                (`Plus (f1, `Int n), ctx1, size)
+                ** (`Minus (f1, `Int n), ctx1, size)
                 ** ( %* ));
-               (let* f, ctx = kind_feats.&(Int) in
+               (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [2;3] in
-                (`ScaleUp (f, n), ctx)
-                ** (`ScaleDown (f, n), ctx)
+                let size = 1 + size1 + 1 in
+                (`ScaleUp (f1, n), ctx1, size)
+                ** (`ScaleDown (f1, n), ctx1, size)
                 ** ( %* ));
-               (let* f1, ctx1 = kind_feats.&(Int) in
-                let* f2, ctx2 = kind_feats.&(Int) in
+               (let* f1, ctx1, size1 = kind_feats.&(Int) in
+                let* f2, ctx2, size2 = kind_feats.&(Int) in
+                let size = 1 + size1 + size2 in
                 if ctx1 = ctx2
-                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1) else ( %* ))
-                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1) else ( %* ))
+                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1, size) else ( %* ))
+                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1, size) else ( %* ))
                 else ( %* ));
              ]
         | Vec ->
            Myseq.concat [
-               !* (`ZeroVec, None);
+               !* (`ZeroVec, None, 1);
                sf;
-               (let* f, ctx = kind_feats.&(Int) in
+               (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [2;3] in
-                (`ScaleUp (f, n), ctx)
-                ** (`ScaleDown (f, n), ctx)
+                let size = 1 + size1 + 1 in
+                (`ScaleUp (f1, n), ctx1, size)
+                ** (`ScaleDown (f1, n), ctx1, size)
                 ** ( %* ));
-               (let* f1, ctx1 = kind_feats.&(Vec) in
-                let* f2, ctx2 = kind_feats.&(Vec) in
+               (let* f1, ctx1, size1 = kind_feats.&(Vec) in
+                let* f2, ctx2, size2 = kind_feats.&(Vec) in
                 if ctx1 = ctx2
-                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1) else ( %* ))
-                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1) else ( %* ))
+                then
+                  let size = 1 + size1 + size2 in
+                  (if f1 < f2 then !* (`Plus (f1, f2), ctx1, size) else ( %* ))
+                  @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1, size) else ( %* ))
                 else ( %* ))
              ]
         | Mask ->
            Myseq.concat [
                sf;
-               (let* f1, ctx1 = kind_feats.&(Mask) in
-                let* f2, ctx2 = kind_feats.&(Mask) in
+               (let* f1, ctx1, size1 = kind_feats.&(Mask) in
+                let* f2, ctx2, size2 = kind_feats.&(Mask) in
                 if ctx1 = ctx2
-                then (`LogAnd (f1,f2), ctx1)
-                     ** (`LogOr (f1,f2), ctx1)
-                     ** (`LogXOr (f1,f2), ctx1)
-                     ** (`LogAndNot (f1,f2), ctx1)
-                     ** ( %* )
+                then
+                  let size = 1 + size1 + size2 in
+                  (`LogAnd (f1,f2), ctx1, size)
+                  ** (`LogOr (f1,f2), ctx1, size)
+                  ** (`LogXOr (f1,f2), ctx1, size)
+                  ** (`LogAndNot (f1,f2), ctx1, size)
+                  ** ( %* )
                 else ( %* ));
-               (let* f, ctx = kind_feats.&(Mask) in
-                !* (`LogNot f, ctx))
+               (let* f1, ctx1, size1 = kind_feats.&(Mask) in
+                !* (`LogNot f1, ctx1, 1+size1))
              ]
         | _ -> sf
       ) in
@@ -2808,10 +2822,10 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
          fold_ilist
            (fun (ap,ar,rap,rar) lp layer ->
              match layer with
-             | `PosShape (`U, `Point (`U)) -> (true,ar,rap,rar)
-             | `PosShape (`U, `Rectangle (`U, `U, `U)) -> (ap,true,rap,rar)
-             | `Repeat (`PosShape (`U, `Point (`U))) -> (ap,ar,true,rar)
-             | `Repeat (`PosShape (`U, `Rectangle (`U, `U, `U))) -> (ap,ar,rap,true)
+             | `PosShape (_, `Point (`U)) -> (true,ar,rap,rar)
+             | `PosShape (_, `Rectangle (_, `U, `U)) -> (ap,true,rap,rar)
+             | `Repeat (`PosShape (_, `Point (`U))) -> (ap,ar,true,rar)
+             | `Repeat (`PosShape (_, `Rectangle (_, `U, `U))) -> (ap,ar,rap,true)
              | _ -> (ap,ar,rap,rar))
            (false,false,false,false) `Root layers
        else true, true, false, false in
@@ -2820,7 +2834,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
          if rep_any_point
          then []
          else
-           let obj = `PosShape (`U, `Point (`U)) in
+           let obj = `PosShape (u_vec, `Point (`U)) in
            if any_point
            then [obj]
            else [obj; `Repeat obj] in
@@ -2830,7 +2844,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
          if rep_any_rect
          then []
          else
-           let obj = `PosShape (`U, `Rectangle (`U, `U, `U)) in
+           let obj = `PosShape (u_vec, `Rectangle (u_vec, `U, `U)) in
            if any_rect
            then [obj]
            else [obj; `Repeat obj] in
@@ -2840,7 +2854,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
        Myseq.concat
          (List.map
             (fun p_shape ->
-              let obj = `PosShape (`U, `Ref p_shape) in
+              let obj = `PosShape (u_vec, `Ref p_shape) in
               let obj =
                 match path_ctx p_shape with
                 | None -> obj
