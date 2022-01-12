@@ -271,14 +271,14 @@ let solved_train_names = (* 29 tasks, ~190.5s for timeout=30s, max_nb_parses=64,
     "6f8cd79b.json"; (* black grid => add cyan border, runtime=0.1s *)
     "7e0986d6.json"; (* NEED MORE TIME collection of rectangles + noise points to be removed, runtime=60.0 *)
     "a1570a43.json"; (* red shape moved into 4 green points, runtime=11.1s *)
-    "a61ba2ce.json"; (* WRONG EXPR -  4 corners, they join as a small square, runtime=22.2s *)
+    "a61ba2ce.json"; (* 4 corners, they join as a small square, runtime=22.2s *)
     "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.1s *)
     "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=6.8s *)
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.4s *)
     "b1948b0a.json"; (* any bitmap, changing background color, runtime=0.4s *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.7s *)
     "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=4.1s *)
-    "bda2d7a6.json"; (* WRONG EXPR - nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=6.4s. With collection: need access to color of item at position (i - 1) mod 3 *)
+    "bda2d7a6.json"; (* nested squares, color shift, partial success: rare case seen as noise, pb: sensitive to params, not really understood, runtime=6.4s. With collection: need access to color of item at position (i - 1) mod 3 *)
     (* bda2 pb: difficult to find right parse as collection of stacked full rectangles, prefer to use one color as background, finds bottom rectangle first because bigger *)
     (* bda2 sol: model common masks such border, checkboard, stripes; ?? *)
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=3.3s *)
@@ -491,7 +491,8 @@ let checker_segmentation : checker =
 	       print_newline ()))
 	(task.train @ task.test)
     method summarize_tasks = ()
-  end												 
+  end
+  
 let _ =
   let () = Printexc.record_backtrace true in
   let dir = ref train_dir in

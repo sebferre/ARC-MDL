@@ -888,7 +888,9 @@ let dl_mask : Grid.mask_model -> dl =
     | `TimesCross -> Mdl.Code.usage 0.025
   | `Mask m ->
      let n = Grid.Mask.height m * Grid.Mask.width m in
-     Mdl.Code.usage 0.3 +. float n (* basic bitmap *)
+     let k = Grid.Mask.area m in
+     Mdl.Code.usage 0.3 +. Mdl.Code.partition [k; n-k] (* prequential coding *)
+     (* Mdl.Code.usage 0.3 +. float n (* basic bitmap *) *)
      (* let missing = n - Grid.Mask.area m in
      Mdl.Code.usage 0.5
      +. Mdl.Code.universal_int_plus missing
