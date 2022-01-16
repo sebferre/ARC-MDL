@@ -1,9 +1,6 @@
 
 open Bigarray
 
-module Intset = Intset.Intmap
-module Intrel2 = Intrel2.Intmap
-       
 type color = int
 
 (* conventional colors like in web app *)
@@ -178,142 +175,7 @@ let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun 
 
 (* grid masks *)
 
-module MaskArray2 = (* to identify active pixels in a same-size grid *)
-  struct
-    type t = (int, int8_unsigned_elt, c_layout) Array2.t
-
-    let empty height width : t = Common.prof "Grid.Mask.empty" (fun () ->
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 0;
-      m)
-
-    let singleton height width i j : t = Common.prof "Grid.Mask.singleton" (fun () ->
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 0;
-      m.{i,j} <- 1;
-      m)
-	
-    let rect height width mini maxi minj maxj : t = Common.prof "Grid.Mask.rect" (fun () ->
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 0;
-      for i = mini to maxi do
-	for j = minj to maxj do
-	  m.{i,j} <- 1
-	done
-      done;
-      m)
-
-    let full height width : t = Common.prof "Grid.Mask.full" (fun () ->
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 1;
-      m)
-
-    let copy m : t = Common.prof "Grid.Mask.copy" (fun () ->
-      let m2 = Array2.create Int8_unsigned C_layout
-			    (Array2.dim1 m) (Array2.dim2 m) in
-      Array2.blit m m2;
-      m2)
-
-    let is_empty m : bool = Common.prof "Grid.Mask.is_empty" (fun () ->
-      let height = Array2.dim1 m in
-      let width = Array2.dim2 m in
-      let res = ref 0 in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  res := !res lor m.{i,j}
-	done
-      done;
-      !res = 0)
-
-    let is_subset m1 m2 : bool = Common.prof "Grid.Mask.is_subset" (fun () ->
-      let height = Array2.dim1 m1 in
-      let width = Array2.dim2 m2 in
-      assert (Array2.dim1 m2 = height);
-      assert (Array2.dim2 m2 = width);
-      let res = ref 1 in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  res := !res land (lnot m1.{i,j} lor m2.{i,j})
-	done
-      done;
-      !res = 1)
-
-    let mem i j m =
-      m.{i,j} = 1
-
-    let add_in_place i j m =
-      m.{i,j} <- 1;
-      m
-	       
-    let union m1 m2 = Common.prof "Grid.Mask.union" (fun () ->
-      let height = Array2.dim1 m1 in
-      let width = Array2.dim2 m1 in
-      assert (Array2.dim1 m2 = height);
-      assert (Array2.dim2 m2 = width);
-      let m = Array2.create Int8_unsigned C_layout height width in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  m.{i,j} <- m1.{i,j} lor m2.{i,j}
-	done
-      done;
-      m)
-		     
-    let union_list ms =
-      match ms with
-      | [] -> invalid_arg "Grid.Mask.union_list: empty list"
-      | m1::ms1 ->
-	 let height = Array2.dim1 m1 in
-	 let width = Array2.dim2 m1 in
-	 let m = Array2.create Int8_unsigned C_layout height width in
-	 for i = 0 to height - 1 do
-	   for j = 0 to width - 1 do
-	     m.{i,j} <-
-	       List.fold_left
-		 (fun res mk -> res lor mk.{i,j})
-		 m1.{i,j} ms1
-	   done
-	 done;
-	 m
-
-    let inter m1 m2 = Common.prof "Grid.Mask.inter" (fun () ->
-      let height = Array2.dim1 m1 in
-      let width = Array2.dim2 m1 in
-      assert (Array2.dim1 m2 = height);
-      assert (Array2.dim2 m2 = width);
-      let m = Array2.create Int8_unsigned C_layout height width in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  m.{i,j} <- m1.{i,j} land m2.{i,j}
-	done
-      done;
-      m)
-		     
-    let diff m1 m2 = Common.prof "Grid.Mask.diff" (fun () ->
-      let height = Array2.dim1 m1 in
-      let width = Array2.dim2 m1 in
-      assert (Array2.dim1 m2 = height);
-      assert (Array2.dim2 m2 = width);
-      let m = Array2.create Int8_unsigned C_layout height width in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  m.{i,j} <- m1.{i,j} land (lnot m2.{i,j})
-	done
-      done;
-      m)
-		     
-    let iter f m =
-      let height = Array2.dim1 m in
-      let width = Array2.dim2 m in
-      for i = 0 to height - 1 do
-	for j = 0 to width - 1 do
-	  if m.{i,j} = 1 then
-	    f i j
-	done
-      done
-	  
-  end
-
-module MaskZ =
+module Mask = (* based on Z arithmetics, as compact bitsets *)
   struct
     type t = { height : int;
 	       width : int;
@@ -405,8 +267,6 @@ module MaskZ =
       done;
       !res
   end
-    
-module Mask = MaskZ
 
 type mask_model =
   [ `Mask of Mask.t
