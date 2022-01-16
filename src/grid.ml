@@ -43,18 +43,29 @@ type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 	       
 type t = { height : int; (* equals Array2.dim1 matrix *)
 	   width : int;  (* equals Array2.dim2 matrix *)
-	   matrix : matrix }
+	   matrix : matrix; (* [i,j] -> col *)
+           color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
+         }
 type pixel = int * int * color (* x, y, col *)
 
 let max_size = 30
            
 let make height width col =
   let matrix = Array2.create Int8_unsigned C_layout height width in
+  let color_count = Array.make (nb_color+1) 0 in 
   Array2.fill matrix col;
-  { height; width; matrix }
+  color_count.(col) <- height * width;
+  { height; width; matrix; color_count }
 			   
 let set_pixel grid i j c =
-  try grid.matrix.{i,j} <- c
+  try
+    let c0 = grid.matrix.{i,j} in
+    if c <> c0 then (
+      grid.matrix.{i,j} <- c;
+      (* maintaining color count *)
+      grid.color_count.(c0) <- grid.color_count.(c0) - 1;
+      grid.color_count.(c) <- grid.color_count.(c) + 1
+    )
   with _ -> () (* pixels out of bound are ignored *)
 
 let iter_pixels f grid = Common.prof "Grid.iter_pixels" (fun () ->
@@ -64,6 +75,25 @@ let iter_pixels f grid = Common.prof "Grid.iter_pixels" (fun () ->
       f i j mat.{i,j}
     done
   done)
+
+let color_partition ~(colors : color list) (grid : t) : int list =
+  List.map
+    (fun c -> grid.color_count.(c))
+    colors
+
+let crop ~(pos : int * int) ~(size : int * int) (grid : t) : t =
+  let mini, minj = pos in
+  let height, width = size in
+  let matrix = Array2.create Int8_unsigned C_layout height width in
+  let color_count = Array.make (nb_color+1) 0 in 
+  for i = 0 to height - 1 do
+    for j = 0 to width - 1 do
+      let c = grid.matrix.{mini + i, minj + j} in
+      matrix.{i,j} <- c;
+      color_count.(c) <- color_count.(c) + 1
+    done
+  done;
+  { height; width; matrix; color_count }
 
 (* pretty-printing in terminal *)
 
@@ -886,6 +916,11 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
     Common.group_by
       (fun part -> part.minj, part.maxj, part.color)
       parts in
+(*  let c_sets =
+    (* grouping same-color parts *)
+    Common.group_by
+      (fun (part : part) -> part.color)
+      parts in *)
   let res = [] in
   let res =
     List.fold_left
@@ -921,6 +956,20 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    let lr = rectangles_of_part ~multipart:true g mask mp in
 	    lr @ res)
       res v_sets in
+(*  let res =
+    List.fold_left
+      (fun res (_, ps) ->
+       match ps with
+       | [] -> assert false
+       | [_] -> res
+       | _ -> (* at least two parts *)
+	  let mp = merge_parts ps in
+	  if List.exists (fun p -> Mask.equal p.pixels mp.pixels) ps
+	  then res
+	  else
+	    let lr = rectangles_of_part ~multipart:true g mask mp in
+	    lr @ res)
+      res c_sets in *)
   let res =
     res
     |> List.sort
