@@ -161,36 +161,42 @@ let html_of_grid (g : Grid.t) =
   Buffer.add_string buf "</table>";
   Buffer.contents buf
 
-let html_of_grid_pair gi go =
-  html_of_grid gi
-  ^ "&nbsp;"
-  ^ html_of_grid go
-  
 let html_of_grid_from_data data =
   match Model2.grid_of_data data with
   | Result.Ok g -> html_of_grid g
   | Result.Error exn -> "(undefined grid)"
 
-let html_of_grid_pair_from_data data_i data_o =
-  html_of_grid_from_data data_i
-  ^ "&nbsp;"
-  ^ html_of_grid_from_data data_o
+let html_grid_pair html_i html_o =
+  html_i ^ "&nbsp;" ^ html_o
     
-type col = ColExample | ColDescr
+type col = ColExample | ColDescr | ColPred
 type cell =
   | Example of Grid.t * Grid.t
   | Descr of Model2.grid_read * Model2.grid_read
+  | Pred of Model2.grid_data * Grid.t
+  | Error of string
                                     
 let html_of_cell : cell -> Html.t = function
   | Example (gi,go) ->
-     html_of_grid_pair gi go
+     html_grid_pair
+       (html_of_grid gi)
+       (html_of_grid go)
   | Descr (ri,ro) ->
      let (_, {data=d_i}, dli : Model2.grid_read) = ri in
      let (_, {data=d_o}, dlo : Model2.grid_read) = ro in
-     html_of_grid_pair_from_data d_i d_o
+     html_grid_pair
+       (html_of_grid_from_data d_i)
+       (html_of_grid_from_data d_o)
      ^ Printf.sprintf "<br/>DL = %.3f = %.3f + %.3f" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
      ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
+  | Pred (gd_i,go) ->
+     let d_i = gd_i.Model2.data in
+     html_grid_pair
+       (html_of_grid_from_data d_i)
+       (html_of_grid go)
+     ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
+  | Error msg -> Jsutils.escapeHTML msg
         
 let w_focus : (arc_word, unit, arc_focus) Widget_focus.widget =
   new Widget_focus.widget
@@ -202,7 +208,7 @@ let w_suggestions : arc_suggestion Widget_suggestions.widget =
     ~id:"lis-suggestions"
     ~html_of_suggestion
 
-let cols = [ColExample; ColDescr]
+let cols = [ColExample; ColDescr; ColPred]
 let w_results : (col, cell) Widget_table.widget =
   new Widget_table.widget
     ~id:"lis-results"
@@ -210,7 +216,8 @@ let w_results : (col, cell) Widget_table.widget =
       let html =
         match col with
         | ColExample -> "Example"
-        | ColDescr -> "Description" in
+        | ColDescr -> "Description"
+        | ColPred -> "Prediction" in
       None, None, None, html)
     ~html_of_cell
 
@@ -223,11 +230,19 @@ let render_place place k =
       let l_bindings =
         List.map2
           (fun pair reads ->
-            match reads with
-            | (in_r,out_r,dl)::_ -> (* using only first read *)
-               [ ColExample, Example (pair.Task.input, pair.Task.output);
-                 ColDescr, Descr (in_r,out_r) ]
-            | _ -> assert false)
+            let ({input=gi; output=go} : Task.pair) = pair in
+            let descr =
+              match reads with
+              | (in_r,out_r,dl)::_ -> Descr (in_r,out_r) (* using only first read *)
+              | [] -> Error "No valid description" in
+            let pred =
+              match Model2.apply_model ext.model gi with
+              | Result.Ok ((gdi, go)::_) -> Pred (gdi,go) (* using only first trial *)
+              | Result.Ok [] -> Error "No valid prediction"
+              | Result.Error exn -> Error (Printexc.to_string exn) in
+            [ ColExample, Example (gi,go);
+              ColDescr, descr;
+              ColPred, pred ])
           ext.task.train ext.gprs.Model2.reads in
       w_results#set_contents cols l_bindings)
     (fun suggestions ->
