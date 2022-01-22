@@ -223,27 +223,39 @@ let w_results : (col, cell) Widget_table.widget =
 
 
 let render_place place k =
+  let get_pred m gi =
+    match Model2.apply_model m gi with
+    | Result.Ok ((gdi, go)::_) -> Pred (gdi,go) (* using only first trial *)
+    | Result.Ok [] -> Error "No valid prediction"
+    | Result.Error exn -> Error (Printexc.to_string exn)
+  in
   let xml = xml_of_focus place#focus in
   w_focus#set_syntax xml;
   place#eval
     (fun ext ->
       let l_bindings =
-        List.map2
-          (fun pair reads ->
+        List.map
+          (fun pair ->
+            let ({input=gi; output=go} : Task.pair) = pair in
+            let pred = get_pred ext.model gi in
+            [ ColExample, Example (gi,go);
+              ColPred, pred ])
+          ext.task.test in
+      let l_bindings =
+        List.fold_right2
+          (fun pair reads l_bindings ->
             let ({input=gi; output=go} : Task.pair) = pair in
             let descr =
               match reads with
               | (in_r,out_r,dl)::_ -> Descr (in_r,out_r) (* using only first read *)
               | [] -> Error "No valid description" in
-            let pred =
-              match Model2.apply_model ext.model gi with
-              | Result.Ok ((gdi, go)::_) -> Pred (gdi,go) (* using only first trial *)
-              | Result.Ok [] -> Error "No valid prediction"
-              | Result.Error exn -> Error (Printexc.to_string exn) in
-            [ ColExample, Example (gi,go);
-              ColDescr, descr;
-              ColPred, pred ])
-          ext.task.train ext.gprs.Model2.reads in
+            let pred = get_pred ext.model gi in
+            let row =
+              [ ColExample, Example (gi,go);
+                ColDescr, descr;
+                ColPred, pred ] in
+            row::l_bindings)
+          ext.task.train ext.gprs.Model2.reads l_bindings in
       w_results#set_contents cols l_bindings)
     (fun suggestions ->
       w_suggestions#set_suggestions ["col-md-12 col-xs-12"] suggestions;
