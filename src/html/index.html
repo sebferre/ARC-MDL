@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>ARC-LIS</title>
+    <meta charset="UTF-8"/>
+    <meta name="author" content="Sébastien Ferré"/>
+    <!-- jQuery library -->
+    <script src="http://code.jquery.com/jquery-2.2.4.min.js"></script>
+    <!-- Bootstrap -->
+    <link rel="stylesheet" href="http://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css"/>
+    <script src="http://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+    <!-- FabLIS -->
+    <link href="index.css?v=2" rel="stylesheet" type="text/css"/>
+    <script src="script.js"></script>
+  </head>
+
+  <body>
+    <!-- header -->
+    <nav class="navbar navbar-inverse">
+      <div class="container-fluid">
+	<div class="navbar-header">
+	  <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#myNavbar">
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>                        
+	  </button>
+	  <a class="navbar-brand">ARC-LIS</a>
+	</div>
+	
+	<div class="collapse navbar-collapse" id="myNavbar">
+
+	</div>
+      </div>
+    </nav>
+
+    <!-- navigation controls -->
+    <div id="control-navig" class="navbar" data-spy="affix" data-offset-top="75">
+      <div class="nav navbar-nav navbar-left">
+	<span class="btn-group">
+	  <button id="button-home" class="btn btn-primary btn-md navbar-btn" data-toggle="tooltip" title="Click to reset the query">
+	    <span class="glyphicon glyphicon-home"></span>
+	  </button>
+	  <button id="button-back" class="btn btn-primary btn-md navbar-btn" data-toggle="tooltip" title="Click to go back in navigation history">
+	    <span class="glyphicon glyphicon-arrow-left"></span>
+	  </button>
+	  <button id="button-forward" class="btn btn-primary btn-md navbar-btn" data-toggle="tooltip" title="Click to go forward in navigation history">
+	    <span class="glyphicon glyphicon-arrow-right"></span>
+	  </button>
+	  <button id="button-refresh" class="btn btn-primary btn-md navbar-btn" data-toggle="tooltip" title="Click to refresh the current view, e.g. after changing the configuration">
+	    <span class="glyphicon glyphicon-refresh"></span>
+	  </button>
+	</span>
+
+      </div>
+    </div>
+
+    <!-- main components -->
+    <div class="container-fluid">
+	
+      <!-- <div id="lis-view" class="panel-group"> -->
+      <div class="row">
+	<!-- focus view -->
+	<div class="col-md-8 col-xs-12">
+	  <div id="focus-view" class="panel panel-info">
+	    <div class="panel-heading">
+	      <h5 class="panel-title">
+		<a data-toggle="collapse" data-target="#collapse-focus">
+		  Your task model</span>
+		  <!-- (click on different parts of the query to change it) -->
+		</a>
+		&nbsp;
+		<span class="btn-group">
+		  <button id="button-save" class="btn btn-primary btn-sm" data-toggle="tooltip" title="Click to save the query">
+		    <span class="glyphicon glyphicon-save"></span>
+		  </button>
+		  <button id="button-open" class="btn btn-primary btn-sm" data-toggle="tooltip" title="Click to load a saved query">
+		    <span class="glyphicon glyphicon-open"></span>
+		  </button>
+		</span>
+		<input id="input-open" type="file" accept=".json,application/json" style="display:none"/>
+	      </h5>
+	    </div>
+	    <div id="collapse-focus" class="panel-collapse collapse in">
+	      <div id="focus-body" class="panel-body">
+		<div id="lis-focus">
+		  FOCUS
+		</div>
+		<!-- <div id="lis-commandline">
+		  COMMANDLINE
+		</div> -->
+	      </div>
+	    </div>
+	  </div>
+	</div>
+
+	<!-- suggestions view -->
+	<div class="col-md-4 col-xs-12">
+	  <div id="suggestions-view" class="panel panel-info">
+	    <div class="panel-heading">
+	      <h5 class="panel-title">
+		<a data-toggle="collapse" data-target="#collapse-suggestions">
+		  Suggestions to refine your model
+		</a>
+		&nbsp;
+		<span class="btn-group" style="visibility:hidden">
+		  <button class="btn btn-primary btn-sm">
+		    <span class="glyphicon glyphicon-save" title=""></span>
+		  </button>
+		</span>
+	      </h5>
+	    </div>
+	    <div id="collapse-suggestions" class="panel-collapse collapse in">
+	      <div id="suggestions-body" class="panel-body">
+		<div id="lis-suggestions">
+		  SUGGESTIONS
+		</div>
+	      </div>
+	    </div>
+	  </div>
+	</div>
+      </div>
+
+      <div class="row">
+	<!-- results view -->
+	<div class="col-md-12">
+	  <div id="results-view" class="panel panel-info">
+	    <div class="panel-heading">
+	      <h5 class="panel-title">
+		<a data-toggle="collapse" data-target="#collapse-results">
+		  Model-based description of the task examples
+		</a>
+		&nbsp;
+		<span class="btn-group">
+		  <button id="button-save-results" class="btn btn-primary btn-sm" data-toggle="tooltip" title="Click to save the results">
+		    <span class="glyphicon glyphicon-save"></span>
+		  </button>
+		</span>
+	      </h5>
+	    </div>
+	    <div id="collapse-results" class="panel-collapse collapse in">
+	      <div id="results-body" class="panel-body">
+		<div id="lis-results">
+		  RESULTS
+		</div>
+	      </div>
+	    </div>
+	  </div>
+	</div>
+      </div>
+    </div>
+
+    <!-- footer -->
+    <footer>
+      <hr/>
+      Created by
+      <a target="_blank" href="http://people.irisa.fr/Sebastien.Ferre">Sébastien Ferré</a> © 2019-
+      <a target="_blank" href="http://www-semlis.irisa.fr/"><img src="semlis.png" alt="SemLIS team" height="30"></a>
+      <a target="_blank" href="http://www.irisa.fr/"><img src="irisa.jpg" alt="IRISA" height="30"></a>
+      <a target="_blank" href="http://www.univ-rennes1.fr/"><img src="UR1.png" alt="Université Rennes 1" height="30"></a>
+      <br/>
+      
+      Last modified January 20th, 2022. Visit
+      <a target="_blank" href="http://people.irisa.fr/Sebastien.Ferre/">
+	my homepage
+      </a>
+      for more information.
+    </footer>
+
+    <script>
+        $(function () {
+            $('[data-toggle="tooltip"]').tooltip();
+        });
+    </script>
+
+  </body>
+</html>
