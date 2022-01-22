@@ -309,7 +309,7 @@ type 'a expr =
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
-         
+
 type template =
   [ `U
   | `Repeat of template patt
@@ -340,11 +340,11 @@ let grid_data0 =
 
 (* stringifiers and pretty-printing *)
 
-let rec string_of_ilist_path : ilist_revpath -> string =
+let rec xp_ilist_path (print : Xprint.t) : ilist_revpath -> unit =
   function
-  | `Root -> "0"
-  | `Left p -> string_of_ilist_path p ^ "0"
-  | `Right p -> string_of_ilist_path p ^ "1"
+  | `Root -> print#string "0"
+  | `Left p -> xp_ilist_path print p; print#string "0"
+  | `Right p -> xp_ilist_path print p; print#string "1"
 
 let string_of_kind : kind -> string = function
   | Bool -> "bool"
@@ -357,170 +357,175 @@ let string_of_kind : kind -> string = function
   | Layer -> "layer"
   | Grid -> "grid"
 
-let rec string_of_role = function
-  | `Int (`I, rv) -> "i/" ^ string_of_role_vec rv
-  | `Int (`J, rv) -> "j/" ^ string_of_role_vec rv
-  | `Index -> "index"
-  | `Color rf -> "color/" ^ string_of_role_frame rf
-  | `Mask -> "mask"
-  | `Vec rv -> "vec/" ^ string_of_role_vec rv
-  | `Shape -> "shape"
-  | `Object -> "object"
-  | `Layer -> "layer"
-  | `Grid -> "grid"
-and string_of_role_vec = function
-  | `Pos -> "pos"
-  | `Size rf -> "size/" ^ string_of_role_frame rf
-and string_of_role_frame = function
-  | `Shape -> "shape"
-  | `Grid -> "grid"
+let rec xp_role (print : Xprint.t) = function
+  | `Int (`I, rv) -> print#string "i/"; xp_role_vec print rv
+  | `Int (`J, rv) -> print#string "j/"; xp_role_vec print rv
+  | `Index -> print#string "index"
+  | `Color rf -> print_string "color/"; xp_role_frame print rf
+  | `Mask -> print#string "mask"
+  | `Vec rv -> print#string "vec/"; xp_role_vec print rv
+  | `Shape -> print#string "shape"
+  | `Object -> print#string "object"
+  | `Layer -> print#string "layer"
+  | `Grid -> print#string "grid"
+and xp_role_vec print = function
+  | `Pos -> print#string "pos"
+  | `Size rf -> print#string "size/"; xp_role_frame print rf
+and xp_role_frame print = function
+  | `Shape -> print#string "shape"
+  | `Grid -> print#string "grid"
            
-let string_of_field : field -> string = function
-  | `I -> "i"
-  | `J -> "j"
-  | `Pos -> "pos"
-  | `Color -> "color"
-  | `Size -> "size"
-  | `Mask -> "mask"
-  | `Shape -> "shape"
-  | `Layer lp -> "layer_" ^ string_of_ilist_path lp
+let xp_field (print : Xprint.t) : field -> unit = function
+  | `I -> print#string "i"
+  | `J -> print#string "j"
+  | `Pos -> print#string "pos"
+  | `Color -> print#string "color"
+  | `Size -> print#string "size"
+  | `Mask -> print#string "mask"
+  | `Shape -> print#string "shape"
+  | `Layer lp -> print#string "layer_"; xp_ilist_path print lp
+let pp_field = Xprint.to_stdout xp_field
 
-let rec string_of_path : revpath -> string = function
-  | `Root -> "^"
-  | `Field (f,p) -> string_of_path p ^ "." ^ string_of_field f
-  | `Arg (i,role_opt,p) -> string_of_path p ^ "." ^ string_of_int i
-  | `Item (None,local,ctx) -> string_of_path ctx ^ "{" ^ string_of_path local ^ "}"
-  | `Item (Some i,local,ctx) -> string_of_path ctx ^ "{" ^ string_of_path local ^ "}[" ^ string_of_int i ^ "]"
+let rec xp_path (print : Xprint.t) : revpath -> unit = function
+  | `Root -> print#string "^"
+  | `Field (f,p) -> xp_path print p; print#string "."; xp_field print f
+  | `Arg (i,role_opt,p) -> xp_path print p; print#string "."; print#int i
+  | `Item (None,local,ctx) -> xp_path print ctx; print#string "{"; xp_path print local; print#string "}"
+  | `Item (Some i,local,ctx) -> xp_path print ctx; print#string "{";  xp_path print local; print#string "}["; print#int i; print#string "]"
+let pp_path = Xprint.to_stdout xp_path
 
-let pp_path p = print_string (string_of_path p)
-let pp_path_list lp =
-  print_string "(";
-  List.iter (fun path -> pp_path path; print_string " in ") lp;
-  print_string ")"
+let xp_path_list (print : Xprint.t) lp =
+  print#string "(";
+  List.iter (fun path -> xp_path print path; print#string " in ") lp;
+  print#string ")"
+let pp_path_list = Xprint.to_stdout xp_path_list
 
-let rec string_of_ilist (string : 'a -> string) (l : 'a ilist) : string =
+let rec xp_ilist (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (l : 'a ilist) : unit =
   let rec aux lp = function
-    | `Nil -> ""
+    | `Nil -> ()
     | `Insert (left,elt,right) ->
-       aux (`Left lp) left
-       ^ "\n  _" ^ string_of_ilist_path lp ^ ": " ^ string elt
-       ^ aux (`Right lp) right
+       aux (`Left lp) left;
+       print#string "\n  _"; xp_ilist_path print lp; print#string ": "; xp print elt;
+       aux (`Right lp) right
   in
   aux `Root l
 
-let string_of_mask_model : Grid.mask_model -> string = function
-  | `Full -> "Full"
-  | `Border -> "Border"
-  | `EvenCheckboard -> "Even Checkboard"
-  | `OddCheckboard -> "Odd Checkboard"
-  | `PlusCross -> "+-cross"
-  | `TimesCross -> "x-cross"
-  | `Mask m -> Grid.Mask.to_string m
+let xp_mask_model (print : Xprint.t) : Grid.mask_model -> unit = function
+  | `Full -> print#string "Full"
+  | `Border -> print#string "Border"
+  | `EvenCheckboard -> print#string "Even Checkboard"
+  | `OddCheckboard -> print#string "Odd Checkboard"
+  | `PlusCross -> print#string "+-cross"
+  | `TimesCross -> print#string "x-cross"
+  | `Mask m -> print#string (Grid.Mask.to_string m)
                  
-let rec string_of_patt (string : 'a -> string) : 'a patt -> string = function
-  | `Bool b -> if b then "true" else "false"
-  | `Int i -> string_of_int i
-  | `Color c -> Grid.name_of_color c
-  | `Mask m -> string_of_mask_model m
+let rec xp_patt (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a patt -> unit = function
+  | `Bool b -> print#string (if b then "true" else "false")
+  | `Int i -> print#int i
+  | `Color c -> print#string (Grid.name_of_color c)
+  | `Mask m -> xp_mask_model print m
   | `Vec (i,j) ->
-     "(" ^ string i ^ "," ^ string j ^ ")"
+     print#string "("; xp print i; print#string ","; xp print j; print#string ")"
   | `Point (color) ->
-     "a point"
-     ^ " with color " ^ string color
+     print#string "a point";
+     print#string " with color "; xp print color
   | `Rectangle (size,color,mask) ->
-     "a rectangle"
-     ^ " with size " ^ string size
-     ^ " and color " ^ string color
-     ^ " and mask " ^ string mask
+     print#string "a rectangle";
+     print#string " with size "; xp print size;
+     print#string " and color "; xp print color;
+     print#string " and mask "; xp print mask
   | `PosShape (pos,shape) ->
-     string shape ^ " at " ^ string pos
+     xp print shape; print#string " at "; xp print pos
   | `Background (size,color,layers) ->
-     "a background with size " ^ string size
-     ^ " and color " ^ string color
-     ^ " and layers" ^ string_of_ilist string layers
+     print#string "a background with size "; xp print size;
+     print#string " and color "; xp print color;
+     print#string " and layers"; xp_ilist xp print layers
   | `Many (ordered,l) ->
-     let contents = String.concat ",\n\t" (List.map string l) in
-     if ordered
-     then "[ " ^ contents ^ " ]"
-     else "{\n\t" ^ contents ^ " }"
+     Xprint.bracket
+       (if ordered then "[", "]" else "{\n\t", " }")
+       (Xprint.sep_list ",\n\t" xp)
+       print
+       l
+let pp_patt xp patt = Xprint.to_stdout (xp_patt xp) patt
+let pp_patt_dummy patt = pp_patt (fun print _ -> print#string "_") patt
 
-let rec string_of_data : data -> string = function
-  | #patt as patt -> string_of_patt string_of_data patt
-
-let pp_data d = print_string (string_of_data d)
+let rec xp_data (print : Xprint.t) : data -> unit = function
+  | #patt as patt -> xp_patt xp_data print patt
+let pp_data = Xprint.to_stdout xp_data
+let string_of_data = Xprint.to_string xp_data
 
 let string_of_index = "$index"
               
-let string_of_var : var -> string = function
-  | #revpath as p -> string_of_path p
-  | `Index -> string_of_index
+let xp_var (print : Xprint.t) : var -> unit = function
+  | #revpath as p -> xp_path print p
+  | `Index -> print#string string_of_index
+let string_of_var = Xprint.to_string xp_var
 
-let string_apply (func : string) (args : string list) : string =
-  func ^ "(" ^ String.concat ", " args ^ ")"
+let xp_apply (func : string) (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (args : 'a list) : unit =
+  print#string func;
+  print#string "(";
+  Xprint.sep_list ", " xp print args;
+  print#string ")"
   
-let rec string_of_expr (string : 'a -> string) : 'a expr -> string = function
-  | `Ref p -> string_of_path p
-  | `ZeroInt -> "'0"
-  | `ZeroVec -> "'(0,0)"
-  | `Plus (a,b) ->
-     string a ^ " + " ^ string b
-  | `Minus (a,b) ->
-     string a ^ " - " ^ string b
-  | `Modulo (a,b) ->
-     string a ^ " % " ^ string b
-  | `ScaleUp (a,k) ->
-     string a ^ " * " ^ string_of_int k
-  | `ScaleDown (a,k) ->
-     string a ^ " / " ^ string_of_int k
-  | `Corner (a,b) ->
-     string_apply "corner" [string a; string b]
-  | `Average (la) ->
-     string_apply "average" (List.map string la)
-  | `Norm a ->
-     "|" ^ string a ^ "|"
-  | `Diag1 (a,k) ->
-     string_apply "diag1" [string a; string_of_int k]
-  | `Diag2 (a,k) ->
-     string_apply "diag2" [string a; string_of_int k]
-  | `LogAnd (a,b) -> string a ^ " and " ^ string b
-  | `LogOr (a,b) -> string a ^ " or " ^ string b
-  | `LogXOr (a,b) -> string a ^ " xor " ^ string b
-  | `LogAndNot (a,b) -> string a ^ " and not " ^ string b
-  | `LogNot (a) -> "not " ^ string a
-  | `Area a -> string_apply "area" [string a]
-  | `Left a -> string_apply "left" [string a]
-  | `Right a -> string_apply "right" [string a]
-  | `Center a -> string_apply "center" [string a]
-  | `Top a -> string_apply "top" [string a]
-  | `Bottom a -> string_apply "bottom" [string a]
-  | `Middle a -> string_apply "middle" [string a]
-  | `Index -> string_of_index
-  | `Indexing (e1,e2) ->
-     string e1 ^ "[" ^ string e2 ^ "]"
+let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> unit = function
+  | `Ref p -> xp_path print p
+  | `ZeroInt -> print#string "'0"
+  | `ZeroVec -> print#string "'(0,0)"
+  | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
+  | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
+  | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
+  | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
+  | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
+  | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
+  | `Average (la) -> xp_apply "average" xp print la
+  | `Norm a -> Xprint.bracket ("|","|") xp print a
+  | `Diag1 (a,k) -> print#string "diag1("; xp print a; print#string ", "; print#int k; print#string ")" 
+  | `Diag2 (a,k) -> print#string "diag2("; xp print a; print#string ", "; print#int k; print#string ")" 
+  | `LogAnd (a,b) -> Xprint.infix " and " xp print (a, b)
+  | `LogOr (a,b) -> Xprint.infix " or " xp print (a, b)
+  | `LogXOr (a,b) -> Xprint.infix " xor " xp print (a, b)
+  | `LogAndNot (a,b) -> Xprint.infix " and not " xp print (a, b)
+  | `LogNot (a) -> print#string "not "; xp print a
+  | `Area a -> xp_apply "area" xp print [a]
+  | `Left a -> xp_apply "left" xp print [a]
+  | `Right a -> xp_apply "right" xp print [a]
+  | `Center a -> xp_apply "center" xp print [a]
+  | `Top a -> xp_apply "top" xp print [a]
+  | `Bottom a -> xp_apply "bottom" xp print [a]
+  | `Middle a -> xp_apply "middle" xp print [a]
+  | `Index -> print#string string_of_index
+  | `Indexing (e1,e2) -> xp print e1; print_string "["; xp print e2; print#string "]"
+let string_of_expr xp = Xprint.to_string (xp_expr xp)
+                         
+                   
+let rec xp_template (print : Xprint.t) : template -> unit = function
+  | `U -> print#string "?"
+  | `Repeat patt -> print#string "repeat "; xp_patt xp_template print patt
+  | `For (p,e1) -> print#string "for {"; xp_path print p; print#string "}: "; xp_template print e1
+  | #patt as patt -> xp_patt xp_template print patt
+  | #expr as e -> xp_expr xp_template print e
+let pp_template = Xprint.to_stdout xp_template
+let string_of_template = Xprint.to_string xp_template
 
-(*let pp_expr e = print_string (string_of_expr e)*)
-
-let rec string_of_template : template -> string = function
-  | `U -> "?"
-  | `Repeat patt -> "repeat " ^ string_of_patt string_of_template patt
-  | `For (p,e1) -> "for {" ^ string_of_path p ^ "}: " ^ string_of_template e1
-  | #patt as patt -> string_of_patt string_of_template patt
-  | #expr as e -> string_of_expr string_of_template e
-
-let pp_template t = print_string (string_of_template t)
-
-let string_of_signature (sg : signature) : string =
-  String.concat "\n"
+let xp_signature (print : Xprint.t) (sg : signature) : unit =
+  Xprint.sep_list "\n"
+    (fun print (k,ps) ->
+      print#string (string_of_kind k); print#string ": ";
+      Xprint.sep_list ", " xp_path print ps)
+    print
+    sg
+(*  String.concat "\n"
     (List.map
        (fun (k,ps) ->
          string_of_kind k ^ ": "
          ^ String.concat ", "
              (List.map string_of_path ps))
-       sg)
+       sg) *)
                   
-let pp_diff diff =
+let xp_diff (print : Xprint.t) diff =
   diff
-  |> List.iter (fun p1 -> print_string "  "; pp_path p1)
+  |> List.iter (fun p1 -> print#string "  "; xp_path print p1)
+let pp_diff = Xprint.to_stdout xp_diff
                   
 let pp_delta delta =
   delta
@@ -621,8 +626,8 @@ let rec find_field_patt (find : 'a -> 'a option) (f : field) (patt_parent : 'a p
       | None -> None
       | Some layer -> find layer)
   | _ ->
-     print_string (string_of_field f); print_string ": ";
-     print_string (string_of_patt (fun _ -> "_") patt_parent);
+     pp_field f; print_string ": ";
+     pp_patt_dummy patt_parent;
      print_newline ();
      assert false
 
@@ -986,7 +991,7 @@ let dl_patt
      
   | _ ->
      pp_path path; print_string ": ";
-     print_string (string_of_patt (fun _ -> "_") patt);
+     pp_patt_dummy patt;
      print_newline ();
      assert false                        
 
@@ -1349,7 +1354,7 @@ let _ =
   Printexc.register_printer
     (function
      | Unbound_var v -> Some ("unbound variable: " ^ string_of_var v)
-     | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr string_of_template e)
+     | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr xp_template e)
      | Undefined_result msg -> Some ("undefined expression: " ^ msg)
      | Out_of_bound (items,i) -> Some ("out of bound indexing: " ^ string_of_template (`Many (false,items)) ^ "[" ^ string_of_int i ^ "]")
      | Negative_integer -> Some ("negative integer")
@@ -2210,11 +2215,15 @@ let init_model =
   { input_pattern = init_template;
     output_template = init_template }
 
-let pp_model m =
-  print_endline "CONSTRUCT (Mo)";
-  pp_template m.output_template; print_newline ();
-  print_endline "WHERE (Mi)";
-  pp_template m.input_pattern; print_newline ()
+let xp_model (print : Xprint.t) m =
+  print#string "CONSTRUCT (Mo)\n";
+  xp_template print m.output_template;
+  print#string "\n";
+  print#string "WHERE (Mi)\n";
+  xp_template print m.input_pattern;
+  print#string "\n"
+let pp_model = Xprint.to_stdout xp_model
+let string_of_model = Xprint.to_string xp_model
 
 let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) list, exn) Result.t =
   Common.prof "Model2.apply_model" (fun () ->
@@ -2336,7 +2345,7 @@ let rec insert_patt (f : 'a option -> 'a) (p : revpath) (patt_parent : 'a patt) 
 
   | _ ->
      pp_path p; print_string ": ";
-     print_string (string_of_patt (fun _ -> "_") patt_parent);
+     pp_patt_dummy patt_parent;
      print_newline ();
      assert false)
 
@@ -2374,23 +2383,25 @@ type grid_refinement =
 (*  | RRepeat of revpath
   | RSingle of revpath *)
 
-let pp_grid_refinement = function
+let xp_grid_refinement (print : Xprint.t) = function
   | RGridInit -> ()
   | RDef (p,t,ctx,partial) ->
-     print_string "DEF: "; pp_path p;
-     print_string "="; pp_template t;
-     if partial then print_string " (partial)"
+     print#string "DEF: "; xp_path print p;
+     print#string "="; xp_template print t;
+     if partial then print#string " (partial)"
   | RObject (path,obj) ->
-     print_string "OBJECT at ";
-     pp_path path;
-     print_string ": ";
-     pp_template obj
+     print#string "OBJECT at ";
+     xp_path print path;
+     print#string ": ";
+     xp_template print obj
 (*  | RRepeat path ->
      print_string "REPEAT at ";
      pp_path path
   | RSingle path ->
      print_string "SINGLE at ";
      pp_path path *)
+let pp_grid_refinement = Xprint.to_stdout xp_grid_refinement
+let string_of_grid_refinement = Xprint.to_string xp_grid_refinement
 
 exception Refinement_no_change
 let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) =
@@ -2934,10 +2945,12 @@ type refinement =
   | Rinput of grid_refinement
   | Routput of grid_refinement
 
-let pp_refinement = function
+let xp_refinement (print : Xprint.t) = function
   | RInit -> ()
-  | Rinput r -> print_string "IN  "; pp_grid_refinement r
-  | Routput r -> print_string "OUT "; pp_grid_refinement r
+  | Rinput r -> print#string "IN  "; xp_grid_refinement print r
+  | Routput r -> print#string "OUT "; xp_grid_refinement print r
+let pp_refinement = Xprint.to_stdout xp_refinement
+let string_of_refinement = Xprint.to_string xp_refinement
 
 let apply_refinement (r : refinement) (m : model) : (refinement * model) option =
   Common.prof "Model2.apply_refinement" (fun () ->
