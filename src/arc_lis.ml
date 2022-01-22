@@ -122,7 +122,10 @@ let html_dl dl =
   Printf.sprintf "%.3f" dl
    
 let xml_of_focus focus =
-  [Syntax.Kwd ("DL = " ^ html_dl focus.dl ^ Html.pre (Model2.string_of_model focus.model))]
+  [Syntax.Block
+     [[Syntax.Kwd (Printf.sprintf "Task %s" focus.name)];
+      [Syntax.Kwd ("DL = " ^ html_dl focus.dl)];
+      [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))]]]
                                       
 let html_of_word (w : arc_word) : Html.t = assert false
 
@@ -143,7 +146,7 @@ let html_of_suggestion ~input_dico = function
      let key = input_dico#add info in
      Html.html_of_input_info key info ^ " a task"
   | RefinedState s ->
-     Jsutils.escapeHTML (html_dl s.dl ^ "  " ^ Model2.string_of_refinement s.refinement)
+     Jsutils.escapeHTML ("(" ^ html_dl s.dl ^ ")  " ^ Model2.string_of_refinement s.refinement)
 
 let html_of_grid (g : Grid.t) =
   let buf = Buffer.create 1000 in
@@ -158,23 +161,36 @@ let html_of_grid (g : Grid.t) =
   Buffer.add_string buf "</table>";
   Buffer.contents buf
 
+let html_of_grid_pair gi go =
+  html_of_grid gi
+  ^ "&nbsp;"
+  ^ html_of_grid go
+  
 let html_of_grid_from_data data =
   match Model2.grid_of_data data with
   | Result.Ok g -> html_of_grid g
   | Result.Error exn -> "(undefined grid)"
-    
-type col = ColDL | ColInputRead | ColOutputRead
-type cell = DL of float | GridRead of Grid.t * Model2.grid_read
 
-let html_of_cell = function
-  | DL dl -> Printf.sprintf "%.3f" dl
-  | GridRead (g, (env, {data; diff; delta}, dl)) ->
-     "DL = " ^ html_dl dl
-     ^ Printf.sprintf " (%d delta cells)" (List.length delta)
-     ^ Html.pre (Model2.string_of_data data)
-     ^ html_of_grid g
-     ^ " read as "
-     ^ html_of_grid_from_data data
+let html_of_grid_pair_from_data data_i data_o =
+  html_of_grid_from_data data_i
+  ^ "&nbsp;"
+  ^ html_of_grid_from_data data_o
+    
+type col = ColExample | ColDescr
+type cell =
+  | Example of Grid.t * Grid.t
+  | Descr of Model2.grid_read * Model2.grid_read
+                                    
+let html_of_cell : cell -> Html.t = function
+  | Example (gi,go) ->
+     html_of_grid_pair gi go
+  | Descr (ri,ro) ->
+     let (_, {data=d_i}, dli : Model2.grid_read) = ri in
+     let (_, {data=d_o}, dlo : Model2.grid_read) = ro in
+     html_of_grid_pair_from_data d_i d_o
+     ^ Printf.sprintf "<br/>DL = %.3f = %.3f + %.3f" (dli +. dlo) dli dlo
+     ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
+     ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
         
 let w_focus : (arc_word, unit, arc_focus) Widget_focus.widget =
   new Widget_focus.widget
@@ -186,16 +202,15 @@ let w_suggestions : arc_suggestion Widget_suggestions.widget =
     ~id:"lis-suggestions"
     ~html_of_suggestion
 
-let cols = [ColDL; ColInputRead; ColOutputRead]               
+let cols = [ColExample; ColDescr]
 let w_results : (col, cell) Widget_table.widget =
   new Widget_table.widget
     ~id:"lis-results"
     ~html_of_column:(fun col ->
       let html =
         match col with
-        | ColDL -> "DL"
-        | ColInputRead -> "input read"
-        | ColOutputRead -> "output read" in
+        | ColExample -> "Example"
+        | ColDescr -> "Description" in
       None, None, None, html)
     ~html_of_cell
 
@@ -210,9 +225,8 @@ let render_place place k =
           (fun pair reads ->
             match reads with
             | (in_r,out_r,dl)::_ -> (* using only first read *)
-               [ ColDL, DL dl;
-                 ColInputRead, GridRead (pair.Task.input, in_r);
-                 ColOutputRead, GridRead (pair.Task.output, out_r) ]
+               [ ColExample, Example (pair.Task.input, pair.Task.output);
+                 ColDescr, Descr (in_r,out_r) ]
             | _ -> assert false)
           ext.task.train ext.gprs.Model2.reads in
       w_results#set_contents cols l_bindings)
