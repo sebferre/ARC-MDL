@@ -1,10 +1,23 @@
 
-Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
+open Js_of_ocaml
+
+let refine_degree = 100
+
+let _ = Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
 
 exception TODO
 
 let ( let| ) res f = Result.bind res f [@@inline]
-        
+
+(* binding operator to force x's effects to take place before running f *)
+(* typical case: x changes the DOM, f () is a long computation *)
+let ( let> ) x f =
+  ignore x;
+  ignore
+    (Dom_html.window##setTimeout
+       (Js.wrap_callback f)
+       0.1)
+                   
 (* ---- LIS -------- *)
         
 type 'a triple = 'a Model2.triple
@@ -64,22 +77,30 @@ object
   method eval k_extent k_suggestions =
     k_extent focus;
     Jsutils.firebug "Computing suggestions...";
-    let suggestions =
+    let _, suggestions = (* selecting up to [refine_degree] compressive refinements, keeping other for information *)
       Model2.model_refinements focus.refinement focus.model focus.gsri focus.gsro
-      |> Myseq.slice ~offset:0 ~limit:100 (* TODO: make it configurable *)
-      |> Myseq.to_rev_list
-      |> List.filter_map
-           (fun (r,m) ->
-             state_of_model focus.name focus.task focus.norm_dl_model_data r m
-             |> Result.to_option)
+      |> Myseq.fold_left
+           (fun (quota_compressive,suggestions as res) (r,m) ->
+             if quota_compressive <= 0
+             then res (* TODO: stop generating sequence *)
+             else
+               match state_of_model focus.name focus.task focus.norm_dl_model_data r m with
+               | Result.Ok state ->
+                  if state.dl < focus.dl
+                  then (quota_compressive - 1, state::suggestions)
+                  else (quota_compressive, state::suggestions)
+               | Result.Error _ -> res)
+           (refine_degree, []) in
+    let suggestions = (* sorting in increasing DL *)
+      suggestions
+      |> List.rev (* to preserve ordering from sequence *) 
       |> List.sort
-           (fun s1 s2 -> Stdlib.compare s1.dl s2.dl)
-      |> List.map
-           (fun s ->
-             `Sugg (RefinedState (s :> arc_state))) in
-    let suggestions =
+           (fun s1 s2 -> Stdlib.compare s1.dl s2.dl) in
+    let suggestions = (* suggestion list in Fablis format *)
       `Sugg (InputTask (new Focus.input (name0,task0)))
-      ::suggestions in
+      :: List.map
+           (fun s -> `Sugg (RefinedState (s :> arc_state)))
+           suggestions in
     Jsutils.firebug "Suggestions computed";
     k_suggestions [suggestions]
 
@@ -229,6 +250,8 @@ let render_place place k =
     | Result.Ok [] -> Error "No valid prediction"
     | Result.Error exn -> Error (Printexc.to_string exn)
   in
+ Jsutils.jquery "#lis-suggestions" (fun elt_lis ->
+     let _ = Jsutils.toggle_class elt_lis "computing" in (* turn on *)
   let xml = xml_of_focus place#focus in
   w_focus#set_syntax xml;
   place#eval
@@ -264,7 +287,10 @@ let render_place place k =
           match place#activate sugg with
           | Some p -> k ~push_in_history:true p
           | None -> assert false) in
-      w_suggestions#on_suggestion_selection suggestion_handler)
+      w_suggestions#on_suggestion_selection suggestion_handler;
+      let _on = Jsutils.toggle_class elt_lis "computing" in (* turn off *)
+      ()))
+
 
 let handle_document_keydown ev place k =
   false

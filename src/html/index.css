@@ -40,6 +40,11 @@
     display: inline-block;
 }
 
+.computing {
+    cursor: progress;
+    opacity: 0.33;
+}
+
 head, body, input, textarea, select {
     font-family: Tahoma, Geneva, sans-serif;
     font-size: 16px;
@@ -325,6 +330,9 @@ input.input-inverse ~ .label-unchecked { margin:0px; }
 input.input-inverse:checked ~ .label-unchecked { display:none; }
 input.input-inverse:checked ~ .label-checked { display:inline; margin:0px; }
 
+#lis-suggestions {
+    transition: opacity 1s;
+}
 
 #control-results {
     margin: 5px 0px;
