@@ -8,8 +8,8 @@ FLAGS_FABLIS = -I ../../fablis/core -I ../../fablis/core/webapp
 
 all: test
 
-test: $(SRC) test.cmo
-	ocamlfind ocamlc $(FLAGS) -linkpkg -o test $(OBJ) $(SRC) test.cmo
+test: $(SRC) test.ml
+	ocamlfind ocamlc $(FLAGS) -linkpkg -o test $(OBJ) $(SRC) test.ml
 
 lis: $(SRC) arc_lis.ml
 # requires to set profiling off (Common.prof_on := false)

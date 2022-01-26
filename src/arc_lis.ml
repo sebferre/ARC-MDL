@@ -167,7 +167,7 @@ let html_of_suggestion ~input_dico = function
      let key = input_dico#add info in
      Html.html_of_input_info key info ^ " a task"
   | RefinedState s ->
-     Jsutils.escapeHTML ("(" ^ html_dl s.dl ^ ")  " ^ Model2.string_of_refinement s.refinement)
+     Jsutils.escapeHTML (Printf.sprintf "(%f)  " s.dl ^ Model2.string_of_refinement s.refinement)
 
 let html_of_grid (g : Grid.t) =
   let buf = Buffer.create 1000 in

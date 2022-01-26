@@ -273,6 +273,64 @@ let path_ctx (path : revpath) : revpath option =
   | `Item (None,local,ctx) -> Some ctx
   | _ -> None
 
+(* reversing a revpath, to get paths starting from the root: used in path_factorize *)
+(* must be its own inverse: reverse(reverse(p,`Root),`Root) = p *)
+let rec path_reverse (p : revpath) (acc : revpath) : revpath =
+  match p with
+  | `Root -> acc
+  | `Field (`Layer lp, p1) -> path_reverse p1 (`Field (`Layer (ilist_reverse lp `Root), acc))
+  | `Field (f,p1) -> path_reverse p1 (`Field (f,acc))
+  | `Arg (i,role_opt,p1) -> path_reverse p1 (`Arg (i,role_opt,acc))
+  | `Item (i_opt,p1,p2) -> path_reverse p2 (`Item (i_opt, path_reverse p1 `Root, acc))
+and ilist_reverse (lp : ilist_revpath) acc =
+  match lp with
+  | `Root -> acc
+  | `Left lp1 -> ilist_reverse lp1 (`Left acc)
+  | `Right lp1 -> ilist_reverse lp1 (`Right acc)
+       
+let path_factorize (p1 : revpath) (p2 : revpath) : revpath * revpath * revpath = (* QUICK *)
+  (* returns q0, q1, q2 s.t. p1 = q0/q1, p2 = q0/q2, and q0 is the longest so *)
+  let rev_p1 = path_reverse p1 `Root in
+  let rev_p2 = path_reverse p2 `Root in
+  let rec aux_path p0 rp1 rp2 =
+    match rp1, rp2 with
+    | `Field (f1,rq1), `Field (f2,rq2) ->
+       ( match f1, f2 with
+         | `Layer rlp1, `Layer rlp2 ->
+            let lp0, lp1, lp2 = aux_ilist `Root rlp1 rlp2 in
+            if lp1 = `Root && lp2 = `Root (* rlp1 = rlp2 *)
+            then aux_path (`Field (`Layer lp0, p0)) rq1 rq2
+            else `Field (`Layer lp0, p0),
+                 path_reverse rq1 (if lp1=`Root then `Root else `Field (`Layer lp1,`Root)),
+                 path_reverse rq2 (if lp2=`Root then `Root else `Field (`Layer lp2,`Root))
+         | _ ->
+            if f1 = f2
+            then aux_path (`Field (f1,p0)) rq1 rq2
+            else p0, path_reverse rp1 `Root, path_reverse rp2 `Root )
+    | `Arg (i1,role1_opt,rq1), `Arg (i2,role2_opt,rq2) ->
+       if i1 = i2 && role1_opt = role2_opt
+       then aux_path (`Arg (i1,role1_opt,p0)) rq1 rq2
+       else p0, path_reverse rp1 `Root, path_reverse rp2 `Root
+    | `Item (i1_opt,rq11,rq12), `Item (i2_opt,rq21,rq22) -> (* rq1 > item i1_opt > rq2 *)
+       let p01, p11, p21 = aux_path `Root rq11 rq21 in
+       if p11 = `Root && p21 = `Root && i1_opt = i2_opt
+       then aux_path (`Item (i1_opt,p01,p0)) rq12 rq22
+       else `Item (None,p01,p0),
+            path_reverse rq21 (`Item (i1_opt, p11, `Root)),
+            path_reverse rq22 (`Item (i2_opt, p21, `Root))
+    | _ -> p0, path_reverse rp1 `Root, path_reverse rp2 `Root
+  and aux_ilist lp0 rlp1 rlp2 =
+    match rlp1, rlp2 with
+    | `Left rlq1, `Left rlq2 ->
+       aux_ilist (`Left lp0) rlq1 rlq2
+    | `Right rlq1, `Right rlq2 ->
+       aux_ilist (`Right lp0) rlq1 rlq2
+    | _ ->
+       lp0, ilist_reverse rlp1 `Root, ilist_reverse rlp2 `Root
+  in
+  aux_path `Root rev_p1 rev_p2
+
+       
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
 
@@ -393,6 +451,7 @@ let rec xp_path (print : Xprint.t) : revpath -> unit = function
   | `Item (None,local,ctx) -> xp_path print ctx; print#string "{"; xp_path print local; print#string "}"
   | `Item (Some i,local,ctx) -> xp_path print ctx; print#string "{";  xp_path print local; print#string "}["; print#int i; print#string "]"
 let pp_path = Xprint.to_stdout xp_path
+let string_of_path = Xprint.to_string xp_path
 
 let xp_path_list (print : Xprint.t) lp =
   print#string "(";
@@ -923,7 +982,7 @@ let dl_ctx_of_data (d : data) : dl_ctx =
   { box_height; box_width })
       
 
-let dl_patt_as_template = Mdl.Code.usage 0.4
+let dl_patt_as_template = Mdl.Code.usage 0.2
 
 let dl_patt
       (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
@@ -1015,6 +1074,8 @@ let dl_data, reset_dl_data =
        dl in
   f, reset
 
+(* OLD version of dl_path
+
 let path_similarity ~ctx_path v = (* QUICK *)
   (* TODO: revise in depth, make generic, care about expressions mixing various kinds *)
   let rec aux lp1' lp2' =
@@ -1080,22 +1141,109 @@ let dl_path_among ~(ctx_path : revpath) (vars : revpath list) (x : revpath) : dl
   then Stdlib.infinity
   else Mdl.Code.usage (x_w /. total_w))
 
+
 let dl_path ~(env_sig : signature) ~(ctx_path : revpath) (x : revpath) : dl =
   let k = path_kind x in
   match List.assoc_opt k env_sig with
   | Some vars -> dl_path_among ~ctx_path vars x
   | None -> Stdlib.infinity (* invalid model, TODO: happens when unify generalizes some path, removing sub-paths *)
 
-(*let dl_var ~env_sig ~ctx_path x =
-  let usage_index =
-    match path_ctx ctx_path with
-    | Some _ -> 0.1 (* Index only available in For-loops *)
-    | None -> 0. in
-  match x with
-  | #revpath as p ->
-     Mdl.Code.usage (1. -. usage_index)
-     +. dl_path ~env_sig ~ctx_path p
-  | `Index -> Mdl.Code.usage usage_index *)
+ OLD version of dl_path *)
+
+(* functions for computing the DL of paths, used as references
+   - the coding takes into account the context of use (kind and role)
+   - the coding takes into account the similarity between the reference path and the context path
+   - the coding is stable, it does not change when the environment signature is extended (unlike the previous solution)
+ *)
+  
+let rec dl_path_length : revpath -> int = function
+  | `Root -> 0
+  | `Field (`Layer lp, p1) -> 1 + dl_ilist_path_length lp + dl_path_length p1
+  | `Field (_, p1) -> 1 + dl_path_length p1
+  | `Arg (_,_,p1) -> dl_path_length p1 (* expr args ignored *)
+  | `Item (_,p1,p2) -> dl_path_length p1 + dl_path_length p2
+and dl_ilist_path_length = function
+  | `Root -> 0
+  | `Left p1 -> 1 + dl_ilist_path_length p1
+  | `Right p1 -> 1 + dl_ilist_path_length p1
+          
+let rec dl_path_role (role : role) (p : revpath) : dl =
+  (* assuming [p] does not contain [`Arg] *)
+  (* assuming the length of [p] is known => no need to code for `Root *)
+  match role with
+  | `Int (rij,rvec) -> dl_path_int rij rvec  p
+  | `Index -> raise TODO
+  | `Color _ -> dl_path_color p
+  | `Mask -> dl_path_mask p
+  | `Vec rvec -> dl_path_vec rvec p
+  | `Shape -> dl_path_shape p
+  | `Object -> dl_path_layer p
+  | `Layer -> dl_path_layer p
+  | `Grid -> dl_path_grid p
+and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
+  | `Root -> 0.
+  | `Field ((`I | `J as ij), p1) ->
+     Mdl.Code.usage (if ij = rij then 0.67 else 0.33)
+     +. dl_path_vec rvec p1
+  | _ -> assert false
+and dl_path_color = function
+  | `Root -> 0.
+  | `Field (`Color, p1) -> dl_path_grid_shape p1
+  | _ -> assert false
+and dl_path_mask = function
+  | `Root -> 0.
+  | `Field (`Mask, p1) -> dl_path_shape p1
+  | _ -> assert false
+and dl_path_vec (rvec : role_vec) = function
+  | `Root -> 0.
+  | `Field ((`Pos|`Size as f), p1) ->
+     let dl_choice =
+       match rvec, f with
+       | `Pos, `Pos 
+         | `Size _, `Size -> Mdl.Code.usage 0.67
+       | _ -> Mdl.Code.usage 0.33 in
+     ( match f with
+       | `Pos -> dl_choice +. dl_path_layer p1
+       | `Size -> dl_choice +. dl_path_grid_shape p1 )
+  | _ -> assert false
+and dl_path_shape = function
+  | `Root -> 0.
+  | `Field (`Shape, p1) -> dl_path_layer p1
+  | _ -> assert false
+and dl_path_grid_shape = function
+  | `Root -> 0.
+  | `Field (`Shape, p1) -> dl_path_layer p1
+  | _ -> assert false
+and dl_path_layer = function
+  | `Root -> 0.
+  | `Field (`Layer lp, p1) ->
+     Mdl.Code.universal_int_star (dl_ilist_path_length lp)
+     +. dl_ilist_path lp
+     +. dl_path_grid p1
+  | _ -> assert false
+and dl_path_grid = function
+  | `Root -> 0.
+  | _ -> assert false
+and dl_ilist_path = function
+  | `Root -> 0. (* assuming lp length known *)
+  | `Left p1 -> 1. +. dl_ilist_path p1
+  | `Right p1 -> 1. +. dl_ilist_path p1
+          
+let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl = (* QUICK *)
+  (* [env_sig] not used *)
+  let ctx_role = path_role ctx_path in
+  let dl =
+    let common_prefix, ctx_branch, p_branch =
+      path_factorize ctx_path p in
+    Mdl.Code.universal_int_star (dl_path_length ctx_branch)
+    +. Mdl.Code.universal_int_star (dl_path_length p_branch)
+    +. dl_path_role ctx_role p_branch in
+  (*Printf.printf "dl_path(%s, %s) = %s / %s / %s = %f\n"
+    (string_of_path ctx_path) (string_of_path p)
+    (string_of_path common_prefix) (string_of_path ctx_branch) (string_of_path p_branch)
+    dl;*)
+  dl
+          
 
 let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
@@ -1210,9 +1358,9 @@ let code_template0 =
   { c_u = Mdl.Code.usage 0.1;
     c_repeat = infinity;
     c_for = infinity;
-    c_patt = dl_patt_as_template (* Mdl.Code.usage 0.4 *);
-    c_ref = 0.25;
-    c_expr = 0.25 }
+    c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
+    c_ref = Mdl.Code.usage 0.5;
+    c_expr = Mdl.Code.usage 0.2 }
 
 let code_template_by_kind : code_template KindMap.t =
   KindMap.make
@@ -1224,9 +1372,9 @@ let code_template_by_kind : code_template KindMap.t =
     ~shape:code_template0
     ~object_:code_template0
     ~layer:{ code_template0 with
-      c_repeat = Mdl.Code.usage 0.1;
-      c_for = Mdl.Code.usage 0.2;
-      c_ref = Mdl.Code.usage 0.1;
+      c_repeat = Mdl.Code.usage 0.05;
+      c_for = Mdl.Code.usage 0.05;
+      c_ref = Mdl.Code.usage 0.5;
       c_expr = Mdl.Code.usage 0.1 }
     ~grid:code_template0
     
@@ -3001,7 +3149,7 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
     else Myseq.empty in
   Myseq.prof "Model2.model_refinements/seq" (
       Myseq.concat
-        [ref_shapos; ref_shapis; ref_defos; ref_defis]
+        [ref_shapis; ref_shapos; ref_defis; ref_defos]
     ))
 
 let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
