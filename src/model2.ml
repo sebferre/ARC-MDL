@@ -870,7 +870,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   match d with
   | `Bool _ -> []
   | `Int i ->
-     if in_output (* && i >= 1 && i <= 3 *)
+     if in_output && i >= 1 && i <= 3 (* TEST *)
      then [(d :> template)]
      else [] (* position- and size-invariance of inputs *)
   | `Color _ ->
