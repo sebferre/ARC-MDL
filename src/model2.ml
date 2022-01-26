@@ -3032,17 +3032,17 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               aux ~objs:[obj] `Root layers)
             ps_shape) in
      let so =
-       let ps_object = signature_of_kind env_sig Object in
+       let ps_layer = signature_of_kind env_sig Layer in
        Myseq.concat
          (List.map
-            (fun p_object ->
-              let obj = `Ref p_object in
+            (fun p_layer ->
+              let obj = `Ref p_layer in
               let obj =
-                match path_ctx p_object with
+                match path_ctx p_layer with
                 | None -> obj
                 | Some p_many -> `For (p_many, obj) in
               aux ~objs:[obj] `Root layers)
-            ps_object) in
+            ps_layer) in
      Myseq.concat [so; ss; sr; sp]
   | _ -> assert false)
 
