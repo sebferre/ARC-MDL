@@ -1595,7 +1595,10 @@ let apply_expr_gen
       | _ -> raise (Invalid_expr e))
   | `Corner (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `Vec (`Int i1,_), `Vec (_, `Int j2) -> `Vec (`Int i1, `Int j2)
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
+         if i1 <> i2 && j1 <> j2
+         then `Vec (`Int i1, `Int j2)
+         else raise (Undefined_result "Corner: vectors on same row/column")
       | _ -> raise (Invalid_expr e))
   | `Average le1 ->
      le1
@@ -2880,14 +2883,6 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
            Myseq.concat [
                sv;
                (*sv_rotation;*)
-               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
-                let* v2, ctx2, size2 = kind_vars.&(Vec) in
-                if ctx1 = ctx2
-                then
-                  let size = 1+size1+size2 in
-                  (if v1 <> v2 then !* (`Corner (v1,v2), ctx1, size) else ( %* ))
-                  @* (if v1 < v2 then !* (`Average [v1;v2], ctx1, size) else ( %* ))
-                else ( %* ))
              ]
         | Mask ->
            Myseq.concat [
@@ -2935,6 +2930,14 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
                 (`ScaleUp (f1, n), ctx1, size)
                 ** (`ScaleDown (f1, n), ctx1, size)
                 ** ( %* ));
+               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
+                let* v2, ctx2, size2 = kind_vars.&(Vec) in
+                if ctx1 = ctx2
+                then
+                  let size = 1+size1+size2 in
+                  (if v1 <> v2 then !* (`Corner (v1,v2), ctx1, size) else ( %* ))
+                  @* (if v1 < v2 then !* (`Average [v1;v2], ctx1, size) else ( %* ))
+                else ( %* ));
                (let* f1, ctx1, size1 = kind_feats.&(Vec) in
                 let* f2, ctx2, size2 = kind_feats.&(Vec) in
                 if ctx1 = ctx2
