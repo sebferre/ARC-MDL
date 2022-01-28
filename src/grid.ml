@@ -270,7 +270,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
 
 type mask_model =
   [ `Mask of Mask.t
-  | `Full (* all pixels on *)
+  | `Full of bool (* all pixels on, bool=true if also a collapsed border *)
   | `Border (* width-1 border *)
   | `EvenCheckboard
   | `OddCheckboard
@@ -278,9 +278,15 @@ type mask_model =
   | `TimesCross
   ]
 
+let mask_model_subsumes (m0 : mask_model) (m1 : mask_model) : bool =
+  match m0, m1 with
+  | `Full b0, `Full b1 -> not b0 || b1
+  | `Border, `Full true -> true
+  | _ -> m0 = m1
+  
 let mask_model_area ~height ~width = function
   | `Mask bm -> Mask.area bm
-  | `Full -> height * width
+  | `Full _ -> height * width
   | `Border -> 2 * (height + width) - 4
   | `EvenCheckboard -> (height * width + 1) / 2
   | `OddCheckboard -> height * width / 2
@@ -320,7 +326,7 @@ let majority_colors, reset_majority_colors =
 let mask_model_mem h w i j = (* mask height and width, relative position (i,j) *)
   function
   | `Mask m -> Mask.mem i j m
-  | `Full -> true
+  | `Full _ -> true
   | `Border -> i=0 || j=0 || i=h-1 || j=w-1
   | `EvenCheckboard -> (i+j) mod 2 = 0
   | `OddCheckboard -> (i+j) mod 2 = 1
@@ -348,7 +354,7 @@ let models_of_mask (m : Mask.t) : mask_model list =
     done
   done;
   let res = [] in
-  let res = if !full then `Full::res else res in
+  let res = if !full then (`Full (h=2 && w>=2 || w=2 && h>=2))::res else res in
   let res = if !border then `Border::res else res in
   let res = if !even_cb then `EvenCheckboard::res else res in
   let res = if !odd_cb then `OddCheckboard::res else res in
@@ -744,13 +750,15 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
          List.fold_left
            (fun mask (i,j,c) -> Mask.add_in_place i j mask)
            (!r_mask) !delta in
-       { height = p.maxi-p.mini+1;
-	 width = p.maxj-p.minj+1;
+       let height = p.maxi-p.mini+1 in
+       let width = p.maxj-p.minj+1 in
+       { height;
+         width;
 	 offset_i = p.mini;
 	 offset_j = p.minj;
 	 color = p.color;
 	 mask;
-	 mask_models = [`Full];
+	 mask_models = [`Full (height = 2 && width >= 2 || width = 2 && height >= 2)];
 	 delta = (!delta);
          nb_explained_pixels = (!nb_explained_pixels) } :: res
      else res in
@@ -763,7 +771,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
         rectangles_of_part ~multipart g mask p) in
   let f = fun ~multipart g mask p -> f (multipart,g,mask,p) in
   f, reset*)
- 
+
 let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
   Common.prof "Grid.rectangles" (fun () ->
   let h_sets =

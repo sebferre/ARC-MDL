@@ -471,7 +471,8 @@ let rec xp_ilist (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (l : 'a ilist)
   aux `Root l
 
 let xp_mask_model (print : Xprint.t) : Grid.mask_model -> unit = function
-  | `Full -> print#string "Full"
+  | `Full false -> print#string "Full"
+  | `Full true -> print#string "Full (and Border)" 
   | `Border -> print#string "Border"
   | `EvenCheckboard -> print#string "Even Checkboard"
   | `OddCheckboard -> print#string "Odd Checkboard"
@@ -845,7 +846,7 @@ let default_shape_color = `Color Grid.no_color
 let default_grid_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
-let default_mask = `Mask `Full
+let default_mask = `Mask (`Full false)
 let default_shape = `Rectangle (default_shape_size, default_shape_color, default_mask)
 let default_object = `PosShape (default_pos, default_shape)
 let default_layer = default_object
@@ -878,6 +879,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
      if in_output
      then [(d :> template)]
      else [] (* color-invariance of inputs *)
+  | `Mask (`Full true) -> [`Mask `Border; `Mask (`Full false)]
   | `Mask _ -> [(d :> template)] (* masks can be seen as patterns *)
   | `Vec _ -> [`Vec (`U, `U)]
   | `Point _ -> [`Point (`U)]
@@ -893,14 +895,14 @@ let matches_ilist (matches : 'a -> 'b -> bool)
   let rev_l1 = fold_ilist (fun res _ t -> t::res) [] `Root il1 in
   let rev_l2 = fold_ilist (fun res _ d -> d::res) [] `Root il2 in
   List.for_all2 matches rev_l1 rev_l2
-  
+
 let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   match t, d with
   | `U, _ -> true
   | `Bool b1, `Bool b2 when b1 = b2 -> true
   | `Int i1, `Int i2 when i1 = i2 -> true
   | `Color c1, `Color c2 when c1 = c2 -> true
-  | `Mask m1, `Mask m2 when m1 = m2 -> true
+  | `Mask m1, `Mask m2 -> Grid.mask_model_subsumes m1 m2
   | `Vec (i1,j1), `Vec (i2,j2) ->
      matches_template i1 i2 && matches_template j1 j2
   | `Point (color1), `Point (color2) ->
@@ -945,7 +947,7 @@ let dl_background_color : Grid.color -> dl =
      else invalid_arg "Unexpected color"
 let dl_mask : Grid.mask_model -> dl =
   function
-  | `Full -> Mdl.Code.usage 0.5
+  | `Full _ -> Mdl.Code.usage 0.5
   | `Border -> Mdl.Code.usage 0.1
   | `EvenCheckboard
     | `OddCheckboard
@@ -1628,8 +1630,8 @@ let apply_expr_gen
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Mask m1, `Mask m2 ->
          (match m1, m2 with
-          | `Full, _ -> `Mask m2
-          | _, `Full -> `Mask m1
+          | `Full _, _ -> `Mask m2
+          | _, `Full _ -> `Mask m1
           | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
              `Mask (`Mask (Grid.Mask.inter bm1 bm2))
           | _ -> raise (Undefined_result "LogAnd: undefined"))
@@ -1638,8 +1640,8 @@ let apply_expr_gen
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Mask m1, `Mask m2 ->
          (match m1, m2 with
-          | `Full, _ -> `Mask `Full
-          | _, `Full -> `Mask `Full
+          | `Full _, _ -> `Mask m1
+          | _, `Full _ -> `Mask m2
           | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
              `Mask (`Mask (Grid.Mask.union bm1 bm2))
           | _ -> raise (Undefined_result "LogOr: undefined"))
@@ -1648,8 +1650,8 @@ let apply_expr_gen
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Mask m1, `Mask m2 ->
          (match m1, m2 with
-          | `Full, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
-          | `Mask bm1, `Full -> `Mask (`Mask (Grid.Mask.compl bm1))
+          | `Full _, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
+          | `Mask bm1, `Full _ -> `Mask (`Mask (Grid.Mask.compl bm1))
           | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
              `Mask (`Mask (Grid.Mask.diff_sym bm1 bm2))
           | _ -> raise (Undefined_result "LogXOr: undefined"))
@@ -1658,7 +1660,7 @@ let apply_expr_gen
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Mask m1, `Mask m2 ->
          (match m1, m2 with
-          | `Full, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
+          | `Full _, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
           | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
              `Mask (`Mask (Grid.Mask.diff bm1 bm2))
           | _ -> raise (Undefined_result "LogAndNot: undefined"))
@@ -2002,7 +2004,8 @@ let parse_mask t : (Grid.mask_model list, data) p_x_parse = (* QUICK *)
     ~parse_patt:(function
       | `Mask m0 ->
          fun p ms state ->
-         if List.mem m0 ms then Myseq.return (`Mask m0, state)
+         if List.exists (Grid.mask_model_subsumes m0) ms then
+           Myseq.return (`Mask m0, state)
          else if state.quota_diff > 0 then
            let* m = Myseq.from_list ms in
            Myseq.return (`Mask m, add_diff p state)
