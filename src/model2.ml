@@ -8,7 +8,7 @@ let def_param name v to_str =
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 64 string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
-let max_nb_shape_parse = def_param "max_nb_shape_parse" 16 string_of_int (* max nb of parses for a shape *)
+let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
@@ -27,6 +27,7 @@ let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
 let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
 let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
 
+                    
 let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
   match lx with
   | [] -> Result.Ok []
@@ -2150,7 +2151,6 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
         Myseq.return (data, state))
       p rectangles state)
   in
-  let parse_shape =
   parse_template
     ~parse_u:
     (fun () ->
@@ -2191,12 +2191,8 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
              items state in
          Myseq.return (`Many (ordered,ditems),state)
       | _ -> assert false)
-    t in
-  fun p ->
-  let parse_shape = parse_shape p in
-  fun () state -> Myseq.prof "Model2.parse_shape/seq" (
-  parse_shape () state
-  |> Myseq.slice ~offset:0 ~limit:(!max_nb_shape_parse))
+    t
+
   
 type parse_layer_data (* pld *) =
   { parseur : (unit,data) x_parse; (* parseur for this layer *)
@@ -2259,7 +2255,8 @@ let parse_layers layers : (unit, data ilist) p_x_parse =
             all_empty := false;
             Some (dlayers, state))
         (fun () ->
-          if !all_empty
+          if !all_empty (* STOP when nothing more to generate *)
+             || k >= !max_relaxation_level_parse_layers (* max relaxation level reached *)
           then Myseq.Nil
           else aux_n (k+1) ())
     in
