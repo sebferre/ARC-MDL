@@ -16,7 +16,7 @@ let ( let> ) x f =
   ignore
     (Dom_html.window##setTimeout
        (Js.wrap_callback f)
-       0.1)
+       0.)
                    
 (* ---- LIS -------- *)
         
@@ -251,7 +251,7 @@ let render_place place k =
     | Result.Error exn -> Error (Printexc.to_string exn)
   in
  Jsutils.jquery "#lis-suggestions" (fun elt_lis ->
-     let _ = Jsutils.toggle_class elt_lis "computing" in (* turn on *)
+  let> _ = Jsutils.toggle_class elt_lis "computing" in (* turn on *)
   let xml = xml_of_focus place#focus in
   w_focus#set_syntax xml;
   place#eval
