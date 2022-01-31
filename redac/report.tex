@@ -186,12 +186,12 @@ A major difference with those work is that the model to be learned
 needs not only explain the data but also be able to perform a
 structured prediction, here the output grid from the input grid.
 %
-At this stage (Version~2.2), we consider rather simple models that
+At this stage (Version~2.3), we consider rather simple models that
 have no chance to cover a large proportion of ARC tasks: single-color
 points and shapes, and basic arithmetic of positions and sizes. Our
 prime objective is to demonstrate the effectiveness of an MDL-based
 approach to the ARC challenge, and hopefully to AGI. Our approach
-succeeds on 29/400 (7.25\%) training tasks and 6/400 (1.5\%)
+succeeds on 31/400 (7.75\%) training tasks and 7/400 (1.75\%)
 evaluation tasks, with a learning timeout of 30s only per task. We
 find such a result quite encouraging given the difficulty of the
 problem. Moreover, the solved tasks are quite diverse, and the
@@ -466,12 +466,43 @@ obtained by a substitution of the pattern unknowns with ground data
 structures. For example, we have
 ${\bf Vec}(12,14) \sim {\bf Vec}(12,?)$.
 
+\begin{figure}[t]
+\begin{center}
+  \begin{datatype}
+    E_\nat \is 0 \alter F_\nat
+    \altis F_\nat + 1..3 \alter F_\nat - 1..3
+    \altis F_\nat \times 2..3 \alter F_\nat \div 2..3
+    \altis F_\nat + F_\nat \alter F_\nat - F_\nat
+    \\
+    E_{\it Vector} \is (0,0) \alter F_{\it Vector}
+    \altis F_{\it Vector} \times 2..3 \alter F_{\it Vector} \div 2..3
+    \altis {\it Corner}(F_{\it Vector}, F_{\it Vector}) \alter {\it Average}(F_{\it Vector}, F_{\it Vector})
+    \altis F_{\it Vector} + F_{\it Vector} \alter F_{\it Vector} - F_{\it Vector}
+    \\
+    E_{\it Mask} \is {\it And}(F_{\it Mask},F_{\it Mask}) \alter {\it Or}(F_{\it Mask},F_{\it Mask}) \alter {\it XOr}(F_{\it Mask},F_{\it Mask})
+    \altis {\it AndNot}(F_{\it Mask},F_{\it Mask}) \alter {\it Not}(F_{\it Mask})
+    \\
+    \\
+    F_\nat \is P_\nat \alter {\it Area}(P_{\it Shape}) \alter {\it Norm1}(P_{\it Vector})
+    \altis {\it Right}(P_{\it Object}) \alter {\it Center}(P_{\it Object}) \alter {\it Bottom}(P_{\it Object}) \alter {\it Middle}(P_{\it Object})
+    \\
+    F_{\it Vector} \is P_{\it Vector}
+    \\
+    F_{\it Mask} \is P_{\it Mask}
+  \end{datatype}
+\end{center}
+\caption{Expressions $E_\tau$ used in grid models for each
+  datatype~$\tau$. Expressions are decomposed into features~$F$ and
+  variables~$P$ of various datatypes. Notation $a..b$ stands for
+  a constant integer between $a$ and $b$.}
+\label{fig:expressions}
+\end{figure}
+
 An {\em expression} defines part of the data structure as the result
 of a computation over some input data structure, which we call the
 {\em environment}. Expressions are made of primitive values,
-constructors, operators/functions, and variables. In Version~2, the
-only operators are zero, addition and substraction over natural numbers,
-they are used to compute the position and size of grids and shapes.
+constructors, operators/functions, and variables.
+%In Version~2, the only operators are zero, addition and substraction over natural numbers, they are used to compute the position and size of grids and shapes.
 Variables are references to parts of the environment. A convenient way
 to refer to such parts is to use {\em paths} in the environment data
 structure.
@@ -480,6 +511,23 @@ Expressions that would only be made of primitive values and
 constructors would actually be data structures, and are therefore not
 considered as expressions.
 %
+Figure~\ref{fig:expressions} defines the supported expressions in
+Version 2.3. Simple arithmetics on integers and vectors and Boolean
+logics on masks account for the majority of operators/functions. There
+are also the constant functions for the zero values, to favor them
+over arbitrary integers (e.g., $(0,0)$ is a common and special value
+for a position). The other functions are defined as follows:
+\begin{itemize}
+\item ${\it Corner}((i_1,j_1), (i_2,j_2)) = (i_1,j_2)$;
+\item ${\it Average}((i_1,j_1), (i_2,j_2)) = (\frac{i_1+i_2}{2}, \frac{j_1+j_2}{2})$ (only valid fractions are integers);
+\item ${\it Area}(shape)$ is the cardinal of its mask (how many cells belong to the shape);
+\item ${\it Norm1}((i,j)) = i+j$;
+\item ${\it Right}(object) = object.pos.i + object.shape.size.i - 1$;
+\item ${\it Center}(object) = object.pos.i + object.shape.size.i / 2$ (only valid when $size.i$ is odd);
+\item ${\it Bottom}(object) = object.pos.j + object.shape.size.j - 1$;
+\item ${\it Middle}(object) = object.pos.j + object.shape.size.j / 2$ (only valid when $size.j$ is odd).  
+\end{itemize}
+
 The environment of the output grid is the input grid, so that parts of
 the output grid can be computed based on the input grid contents. The
 input grid has no environment so that expressions are not useful in
@@ -495,17 +543,18 @@ unknowns for the input grid, and expressions for the output grid:
     \quad \quad ~~{\bf PosShape}({\bf Vec}(?,?), {\bf Rectangle}({\bf Vec}(?, ?), ?, {\bf Full})~])), \\
     \quad {\bf Grid}(layers[1].shape.size, layers[0].shape.color, \\
     \quad \quad [~ {\bf PosShape}(\\
-    \quad \quad \quad \quad {\bf Vec}(layers[0].pos.i - layers[1].pos.i,\ layers[0].pos.j - layers[1].pos.j), \\
+%    \quad \quad \quad \quad {\bf Vec}(layers[0].pos.i - layers[1].pos.i,\ layers[0].pos.j - layers[1].pos.j), \\
+    \quad \quad \quad \quad layers[0].pos - layers[1].pos, \\
     \quad \quad \quad \quad {\bf Rectangle}(layers[0].size,\ layers[1].color,\ {\bf Full})) ~])).
   \end{array} \]
 
-In words, this models says: ``find two stacked full rectangles on a
+In words, this models says: {\em ``find two stacked full rectangles on a
 black background in the input grid, then generate an output grid,
 whose size is the same as the bottom shape, and whose background color
 is the color of the top shape, and finally add a full rectangle whose
 size is the same as the top shape, whose color is the same as the
 bottom shape, and whose position is the difference between the top
-shape position and the bottom shape position (relative position).''
+shape position and the bottom shape position (relative position).''}
 
 A model is {\em well-formed} if it is well-typed (constructor
 arguments, operator operand types, etc.), and if all variables are
@@ -662,8 +711,7 @@ their evaluation result.
 \end{definition}
 
 \paragraph{Version 2.} Environments are grid parse trees, and
-variables are paths into them. There are only three operators -- zero, plus,
-minus -- and they are evaluated in the usual way on integer values.
+variables are paths into them.
 
 \paragraph{}
 We also define two non-deterministic functions that produce grid parse
@@ -707,14 +755,16 @@ they will be matched to points in the grid from left to right,
 top-down.
 %
 Layers are parsed top-down. When done in a naive recursive way, the
-search space is not be explored in fair way. Indeed, the second
-candidate object for the frst layer is only considered when all
-candidates have been considered for the other layers in combination
-with the first candidate object for the first layer. Defining the rank
-of a parse tree for all layers as the sum of the rank of the chosen
-candidate object of each layer, we explore the search space in
-increasing rank to favor the first candidate objects across all
-layers. This improvement was introduced in Version~2.2.
+search space is not explored in fair way. Indeed, the second candidate
+object for the first layer is only considered when all candidates have
+been considered for the other layers in combination with the first
+candidate object for the first layer. Defining the rank of a parse
+tree for all layers as the sum of the rank of the chosen candidate
+object of each layer, we explore the search space in increasing rank
+to favor the first candidate objects across all layers. This
+improvement was introduced in Version~2.2. In Version~2.3, we set a
+maximal rank (e.g., 16) to avoid a systematic exploration when there
+are no valid parse tree.
 
 As an example of parsing, the test input grid in Figure~\ref{fig:task}
 has three contiguous parts: the light blue one, the green one, and the
@@ -731,11 +781,12 @@ sense that a sequence of grid parse trees is produced. We use the
 description lengths as defined below to order this sequence from the
 shorter DL to the longer DL. Indeed, the shorter the DL, the more
 plausible the grid parse tree is. Because of combinatorial problems in
-the parsing process, we use various bounds: maximum number of
-candidate objects for a given layer in the model, maximum number of
-produced grid parse trees before sorting them, and maximum number of
-grid parse trees actually returned. Relative to approximate parsing,
-we also bound the number of differences w.r.t. the model.
+the parsing process, we use various bounds: maximum rank when parsing
+layers, maximum number of produced grid parse trees before sorting
+them, and maximum number of grid parse trees actually
+returned. Relative to approximate parsing, we also bound the number of
+differences w.r.t. the model, and produce the parse trees in
+increasing number of differences.
 
 \paragraph{}
 The second function corresponds to generation, where the grid parse
@@ -1052,8 +1103,13 @@ color~$c$, $L(c) = -\log P_{BC}(c)$. \KILL{We then define the
   description length of background colors $L_{BC}(c)$ as
   $L_{P_{bc}}(c)$.}
 %
-The description length of a rectangular bitmap is simply defined as
-its number of cells: $L(m) = height(m) \times width(m)$.
+\KILL{Version up to 2.2: The description length of a rectangular bitmap is simply defined as
+  its number of cells: $L(m) = height(m) \times width(m)$.
+}
+%
+The description length of a rectangular bitmap is defined according to
+a prequential code, which favors unbalanced bitmaps (either nearly
+full or nearly empty).
 
 {\em Algebraic types.} For each algebraic datatype (${\it Grid}$,
 ${\it Object}$, ${\it Shape}$, ${\it Vector}$, ${\it Mask}$), each
@@ -1086,36 +1142,43 @@ universal encoding of the length of the list, followed by the encoding
 of the list elements.
 
 {\em Expressions.} There are two kinds of expressions (with
-distribution~$P_e$): function (or operator) applications ($P_e = 0.5$,
-1 bit), and variables ($P_e = 0.5$, 1 bit). Functions are encoded
+distribution~$P_e$): function (or operator) applications
+($P_e = 0.3$), and variables ($P_e = 0.7$). Functions are encoded
 along a uniform distribution over the functions whose result type is
 the expected type. The expected type is determined by the syntactic
 context of the expression: e.g., a color if it is the color field of
 the grid or a shape, an integer if it is a component of the position
-of a shape, or an operand of an arithmetic operator. Currently, there
-are only three functions -- zero, addition, and substraction -- all
-with result type ${\it int}$. Variables are encoded according to the
-environment signature, i.e. the set of variables that are available in
-the environment, grouped by data type. A variable is encoded according
-to a probability distribution over the environment variables of same
-type. In order to distinguish between the same-type variables, we
-define the probability distribution as the softmax of the similarities
-between the paths of those variables with the expression path. This
-implies that defining a shape height as a function of a shape height
-is prefered to defining it as a function of a shape width or a shape
-position.
+of a shape, or an operand of an arithmetic operator.
+%
+\KILL{Version 2.2: Variables are encoded according to the environment signature, i.e. the
+set of variables that are available in the environment, grouped by
+data type. A variable is encoded according to a probability
+distribution over the environment variables of same type. In order to
+distinguish between the same-type variables, we define the probability
+distribution as the softmax of the similarities between the paths of
+those variables with the expression path. This implies that defining a
+shape height as a function of a shape height is prefered to defining
+it as a function of a shape width or a shape position.}
+%
+Variables are encoded according to their context of insertion in the
+model, and hence according to its datatype. The encoded information
+tells how to transform the context path into the variable
+path. Therefore, the most similar they are, the shorter the encoding
+is. We first compute the longest common prefix of the two paths, then
+we encode by how much the context path must be shortened, and finally
+we encode what has to be added to the common prefix to reconstruct the
+variable path, taking into account the suffix of the context path.
 
 {\em Templates.} There are three kinds of templates (with
-distribution~$P_t$): primitive values and constructors ($P_t = 0.4$,
-1.3 bits), expressions ($P_t = 0.5$, 1 bit), and unknowns
-($P_t = 0.1$, 3.3 bits). Each field of a constructor and each argument
-of a function is a template, thus allowing in principle arbitrary
-mixing of values, constructors, functions, and unknowns. In Version~2,
-we never use unknowns for grids, objects, shapes, and function
-arguments. Expressions are given higher probability because they
-explain some part of the grid parse tree from the
-environment. unknowns are given the lower probability because they
-correspond to unexplained parts.
+distribution~$P_t$): primitive values and constructors ($P_t = 0.2$),
+expressions ($P_t = 0.7$), and unknowns ($P_t = 0.1$). Each field of a
+constructor and each argument of a function is a template, thus
+allowing in principle arbitrary mixing of values, constructors,
+functions, and unknowns. In Version~2, we never use unknowns for
+grids, objects, shapes, and function arguments. Expressions are given
+higher probability because they explain some part of the grid parse
+tree from the environment. unknowns are given the lower probability
+because they correspond to unexplained parts.
 
 {\em Grid models} ($L(m)$) are templates over type ${\it Grid}$,
 and are encoded as such.
@@ -1283,12 +1346,12 @@ encoding for integers when bounds are known for the attribute value
           & $L(M)$ & $L(D|M)$ & $L(M,D)$ & $\hat{L}(M,D)$ \\
     \hline
     \hline
-    input & 9.0 & 10645.0 & 10653.9 & 1.000 \\
+    input & 15.6 & 13695.3 & 13710.9 & 1.000 \\
     \hline
-    output & 9.0 & 1714.0 & 1723.0 & 1.000 \\
+    output & 15.6 & 2124.4 & 2140.0 & 1.000 \\
     \hline
     \hline
-    chained & 17.9 & 12359.0 & 12376.9 & 2.000 \\
+    chained & 31.2 & 15819.7 & 15850.9 & 2.000 \\
     \hline
       \end{tabular}
     \end{center}
@@ -1301,12 +1364,12 @@ encoding for integers when bounds are known for the attribute value
       & $L(M)$ & $L(D|M)$ & $L(M,D)$ & $\hat{L}(M,D)$ \\
     \hline
     \hline
-    input & 73.5 & 1711.3 & 1784.9 & 0.168 \\
+    input & 81.2 & 2429.8 & 2511.1 & 0.183 \\
     \hline
-    output & 53.9 & 0.0 & 53.9 & 0.031 \\
+    output & 79.5 & 0.0 & 79.5 & 0.037 \\
     \hline
     \hline
-    chained & 127.4 & 1711.3 & 1838.7 & 0.199 \\
+    chained & 160.7 & 2429.8 & 2590.5 & 0.220 \\
     \hline
     \end{tabular}
   \end{center}
@@ -1427,10 +1490,14 @@ empty. For the output grid model, every path into the input grid parse
 tree is available as an environment variable.
 %
 In this version, we only consider patterns made of a single primitive
-value or a single constructor with all fields being unknowns; and we
-only consider expressions on integers with a form among $x$, $x+c$,
-$x-c$, $x+y$, $x-y$, for any environment variables~$x,y$, and any
-constant integer~$c \in \{1,2,3\}$.
+value or a single constructor with all fields being unknowns. By
+following a principle of invariance in ARC tasks respective to scale
+and color, we do not allow for the insertion of specific integer and
+color values in the input model, and we only insert small integer
+values in 1..3 in the output model.
+%
+We consider all expressions in Figure~\ref{fig:expressions}, starting
+from the environment variables.
 %
 When the replaced part~$p$ is an unknown, it enables to make the model
 more specific to the task. When the replaced part is a pattern in the
@@ -1458,18 +1525,19 @@ pattern~$t$ if
 \end{enumerate}
 
 
-A tentative ordering of refinements is the following: output shapes,
-input shapes, output expressions, input expressions.  Among
-expressions, the ordering is: $x$, $x-c$, $x+c$, $x-y$, $x+y$.
+A tentative ordering of refinements is the following: input shapes,
+output shapes, input expressions, output expressions.
+%Among expressions, the ordering is: $x$, $x-c$, $x+c$, $x-y$, $x+y$.
 
 The sequence of compressive refinements that leads to the above model
-about task in Figure~\ref{fig:task} is shown in the table below. The
-normalized description length is the one reached after applying the
-refinement. Each refinement is described as an equality between a
-model path (left-hand side) and a template (right-hand
-side). Refinements defining a layer by a shape actually insert a new
-layer for that shape.
+about task in Figure~\ref{fig:task} takes 0.6s to compute, and is
+shown in the table below. The normalized description length is the one
+reached after applying the refinement. Each refinement is described as
+an equality between a model path (left-hand side) and a template
+(right-hand side). Refinements defining a layer by a shape actually
+insert a new layer for that shape.
 
+\KILL{Version 2.2
 \begin{center}
   \begin{tabular}{|r|r|l|}
     \hline
@@ -1499,38 +1567,51 @@ layer for that shape.
     \hline
   \end{tabular}
 \end{center}
+}
+
+\begin{center}
+  \begin{tabular}{|r|r|l|}
+    \hline
+    step & $\hat{L}(M,D)$ & refinement \\
+    \hline
+    0 & 2.000 & \\
+    1 & 1.250 & $in.layer[1] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    2 & 0.960 & $out.layer[0] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    3 & 0.757 & $out.size = layer[1].shape.size$ \\
+    4 & 0.678 & $out.layer[0].shape.color = in.layer[1].shape.color$ \\
+    5 & 0.626 & $in.layer[0] = {\bf PosShape}(?, {\bf Rectangle}(?,?,?))$ \\
+    6 & 0.505 & $out.color = in.layer[0].shape.color$ \\
+    7 & 0.390 & $out.layer[0].shape.pos = in.layer[0].shape.pos - in.layer[1].shape.pos$ \\    
+    8 & 0.282 & $out.layer[0].shape.size = in.layer[0].shape.size$ \\
+    9 & 0.235 & $out.layer[0].shape.mask = in.layer[1].shape.mask$ \\
+    10 & 0.228 & $in.layer[0].shape.mask = {\bf Full}$ \\
+    11 & 0.220 & $in.layer[1].shape.mask = {\bf Full}$ \\
+    \hline
+  \end{tabular}
+\end{center}
 
 At steps 1 and 5, two rectangle objects are introduced in the input.
-At step 3, a rectangle object is introduced in the output. Combined
+At step 2, a rectangle object is introduced in the output. Combined
 with the background grid, this is enough to cover all cells in both
 grids. As of step 5, there are therefore empty grid deltas.
 %
-At steps 2 and 6, the size and color of the output grid are
+At steps 3 and 6, the size and color of the output grid are
 respectively equated to the bottom input shape
 ($in.layer[1].shape.size$) and to the top input shape
-($in.layer[0].shape.color$). At steps 4 and 7, the size and color of
+($in.layer[0].shape.color$). At steps 4 and 8, the size and color of
 the output shape are equated to respectively to the top input shape
 ($in.layer[0].shape.size$), and to the bottom input shape
-($in.layer[1].shape.color$). At step 8, the mask of the ouput shape is
-equated to the mask of the top input shape (always ${\bf Full}$ in the
-examples). At this stage, only the position of the output shape remains
-to be specified.
-%
-Steps 9-11 expand the output shape position as a vector, and find the
-expressions that define those positions, here differences between the
-top input shape and the bottom input shape.
+($in.layer[1].shape.color$). At step 7, the position of the output
+shape is defined as the difference between the two input objects.
+At step 9, the mask of the ouput shape is
+equated to the mask of the bottom input shape (always ${\bf Full}$ in the
+examples).
 %
 At this stage, the model has solved the task as it can correctly
 generate the output grid for any input grid.
 %
-Steps 12-13 finds that all input shapes are {\em full}
-rectangles. Step 14 finds that the input background color is black.
-%
-The other steps expand the remaining positions and sizes as vectors,
-and find that all input grids have 12 rows. The latter is an
-accidental regularity, and approximate parsing is necessary to parse
-the test instance as it has 14 rows.
-
+Steps 10-11 finds that all input shapes are {\em full}
+rectangles.
 
 %%%
 \section{Evaluation}
@@ -1562,7 +1643,9 @@ the test instance as it has 14 rows.
     v2.1 & 2021-09-12 & ~10~ & 120s & 52s & ~38 / 46.9~ & ~28 / 28.5~ & 77s & ~10 / 14.0~ & ~8 / 8.5~ \\
     \hline
 %    v2.2 & 2021-10-11 & ~10~ & 30s & 15s & ~44 / 52.5~ & ~30 / 30.5~ & 21s & ~9 / 13.2 & ~7 / 7.0~ \\
-    v2.2 & 2021-10-22 & ~10~ & 30s & 14s & ~41 / 50.1~ & ~29 / 29.5~ & 20s & ~8 / 12.7 & ~6 / 6.5~ \\
+    v2.2 & 2021-10-22 & ~10~ & 30s & 14s & ~41 / 50.1~ & ~29 / 29.5~ & 20s & ~8 / 12.7~ & ~6 / 6.5~ \\
+    \hline
+    v2.3 & 2022-01-29 & ~10~ & 30s & 14s & ~44 / 56.2~ & ~32 / 33.0~ & 19s & ~11 / 16.3~ & ~7 / 7.5~ \\ 
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -1811,6 +1894,16 @@ grid has three objects, and the output grid has only one of them, the
 one that has a symmetry. Our system only understands that the output
 selects an input object, and makes an attempt for each object.
 
+\paragraph{Version 2.3.} The main change in this version is the
+introduction of various operators/functions for integers, vectors, and
+masks. Unfortunately, this only brings 3 more successful tasks. There
+are 5 new successful tasks: {\tt b230c067}, {\tt d631b094} (uses the area of a shape), {\tt
+  d9fac9be}*, {\tt de1cd16c}*, {\tt ea786f4a}. There are two lost
+tasks: {\tt bda2d7a6}, {\tt ddf7fa4f}*.
+%
+The number of considered refinements had to be raised from 20 to 100
+to account for the many new expressions. Various optimizations were
+applied to maintain a similar runtime on average.
 
 %%%
 \section{Discussion and Perspectives}
