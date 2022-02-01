@@ -345,11 +345,14 @@ type 'a expr =
   | `ZeroInt | `ZeroVec (* Int, Vec *)
   | `Plus of 'a * 'a (* on Int, Vec *)
   | `Minus of 'a * 'a (* on Int, Vec *)
+  | `Incr of 'a * int (* on Int, Vec *)
+  | `Decr of 'a * int (* in Int, Vec *)
   | `Modulo of 'a * 'a (* on Int *)
   | `ScaleUp of 'a * int (* on Int, Vec *)
   | `ScaleDown of 'a * int (* on Int, Vec *)
   | `Corner of 'a * 'a (* on Vec *)
-  | `Average of 'a list (* on Vec *)
+  | `Average of 'a list (* on Int, Vec *)
+  | `Span of 'a * 'a (* on Vec *)
   | `Norm of 'a (* Vec -> Int *)
   | `Diag1 of 'a * int (* Vec -> Int *)
   | `Diag2 of 'a * int (* Vec -> Int *)
@@ -534,11 +537,14 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ZeroVec -> print#string "'(0,0)"
   | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
   | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
+  | `Incr (a,k) -> xp print a; print#string " + "; print#int k
+  | `Decr (a,k) -> xp print a; print#string " - "; print#int k
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
   | `Average (la) -> xp_apply "average" xp print la
+  | `Span (a,b) -> xp_apply "span" xp print [a;b]
   | `Norm a -> Xprint.bracket ("|","|") xp print a
   | `Diag1 (a,k) -> print#string "diag1("; xp print a; print#string ", "; print#int k; print#string ")" 
   | `Diag2 (a,k) -> print#string "diag2("; xp print a; print#string ", "; print#int k; print#string ")" 
@@ -1258,8 +1264,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               (*`Left `X; *) `Right `X; `Center `X;
               (*`Top `X; *) `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
+              `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
-              `Norm `X; (*`Diag1 (`X,2); `Diag2 (`X,2);*)
+              (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*)
               `Index; `Indexing (`X,`X) ])
     ~bool:(uniform_among [])
     ~color:(uniform_among [])
@@ -1270,8 +1277,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~vec:(uniform_among [
               `ZeroVec;
               `Plus (`X,`X); `Minus (`X,`X);
+              `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
-              `Corner (`X,`X); `Average [`X;`X];
+              `Corner (`X,`X); `Average [`X;`X]; `Span (`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `Indexing (`X,`X) ])
@@ -1299,6 +1307,10 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
+  | `Incr (e1,k) | `Decr (e1,k) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. Mdl.Code.universal_int_plus k
   | `Modulo (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1320,6 +1332,10 @@ let rec dl_expr
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
           (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
+  | `Span (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,None,path)) e2
   | `Norm e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
@@ -1575,6 +1591,16 @@ let apply_expr_gen
          `Int i *)
       | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1-i2), `Int (j1-j2))
       | _ -> raise (Invalid_expr e))
+  | `Incr (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Int i1 -> `Int (i1 + k)
+      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 + k), `Int (j1 + k))
+      | _ -> raise (Invalid_expr e))
+  | `Decr (e1,k) ->
+     (match apply ~lookup p e1 with
+      | `Int i1 -> `Int (i1 - k)
+      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 - k), `Int (j1 - k))
+      | _ -> raise (Invalid_expr e))
   | `Modulo (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 mod i2)
@@ -1587,11 +1613,13 @@ let apply_expr_gen
   | `ScaleDown (e1,k) ->
      (match apply ~lookup p e1 with
       | `Int i1 ->
-         if i1 mod k = 0
+         let rem = i1 mod k in
+         if rem = 0 || rem = k - 1 (* account for separators *)
          then `Int (i1 / k)
          else raise (Undefined_result "ScaleDown: not an integer")
       | `Vec (`Int i1, `Int j1) ->
-         if i1 mod k = 0 && j1 mod k = 0
+         let remi, remj = i1 mod k, j1 mod k in
+         if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
          then `Vec (`Int (i1 / k), `Int (j1 / k))
          else raise (Undefined_result "ScaleDown: not an integer")                          
       | _ -> raise (Invalid_expr e))
@@ -1614,6 +1642,10 @@ let apply_expr_gen
       if sumi mod n = 0 && sumj mod n = 0
       then `Vec (`Int (sumi / n), `Int (sumj / n))
       else raise (Undefined_result "Average: not an integer"))
+  | `Span (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1))
+      | _ -> raise (Invalid_expr e))
   | `Norm e1 ->
      (match apply ~lookup p e1 with
       | `Vec (`Int i, `Int j) -> `Int (i+j)
@@ -2744,7 +2776,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     match reads with
     | [] -> None
     | (env,u_val,dl,rank)::rem ->
-       let d = try PMap.find p u_val with _ -> assert false in
+       let d = try PMap.find p u_val
+               with _ -> pp_path p; assert false in
        if defs_check ~env t ctx d
        then Some (dl,rank)
        else find_dl_rank t ctx p rem
@@ -2917,7 +2950,7 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
                (*sv_rotation;*)
                (let* v1, ctx1, size1 = kind_vars.&(Shape) in
                 !* (`Area v1, ctx1, 1+size1));
-               (let* v1, ctx1, size1 = kind_vars.&(Object) in
+               (let* v1, ctx1, size1 = kind_vars.&(Layer) in
                 let size = 1+size1 in
                 (* Left v already accessible via position *)
                 (`Right v1, ctx1, size) 
@@ -2926,9 +2959,10 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
                 ** (`Bottom v1, ctx1, size)
                 ** (`Middle v1, ctx1, size)
                 ** ( %* ));
+(* Norm not found useful 
                (let* v1, ctx1, size1 = kind_vars.&(Vec) in
                 (`Norm v1, ctx1, 1+size1)
-                ** ( %* ));
+                ** ( %* )); *)
 (* Diag1/2 should be used as switch for colors, or other categorical attribute
                (let* v, ctx = kind_vars.&(Vec) in
                 let* k = Myseq.from_list [2;3] in
@@ -2941,6 +2975,13 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
            Myseq.concat [
                sv;
                (*sv_rotation;*)
+               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
+                let* v2, ctx2, size2 = kind_vars.&(Vec) in
+                if ctx1 = ctx2 && v1 <> v2
+                then
+                  let size = 1+size1+size2 in
+                  !* (`Span (v1,v2), ctx1, size)
+                else ( %* ));
              ]
         | Mask ->
            Myseq.concat [
@@ -2961,8 +3002,8 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
                (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [1;2;3] in
                 let size = 1 + size1 + 1 in
-                (`Plus (f1, `Int n), ctx1, size)
-                ** (`Minus (f1, `Int n), ctx1, size)
+                (`Incr (f1, n), ctx1, size)
+                ** (`Decr (f1, n), ctx1, size)
                 ** ( %* ));
                (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [2;3] in
@@ -2982,6 +3023,12 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
            Myseq.concat [
                !* (`ZeroVec, None, 1);
                sf;
+               (let* f1, ctx1, size1 = kind_feats.&(Vec) in
+                let* n = Myseq.from_list [1;2] in
+                let size = 1 + size1 + 1 in
+                (`Incr (f1, n), ctx1, size)
+                ** (`Decr (f1, n), ctx1, size)
+                ** ( %* ));
                (let* f1, ctx1, size1 = kind_feats.&(Int) in
                 let* n = Myseq.from_list [2;3] in
                 let size = 1 + size1 + 1 in
