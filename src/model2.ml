@@ -27,7 +27,10 @@ let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
 let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
 let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
 
-                    
+let ( let$ ) (init,l) f =
+  l |> List.fold_left (fun res x -> f (res, x)) init [@@inline]
+
+
 let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
   match lx with
   | [] -> Result.Ok []
@@ -2728,10 +2731,6 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               let definable_var =
                 match k with
                 | Grid -> false (* not grids *)
-                (* too much ad'hoc, sometimes good, sometimes bad
-                | `Vec, `Rectangle (_, _, `U)::_ -> false (* not sizes of rectangle with unknown mask *)
-                | `Int, `Vec _::`Rectangle (_, _, `U)::_ -> false (* idem *) 
- *)
                 | _ -> true in
               if definable_var
               then (for_p,p,k,t0)::res
@@ -2791,79 +2790,57 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   (* defs from first example *)
   let defs = [] in
   let defs = Common.prof "Model2.defs_refinements/first/patterns" (fun () ->
-    u_vars
-    |> List.fold_left
-         (fun defs (for_p,p,k,t0) ->
-           let tmap_score_patt =
-             match t0 with
-             | `U ->
-                reads_fst
-                |> List.fold_left
-                     (fun res (env,u_val,dl,rank) ->
-                       let d = try PMap.find p u_val with _ -> assert false in
-                       root_template_of_data ~in_output d
-                       |> List.fold_left
-                            (fun res t ->
-                              let (t, ctx as t_ctx) =
-                                match t, for_p with
-                                | `Many (ordered,items), Some _ ->
-                                   (`Indexing (t, `Index), for_p)
-                                | _ -> (t,None) in
-                              if t <> t0 (* a different pattern *)
-                                 && not (TMap.mem t_ctx res) (* that was not already seen *)
-                                        (* && defs_check ~env t ctx d (* and that checks. true by construction *) *)
-                              then TMap.add t_ctx (dl, rank, tprio t) res
-                              else res)
-                            res)
-                     TMap.empty
-             | _ -> TMap.empty in
-           TMap.fold
-             (fun (t,ctx) (dl,rank,prio) defs ->
-               (dl,rank,prio,1,p,k,t,ctx)::defs)
-             tmap_score_patt defs)
-         defs) in
+    let$ defs, (for_p,p,k,t0) = defs, u_vars in
+    let tmap_score_patt =
+      match t0 with
+      | `U ->
+         let$ res, (env,u_val,dl,rank) = TMap.empty, reads_fst in
+         let d = try PMap.find p u_val with _ -> assert false in
+         let$ res, t = res, root_template_of_data ~in_output d in
+         let (t, ctx as t_ctx) =
+           match t, for_p with
+           | `Many (ordered,items), Some _ ->
+              (`Indexing (t, `Index), for_p)
+           | _ -> (t,None) in
+         if t <> t0 (* a different pattern *)
+            && not (TMap.mem t_ctx res) (* that was not already seen *)
+                   (* && defs_check ~env t ctx d (* and that checks. true by construction *) *)
+         then TMap.add t_ctx (dl, rank, tprio t) res
+         else res
+      | _ -> TMap.empty in
+    TMap.fold
+      (fun (t,ctx) (dl,rank,prio) defs ->
+        (dl,rank,prio,1,p,k,t,ctx)::defs)
+      tmap_score_patt defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
-    defs_expressions ~env_sig
-    |> KindMap.fold_left
-         (fun defs ke le ->
-           le
-           |> List.fold_left
-                (fun defs (t,ctx,tsize) ->
-                  let data_fst =
-                    reads_fst
-                    |> List.map
-                         (fun (env,u_val,dl,rank) ->
-                           (defs_check_apply ~env t ctx, u_val,dl,rank)) in
-                  u_vars
-                  |> List.fold_left
-                       (fun defs (for_p,p,k,t0) ->
-                         if k <> ke then defs
-                         else
-                           let data_opt =
-                             data_fst
-                             |> List.find_opt
-                                  (fun (te_opt,u_val,dl,rank) ->
-                                    let d = try PMap.find p u_val with _ -> assert false in
-                                    defs_check_match te_opt d) in
-                           match data_opt with
-                           | None -> defs
-                           | Some (_,_,dl,rank) ->
-                              (dl, rank, tprio t, tsize, p, k, t, ctx)::defs)
-                       defs)
-                defs)
-         defs) in
+    let$ defs, (ke,t,ctx,tsize) = defs, defs_expressions ~env_sig in
+    let data_fst =
+      reads_fst
+      |> List.map
+           (fun (env,u_val,dl,rank) ->
+             (defs_check_apply ~env t ctx, u_val,dl,rank)) in
+    let$ defs, (for_p,p,k,t0) = defs, u_vars in
+    if k <> ke then defs
+    else
+      let data_opt =
+        data_fst
+        |> List.find_opt
+             (fun (te_opt,u_val,dl,rank) ->
+               let d = try PMap.find p u_val with _ -> assert false in
+               defs_check_match te_opt d) in
+      match data_opt with
+      | None -> defs
+      | Some (_,_,dl,rank) ->
+         (dl, rank, tprio t, tsize, p, k, t, ctx)::defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
-    reads_others
-    |> List.fold_left
-         (fun defs reads ->
-           defs
-           |> List.filter_map
-                (fun (dl0,rank0,prio,tsize,p,k,t,ctx) ->
-                  match find_dl_rank t ctx p reads with
-                  | None -> None
-                  | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, k, t, ctx)))
-         defs) in
+    let$ defs, reads = defs, reads_others in
+    defs
+    |> List.filter_map
+         (fun (dl0,rank0,prio,tsize,p,k,t,ctx) ->
+           match find_dl_rank t ctx p reads with
+           | None -> None
+           | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, k, t, ctx))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
@@ -2900,10 +2877,11 @@ and defs_check_match (t_opt : template option) (d : data) : bool = (* QUICK *)
           List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *) *)
        | _, `Many (_,items) -> List.for_all (matches_template t) items
        | _ -> matches_template t d )
-and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t =
+and defs_expressions ~env_sig : (kind * template * revpath option * int) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
+  (* the [int] is expression size, for ranking expressions *)
   Common.prof "Model2.defs_expressions" (fun () ->
-  if env_sig = [] then KindMap.init (fun k -> []) (* we are in the input model *)
+  if env_sig = [] then [] (* we are in the input model *)
   else (
   (* TODO: recover rotational vars
   let vars_of_path (p : revpath) : (template * revpath option) Myseq.t =
@@ -2921,159 +2899,76 @@ and defs_expressions ~env_sig : (template * revpath option * int) list KindMap.t
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
        Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in *)
   let kind_paths =
-    KindMap.init
-      (fun k ->
-        signature_of_kind env_sig k
-        |> Myseq.from_list
-        |> Myseq.memoize) in
+    let$ res, (k,lp) = [], env_sig in
+    let$ res, p = res, lp in
+    (path_kind p, p) :: res in
   let kind_vars =
-    kind_paths
-    |> KindMap.map
-         (fun k sp ->
-           Myseq.memoize
-             (let* p = sp in
-              match path_ctx p with
-              | None -> Myseq.return (`Ref p, None, 1)
-              | Some ctx ->
-                 Myseq.concat [
-                     Myseq.return (`Indexing (`Ref p, `Index), Some ctx, 2);
-                     (let* i = Myseq.from_list [0; 1; 2] in
-                      Myseq.return (`Indexing (`Ref p, `Int i), None, 2)) ])) in
+    let$ res, (k,p) = [], kind_paths in
+    match path_ctx p with
+    | None -> (k, `Ref p, None, 1)::res
+    | Some ctx ->
+       let res = (k, `Indexing (`Ref p, `Index), Some ctx, 2)::res in
+       let$ res, i = res, [0; 1; 2] in
+       (k, `Indexing (`Ref p, `Int i), None, 2)::res in
   let kind_feats =
-    kind_vars
-    |> KindMap.map
-      (fun k sv ->
-        match k with
-        | Int ->
-           Myseq.concat [
-               sv;
-               (*sv_rotation;*)
-               (let* v1, ctx1, size1 = kind_vars.&(Shape) in
-                !* (`Area v1, ctx1, 1+size1));
-               (let* v1, ctx1, size1 = kind_vars.&(Layer) in
-                let size = 1+size1 in
-                (* Left v already accessible via position *)
-                (`Right v1, ctx1, size) 
-                ** (`Center v1, ctx1, size)
-                (* Top v already accessible via position *)
-                ** (`Bottom v1, ctx1, size)
-                ** (`Middle v1, ctx1, size)
-                ** ( %* ));
-(* Norm not found useful 
-               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
-                (`Norm v1, ctx1, 1+size1)
-                ** ( %* )); *)
-(* Diag1/2 should be used as switch for colors, or other categorical attribute
-               (let* v, ctx = kind_vars.&(Vec) in
-                let* k = Myseq.from_list [2;3] in
-                (`Diag1 (v,k), ctx)
-                ** (`Diag2 (v,k), ctx)
-                ** ( %* ))
-                *)
-             ]
-        | Vec ->
-           Myseq.concat [
-               sv;
-               (*sv_rotation;*)
-               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
-                let* v2, ctx2, size2 = kind_vars.&(Vec) in
-                if ctx1 = ctx2 && v1 <> v2
-                then
-                  let size = 1+size1+size2 in
-                  !* (`Span (v1,v2), ctx1, size)
-                else ( %* ));
-             ]
-        | Mask ->
-           Myseq.concat [
-               sv;
-               (*sv_rotation;*)
-             ]
-        | _ -> sv (* Myseq.concat [sv; sv_rotation] *)
-      ) in
+    let$ res, (k1,v1,ctx1,size1 as var1) = [], kind_vars in
+    let res = var1 :: res in
+    let res = (* unary operators *)
+      let size = 1 + size1 in
+      match k1 with
+      | Shape -> (Int, `Area v1, ctx1, size)::res
+      | Layer -> (Int, `Right v1, ctx1, size)::
+                   (Int, `Center v1, ctx1, size)::
+                     (Int, `Bottom v1, ctx1, size)::
+                       (Int, `Middle v1, ctx1, size)::res
+      | _ -> res in
+    let$ res, (k2,v2,ctx2,size2) = res, kind_vars in (* binary operators *)
+    let size = 1 + size1 + size2 in
+    match k1, k2 with
+    | Vec, Vec when ctx1 = ctx2 && v1 < v2 ->
+       (Vec, `Span (v1,v2), ctx1, size)::res
+    | _ -> res in 
   let kind_exprs = (* actually, expressions and constants *)
-    kind_feats
-    |> KindMap.map
-      (fun k sf ->
-        match k with
-        | Int ->
-           Myseq.concat [
-               !* (`ZeroInt, None, 1);
-               sf;
-               (let* f1, ctx1, size1 = kind_feats.&(Int) in
-                let* n = Myseq.from_list [1;2;3] in
-                let size = 1 + size1 + 1 in
-                (`Incr (f1, n), ctx1, size)
-                ** (`Decr (f1, n), ctx1, size)
-                ** ( %* ));
-               (let* f1, ctx1, size1 = kind_feats.&(Int) in
-                let* n = Myseq.from_list [2;3] in
-                let size = 1 + size1 + 1 in
-                (`ScaleUp (f1, n), ctx1, size)
-                ** (`ScaleDown (f1, n), ctx1, size)
-                ** ( %* ));
-               (let* f1, ctx1, size1 = kind_feats.&(Int) in
-                let* f2, ctx2, size2 = kind_feats.&(Int) in
-                let size = 1 + size1 + size2 in
-                if ctx1 = ctx2
-                then (if f1 < f2 then !* (`Plus (f1, f2), ctx1, size) else ( %* ))
-                     @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1, size) else ( %* ))
-                else ( %* ));
-             ]
-        | Vec ->
-           Myseq.concat [
-               !* (`ZeroVec, None, 1);
-               sf;
-               (let* f1, ctx1, size1 = kind_feats.&(Vec) in
-                let* n = Myseq.from_list [1;2] in
-                let size = 1 + size1 + 1 in
-                (`Incr (f1, n), ctx1, size)
-                ** (`Decr (f1, n), ctx1, size)
-                ** ( %* ));
-               (let* f1, ctx1, size1 = kind_feats.&(Int) in
-                let* n = Myseq.from_list [2;3] in
-                let size = 1 + size1 + 1 in
-                (`ScaleUp (f1, n), ctx1, size)
-                ** (`ScaleDown (f1, n), ctx1, size)
-                ** ( %* ));
-               (let* v1, ctx1, size1 = kind_vars.&(Vec) in
-                let* v2, ctx2, size2 = kind_vars.&(Vec) in
-                if ctx1 = ctx2
-                then
-                  let size = 1+size1+size2 in
-                  (if v1 <> v2 then !* (`Corner (v1,v2), ctx1, size) else ( %* ))
-                  @* (if v1 < v2 then !* (`Average [v1;v2], ctx1, size) else ( %* ))
-                else ( %* ));
-               (let* f1, ctx1, size1 = kind_feats.&(Vec) in
-                let* f2, ctx2, size2 = kind_feats.&(Vec) in
-                if ctx1 = ctx2
-                then
-                  let size = 1 + size1 + size2 in
-                  (if f1 < f2 then !* (`Plus (f1, f2), ctx1, size) else ( %* ))
-                  @* (if f1 <> f2 then !* (`Minus (f1, f2), ctx1, size) else ( %* ))
-                else ( %* ))
-             ]
-        | Mask ->
-           Myseq.concat [
-               sf;
-               (let* f1, ctx1, size1 = kind_feats.&(Mask) in
-                let* f2, ctx2, size2 = kind_feats.&(Mask) in
-                if ctx1 = ctx2
-                then
-                  let size = 1 + size1 + size2 in
-                  (`LogAnd (f1,f2), ctx1, size)
-                  ** (`LogOr (f1,f2), ctx1, size)
-                  ** (`LogXOr (f1,f2), ctx1, size)
-                  ** (`LogAndNot (f1,f2), ctx1, size)
-                  ** ( %* )
-                else ( %* ));
-               (let* f1, ctx1, size1 = kind_feats.&(Mask) in
-                !* (`LogNot f1, ctx1, 1+size1))
-             ]
-        | _ -> sf
-      ) in
-  KindMap.map
-    (fun k se -> Myseq.to_list se)
-    kind_exprs))
+    let res = (Int, `ZeroInt, None, 1)::
+                (Vec, `ZeroVec, None, 1)::[] in
+    let$ res, (k1,f1,ctx1,size1 as feat1) = res, kind_feats in
+    let res = feat1::res in
+    let res = (* unary operators *)
+      let size = 1 + size1 in
+      match k1 with
+      | Int | Vec ->
+         let res =
+           let$ res, n = res, [1;2;3] in
+           (k1, `Incr (f1,n), ctx1, size)::
+             (k1, `Decr (f1,n), ctx1, size)::res in
+         let res =
+           let$ res, n = res, [2;3] in
+           (k1, `ScaleUp (f1,n), ctx1, size)::
+             (k1, `ScaleDown (f1,n), ctx1, size)::res in
+         res
+      | Mask ->
+         (Mask, `LogNot f1, ctx1, size)::res
+      | _ -> res in
+    let$ res, (k2,f2,ctx2,size2) = res, kind_feats in
+    let size = 1 + size1 + size2 in
+    match k1, k2 with
+    | Int, Int when ctx1 = ctx2 ->
+       let res = if f1 < f2 then (k1, `Plus (f1,f2), ctx1, size)::res else res in
+       let res = if f1 <> f2 then (k1, `Minus (f1,f2), ctx1, size)::res else res in
+       res
+    | Vec, Vec when ctx1 = ctx2 ->
+       let res = if f1 <> f2 then (k1, `Corner (f1,f2), ctx1, size)::res else res in (* TEST: var/feat *)
+       let res = if f1 < f2 then (k1, `Average [f1;f2], ctx1, size)::res else res in
+       let res = if f1 < f2 then (k1, `Plus (f1,f2), ctx1, size)::res else res in
+       let res = if f1 <> f2 then (k1, `Minus (f1,f2), ctx1, size)::res else res in
+       res
+    | Mask, Mask when ctx1 = ctx2 ->
+       (Mask, `LogAnd (f1,f2), ctx1, size)::
+         (Mask, `LogOr (f1,f2), ctx1, size)::
+           (Mask, `LogXOr (f1,f2), ctx1, size)::
+             (Mask, `LogAndNot (f1,f2), ctx1, size)::res
+    | _ -> res in
+  List.rev kind_exprs))
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->
