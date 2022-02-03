@@ -1284,10 +1284,14 @@ and dl_path_layer = function
 and dl_path_grid = function
   | `Root -> 0.
   | _ -> assert false
-and dl_ilist_path = function
-  | `Root -> 0. (* assuming lp length known *)
-  | `Left p1 -> 1. +. dl_ilist_path p1
-  | `Right p1 -> 1. +. dl_ilist_path p1
+and dl_ilist_path lp = (* assuming lp length known *)
+  let rec aux = function
+    | `Root -> 0, 0
+    | `Left lp1 -> let nl, nr = aux lp1 in nl+1, nr
+    | `Right lp1 -> let nl, nr = aux lp1 in nl, nr+1
+  in
+  let nleft, nright = aux lp in
+  Mdl.Code.partition [nleft; nright]
           
 let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl = (* QUICK *)
   (* [env_sig] not used *)
