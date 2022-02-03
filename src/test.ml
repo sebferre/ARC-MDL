@@ -10,7 +10,7 @@ let def_param name v to_str =
   ref v
              
 let beam_width = def_param "beam_width" 1 string_of_int
-let refine_degree = def_param "refine_degree" 100 (* TEST 20 *) string_of_int
+let refine_degree = def_param "refine_degree" 50 string_of_int
 
 (* === command line options === *)
              

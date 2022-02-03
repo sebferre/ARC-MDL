@@ -1,7 +1,7 @@
 
 open Js_of_ocaml
 
-let refine_degree = 100
+let refine_degree = 50
 
 let _ = Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
 

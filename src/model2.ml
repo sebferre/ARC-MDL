@@ -220,7 +220,56 @@ let kind_of_role : role -> kind = function
   | `Object -> Object
   | `Layer -> Layer
   | `Grid -> Grid
-  
+
+type role_poly = (* polymorphic extension of role *)
+  [ `Int of [`I | `J | `X] * role_vec_poly
+  | `Index
+  | `Color of role_frame_poly
+  | `Mask
+  | `Vec of role_vec_poly
+  | `Shape
+  | `Object
+  | `Layer
+  | `Grid ]
+and role_vec_poly =
+  [ `Pos | `Size of role_frame_poly | `X ]
+and role_frame_poly =
+  [ `Shape | `Grid | `X ]
+
+let role_poly_matches (role_x : role_poly) (role : role) : int option (* relaxation value, if valid *) =
+  let rec aux_role r_x r =
+    match r_x, r with
+    | `Int (ij_x,vec_x), `Int (ij,vec) -> Some (aux_ij ij_x ij + aux_vec vec_x vec)
+    | `Index, `Index -> Some 0
+    | `Color fr_x, `Color fr -> Some (aux_frame fr_x fr)
+    | `Mask, `Mask -> Some 0
+    | `Vec vec_x, `Vec vec -> Some (aux_vec vec_x vec)
+    | `Shape, `Shape -> Some 0
+    | `Object, `Object -> Some 0
+    | `Layer, `Layer -> Some 0
+    | `Grid, `Grid -> Some 0
+    | _ -> None
+  and aux_ij ij_x ij =
+    match ij_x, ij with
+    | `X, _ -> 0
+    | `I, `I | `J, `J -> 0
+    | _ -> 1
+  and aux_vec vec_x vec =
+    match vec_x, vec with
+    | `X, _ -> 0
+    | `Pos, `Pos -> 0
+    | `Size fr_x, `Size fr -> aux_frame fr_x fr
+    | _ -> 1
+  and aux_frame fr_x fr =
+    match fr_x, fr with
+    | `X, _ -> 0
+    | `Shape, `Shape -> 0
+    | `Grid, `Grid -> 0
+    | _ -> 1
+  in
+  aux_role role_x role
+           
+
 type 'a patt =
   [ `Bool of bool
   | `Int of int
@@ -2727,13 +2776,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            match t0 with
            | #expr -> res
            | _ ->
-              let k = path_kind p in
+              let role = path_role p in
               let definable_var =
-                match k with
-                | Grid -> false (* not grids *)
+                match role with
+                | `Grid -> false (* not grids *)
                 | _ -> true in
               if definable_var
-              then (for_p,p,k,t0)::res
+              then (for_p,p,role,t0)::res
               else res)
          [] None path0 t []) in
   let module PMap = (* mappings from defining templates *)
@@ -2750,7 +2799,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
           (fun rank (env,gd,dl) ->
             let u_val =
               List.fold_left
-                (fun res (for_p,p,k,t0) ->
+                (fun res (for_p,p,role,t0) ->
                   match find_data p gd.data with
                   | Some d -> PMap.add p d res
                   | None ->
@@ -2790,7 +2839,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   (* defs from first example *)
   let defs = [] in
   let defs = Common.prof "Model2.defs_refinements/first/patterns" (fun () ->
-    let$ defs, (for_p,p,k,t0) = defs, u_vars in
+    let$ defs, (for_p,p,role,t0) = defs, u_vars in
     let tmap_score_patt =
       match t0 with
       | `U ->
@@ -2810,18 +2859,20 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       | _ -> TMap.empty in
     TMap.fold
       (fun (t,ctx) (dl,rank,prio) defs ->
-        (dl,rank,prio,1,p,k,t,ctx)::defs)
+        (dl,rank,prio,1,p,role,t,ctx)::defs)
       tmap_score_patt defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
-    let$ defs, (ke,t,ctx,tsize) = defs, defs_expressions ~env_sig in
+    let$ defs, (role_e,t,ctx,tsize) = defs, defs_expressions ~env_sig in
     let data_fst =
       reads_fst
       |> List.map
            (fun (env,u_val,dl,rank) ->
              (defs_check_apply ~env t ctx, u_val,dl,rank)) in
-    let$ defs, (for_p,p,k,t0) = defs, u_vars in
-    if k <> ke then defs
-    else
+    let$ defs, (for_p,p,role,t0) = defs, u_vars in
+    match role_poly_matches role_e role with
+      (* whether the expression role matches the defined path, and relaxation value *)
+    | None -> defs
+    | Some role_relax -> 
       let data_opt =
         data_fst
         |> List.find_opt
@@ -2831,16 +2882,16 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       match data_opt with
       | None -> defs
       | Some (_,_,dl,rank) ->
-         (dl, rank, tprio t, tsize, p, k, t, ctx)::defs) in
+         (dl, rank, tprio t, tsize + role_relax, p, role, t, ctx)::defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
     defs
     |> List.filter_map
-         (fun (dl0,rank0,prio,tsize,p,k,t,ctx) ->
+         (fun (dl0,rank0,prio,tsize,p,role,t,ctx) ->
            match find_dl_rank t ctx p reads with
            | None -> None
-           | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, k, t, ctx))) in
+           | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, role, t, ctx))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
@@ -2848,7 +2899,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (sum_dl1,sum_rank1,prio1,tsize1,_,_,_,_) (sum_dl2,sum_rank2,prio2,tsize2,_,_,_,_) ->
          Stdlib.compare (sum_dl1,sum_rank1,prio1,tsize1) (sum_dl2,sum_rank2,prio2,tsize2))
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,_,_,p,k,t,ctx) -> RDef (p,t,ctx,false)))
+  |> Myseq.map (fun (_,_,_,_,p,_,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   let t_opt = defs_check_apply ~env t ctx in
   defs_check_match t_opt d
@@ -2877,7 +2928,7 @@ and defs_check_match (t_opt : template option) (d : data) : bool = (* QUICK *)
           List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *) *)
        | _, `Many (_,items) -> List.for_all (matches_template t) items
        | _ -> matches_template t d )
-and defs_expressions ~env_sig : (kind * template * revpath option * int) list =
+and defs_expressions ~env_sig : (role_poly * template * revpath option * int) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   (* the [int] is expression size, for ranking expressions *)
   Common.prof "Model2.defs_expressions" (fun () ->
@@ -2898,77 +2949,102 @@ and defs_expressions ~env_sig : (kind * template * revpath option * int) list =
     | Some ctx ->
        let* k, n = Myseq.from_list [(0,2); (1,2); (0,3); (1,3); (2,3)] in
        Myseq.return (`Indexing (`Ref p, `Modulo (`Plus (`Index, `Int k), `Int n)), Some ctx) in *)
-  let kind_paths =
-    let$ res, (k,lp) = [], env_sig in
+  let paths =
+    let$ res, (_k,lp) = [], env_sig in (* TODO: make env_sig a flat list *)
     let$ res, p = res, lp in
-    (path_kind p, p) :: res in
-  let kind_vars =
-    let$ res, (k,p) = [], kind_paths in
+    ((path_role p :> role_poly), p) :: res in
+  let vars =
+    let$ res, (role,p) = [], paths in
     match path_ctx p with
-    | None -> (k, `Ref p, None, 1)::res
+    | None -> (role, `Ref p, None, 1)::res
     | Some ctx ->
-       let res = (k, `Indexing (`Ref p, `Index), Some ctx, 2)::res in
+       let res = (role, `Indexing (`Ref p, `Index), Some ctx, 2)::res in
        let$ res, i = res, [0; 1; 2] in
-       (k, `Indexing (`Ref p, `Int i), None, 2)::res in
-  let kind_feats =
-    let$ res, (k1,v1,ctx1,size1 as var1) = [], kind_vars in
+       (role, `Indexing (`Ref p, `Int i), None, 2)::res in
+  let feats =
+    let$ res, (role1,v1,ctx1,size1 as var1) = [], vars in
     let res = var1 :: res in
     let res = (* unary operators *)
       let size = 1 + size1 in
-      match k1 with
-      | Shape -> (Int, `Area v1, ctx1, size)::res
-      | Layer -> (Int, `Right v1, ctx1, size)::
-                   (Int, `Center v1, ctx1, size)::
-                     (Int, `Bottom v1, ctx1, size)::
-                       (Int, `Middle v1, ctx1, size)::res
+      match role1 with
+      | `Shape -> (`Int (`X, `Size `X), `Area v1, ctx1, size)::res
+      | `Layer -> (`Int (`J, `Pos), `Right v1, ctx1, size)::
+                   (`Int (`J, `Pos), `Center v1, ctx1, size)::
+                     (`Int (`I, `Pos), `Bottom v1, ctx1, size)::
+                       (`Int (`I, `Pos), `Middle v1, ctx1, size)::res
       | _ -> res in
-    let$ res, (k2,v2,ctx2,size2) = res, kind_vars in (* binary operators *)
-    let size = 1 + size1 + size2 in
-    match k1, k2 with
-    | Vec, Vec when ctx1 = ctx2 && v1 < v2 ->
-       (Vec, `Span (v1,v2), ctx1, size)::res
-    | _ -> res in 
-  let kind_exprs = (* actually, expressions and constants *)
-    let res = (Int, `ZeroInt, None, 1)::
-                (Vec, `ZeroVec, None, 1)::[] in
-    let$ res, (k1,f1,ctx1,size1 as feat1) = res, kind_feats in
+    let$ res, (role2,v2,ctx2,size2) = res, vars in (* binary operators *)
+    if ctx1 = ctx2
+    then
+      let size = 1 + size1 + size2 in
+      match role1, role2 with
+      | `Vec `Pos, `Vec `Pos when v1 < v2 ->
+         (`Vec (`Size `X), `Span (v1,v2), ctx1, size)::res
+      | _ -> res
+    else res in 
+  let exprs = (* actually, expressions and constants *)
+    let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::
+                (`Vec `Pos, `ZeroVec, None, 1)::[] in
+    let$ res, (role1,f1,ctx1,size1 as feat1) = res, feats in
     let res = feat1::res in
     let res = (* unary operators *)
       let size = 1 + size1 in
-      match k1 with
-      | Int | Vec ->
+      match role1 with
+      | `Int _ | `Vec _ ->
          let res =
            let$ res, n = res, [1;2;3] in
-           (k1, `Incr (f1,n), ctx1, size)::
-             (k1, `Decr (f1,n), ctx1, size)::res in
+           (role1, `Incr (f1,n), ctx1, size)::
+             (role1, `Decr (f1,n), ctx1, size)::res in
          let res =
            let$ res, n = res, [2;3] in
-           (k1, `ScaleUp (f1,n), ctx1, size)::
-             (k1, `ScaleDown (f1,n), ctx1, size)::res in
+           (role1, `ScaleUp (f1,n), ctx1, size)::
+             (role1, `ScaleDown (f1,n), ctx1, size)::res in
          res
-      | Mask ->
-         (Mask, `LogNot f1, ctx1, size)::res
+      | `Mask ->
+         (`Mask, `LogNot f1, ctx1, size)::res
       | _ -> res in
-    let$ res, (k2,f2,ctx2,size2) = res, kind_feats in
-    let size = 1 + size1 + size2 in
-    match k1, k2 with
-    | Int, Int when ctx1 = ctx2 ->
-       let res = if f1 < f2 then (k1, `Plus (f1,f2), ctx1, size)::res else res in
-       let res = if f1 <> f2 then (k1, `Minus (f1,f2), ctx1, size)::res else res in
-       res
-    | Vec, Vec when ctx1 = ctx2 ->
-       let res = if f1 <> f2 then (k1, `Corner (f1,f2), ctx1, size)::res else res in (* TEST: var/feat *)
-       let res = if f1 < f2 then (k1, `Average [f1;f2], ctx1, size)::res else res in
-       let res = if f1 < f2 then (k1, `Plus (f1,f2), ctx1, size)::res else res in
-       let res = if f1 <> f2 then (k1, `Minus (f1,f2), ctx1, size)::res else res in
-       res
-    | Mask, Mask when ctx1 = ctx2 ->
-       (Mask, `LogAnd (f1,f2), ctx1, size)::
-         (Mask, `LogOr (f1,f2), ctx1, size)::
-           (Mask, `LogXOr (f1,f2), ctx1, size)::
-             (Mask, `LogAndNot (f1,f2), ctx1, size)::res
-    | _ -> res in
-  List.rev kind_exprs))
+    let$ res, (role2,f2,ctx2,size2) = res, feats in
+    if ctx1 = ctx2
+    then
+      let size = 1 + size1 + size2 in
+      match role1, role2 with
+      | `Int (_, role_vec1), `Int (_,`Size _) ->
+         let res =
+           if (if role_vec1 = `Pos then f1 <> f2 else f1 < f2)
+           then (role1, `Plus (f1,f2), ctx1, size)::res
+           else res in
+         let res =
+           if f1 <> f2
+           then (role1, `Minus (f1,f2), ctx1, size)::res
+           else res in
+         res
+      | `Vec xx1, `Vec xx2 ->
+         let res =
+           match xx1, xx2 with
+           | `Pos, `Pos when f1 <> f2 -> (role1, `Corner (f1,f2), ctx1, size)::res
+           | _ -> res in (* TEST: var/feat *)
+         let res =
+           match xx1, xx2 with
+           | (`Pos, `Pos | `Size _, `Size _) when f1 < f2 ->
+              (role1, `Average [f1;f2], ctx1, size)::res
+           | _ -> res in
+         let res =
+           if (if xx1 = `Pos then f1 <> f2 else f1 < f2) && xx2 <> `Pos
+           then (role1, `Plus (f1,f2), ctx1, size)::res
+           else res in
+         let res =
+           if f1 <> f2
+           then (role1, `Minus (f1,f2), ctx1, size)::res
+           else res in
+         res
+      | `Mask, `Mask ->
+         (`Mask, `LogAnd (f1,f2), ctx1, size)::
+           (`Mask, `LogOr (f1,f2), ctx1, size)::
+             (`Mask, `LogXOr (f1,f2), ctx1, size)::
+               (`Mask, `LogAndNot (f1,f2), ctx1, size)::res
+      | _ -> res
+    else res in
+  List.rev exprs))
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->
