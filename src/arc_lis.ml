@@ -1,8 +1,6 @@
 
 open Js_of_ocaml
 
-let refine_degree = 50
-
 let _ = Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
 
 exception TODO
@@ -90,7 +88,7 @@ object
                   then (quota_compressive - 1, state::suggestions)
                   else (quota_compressive, state::suggestions)
                | Result.Error _ -> res)
-           (refine_degree, []) in
+           (!Model2.max_refinements, []) in
     let suggestions = (* sorting in increasing DL *)
       suggestions
       |> List.rev (* to preserve ordering from sequence *) 

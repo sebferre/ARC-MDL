@@ -11,6 +11,7 @@ let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* 
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
+let max_refinements = def_param "max_refinements" 50 string_of_int (* max nb of considered refinements *)
 let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
 
 exception TODO

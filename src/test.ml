@@ -3,15 +3,6 @@ open Task
 
 module Model = Model2
 
-(* === parameters === *)
-             
-let def_param name v to_str =
-  Printf.printf "## %s = %s\n" name (to_str v);
-  ref v
-             
-let beam_width = def_param "beam_width" 1 string_of_int
-let refine_degree = def_param "refine_degree" 50 string_of_int
-
 (* === command line options === *)
              
 let training = ref true (* should be set to false on evaluation set *)
@@ -198,7 +189,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
           ~pause:(!pause)
           ~timeout:(!task_timeout)
           ~init_model
-          ~beam_width:(!beam_width) ~refine_degree
+          ~beam_width:1 ~refine_degree
           task.train)
   in
   match res with
@@ -469,7 +460,7 @@ class checker_model ~(get_init_model : string -> Model.model) ~refine_degree : c
 
 let checker_learning = new checker_model
                          ~get_init_model:(fun _ -> Model.init_model)
-                         ~refine_degree:(!refine_degree)
+                         ~refine_degree:(!Model2.max_refinements)
 
 let checker_apply = new checker_model
                          ~get_init_model:(fun name -> List.assoc name task_model)
