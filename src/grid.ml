@@ -330,38 +330,8 @@ let mask_model_mem h w i j = (* mask height and width, relative position (i,j) *
   | `Border -> i=0 || j=0 || i=h-1 || j=w-1
   | `EvenCheckboard -> (i+j) mod 2 = 0
   | `OddCheckboard -> (i+j) mod 2 = 1
-  | `PlusCross -> (i=h/2 || i=(h-1)/2) && (j=w/2 || j=(w-1)/2)
+  | `PlusCross -> (i=h/2 || i=(h-1)/2) || (j=w/2 || j=(w-1)/2)
   | `TimesCross -> assert (h=w); i=j || (h-1-i) = j
-
-let models_of_mask (m : Mask.t) : mask_model list =
-  let h, w = m.height, m.width in
-  let maxi, maxj = h - 1, w - 1 in
-  let full = ref true in
-  let border = ref true in
-  let even_cb = ref true in
-  let odd_cb = ref true in
-  let plus_cross = ref true in
-  let times_cross = ref (maxi = maxj) in
-  for i=0 to maxi do
-    for j=0 to maxj do (* reuse below Boolean expressions from 'mask_model_mem' *)
-      let pixel_on = Mask.mem i j m in
-      full := !full && pixel_on = true;
-      border := !border && pixel_on = (i=0 || j=0 || i=maxi || j=maxj);
-      even_cb := !even_cb && pixel_on = ((i+j) mod 2 = 0);
-      odd_cb := !odd_cb && pixel_on = ((i+j) mod 2 = 1);
-      plus_cross := !plus_cross && pixel_on = ((i=h/2 || i=maxi/2) && (j=w/2 || j=maxj/2));
-      times_cross := !times_cross && pixel_on = (i=j || (maxi-i) = j)
-    done
-  done;
-  let res = [] in
-  let res = if !full then (`Full (h=2 && w>=2 || w=2 && h>=2))::res else res in
-  let res = if !border then `Border::res else res in
-  let res = if !even_cb then `EvenCheckboard::res else res in
-  let res = if !odd_cb then `OddCheckboard::res else res in
-  let res = if !plus_cross then `PlusCross::res else res in
-  let res = if !times_cross then `TimesCross::res else res in
-  let res = if res = [] then [`Mask m] else res in
-  res
   
              
 (* segmenting grids *)
@@ -677,20 +647,22 @@ let points, reset_points =
 type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: color;
-		   mask : Mask.t; (* covered pixels *)
+		   new_cover : Mask.t; (* new covered pixels *)
 		   mask_models : mask_model list; (* mask models, relative to rectangle box *)
 		   delta : pixel list;
                    nb_explained_pixels : int }
 
 let rectangle_as_grid (g : t) (r : rectangle) : t =
   let gr = make g.height g.width no_color in
-  let col = r.color in
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
-      if Mask.mem i j r.mask then
+      if mask_model_mem
+           r.height r.width (i - r.offset_i) (j - r.offset_j)
+           (try List.hd r.mask_models with _ -> assert false) then
+           (*Mask.mem i j r.mask then*)
 	(*match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
 	| Some (_,_,c) -> set_pixel gr i j c
-	| None ->*) set_pixel gr i j col
+	| None ->*) set_pixel gr i j r.color
     done
   done;
   gr
@@ -699,71 +671,85 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   print_endline "RECTANGLES:";
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
-let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list = (* QUICK *)
-   let h, w, p_color, p_pixels = p.maxi-p.mini+1, p.maxj-p.minj+1, p.color, p.pixels in
-   let _area = h * w in
-   let r_mask = ref (Mask.copy p.pixels) in (* rectangle mask *)
-   let valid_area = ref 0 in (* area of r_mask *)
-   let delta = ref [] in (* inconsistent pixels, relative to mask and p.color *)
-   let nb_explained_pixels = ref 0 in (* mask pixels explained by rectangle *)
-   for i = p.mini to p.maxi do
-     for j = p.minj to p.maxj do
-       let c = g.matrix.{i,j} in
-       if Mask.mem i j mask (* pixel (i,j) in rectangle box, not yet explained *)
-       then
-         if c = p_color && Mask.mem i j p_pixels (* this pixel is in part and has the expected color *)
-         then (
-	   r_mask := Mask.add_in_place i j !r_mask; (* included in rectangle mask *)
-           incr valid_area;
-           incr nb_explained_pixels ) (* and hence now explained *)
-         else delta := (i,j,c)::!delta (* the pixel has yet to be explained *)
-       else ( (* pixel in rectangle box but already explained, hidden behind above layers *)
-	 r_mask := Mask.add_in_place i j !r_mask; (* we consider it as valid *)
-	 incr valid_area )
-     done
-   done;
-   let res = [] in
-   let res = (* adding rectangle with specific mask model, without delta *)
-     if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
-     then
-       let m =
-	 List.fold_left
-	   (fun m (i,j,c) ->
-	     Mask.remove (i - p.mini) (j - p.minj) m)
-	   (Mask.full h w)
-	   !delta in
-       { height = p.maxi-p.mini+1;
-	 width = p.maxj-p.minj+1;
-	 offset_i = p.mini;
-	 offset_j = p.minj;
-	 color = p.color;
-	 mask = (!r_mask);
-	 mask_models = models_of_mask m;
-	 delta = [];
-         nb_explained_pixels = (!nb_explained_pixels) } :: res
-     else res in
-   let res = (* adding full rectangle with delta *)
-     if List.length !delta < !valid_area
-     then
-       let _valid_area = !valid_area + List.length !delta in
-       let mask =
-         List.fold_left
-           (fun mask (i,j,c) -> Mask.add_in_place i j mask)
-           (!r_mask) !delta in
-       let height = p.maxi-p.mini+1 in
-       let width = p.maxj-p.minj+1 in
-       { height;
-         width;
-	 offset_i = p.mini;
-	 offset_j = p.minj;
-	 color = p.color;
-	 mask;
-	 mask_models = [`Full (height = 2 && width >= 2 || width = 2 && height >= 2)];
-	 delta = (!delta);
-         nb_explained_pixels = (!nb_explained_pixels) } :: res
-     else res in
-   res
-
+  
+let models_of_mask_part (visible_mask : Mask.t) (p : part) : mask_model list =
+  let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
+  let m = ref (Mask.empty height width) in (* mask over the part box *)
+  let full = ref true in
+  let border = ref true in
+  let even_cb = ref true in
+  let odd_cb = ref true in
+  let plus_cross = ref true in
+  let times_cross = ref (height = width) in
+  for absi = p.mini to p.maxi do
+    let i = absi - p.mini in
+    for absj = p.minj to p.maxj do (* reuse below Boolean expressions from 'mask_model_mem' *)
+      let j = absj - p.minj in
+      let hidden = not (Mask.mem absi absj visible_mask) in
+      let pixel_on = Mask.mem absi absj p.pixels in
+      if pixel_on (* || hidden *) then m := Mask.add_in_place i j !m;
+      full := !full && (hidden || pixel_on = true);
+      border := !border && (hidden || pixel_on = (i=0 || j=0 || i=height-1 || j=width-1));
+      even_cb := !even_cb && (hidden || pixel_on = ((i+j) mod 2 = 0));
+      odd_cb := !odd_cb && (hidden || pixel_on = ((i+j) mod 2 = 1));
+      plus_cross := !plus_cross && (hidden || pixel_on = ((i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)));
+      times_cross := !times_cross && (hidden || pixel_on = (i=j || (height-1-i) = j))
+    done
+  done;
+  let res = [] in
+  let res = if !full then `Full (height=2 && width>=2 || width=2 && height>=2)::res else res in
+  let res = if !border then `Border::res else res in
+  let res = if !even_cb then `EvenCheckboard::res else res in
+  let res = if !odd_cb then `OddCheckboard::res else res in
+  let res = if !plus_cross then `PlusCross::res else res in
+  let res = if !times_cross then `TimesCross::res else res in
+  let res = if res = [] then `Mask !m::res else res in
+  res
+  
+let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list =
+  let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
+  let delta = ref [] in
+  let nb_delta = ref 0 in
+  let nb_explained_pixels = Mask.area (Mask.inter mask p.pixels) in 
+  for i = p.mini to p.maxi do
+    for j = p.minj to p.maxj do
+      if Mask.mem i j mask && not (Mask.mem i j p.pixels)
+      then (
+        delta := (i, j, g.matrix.{i,j}) :: !delta;
+        incr nb_delta
+      )
+    done
+  done;
+  let res = [] in
+  let res = (* adding full rectangle with delta *)
+    if !nb_delta < height * width - !nb_delta
+    then
+      let new_cover =
+        List.fold_left
+          (fun mask (i,j,c) -> Mask.add_in_place i j mask)
+          p.pixels !delta in
+      { height; width;
+        offset_i = p.mini; offset_j = p.minj;
+        color = p.color;
+        new_cover;
+        mask_models = [`Full (height = 2 && width >= 2 || width = 2 && height >= 2)];
+	delta = (!delta);
+        nb_explained_pixels
+      } :: res
+    else res in
+  let res = (* adding rectangle with specific mask model, without delta *)
+    if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
+    then
+      { height; width;
+        offset_i = p.mini; offset_j = p.minj;
+        color = p.color;
+        new_cover = p.pixels;
+        mask_models = models_of_mask_part mask p;
+        delta = [];
+        nb_explained_pixels
+      } :: res
+    else res in
+  res
 (*let rectangles_of_part, reset_rectangles_of_part =
   let f, reset =
     Common.memoize ~size:103

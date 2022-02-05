@@ -2121,9 +2121,9 @@ let parse_vec t : (int * int, data) p_x_parse = (* QUICK *)
       | _ -> parse_empty)
     t
 
-let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
+let state_minus_shape_gen state occ_delta occ_new_cover =
   Common.prof "Model2.state_minus_shape_gen" (fun () ->
-  let new_mask = Grid.Mask.diff state.mask occ_mask in
+  let new_mask = Grid.Mask.diff state.mask occ_new_cover in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
   else
@@ -2134,12 +2134,11 @@ let state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask =
 	parts = filter_parts_with_mask ~new_mask state.parts } in
     Some new_state)
 let state_minus_point state (i,j,c) =
-  let nb_explained_pixels = 1 in
   let occ_delta = [] in
-  let occ_mask = Grid.Mask.singleton state.grid.height state.grid.width i j in
-  state_minus_shape_gen state nb_explained_pixels occ_delta occ_mask
+  let occ_new_cover = Grid.Mask.singleton state.grid.height state.grid.width i j in
+  state_minus_shape_gen state occ_delta occ_new_cover
 let state_minus_rectangle state (rect : Grid.rectangle) =
-  state_minus_shape_gen state rect.nb_explained_pixels rect.delta rect.mask
+  state_minus_shape_gen state rect.delta rect.new_cover
   
 let rec parse_shape (t : template) : (unit,data) p_x_parse =
   let parse_point pos color : (Grid.pixel, data) p_x_parse =
@@ -2229,13 +2228,14 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
     (*print_endline "RECTANGLES";*)
     parse_repeat
       (fun (rect : Grid.rectangle) state ->
-        Grid.Mask.(is_subset rect.mask state.mask) (* TEST: disjoint items *)
+        Grid.Mask.(is_subset rect.new_cover state.mask) (* TEST: disjoint items *)
+      (* TODO: true by definition of Grid.rectangles_of_part, revise *)
       (*not Grid.Mask.(is_empty (inter rect.mask state.mask))*)
       )
       (fun i p_item rect state ->
         let* data, state = parse_rectangle p_item rect state in
         let state =
-          let new_mask = Grid.Mask.diff state.mask rect.mask in
+          let new_mask = Grid.Mask.diff state.mask rect.new_cover in
           { state with
             mask = new_mask;
             delta = add_delta_with_mask ~mask:state.mask state.delta rect.delta;

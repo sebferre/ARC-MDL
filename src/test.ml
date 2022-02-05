@@ -246,8 +246,9 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 32 tasks, 147.8s for timeout=30s, max_nb_parses=64, max_refs=100 *)
+let solved_train_names = (* 33 tasks, 147.8s for timeout=30s, max_nb_parses=64, max_refs=100 *)
   [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=8.4s *)
+    "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=15.9s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.2s *)
     "1cf80156.json"; (* crop on shape, runtime=0.1s *)
     "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 1s, timeout trying to explain everything, runtime=6.0 *)
