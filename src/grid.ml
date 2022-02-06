@@ -293,36 +293,6 @@ let mask_model_area ~height ~width = function
   | `PlusCross -> height + width - 1
   | `TimesCross -> height + width - (height mod 2)
   
-(* mask-based computations on grids *)
-
-let majority_colors (mask : Mask.t) (g : t) : color list =
-  Common.prof "Grid.majority_colors" (fun () ->
-  let color_counter = Array.make nb_color 0 in
-  Mask.iter
-    (fun i j ->
-      let c = g.matrix.{i,j} in
-      color_counter.(c) <- color_counter.(c) + 1
-    )
-    mask;
-  let max_count = ref 0 in
-  let bcs = ref [] in
-  for c = 0 to nb_color - 1 do
-    let count = color_counter.(c) in
-    if count = !max_count then bcs := c::!bcs
-    else if count > !max_count then (
-      max_count := count;
-      bcs := [c])
-    else ()
-  done;
-  !bcs)
-let majority_colors, reset_majority_colors =
-  let f, reset =
-    Common.memoize ~size:103
-      (fun (mask,g) ->
-        majority_colors mask g) in
-  let f = fun mask g -> f (mask,g) in
-  f, reset
-
 let mask_model_mem h w i j = (* mask height and width, relative position (i,j) *)
   function
   | `Mask m -> Mask.mem i j m
@@ -585,12 +555,13 @@ let segment_by_color (g : t) : part list =
   done;
   (* collecting parts *)
   fm#fold
-    (fun _ part res ->
+    (fun _ part res -> (* TODO: fin a way to avoid this trick *)
       if part.mini=0 && part.maxi=h-1
          && part.minj=0 && part.maxj=w-1
-         && part.color=black && 2 * part.nb_pixels - 1 > hw
-     then res (* ignoring black background *)
-     else part :: split_part part @ res)
+         && part.color=black (* NOTE: do not relax this constraint *)
+         && 2 * part.nb_pixels - 1 > hw
+      then res (* ignoring black background *)
+      else part :: split_part part @ res)
     [])
 let segment_by_color, reset_segment_by_color =
   Common.memoize ~size:203 segment_by_color
@@ -598,6 +569,28 @@ let segment_by_color, reset_segment_by_color =
 
 (* locating shapes *)
 
+let background_colors (g : t) : color list = (* in decreasing frequency order *)
+  Common.prof "Grid.background_colors" (fun () ->
+  let area = g.height * g.width in
+  let l = ref [] in
+  for c = 0 to nb_color - 1 do
+    let n = g.color_count.(c) in
+    if n > 0 then l := (c,n)::!l (* keeping only occurring colors *)
+  done;
+  let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
+  let l =
+    match l with (* keep only significant colors, and at most 2 *)
+    | (c1,n1)::(c2,n2)::_ ->
+       if n2 >= area / 4
+       then [c1; c2]
+       else [c1]
+    | (c1,_)::_ -> [c1]
+    | [] -> [] in
+  if List.mem black l
+  then l
+  else l @ [black]) (* ensure black is considered as a background color *)
+
+  
 type point = pixel
 
 let point_as_grid (g : t) (p : point) : t =
@@ -635,7 +628,7 @@ let points (g : t) (mask : Mask.t) (parts : part list) : point list =
        (fun res part -> points_of_part ~acc:res mask part)
        []
   |> List.sort_uniq (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
-         Stdlib.compare (c1 = black, p1) (c2 = black, p2))) (* black points last *)
+         Stdlib.compare p1 p2))
 let points, reset_points =
   let f, reset =
     Common.memoize ~size:103
@@ -828,9 +821,9 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
     res
     |> List.sort
          (fun rect1 rect2 ->
-           Stdlib.compare (* black last, decreasing nb_explained_pixels *)
-             (rect1.color = black, - rect1.nb_explained_pixels, rect1)
-             (rect2.color = black, - rect2.nb_explained_pixels, rect2))
+           Stdlib.compare (* decreasing nb_explained_pixels *)
+             (- rect1.nb_explained_pixels, rect1)
+             (- rect2.nb_explained_pixels, rect2))
   in
   res)
 let rectangles, reset_rectangles =
@@ -844,7 +837,6 @@ let rectangles, reset_rectangles =
 
 let reset_memoized_functions () =
   reset_segment_by_color ();
-  reset_majority_colors ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
   reset_rectangles ()

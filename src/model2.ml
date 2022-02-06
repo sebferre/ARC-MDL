@@ -1006,7 +1006,7 @@ let dl_background_color : Grid.color -> dl =
      else invalid_arg "Unexpected color"
 let dl_mask : Grid.mask_model -> dl =
   function
-  | `Full _ -> Mdl.Code.usage 0.5
+  | `Full _ -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
   | `Border -> Mdl.Code.usage 0.1
   | `EvenCheckboard
     | `OddCheckboard
@@ -2076,7 +2076,7 @@ let parse_color t : (Grid.color,data) p_x_parse = (* QUICK *)
     ~parse_patt:(function
       | `Color c0 ->
          fun p c state ->
-         if c=c0 then Myseq.return (`Color c, state)
+         if c0 = c then Myseq.return (`Color c0, state)
          else if state.quota_diff > 0 then
            Myseq.return (`Color c, add_diff p state)
          else Myseq.empty
@@ -2361,21 +2361,30 @@ let parse_grid t : (Grid.t, data) p_x_parse = Common.prof "Model2.parse_grid" (f
     ~parse_patt:
     (function
      | `Background (size,color,layers) ->
-        let parse_layers = parse_layers layers in
         let parse_size = parse_vec size in
         let parse_color = parse_color color in
+        let seq_background_colors =
+          match color with
+          | `Color bc -> (fun g -> Myseq.return bc)
+          | `U -> (fun g -> Myseq.from_list (Grid.background_colors g))
+          | _ -> assert false in
+        let parse_layers = parse_layers layers in
         fun p ->
-        let parse_layers = parse_layers p in
         let parse_size = parse_size (p ++ `Size) in
         let parse_color = parse_color (p ++ `Color) in
+        let parse_layers = parse_layers p in
         fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid/seq" (
-        let* dlayers, state = parse_layers () state in
         let* dsize, state = parse_size (g.height,g.width) state in
-        let bc = (* background color *)
+        let* bc = seq_background_colors g in                              
+        let* dcolor, state = parse_color bc state in
+        let state = { state with (* ignoring parts belonging to background *)
+                      parts = List.filter (fun (p : Grid.part) -> p.color <> bc) state.parts } in
+        let* dlayers, state = parse_layers () state in
+(*        let bc = (* background color *)
 	  match Grid.majority_colors state.mask g with
 	  | bc::_ -> bc (* TODO: return sequence of colors *)
 	  | [] -> Grid.black in
-        let* dcolor, state = parse_color bc state in
+        let* dcolor, state = parse_color bc state in *)
         let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
         let new_state =
