@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 33 tasks, 3.0s/task for timeout=60s, max_nb_parses=64, max_refs=100 *)
+let solved_train_names = (* 34 tasks, 3.0s/task for timeout=60s, max_nb_parses=64, max_refs=100 *)
   [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=8.4s *)
     "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=15.9s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.2s *)
@@ -280,6 +280,7 @@ let solved_train_names = (* 33 tasks, 3.0s/task for timeout=60s, max_nb_parses=6
     "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=0.5s *)
     "d631b094.json"; (* NEW any colored shape, output 1 x area grid with same color, runtime=0.0s *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=10.4s *)
+    "e9614598.json"; (* NEW two aligned blue points, add a 3x3 green +-cross in between *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=3.9s *)
     "ea786f4a.json"; (* NEW black point in a colored grid, produce same-size same-color grid with a full-grid x-cross black shape at (0,0), runtime=0.2s *)
@@ -287,8 +288,6 @@ let solved_train_names = (* 33 tasks, 3.0s/task for timeout=60s, max_nb_parses=6
 
 let nogen_train_names = (* tasks that succeeds on examples but fail on test cases *)
   [
-    "0962bcdd.json"; (* pb: selects wrong expression for position, need too many diffs
-                        todo: use more semantic expressions on pos/size, prune irrelevant constants in input model, consider best mask model w.r.t. hidden pixels (considered as on currently), position at center *) 
     "1caeab9d.json"; (* pb: ignores the side point in shapes (prefers Full like in other examples); with repeat, how to refer to the blue shape?
                         todo: use Repeat to value the common shape, refine ordering of Grid.rectangles, take into account output delta (objective is zero) *)
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test
@@ -298,15 +297,10 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
     "496994bd.json"; (* diff OK
                         pb: needs complex expressions (a - b -c) (a - 2*(a+b)) 
                         todo: simply consider application of symmetries to input grid! here vertical symmetry (requires neutral color, black?) *)
-    "694f12f3.json"; (* pb: selects wrong expressions
-                        todo: like for 0962b, use expressions like size-(2,2) and pos+(1,1); also consider shape filling color (out-of-mask pixels) *)
     "91714a58.json"; (* pb: subtle dl optim parsing two rectangles
                         todo: prune input model, stop condition to avoid explaining big noise *)
     "a61f2674.json"; (* pb: variable nb of bars
                         todo: manage collections *)
-    "b230c067.json"; (* pb: too many relaxations needed (constants)
-                        todo: should prune input grid model for unnecessary constraints *)
-    "bb43febb.json"; (* see 694f *)
     "caa06a1f.json"; (* pb: test has a complex checkboard motif, not examples
                         todo: k-color mask model (k small, 2-3), generalizing filling color ? + mask relaxation  *)
     "d5d6de2d.json"; (* pb: collection, fails to generalize from mapping first item to all items (use relax mechanism), degenerated case where produced rectangle is void (size (0,0))
@@ -322,7 +316,6 @@ let maybe_train_names =
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
     "6b9890af.json"; (* TODO pb: need for scale-invariant masks/bitmaps *)
-    "ea786f4a.json"; (* pbs: missing black cross as part, chooses checkboard on example 1 *)
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "72ca375d.json"; (* SUCCESS: by trying the different options, not understanding proper *)
     "0b148d64.json"; (* SUCCESS crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)
@@ -332,7 +325,7 @@ let maybe_train_names =
     "928ad970.json"; (* TODO pb: position next to borders on all sides, need more expressions, and also border as special mask, independent of size, and ignoring what is inside *)
     "67a423a3.json"; (* pb: rectangle mask, need to be transpose-invariant *)
     "41e4d17e.json"; (* pb: collection, map *)
-    "952a094c.json"; (* pb: 4 points, which is which, need for nesting? explicit bottom right position of rectangles *)
+    "952a094c.json"; (* pb: 4 points, which is which, order of refinements matters *)
     "98cf29f8.json"; (* pb: too slow, insufficient expressions on pos/size *)
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
     "b9b7f026.json"; (* pb: need for nesting *)

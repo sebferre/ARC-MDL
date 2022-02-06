@@ -934,10 +934,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
      if in_output && i >= 1 && i <= 3
      then [(d :> template)]
      else [] (* position- and size-invariance of inputs *)
-  | `Color _ ->
-     if in_output
-     then [(d :> template)]
-     else [] (* color-invariance of inputs *)
+  | `Color _ -> [(d :> template)] (* colors can be seen as patterns *)
   | `Mask (`Full true) -> [`Mask `Border; `Mask (`Full false)]
   | `Mask _ -> [(d :> template)] (* masks can be seen as patterns *)
   | `Vec _ -> [`Vec (`U, `U)]
@@ -2992,8 +2989,18 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     then
       let size = 1 + size1 + size2 in
       match role1, role2 with
-      | `Vec `Pos, `Vec `Pos when v1 < v2 ->
-         (`Vec (`Size `X), `Span (v1,v2), ctx1, size)::res
+      | `Vec xx1, `Vec xx2 ->
+         let res =
+           match xx1, xx2 with
+           | `Pos, `Pos when v1 < v2 ->
+              (`Vec (`Size `X), `Span (v1,v2), ctx1, size)::res
+           | _ -> res in
+         let res =
+           match xx1, xx2 with
+           | (`Pos, `Pos | `Size _, `Size _) when v1 < v2 ->
+              (role1, `Average [v1;v2], ctx1, size)::res
+           | _ -> res in
+         res
       | _ -> res
     else res in 
   let exprs = (* actually, expressions and constants *)
@@ -3037,11 +3044,6 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
            match xx1, xx2 with
            | `Pos, `Pos when f1 <> f2 -> (role1, `Corner (f1,f2), ctx1, size)::res
            | _ -> res in (* TEST: var/feat *)
-         let res =
-           match xx1, xx2 with
-           | (`Pos, `Pos | `Size _, `Size _) when f1 < f2 ->
-              (role1, `Average [f1;f2], ctx1, size)::res
-           | _ -> res in
          let res =
            if (if xx1 = `Pos then f1 <> f2 else f1 < f2) && xx2 <> `Pos
            then (role1, `Plus (f1,f2), ctx1, size)::res
