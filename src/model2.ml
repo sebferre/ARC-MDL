@@ -31,7 +31,6 @@ let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
 let ( let$ ) (init,l) f =
   l |> List.fold_left (fun res x -> f (res, x)) init [@@inline]
 
-
 let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
   match lx with
   | [] -> Result.Ok []
@@ -2998,7 +2997,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let$ res, (_k,lp) = [], env_sig in (* TODO: make env_sig a flat list *)
     let$ res, p = res, lp in
     ((path_role p :> role_poly), p) :: res in
-  let vars =
+  let exprs = (* LEVEL 0 *)
     let$ res, (role,p) = [], paths in
     match path_ctx p with
     | None -> (role, `Ref p, None, 1)::res
@@ -3006,95 +3005,126 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
        let res = (role, `Indexing (`Ref p, `Index), Some ctx, 2)::res in
        let$ res, i = res, [0; 1; 2] in
        (role, `Indexing (`Ref p, `Int i), None, 2)::res in
-  let feats =
-    let$ res, (role1,v1,ctx1,size1 as var1) = [], vars in
-    let res = var1 :: res in
-    let res = (* unary operators *)
-      let size = 1 + size1 in
+  let exprs = (* LEVEL 1 *)
+    let$ res, (role1,e1,ctx1,size1 as expr1) = [], exprs in
+    let res = expr1 :: res in
+    (* unary operators *)
+    let size = 1 + size1 in
+    let res = (* area(_) *)
       match role1 with
-      | `Shape -> (`Int (`X, `Size `X), `Area v1, ctx1, size)::res
-      | `Layer -> (`Int (`J, `Pos), `Right v1, ctx1, size)::
-                   (`Int (`J, `Pos), `Center v1, ctx1, size)::
-                     (`Int (`I, `Pos), `Bottom v1, ctx1, size)::
-                       (`Int (`I, `Pos), `Middle v1, ctx1, size)::res
+      | `Shape -> (`Int (`X, `Size `X), `Area e1, ctx1, size)::res
       | _ -> res in
-    let$ res, (role2,v2,ctx2,size2) = res, vars in (* binary operators *)
+    let res = (* right(_) *)
+      match role1 with
+      | `Layer -> (`Int (`J, `Pos), `Right e1, ctx1, size)::res
+      | _ -> res in
+    let res = (* center(_) *)
+      match role1 with
+      | `Layer -> (`Int (`J, `Pos), `Center e1, ctx1, size)::res
+      | _ -> res in
+    let res = (* bottom(_) *)
+      match role1 with
+      | `Layer -> (`Int (`I, `Pos), `Bottom e1, ctx1, size)::res
+      | _ -> res in
+    let res = (* middle(_) *)
+      match role1 with
+      | `Layer -> (`Int (`I, `Pos), `Middle e1, ctx1, size)::res
+      | _ -> res
+    in
+    let$ res, (role2,e2,ctx2,size2) = res, exprs in
     if ctx1 = ctx2
     then
+      (* binary operators *)
       let size = 1 + size1 + size2 in
-      match role1, role2 with
-      | `Vec xx1, `Vec xx2 ->
-         let res =
-           match xx1, xx2 with
-           | `Pos, `Pos when v1 < v2 ->
-              (`Vec (`Size `X), `Span (v1,v2), ctx1, size)::res
-           | _ -> res in
-         let res =
-           match xx1, xx2 with
-           | (`Pos, `Pos | `Size _, `Size _) when v1 < v2 ->
-              (role1, `Average [v1;v2], ctx1, size)::res
-           | _ -> res in
-         res
-      | `Layer, `Layer when v1 < v2 ->
-         (`Vec (`Size `X), `TranslationOnto (v1,v2), ctx1, size)::res
-      | _ -> res
+      let res = (* span(_,_) *)
+        match role1, role2 with
+        | `Vec `Pos, `Vec `Pos when e1 < e2 ->
+           (`Vec (`Size `X), `Span (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* average([_;_]) *)
+        match role1, role2 with
+        | `Vec `Pos, `Vec `Pos | `Vec (`Size _), `Vec (`Size _) when e1 < e2 ->
+           (role1, `Average [e1;e2], ctx1, size)::res
+        | _ -> res in
+      let res = (* translationOnto(_,_) *)
+        match role1, role2 with
+        | `Layer, `Layer when e1 < e2 ->
+           (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* not _ *)
+        match role1 with
+        | `Mask -> (`Mask, `LogNot e1, ctx1, size)::res
+        | _ -> res in
+      let res = (* _ and _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogAnd (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ or _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogOr (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ xor _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogXOr (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ and not _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogAndNot (e1,e2), ctx1, size)::res
+        | _ -> res in
+      res
     else res in 
-  let exprs = (* actually, expressions and constants *)
-    let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::
-                (`Vec `Pos, `ZeroVec, None, 1)::[] in
-    let$ res, (role1,f1,ctx1,size1 as feat1) = res, feats in
-    let res = feat1::res in
-    let res = (* unary operators *)
-      let size = 1 + size1 in
-      match role1 with
-      | `Int _ | `Vec _ ->
-         let res =
-           let$ res, n = res, [1;2;3] in
-           (role1, `Incr (f1,n), ctx1, size)::
-             (role1, `Decr (f1,n), ctx1, size)::res in
-         let res =
-           let$ res, n = res, [2;3] in
-           (role1, `ScaleUp (f1,n), ctx1, size)::
-             (role1, `ScaleDown (f1,n), ctx1, size)::res in
-         res
-      | `Mask ->
-         (`Mask, `LogNot f1, ctx1, size)::res
-      | _ -> res in
-    let$ res, (role2,f2,ctx2,size2) = res, feats in
+  let exprs = (* LEVEL 2 *)
+    let res = [] in
+    let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::res in
+    let res = (`Vec `Pos, `ZeroVec, None, 1)::res in
+    let$ res, (role1,e1,ctx1,size1 as expr1) = res, exprs in
+    let res = expr1::res in
+    (* unary operators *)
+    let size = 1 + size1 in
+    let res =
+      let$ res, n = res, [1;2;3] in
+      let res = (* incr(_,1..3) *)
+        match role1 with
+        | `Int _ | `Vec _ -> (role1, `Incr (e1,n), ctx1, size)::res
+        | _ -> res in
+      let res = (* decr(_,1..3) *)
+        match role1 with
+        | `Int _ | `Vec _ -> (role1, `Decr (e1,n), ctx1, size)::res
+        | _ -> res in
+      res in
+    let res =
+      let$ res, n = res, [2;3] in
+      let res = (* scaleUp(_,2..3) *)
+        match role1 with
+        | `Int _ | `Vec _ -> (role1, `ScaleUp (e1,n), ctx1, size)::res
+        | _ -> res in
+      let res = (* scaleDown(_,2..3) *)
+        match role1 with
+        | `Int _ | `Vec _ -> (role1, `ScaleDown (e1,n), ctx1, size)::res
+        | _ -> res in
+      res in
+    let$ res, (role2,e2,ctx2,size2) = res, exprs in
     if ctx1 = ctx2
     then
+      (* binary operators *)
       let size = 1 + size1 + size2 in
-      match role1, role2 with
-      | `Int (_, role_vec1), `Int (_,`Size _) ->
-         let res =
-           if (if role_vec1 = `Pos then f1 <> f2 else f1 < f2)
-           then (role1, `Plus (f1,f2), ctx1, size)::res
-           else res in
-         let res =
-           if f1 <> f2
-           then (role1, `Minus (f1,f2), ctx1, size)::res
-           else res in
-         res
-      | `Vec xx1, `Vec xx2 ->
-         let res =
-           match xx1, xx2 with
-           | `Pos, `Pos when f1 <> f2 -> (role1, `Corner (f1,f2), ctx1, size)::res
-           | _ -> res in (* TEST: var/feat *)
-         let res =
-           if (if xx1 = `Pos then f1 <> f2 else f1 < f2) && xx2 <> `Pos
-           then (role1, `Plus (f1,f2), ctx1, size)::res
-           else res in
-         let res =
-           if f1 <> f2
-           then (role1, `Minus (f1,f2), ctx1, size)::res
-           else res in
-         res
-      | `Mask, `Mask ->
-         (`Mask, `LogAnd (f1,f2), ctx1, size)::
-           (`Mask, `LogOr (f1,f2), ctx1, size)::
-             (`Mask, `LogXOr (f1,f2), ctx1, size)::
-               (`Mask, `LogAndNot (f1,f2), ctx1, size)::res
-      | _ -> res
+      let res = (* corner(_,_) *)
+        match role1, role2 with
+        | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
+           (role1, `Corner (e1,e2), ctx1, size)::res
+        | _ -> res in (* TEST: var/feat *)
+      let res = (* _ + _ *)
+        match role1, role2 with
+        | `Int (_, xx1), `Int (_,`Size _) | `Vec xx1, `Vec (`Size _)
+             when (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
+           (role1, `Plus (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ - _ *)
+        match role1, role2 with
+        | `Int _, `Int (_, `Size _) | `Vec _, `Vec _ when e1 <> e2 ->
+           (role1, `Minus (e1,e2), ctx1, size)::res
+        | _ -> res in
+      res
     else res in
   List.rev exprs))
   
