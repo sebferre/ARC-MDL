@@ -246,8 +246,9 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 34 tasks, 3.0s/task for timeout=60s, max_nb_parses=64, max_refs=100 *)
-  [ "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=8.4s *)
+let solved_train_names = (* 36 tasks, 3.2s/task for timeout=60s, max_nb_parses=64, max_refs=100 *)
+  [ "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.9s *)
+    "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=8.4s *)
     "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=15.9s *)
     "1bfc4729.json"; (* 2 colored points, expand each in a fixed shape at relative position, runtime=2.2s *)
     "1cf80156.json"; (* crop on shape, runtime=0.1s *)
@@ -279,6 +280,7 @@ let solved_train_names = (* 34 tasks, 3.0s/task for timeout=60s, max_nb_parses=6
     "bdad9b1f.json"; (* red and cyan segments, made full lines, yellow point at crossing, runtime=3.5s *)
     "be94b721.json"; (* 3 shapes (at least), selecting the biggest one, runtime=0.5s *)
     "d631b094.json"; (* NEW any colored shape, output 1 x area grid with same color, runtime=0.0s *)
+    "dc433765.json"; (* NEW a gren point and a yellow point, the green one moves one step towards the green one *)
     "e48d4e1a.json"; (* colored cross moved according to height of grey rectangle at (0,9), runtime=10.4s *)
     "e9614598.json"; (* NEW two aligned blue points, add a 3x3 green +-cross in between *)
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
@@ -313,6 +315,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
     "6b9890af.json"; (* TODO pb: need for scale-invariant masks/bitmaps *)

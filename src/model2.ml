@@ -87,7 +87,8 @@ object
     | Nil -> None
     | Cons (x,next) -> s <- next; Some x
 end
-  
+
+
 (** Part 1: grids *)
 
 (* common data structures *)
@@ -384,6 +385,11 @@ let path_factorize (p1 : revpath) (p2 : revpath) : revpath * revpath * revpath =
   in
   aux_path `Root rev_p1 rev_p2
 
+let shape_size = (* : 'shape -> [`Vec of [`Int of int] * [`Int of int]] = *)
+  function
+  | `Point _ -> `Vec (`Int 1, `Int 1)
+  | `Rectangle (size,_,_) -> size
+  | _ -> failwith "Model2.shape_size: unexpected shape"
        
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
@@ -421,6 +427,7 @@ type 'a expr =
   | `Top of 'a (* on Object *)
   | `Bottom of 'a (* on Object *)
   | `Middle of 'a (* on Object *)
+  | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
@@ -613,6 +620,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Top a -> xp_apply "top" xp print [a]
   | `Bottom a -> xp_apply "bottom" xp print [a]
   | `Middle a -> xp_apply "middle" xp print [a]
+  | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
   | `Index -> print#string string_of_index
   | `Indexing (e1,e2) -> xp print e1; print_string "["; xp print e2; print#string "]"
 let string_of_expr xp = Xprint.to_string (xp_expr xp)
@@ -1334,6 +1342,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Corner (`X,`X); `Average [`X;`X]; `Span (`X,`X);
+              `TranslationOnto (`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `Indexing (`X,`X) ])
@@ -1414,6 +1423,10 @@ let rec dl_expr
     | `Top e1 | `Bottom e1 | `Middle e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
+  | `TranslationOnto (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some `Object, path)) e2
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1799,6 +1812,27 @@ let apply_expr_gen
          then raise (Undefined_result "Middle: no middle, even height")
          else `Int (i + h/2 + 1)
       | `PosShape _ -> raise (Undefined_result "Middle: not a rectangle")
+      | _ -> raise (Invalid_expr e))
+  | `TranslationOnto (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
+        `PosShape (`Vec (`Int mini2, `Int minj2), shape2) ->
+         ( match shape_size shape1, shape_size shape2 with
+           | `Vec (`Int h1, `Int w1), `Vec (`Int h2, `Int w2) ->
+              let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
+              let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
+              let ti =
+                if maxi1 < mini2 then mini2 - maxi1 - 1
+                else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
+                else 0 in
+              let tj =
+                if maxj1 < minj2 then minj2 - maxj1 - 1
+                else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
+                else 0 in
+              if ti = 0 && tj = 0
+              then raise (Undefined_result "TranslationOnto: two objects overlap")
+              else `Vec (`Int ti, `Int tj)
+           | _ -> raise (Invalid_expr e) )
       | _ -> raise (Invalid_expr e))
   | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
      (match lookup (ctx :> var), apply ~lookup p e2 with
@@ -3001,6 +3035,8 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
               (role1, `Average [v1;v2], ctx1, size)::res
            | _ -> res in
          res
+      | `Layer, `Layer when v1 < v2 ->
+         (`Vec (`Size `X), `TranslationOnto (v1,v2), ctx1, size)::res
       | _ -> res
     else res in 
   let exprs = (* actually, expressions and constants *)
