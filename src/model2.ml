@@ -1668,9 +1668,6 @@ let apply_expr_gen
   | `Minus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1-i2)
-(*         let i = i1 - i2 in
-         if i < 0 then raise Negative_integer;
-         `Int i *)
       | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1-i2), `Int (j1-j2))
       | _ -> raise (Invalid_expr e))
   | `Incr (e1,k) ->
@@ -1762,8 +1759,14 @@ let apply_expr_gen
       | _ -> assert false) (* empty or ill-typed list *)
   | `Span (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `Int i1, `Int i2 -> `Int (abs (i2-i1) + 1)
-      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1))
+      | `Int i1, `Int i2 ->
+         if i1=i2
+         then raise (Undefined_result "Span: same int")
+         else `Int (abs (i2-i1) + 1)
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
+         if i1=i2 && j1=j2
+         then raise (Undefined_result "Span: same vector")
+         else `Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1))
       | _ -> raise (Invalid_expr e))
   | `Norm e1 ->
      (match apply ~lookup p e1 with
@@ -2960,11 +2963,11 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       tmap_score_patt defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
     let$ defs, (role_e,t,ctx,tsize) = defs, defs_expressions ~env_sig in
-    let data_fst =
+    let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
       |> List.map
            (fun (env,u_val,dl,rank) ->
-             (defs_check_apply ~env t ctx, u_val,dl,rank)) in
+             (defs_check_apply ~env t ctx, u_val,dl,rank))) in
     let$ defs, (for_p,p,role,t0) = defs, u_vars in
     match role_poly_matches role_e role with
       (* whether the expression role matches the defined path, and relaxation value *)
@@ -3059,8 +3062,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
        let$ res, i = res, [0; 1; 2] in
        (role, `Indexing (`Ref p, `Int i), None, 2)::res in
   let exprs = (* LEVEL 1 *)
-    let$ res, (role1,e1,ctx1,size1 as expr1) = [], exprs in
-    let res = expr1 :: res in
+    let$ res, (role1,e1,ctx1,size1) = exprs, exprs in
     (* unary operators *)
     let size = 1 + size1 in
     let res = (* area(_) *)
@@ -3096,7 +3098,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> res in (* TEST: var/feat *)
       let res = (* span(_,_) *)
         match role1, role2 with
-        | `Int ((`I | `J as ij1), `Pos), `Int ((`I | `J as ij2), `Pos) when ij1=ij2 ->
+        | `Int ((`I | `J as ij1), `Pos), `Int ((`I | `J as ij2), `Pos) when ij1=ij2 && e1 < e2 ->
            (`Int (ij1, `Pos), `Span (e1,e2), ctx1, size)::res
         | `Vec `Pos, `Vec `Pos when e1 < e2 ->
            (`Vec (`Size `X), `Span (e1,e2), ctx1, size)::res
@@ -3125,8 +3127,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       res
     else res in
   let exprs = (* LEVEL 2 *)
-    let$ res, (role1,e1,ctx1,size1 as expr1) = [], exprs in
-    let res = expr1::res in
+    let$ res, (role1,e1,ctx1,size1) = exprs, exprs in
     let$ res, (role2,e2,ctx2,size2) = res, exprs in
     if ctx1 = ctx2
     then
@@ -3139,11 +3140,10 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       res
     else res in
   let exprs = (* LEVEL 3 *)
-    let res = [] in
+    let res = exprs in
     let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::res in
     let res = (`Vec `Pos, `ZeroVec, None, 1)::res in
-    let$ res, (role1,e1,ctx1,size1 as expr1) = res, exprs in
-    let res = expr1::res in
+    let$ res, (role1,e1,ctx1,size1) = res, exprs in
     (* unary operators *)
     let size = 1 + size1 in
     let res =
@@ -3168,6 +3168,10 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | `Int _ | `Vec _ -> (role1, `ScaleDown (e1,n), ctx1, size)::res
         | _ -> res in
       res in
+    let res = (* not _ *)
+      match role1 with
+      | `Mask -> (`Mask, `LogNot e1, ctx1, size)::res
+      | _ -> res in
     let$ res, (role2,e2,ctx2,size2) = res, exprs in
     if ctx1 = ctx2
     then
@@ -3184,25 +3188,21 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | `Int _, `Int (_, `Size _) | `Vec _, `Vec _ when e1 <> e2 ->
            (role1, `Minus (e1,e2), ctx1, size)::res
         | _ -> res in
-      let res = (* not _ *)
-        match role1 with
-        | `Mask -> (`Mask, `LogNot e1, ctx1, size)::res
-        | _ -> res in
       let res = (* _ and _ *)
         match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogAnd (e1,e2), ctx1, size)::res
+        | `Mask, `Mask when e1 < e2 -> (`Mask, `LogAnd (e1,e2), ctx1, size)::res
         | _ -> res in
       let res = (* _ or _ *)
         match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogOr (e1,e2), ctx1, size)::res
+        | `Mask, `Mask when e1 < e2 -> (`Mask, `LogOr (e1,e2), ctx1, size)::res
         | _ -> res in
       let res = (* _ xor _ *)
         match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogXOr (e1,e2), ctx1, size)::res
+        | `Mask, `Mask when e1 < e2 -> (`Mask, `LogXOr (e1,e2), ctx1, size)::res
         | _ -> res in
       let res = (* _ and not _ *)
         match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogAndNot (e1,e2), ctx1, size)::res
+        | `Mask, `Mask when e1 <> e2 -> (`Mask, `LogAndNot (e1,e2), ctx1, size)::res
         | _ -> res in
       res
     else res in

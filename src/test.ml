@@ -315,7 +315,12 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
-    "b6afb2da.json"; (* pb: *) 
+    "ed36ccf7.json"; (* pb: need mask rotation *)
+    "47c1f68c.json"; (* pb: need flips and rotate180, and opposite coordinates in grid *)
+    "8be77c9e.json"; (* pb: need symmetric extension of masks, expression concatHeight(mask,flipHeight(mask)) *)
+    "4c4377d9.json"; (* pb: same as 8be7 *)
+    "3af2c5a8.json"; (* pb: need symmtric extension of masks *)
+    "b6afb2da.json"; (* pb: prefers a layer's size to bottom(some layer) *) 
     "d4a91cb9.json"; (* pb: missing position/size expressions, maybe a Segment(pos1,pos2) shape + Corner expr *)
     "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
