@@ -229,7 +229,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       && j >= 0 && j < m.width
       && Z.testbit m.bits (i * m.width + j)
 
-    let add_in_place i j m =
+    let add i j m =
       { m with
 	bits = Z.logor m.bits (Z.shift_left Z.one (i * m.width + j)) }
     let remove i j m =
@@ -266,6 +266,99 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
 	done
       done;
       !res
+
+    let flipHeight m =
+      let h, w = m.height, m.width in
+      let res = ref (empty h w) in
+      iter
+        (fun i j -> res := add (h - 1 - i) j !res)
+        m;
+      !res
+      
+    let flipWidth m =
+      let h, w = m.height, m.width in
+      let res = ref (empty h w) in
+      iter
+        (fun i j -> res := add i (w - 1 - j) !res)
+        m;
+      !res
+
+    let flipDiag1 m =
+      let h, w = m.height, m.width in
+      let res = ref (empty w h) in
+      iter
+        (fun i j -> res := add j i !res)
+        m;
+      !res
+
+    let flipDiag2 m =
+      let h, w = m.height, m.width in
+      let res = ref (empty w h) in
+      iter
+        (fun i j -> res := add (w - 1 - j) (h - 1 - i) !res)
+        m;
+      !res
+
+    let rotate90 m = (* clockwise *)
+      let h, w = m.height, m.width in
+      let res = ref (empty w h) in
+      iter
+        (fun i j -> res := add j (h - 1 - i) !res)
+        m;
+      !res
+      
+    let rotate180 m = (* clockwise *)
+      let h, w = m.height, m.width in
+      let res = ref (empty h w) in
+      iter
+        (fun i j -> res := add (h - 1 - i) (w - 1 - j) !res)
+        m;
+      !res
+      
+    let rotate90 m = (* clockwise *)
+      let h, w = m.height, m.width in
+      let res = ref (empty w h) in
+      iter
+        (fun i j -> res := add (w - 1 - j) i !res)
+        m;
+      !res
+      
+    let scale (k : int) (l : int) m = (* stretching/scaling mask [m] by a factor k x l *)
+      let res = ref (empty (m.height * k) (m.width * l)) in
+      iter
+        (fun i j ->
+          for i' = k*i to k*(i+1)-1 do
+            for j' = l*j to l*(j+1)-1 do
+              res := add i' j' !res
+            done
+          done)
+        m;
+      !res
+
+    let concatHeight m1 m2 =
+      assert (m1.width = m2.width);
+      let h1, h2 = m1.height, m2.height in
+      let res = ref (empty (h1+h2) m1.width) in
+      iter
+        (fun i1 j1 -> res := add i1 j1 !res)
+        m1;
+      iter
+        (fun i2 j2 -> res := add (h1+i2) j2 !res)
+        m2;
+      !res
+      
+    let concatWidth m1 m2 =
+      assert (m1.height = m2.height);
+      let w1, w2 = m1.width, m2.width in
+      let res = ref (empty m1.height (w1+w2)) in
+      iter
+        (fun i1 j1 -> res := add i1 j1 !res)
+        m1;
+      iter
+        (fun i2 j2 -> res := add i2 (w1+j2) !res)
+        m2;
+      !res
+      
   end
 
 type mask_model =
@@ -500,7 +593,7 @@ let split_part (part : part) : part list =
 	    let pixels = ref (Mask.empty h w) in
 	    for i = mini to maxi do
 	      for j = minj to maxj do
-		pixels := Mask.add_in_place i j !pixels
+		pixels := Mask.add i j !pixels
 	      done
 	    done;
 	    let subpart =
@@ -680,7 +773,7 @@ let models_of_mask_part (visible_mask : Mask.t) (p : part) : mask_model list =
       let j = absj - p.minj in
       let hidden = not (Mask.mem absi absj visible_mask) in
       let pixel_on = Mask.mem absi absj p.pixels in
-      if pixel_on (* || hidden *) then m := Mask.add_in_place i j !m;
+      if pixel_on then m := Mask.add i j !m;
       full := !full && (hidden || pixel_on = true);
       border := !border && (hidden || pixel_on = (i=0 || j=0 || i=height-1 || j=width-1));
       even_cb := !even_cb && (hidden || pixel_on = ((i+j) mod 2 = 0));
@@ -719,7 +812,7 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
     then
       let new_cover =
         List.fold_left
-          (fun mask (i,j,c) -> Mask.add_in_place i j mask)
+          (fun mask (i,j,c) -> Mask.add i j mask)
           p.pixels !delta in
       { height; width;
         offset_i = p.mini; offset_j = p.minj;
