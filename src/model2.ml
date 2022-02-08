@@ -409,6 +409,8 @@ type 'a expr =
   | `ScaleUp of 'a * int (* on Int, Vec *)
   | `ScaleDown of 'a * int (* on Int, Vec *)
   | `Corner of 'a * 'a (* on Vec *)
+  | `Min of 'a list (* on Int *)
+  | `Max of 'a list (* on Int *)
   | `Average of 'a list (* on Int, Vec *)
   | `Span of 'a * 'a (* on Vec *)
   | `Norm of 'a (* Vec -> Int *)
@@ -602,7 +604,9 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
-  | `Average (la) -> xp_apply "average" xp print la
+  | `Min la -> xp_apply "min" xp print la
+  | `Max la -> xp_apply "max" xp print la
+  | `Average la -> xp_apply "average" xp print la
   | `Span (a,b) -> xp_apply "span" xp print [a;b]
   | `Norm a -> Xprint.bracket ("|","|") xp print a
   | `Diag1 (a,k) -> print#string "diag1("; xp print a; print#string ", "; print#int k; print#string ")" 
@@ -1248,7 +1252,7 @@ let rec dl_path_role (role : role) (p : revpath) : dl =
 and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
   | `Root -> 0.
   | `Field ((`I | `J as ij), p1) ->
-     Mdl.Code.usage (if ij = rij then 0.67 else 0.33)
+     Mdl.Code.usage (if ij = rij then 0.75 else 0.25)
      +. dl_path_vec rvec p1
   | _ -> assert false
 and dl_path_color = function
@@ -1265,8 +1269,8 @@ and dl_path_vec (rvec : role_vec) = function
      let dl_choice =
        match rvec, f with
        | `Pos, `Pos 
-         | `Size _, `Size -> Mdl.Code.usage 0.67
-       | _ -> Mdl.Code.usage 0.33 in
+         | `Size _, `Size -> Mdl.Code.usage 0.9
+       | _ -> Mdl.Code.usage 0.1 in
      ( match f with
        | `Pos -> dl_choice +. dl_path_layer p1
        | `Size -> dl_choice +. dl_path_grid_shape p1 )
@@ -1327,6 +1331,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `Min [`X;`X]; `Max [`X;`X]; `Average [`X;`X]; `Span (`X,`X);
               (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*)
               `Index; `Indexing (`X,`X) ])
     ~bool:(uniform_among [])
@@ -1340,19 +1345,20 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Plus (`X,`X); `Minus (`X,`X);
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
-              `Corner (`X,`X); `Average [`X;`X]; `Span (`X,`X);
-              `TranslationOnto (`X,`X);
+              `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `Indexing (`X,`X) ])
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
-    ~layer:(uniform_among [])
+    ~layer:(uniform_among [
+                `TranslationOnto (`X,`X) ])
     ~grid:(uniform_among [])
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
+  (* for overloaded functions, rather infer type bottom-up *)
   let k = path_kind path in
   let code_expr = code_expr_by_kind.&(k) in
   match e with
@@ -1389,6 +1395,16 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
+  | `Min le1 ->
+     code_expr
+     +. Mdl.Code.universal_int_plus (List.length le1)
+     +. Mdl.sum le1
+          (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
+  | `Max le1 ->
+     code_expr
+     +. Mdl.Code.universal_int_plus (List.length le1)
+     +. Mdl.sum le1
+          (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
   | `Average le1 ->
      code_expr
      +. Mdl.Code.universal_int_plus (List.length le1)
@@ -1696,20 +1712,57 @@ let apply_expr_gen
          then `Vec (`Int i1, `Int j2)
          else raise (Undefined_result "Corner: vectors on same row/column")
       | _ -> raise (Invalid_expr e))
+  | `Min le1 ->
+     le1
+     |> List.map (fun e1 -> apply ~lookup p e1)
+     |> List.fold_left
+          (fun (is_int,is_vec,mini,minj) -> function
+            | `Int i -> (true, is_vec, min i mini, minj)
+            | `Vec (`Int i, `Int j) -> (is_int, true, min i mini, min j minj)
+            | _ -> raise (Invalid_expr e))
+          (false, false, max_int, max_int)
+     |> (fun (is_int,is_vec,mini,minj) ->
+      match is_int, is_vec with
+      | true, false -> `Int mini
+      | false, true -> `Vec (`Int mini, `Int minj)
+      | _ -> assert false)
+  | `Max le1 ->
+     le1
+     |> List.map (fun e1 -> apply ~lookup p e1)
+     |> List.fold_left
+          (fun (is_int,is_vec,maxi,maxj) -> function
+            | `Int i -> (true, is_vec, max i maxi, maxj)
+            | `Vec (`Int i, `Int j) -> (is_int, true, max i maxi, max j maxj)
+            | _ -> raise (Invalid_expr e))
+          (false, false, min_int, min_int)
+     |> (fun (is_int,is_vec,maxi,maxj) ->
+      match is_int, is_vec with
+      | true, false -> `Int maxi
+      | false, true -> `Vec (`Int maxi, `Int maxj)
+      | _ -> assert false)
   | `Average le1 ->
      le1
      |> List.map (fun e1 -> apply ~lookup p e1)
      |> List.fold_left
-          (fun (n,sumi,sumj) -> function
-            | `Vec (`Int i, `Int j) -> (n+1, sumi+i, sumj+j)
+          (fun (is_int,is_vec,n,sumi,sumj) -> function
+            | `Int i -> (true, is_vec, n+1, sumi+i, sumj)
+            | `Vec (`Int i, `Int j) -> (is_int, true, n+1, sumi+i, sumj+j)
             | _ -> raise (Invalid_expr e))
-          (0, 0, 0)
-     |> (fun (n,sumi,sumj) ->
-      if sumi mod n = 0 && sumj mod n = 0
-      then `Vec (`Int (sumi / n), `Int (sumj / n))
-      else raise (Undefined_result "Average: not an integer"))
+          (false, false, 0, 0, 0)
+     |> (fun (is_int,is_vec,n,sumi,sumj) ->
+      match is_int, is_vec with
+      | true, false ->
+         if sumi mod n = 0
+         then `Int (sumi / n)
+         else raise (Undefined_result "Average: not an integer")
+      | false, true ->
+         if sumi mod n = 0 && sumj mod n = 0
+         then `Vec (`Int (sumi / n), `Int (sumj / n))
+         else raise (Undefined_result "Average: not an integer")
+      | _ -> assert false) (* empty or ill-typed list *)
   | `Span (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Int i1, `Int i2 -> `Int (abs (i2-i1) + 1)
       | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1))
       | _ -> raise (Invalid_expr e))
   | `Norm e1 ->
@@ -3036,44 +3089,56 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     then
       (* binary operators *)
       let size = 1 + size1 + size2 in
+      let res = (* corner(_,_) *)
+        match role1, role2 with
+        | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
+           (role1, `Corner (e1,e2), ctx1, size)::res
+        | _ -> res in (* TEST: var/feat *)
       let res = (* span(_,_) *)
         match role1, role2 with
+        | `Int ((`I | `J as ij1), `Pos), `Int ((`I | `J as ij2), `Pos) when ij1=ij2 ->
+           (`Int (ij1, `Pos), `Span (e1,e2), ctx1, size)::res
         | `Vec `Pos, `Vec `Pos when e1 < e2 ->
            (`Vec (`Size `X), `Span (e1,e2), ctx1, size)::res
         | _ -> res in
+      let res = (* min([_;_]) *)
+        match role1, role2 with
+        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+           (role1, `Min [e1;e2], ctx1, size)::res
+        | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
+           (role1, `Min [e1;e2], ctx1, size)::res
+        | _ -> res in
+      let res = (* max([_;_]) *)
+        match role1, role2 with
+        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+           (role1, `Max [e1;e2], ctx1, size)::res
+        | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
+           (role1, `Max [e1;e2], ctx1, size)::res
+        | _ -> res in
       let res = (* average([_;_]) *)
         match role1, role2 with
-        | `Vec `Pos, `Vec `Pos | `Vec (`Size _), `Vec (`Size _) when e1 < e2 ->
+        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+           (role1, `Average [e1;e2], ctx1, size)::res
+        | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            (role1, `Average [e1;e2], ctx1, size)::res
         | _ -> res in
+      res
+    else res in
+  let exprs = (* LEVEL 2 *)
+    let$ res, (role1,e1,ctx1,size1 as expr1) = [], exprs in
+    let res = expr1::res in
+    let$ res, (role2,e2,ctx2,size2) = res, exprs in
+    if ctx1 = ctx2
+    then
+      let size = 1 + size1 + size2 in
       let res = (* translationOnto(_,_) *)
         match role1, role2 with
-        | `Layer, `Layer when e1 < e2 ->
+        | `Layer, `Layer when e1 <> e2 ->
            (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size)::res
         | _ -> res in
-      let res = (* not _ *)
-        match role1 with
-        | `Mask -> (`Mask, `LogNot e1, ctx1, size)::res
-        | _ -> res in
-      let res = (* _ and _ *)
-        match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogAnd (e1,e2), ctx1, size)::res
-        | _ -> res in
-      let res = (* _ or _ *)
-        match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogOr (e1,e2), ctx1, size)::res
-        | _ -> res in
-      let res = (* _ xor _ *)
-        match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogXOr (e1,e2), ctx1, size)::res
-        | _ -> res in
-      let res = (* _ and not _ *)
-        match role1, role2 with
-        | `Mask, `Mask -> (`Mask, `LogAndNot (e1,e2), ctx1, size)::res
-        | _ -> res in
       res
-    else res in 
-  let exprs = (* LEVEL 2 *)
+    else res in
+  let exprs = (* LEVEL 3 *)
     let res = [] in
     let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::res in
     let res = (`Vec `Pos, `ZeroVec, None, 1)::res in
@@ -3108,11 +3173,6 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     then
       (* binary operators *)
       let size = 1 + size1 + size2 in
-      let res = (* corner(_,_) *)
-        match role1, role2 with
-        | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           (role1, `Corner (e1,e2), ctx1, size)::res
-        | _ -> res in (* TEST: var/feat *)
       let res = (* _ + _ *)
         match role1, role2 with
         | `Int (_, xx1), `Int (_,`Size _) | `Vec xx1, `Vec (`Size _)
@@ -3123,6 +3183,26 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         match role1, role2 with
         | `Int _, `Int (_, `Size _) | `Vec _, `Vec _ when e1 <> e2 ->
            (role1, `Minus (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* not _ *)
+        match role1 with
+        | `Mask -> (`Mask, `LogNot e1, ctx1, size)::res
+        | _ -> res in
+      let res = (* _ and _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogAnd (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ or _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogOr (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ xor _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogXOr (e1,e2), ctx1, size)::res
+        | _ -> res in
+      let res = (* _ and not _ *)
+        match role1, role2 with
+        | `Mask, `Mask -> (`Mask, `LogAndNot (e1,e2), ctx1, size)::res
         | _ -> res in
       res
     else res in

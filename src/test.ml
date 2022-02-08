@@ -315,6 +315,8 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "b6afb2da.json"; (* pb: *) 
+    "d4a91cb9.json"; (* pb: missing position/size expressions, maybe a Segment(pos1,pos2) shape + Corner expr *)
     "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
