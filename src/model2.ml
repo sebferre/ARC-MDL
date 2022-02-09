@@ -11,6 +11,7 @@ let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* 
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
+let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
 let max_refinements = def_param "max_refinements" 50 string_of_int (* max nb of considered refinements *)
 let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
 
@@ -2965,24 +2966,29 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     let$ defs, (role_e,t,ctx,tsize) = defs, defs_expressions ~env_sig in
     let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
-      |> List.map
+      |> List.filter_map
            (fun (env,u_val,dl,rank) ->
-             (defs_check_apply ~env t ctx, u_val,dl,rank))) in
-    let$ defs, (for_p,p,role,t0) = defs, u_vars in
-    match role_poly_matches role_e role with
+             match defs_check_apply ~env t ctx with
+             | None -> None
+             | Some te -> Some (te,u_val,dl,rank))) in
+    if data_fst = []
+    then defs
+    else
+      let$ defs, (for_p,p,role,t0) = defs, u_vars in
+      match role_poly_matches role_e role with
       (* whether the expression role matches the defined path, and relaxation value *)
-    | None -> defs
-    | Some role_relax -> 
-      let data_opt =
-        data_fst
-        |> List.find_opt
-             (fun (te_opt,u_val,dl,rank) ->
-               let d = try PMap.find p u_val with _ -> assert false in
-               defs_check_match te_opt d) in
-      match data_opt with
       | None -> defs
-      | Some (_,_,dl,rank) ->
-         (dl, rank, tprio t, tsize + role_relax, p, role, t, ctx)::defs) in
+      | Some role_relax -> 
+         let data_opt =
+           data_fst
+           |> List.find_opt
+                (fun (te,u_val,dl,rank) ->
+                  let d = try PMap.find p u_val with _ -> assert false in
+                  defs_check_match te d) in
+         match data_opt with
+         | None -> defs
+         | Some (_,_,dl,rank) ->
+            (dl, rank, tprio t, tsize + role_relax, p, role, t, ctx)::defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
@@ -3001,8 +3007,9 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   |> Myseq.from_list
   |> Myseq.map (fun (_,_,_,_,p,_,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
-  let t_opt = defs_check_apply ~env t ctx in
-  defs_check_match t_opt d
+  match defs_check_apply ~env t ctx with
+  | None -> false
+  | Some te -> defs_check_match te d
 and defs_check_apply ~env (t : template) (ctx : revpath option) : template option =
   match t with
   | #patt -> Some t
@@ -3018,16 +3025,13 @@ and defs_check_apply ~env (t : template) (ctx : revpath option) : template optio
   | `U -> assert false (* should not be used as def *)
   | `Repeat _ -> assert false (* should not be used as def *)
   | `For _ -> assert false
-and defs_check_match (t_opt : template option) (d : data) : bool = (* QUICK *)
-  match t_opt with
-  | None -> false
-  | Some t ->
-     ( match t, d with
+and defs_check_match (t : template) (d : data) : bool = (* QUICK *)
+  match t, d with
        (* | `Many (ordered1,items1), `Many (ordered2,items2) ->
           (* TODO: how to handle [ordered] flags *)
           List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *) *)
-       | _, `Many (_,items) -> List.for_all (matches_template t) items
-       | _ -> matches_template t d )
+  | _, `Many (_,items) -> List.for_all (matches_template t) items
+  | _ -> matches_template t d
 and defs_expressions ~env_sig : (role_poly * template * revpath option * int) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   (* the [int] is expression size, for ranking expressions *)
@@ -3206,7 +3210,8 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> res in
       res
     else res in
-  List.rev exprs))
+  let exprs = List.rev exprs in (* approximate order in increasing size *)
+  Common.sub_list exprs 0 !max_expressions)) (* bounding nb expressions because of combinatorial number in some tasks *)
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->
