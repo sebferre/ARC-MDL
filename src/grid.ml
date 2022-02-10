@@ -181,6 +181,8 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
 	       width : int;
 	       bits : Z.t; }
 
+    exception Invalid_dim (* height/width are invalid for the operation *)
+           
     let height m = m.height
     let width m = m.width
     let area m = Z.hamdist Z.zero m.bits
@@ -267,6 +269,8 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       done;
       !res
 
+    (* isometric transformations *)
+      
     let flipHeight m =
       let h, w = m.height, m.width in
       let res = ref (empty h w) in
@@ -315,15 +319,17 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
         m;
       !res
       
-    let rotate90 m = (* clockwise *)
+    let rotate270 m = (* clockwise *)
       let h, w = m.height, m.width in
       let res = ref (empty w h) in
       iter
         (fun i j -> res := add (w - 1 - j) i !res)
         m;
       !res
+
+    (* scaling *)
       
-    let scale (k : int) (l : int) m = (* stretching/scaling mask [m] by a factor k x l *)
+    let scale_up (k : int) (l : int) m = (* scaling up mask [m] by a factor (k,l) *)
       let res = ref (empty (m.height * k) (m.width * l)) in
       iter
         (fun i j ->
@@ -335,8 +341,20 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
         m;
       !res
 
+    let scale_down (k : int) (l : int) m = (* scaling down *)
+      (* each resulting pixel is a OR of the corresponding source pixels *)
+      let res = ref (empty (m.height / k) (m.width / l)) in
+      iter
+        (fun i j -> res := add (i/k) (j/l) !res)
+        m;
+      !res
+
+    (* TODO:  unfold (repeating mask) and fold (finding smallest repeat factor) *)
+      
+    (* cropping and concatenating *)
+
     let concatHeight m1 m2 =
-      assert (m1.width = m2.width);
+      if m1.width <> m2.width then raise Invalid_dim;
       let h1, h2 = m1.height, m2.height in
       let res = ref (empty (h1+h2) m1.width) in
       iter
@@ -348,7 +366,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
       
     let concatWidth m1 m2 =
-      assert (m1.height = m2.height);
+      if m1.height <> m2.height then raise Invalid_dim;
       let w1, w2 = m1.width, m2.width in
       let res = ref (empty m1.height (w1+w2)) in
       iter
@@ -358,44 +376,160 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
         (fun i2 j2 -> res := add i2 (w1+j2) !res)
         m2;
       !res
+
+    let concatHeightWidth m1 m2 m3 m4 (* top left, top right, bottom left, bottom right *) =
+      concatHeight
+        (concatWidth m1 m2)
+        (concatWidth m3 m4)
+
+    (* TODO: selecting halves and quarters *)
+
+    let compose m1 m2 = (* repeating m2 for each 1-bit of m1 *)
+      let h1, w1 = m1.height, m1.width in
+      let h2, w2 = m2.height, m2.width in
+      let res = ref (empty (h1*h2) (w1*w2)) in
+      iter
+        (fun i1 j1 ->
+          iter
+            (fun i2 j2 ->
+              res := add (i1*h2+i2) (j1*w2+j2) !res)
+            m2)
+        m1;
+      !res
+
+    (* symmetrization *)
       
+    let sym_flipHeight_inplace m = union m (flipHeight m)
+    let sym_flipWidth_inplace m = union m (flipWidth m)
+    let sym_rotate180_inplace m = union m (rotate180 m)
+    let sym_flipHeightWidth_inplace m = union (union m (flipHeight m)) (flipWidth m) (* also includes rotate180(m) *)
+    let sym_flipDiag1_inplace m =
+      if m.height <> m.width then raise Invalid_dim;
+      union m (flipDiag1 m)
+    let sym_flipDiag2_inplace m =
+      if m.height <> m.width then raise Invalid_dim;
+      union m (flipDiag2 m)
+    let sym_flipDiag1Diag2_inplace m =
+      if m.height <> m.width then raise Invalid_dim;
+      union (union m (flipDiag1 m)) (flipDiag2 m)
+    let sym_rotate90_inplace m =
+      if m.height <> m.width then raise Invalid_dim;
+      union m (rotate90 m)
+    let sym_full_inplace m =
+      if m.height <> m.width then raise Invalid_dim;
+      union (union m (rotate90 m)) (flipHeight m) (* includes all symmetries *)
+
+    let sym_flipHeight_unfold m =
+      let m'= flipHeight m in
+      [ concatHeight m m'; concatHeight m' m ]
+    let sym_flipWidth_unfold m =
+      let m'= flipWidth m in
+      [ concatWidth m m'; concatWidth m' m ]
+    let sym_rotate180_unfold m =
+      let m' = rotate180 m in
+      [ concatHeight m m'; concatHeight m' m;
+        concatWidth m m'; concatWidth m' m ]
+    let sym_flipHeightWidth_unfold m =
+      let m'= flipWidth m in
+      let m1 = concatWidth m m' in
+      let m2 = concatWidth m' m in
+      let m1' = flipHeight m1 in
+      let m2' = flipHeight m2 in
+      [ concatHeight m1 m1'; concatHeight m1' m1;
+        concatHeight m2 m2'; concatHeight m2' m2 ]
+    let sym_rotate90_unfold m =
+      if m.height <> m.width then raise Invalid_dim;
+      let m90 = rotate90 m in
+      let m180 = rotate180 m in
+      let m270 = rotate270 m in
+      [ concatHeightWidth m m90 m270 m180;
+        concatHeightWidth m270 m m180 m90;
+        concatHeightWidth m180 m270 m90 m;
+        concatHeightWidth m90 m180 m m270 ]
+
   end
 
-type mask_model =
-  [ `Mask of Mask.t
-  | `Full of bool (* all pixels on, bool=true if also a collapsed border *)
-  | `Border (* width-1 border *)
-  | `EvenCheckboard
-  | `OddCheckboard
-  | `PlusCross
-  | `TimesCross
-  ]
+module Mask_model =
+  struct
+    type t =
+      [ `Mask of Mask.t
+      | `Full of bool (* all pixels on, bool=true if also a collapsed border *)
+      | `Border (* width-1 border *)
+      | `EvenCheckboard
+      | `OddCheckboard
+      | `PlusCross
+      | `TimesCross
+      ]
+      
+    let subsumes (m0 : t) (m1 : t) : bool =
+      match m0, m1 with
+      | `Full b0, `Full b1 -> not b0 || b1
+      | `Border, `Full true -> true
+      | _ -> m0 = m1
+  
+    let area ~height ~width = function
+      | `Mask bm -> Mask.area bm
+      | `Full _ -> height * width
+      | `Border -> 2 * (height + width) - 4
+      | `EvenCheckboard -> (height * width + 1) / 2
+      | `OddCheckboard -> height * width / 2
+      | `PlusCross -> height + width - 1
+      | `TimesCross -> height + width - (height mod 2)
+  
+    let mem ~height ~width i j = (* mask height and width, relative position (i,j) *)
+      function
+      | `Mask m -> Mask.mem i j m
+      | `Full _ -> true
+      | `Border -> i=0 || j=0 || i=height-1 || j=width-1
+      | `EvenCheckboard -> (i+j) mod 2 = 0
+      | `OddCheckboard -> (i+j) mod 2 = 1
+      | `PlusCross -> (i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)
+      | `TimesCross -> height=width && (i=j || (height-1-i) = j)
 
-let mask_model_subsumes (m0 : mask_model) (m1 : mask_model) : bool =
-  match m0, m1 with
-  | `Full b0, `Full b1 -> not b0 || b1
-  | `Border, `Full true -> true
-  | _ -> m0 = m1
+    let to_mask ~height ~width (mm : t) : Mask.t =
+      let res = ref (Mask.empty height width) in
+      for i = 0 to height - 1 do
+        for j = 0 to width - 1 do
+          if mem ~height ~width i j mm then
+            res := Mask.add i j !res
+        done
+      done;
+      !res
+                       
+    let from_box_in_mask ?visible_mask ~mini ~maxi ~minj ~maxj (mask : Mask.t) : t list =
+      let height, width = maxi-mini+1, maxj-minj+1 in
+      let is_visible =
+        match visible_mask with
+        | None -> (fun absi absj -> true)
+        | Some m -> (fun absi absj -> Mask.mem absi absj m)
+      in
+      let m = ref (Mask.empty height width) in (* mask over the part box *)
+      let models = ref [`Full (height=2 && width>=2 || width=2 && height>=2);
+                        `Border; `EvenCheckboard; `OddCheckboard; `PlusCross; `TimesCross] in
+      for absi = mini to maxi do
+        let i = absi - mini in
+        for absj = minj to maxj do
+          let j = absj - minj in
+          let hidden = not (is_visible absi absj) in
+          let pixel_on = Mask.mem absi absj mask in
+          if pixel_on then m := Mask.add i j !m;
+          models :=
+            List.filter
+              (fun model -> hidden || pixel_on = mem ~height ~width i j model)
+              !models;
+        done
+      done;
+      if !models = []
+      then [`Mask !m]
+      else !models
+      
+    let from_mask (mask : Mask.t) : t list =
+      from_box_in_mask
+        ~mini:0 ~maxi:(mask.height-1)
+        ~minj:0 ~maxj:(mask.width-1)
+        mask
   
-let mask_model_area ~height ~width = function
-  | `Mask bm -> Mask.area bm
-  | `Full _ -> height * width
-  | `Border -> 2 * (height + width) - 4
-  | `EvenCheckboard -> (height * width + 1) / 2
-  | `OddCheckboard -> height * width / 2
-  | `PlusCross -> height + width - 1
-  | `TimesCross -> height + width - (height mod 2)
-  
-let mask_model_mem h w i j = (* mask height and width, relative position (i,j) *)
-  function
-  | `Mask m -> Mask.mem i j m
-  | `Full _ -> true
-  | `Border -> i=0 || j=0 || i=h-1 || j=w-1
-  | `EvenCheckboard -> (i+j) mod 2 = 0
-  | `OddCheckboard -> (i+j) mod 2 = 1
-  | `PlusCross -> (i=h/2 || i=(h-1)/2) || (j=w/2 || j=(w-1)/2)
-  | `TimesCross -> assert (h=w); i=j || (h-1-i) = j
-  
+  end
              
 (* segmenting grids *)
 
@@ -734,7 +868,7 @@ type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: color;
 		   new_cover : Mask.t; (* new covered pixels *)
-		   mask_models : mask_model list; (* mask models, relative to rectangle box *)
+		   mask_models : Mask_model.t list; (* mask models, relative to rectangle box *)
 		   delta : pixel list;
                    nb_explained_pixels : int }
 
@@ -742,8 +876,8 @@ let rectangle_as_grid (g : t) (r : rectangle) : t =
   let gr = make g.height g.width no_color in
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
-      if mask_model_mem
-           r.height r.width (i - r.offset_i) (j - r.offset_j)
+      if Mask_model.mem
+           ~height:r.height ~width:r.width (i - r.offset_i) (j - r.offset_j)
            (try List.hd r.mask_models with _ -> assert false) then
            (*Mask.mem i j r.mask then*)
 	(*match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
@@ -758,7 +892,7 @@ let pp_rectangles (g : t) (rs : rectangle list) =
   pp_grids (g :: List.map (rectangle_as_grid g) rs)
 
   
-let models_of_mask_part (visible_mask : Mask.t) (p : part) : mask_model list =
+(*let models_of_mask_part (visible_mask : Mask.t) (p : part) : Mask_model.t list =
   let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let m = ref (Mask.empty height width) in (* mask over the part box *)
   let full = ref true in
@@ -769,7 +903,7 @@ let models_of_mask_part (visible_mask : Mask.t) (p : part) : mask_model list =
   let times_cross = ref (height = width) in
   for absi = p.mini to p.maxi do
     let i = absi - p.mini in
-    for absj = p.minj to p.maxj do (* reuse below Boolean expressions from 'mask_model_mem' *)
+    for absj = p.minj to p.maxj do (* reuse below Boolean expressions from 'Mask_model.mem' *)
       let j = absj - p.minj in
       let hidden = not (Mask.mem absi absj visible_mask) in
       let pixel_on = Mask.mem absi absj p.pixels in
@@ -790,7 +924,7 @@ let models_of_mask_part (visible_mask : Mask.t) (p : part) : mask_model list =
   let res = if !plus_cross then `PlusCross::res else res in
   let res = if !times_cross then `TimesCross::res else res in
   let res = if res = [] then `Mask !m::res else res in
-  res
+  res*)
   
 let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : rectangle list =
   let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
@@ -830,7 +964,9 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
         offset_i = p.mini; offset_j = p.minj;
         color = p.color;
         new_cover = p.pixels;
-        mask_models = models_of_mask_part mask p;
+        mask_models = Mask_model.from_box_in_mask ~visible_mask:mask
+                        ~mini:p.mini ~maxi:p.maxi ~minj:p.minj ~maxj:p.maxj
+                        p.pixels;
         delta = [];
         nb_explained_pixels
       } :: res

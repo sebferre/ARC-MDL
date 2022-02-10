@@ -315,6 +315,8 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "56dc2b01.json"; (* pb: would need translationOnto(..) minus some number along the translation vector *) 
+    "3345333e.json"; (* pb: needs to recover hidden part by symmetry *)
     "ed36ccf7.json"; (* pb: need mask rotation *)
     "47c1f68c.json"; (* pb: need flips and rotate180, and opposite coordinates in grid *)
     "8be77c9e.json"; (* pb: need symmetric extension of masks, expression concatHeight(mask,flipHeight(mask)) *)

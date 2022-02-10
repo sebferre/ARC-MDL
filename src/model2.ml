@@ -276,7 +276,7 @@ type 'a patt =
   [ `Bool of bool
   | `Int of int
   | `Color of Grid.color
-  | `Mask of Grid.mask_model
+  | `Mask of Grid.Mask_model.t
   | `Vec of 'a * 'a (* i, j -> vec *)
   | `Point of 'a (* color -> shape *)
   | `Rectangle of 'a * 'a * 'a (* size, color, mask -> shape *)
@@ -535,7 +535,7 @@ let rec xp_ilist (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (l : 'a ilist)
   in
   aux `Root l
 
-let xp_mask_model (print : Xprint.t) : Grid.mask_model -> unit = function
+let xp_mask_model (print : Xprint.t) : Grid.Mask_model.t -> unit = function
   | `Full false -> print#string "Full"
   | `Full true -> print#string "Full (and Border)" 
   | `Border -> print#string "Border"
@@ -970,7 +970,7 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   | `Bool b1, `Bool b2 when b1 = b2 -> true
   | `Int i1, `Int i2 when i1 = i2 -> true
   | `Color c1, `Color c2 when c1 = c2 -> true
-  | `Mask m1, `Mask m2 -> Grid.mask_model_subsumes m1 m2
+  | `Mask m1, `Mask m2 -> Grid.Mask_model.subsumes m1 m2
   | `Vec (i1,j1), `Vec (i2,j2) ->
      matches_template i1 i2 && matches_template j1 j2
   | `Point (color1), `Point (color2) ->
@@ -1013,7 +1013,7 @@ let dl_background_color : Grid.color -> dl =
      if c > 0 && c < 10 (* 9 colors *)
      then Mdl.Code.usage 0.01
      else invalid_arg "Unexpected color"
-let dl_mask : Grid.mask_model -> dl =
+let dl_mask : Grid.Mask_model.t -> dl =
   function
   | `Full _ -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
   | `Border -> Mdl.Code.usage 0.1
@@ -1831,7 +1831,7 @@ let apply_expr_gen
      (match apply ~lookup p e1 with
       | `Point _ -> `Int 1
       | `Rectangle (`Vec (`Int height, `Int width), _, `Mask m) ->
-         `Int (Grid.mask_model_area ~height ~width m)
+         `Int (Grid.Mask_model.area ~height ~width m)
       | _ -> raise (Invalid_expr e))
   | `Left e1 ->
      (match apply ~lookup p e1 with
@@ -1991,7 +1991,7 @@ and draw_layer g = function
      let maxj = minj + w - 1 in
      for i = mini to maxi do
        for j = minj to maxj do
-	 if Grid.mask_model_mem h w (i-mini) (j-minj) m
+	 if Grid.Mask_model.mem ~height:h ~width:w (i-mini) (j-minj) m
 	 then Grid.set_pixel g i j c
        done;
      done
@@ -2170,7 +2170,7 @@ let parse_color t : (Grid.color,data) p_x_parse = (* QUICK *)
       | _ -> parse_empty)
     t
   
-let parse_mask t : (Grid.mask_model list, data) p_x_parse = (* QUICK *)
+let parse_mask t : (Grid.Mask_model.t list, data) p_x_parse = (* QUICK *)
   parse_template
     ~parse_u:
     (fun () ->
@@ -2180,7 +2180,7 @@ let parse_mask t : (Grid.mask_model list, data) p_x_parse = (* QUICK *)
     ~parse_patt:(function
       | `Mask m0 ->
          fun p ms state ->
-         if List.exists (Grid.mask_model_subsumes m0) ms then
+         if List.exists (Grid.Mask_model.subsumes m0) ms then
            Myseq.return (`Mask m0, state)
          else if state.quota_diff > 0 then
            let* m = Myseq.from_list ms in
