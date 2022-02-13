@@ -349,9 +349,77 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
         m;
       !res
 
-    (* TODO:  unfold (repeating mask) and fold (finding smallest repeat factor) *)
+    let scale_to (new_h : int) (new_w : int) (m : t) : t option =
+      let h, w = m.height, m.width in
+      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
+        Some (scale_up (new_h / h) (new_w / w) m)
+      else if new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
+        Some (scale_down (h / new_h) (w / new_w) m)
+      else None
+        
+    (* resize and factor *)
+
+    let tile (k : int) (l : int) m = (* k x l tiling of m *)
+      let h, w = m.height, m.width in
+      let h', w' = h * k, w * l in
+      let res = ref (empty h' w') in
+      iter
+        (fun i j ->
+          for u = 0 to k-1 do
+            for v = 0 to l-1 do
+              res := add (u*h + i) (v*w + j) !res
+            done
+          done)
+        m;
+      !res
+
+    let factor (m : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
+      let rec range a b =
+        if a > b then []
+        else a :: range (a+1) b
+      in
+      let h, w = m.height, m.width in
+      let h_factors = ref (range 1 (h-1)) in
+      let w_factors = ref (range 1 (w-1)) in
+      for i = 1 to h-1 do (* starting at 1 OK because 0 mod x = 0 *)
+        for j = 1 to w-1 do
+          h_factors := !h_factors |> List.filter (fun h' -> mem i j m = mem (i mod h') j m);
+          w_factors := !w_factors |> List.filter (fun w' -> mem i j m = mem i (j mod w') m)
+        done
+      done;
+      let h' = match !h_factors with [] -> h | h'::_ -> h' in
+      let w' = match !w_factors with [] -> w | w'::_ -> w' in
+      (h', w')
+
+    let resize_alike (m : t) (new_h : int) (new_w : int) : t = (* change size while preserving the repeating pattern *)
+      let h, w = m.height, m.width in
+      let h', w' = factor m in
+      let res = ref (empty new_h new_w) in
+      for i' = 0 to h' - 1 do (* for each position in the factor *)
+        for j' = 0 to w' - 1 do
+          if mem i' j' m then (* when pixel on *)
+            for u = 0 to (new_h - 1) / h' + 1 do
+              for v = 0 to (new_w - 1) / w' + 1 do
+                let i, j = u*h' + i', v*w' + j' in
+                if i < new_h && j < new_w then
+                  res := add i j !res
+              done
+            done
+        done
+      done;
+      !res
       
     (* cropping and concatenating *)
+
+    let crop m offset_i offset_j new_h new_w =
+      let res = ref (empty new_h new_w) in
+      for i = 0 to new_h - 1 do
+        for j = 0 to new_w - 1 do
+          if mem (offset_i + i) (offset_j + j) m then
+            res := add i j !res
+        done
+      done;
+      !res      
 
     let concatHeight m1 m2 =
       if m1.width <> m2.width then raise Invalid_dim;
