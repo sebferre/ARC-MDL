@@ -1,6 +1,8 @@
 
 open Bigarray
 
+exception Undefined_result of string (* for undefined computations *)
+   
 type color = int
 
 (* conventional colors like in web app *)
@@ -353,7 +355,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       let h, w = m.height, m.width in
       if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
         Some (scale_up (new_h / h) (new_w / w) m)
-      else if new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
+      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
         Some (scale_down (h / new_h) (w / new_w) m)
       else None
         
@@ -392,7 +394,6 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       (h', w')
 
     let resize_alike (m : t) (new_h : int) (new_w : int) : t = (* change size while preserving the repeating pattern *)
-      let h, w = m.height, m.width in
       let h', w' = factor m in
       let res = ref (empty new_h new_w) in
       for i' = 0 to h' - 1 do (* for each position in the factor *)
@@ -587,16 +588,27 @@ module Mask_model =
               !models;
         done
       done;
-      if !models = []
-      then [`Mask !m]
-      else !models
+      !models @ [`Mask !m] (* still considering as raw mask for allowing some computations such as scaling *)
       
     let from_mask (mask : Mask.t) : t list =
       from_box_in_mask
         ~mini:0 ~maxi:(mask.height-1)
         ~minj:0 ~maxj:(mask.width-1)
         mask
-  
+
+    let scale_up k l : t -> t (* may fail *) = function
+      | `Mask m -> `Mask (Mask.scale_up k l m)
+      | (`Full false as mm) -> mm
+      | mm -> raise (Undefined_result "Grid.Mask_model.scale_up: undefined")
+
+    let scale_to new_h new_w : t -> t (* may fail *) = function
+      | `Mask m ->
+         ( match Mask.scale_to new_h new_w m with
+           | Some m -> `Mask m
+           | None -> raise (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
+      | (`Full false as mm) -> mm
+      | mm -> raise (Undefined_result "Grid.Mask_model.scale_to: undefined")
+      
   end
              
 (* segmenting grids *)

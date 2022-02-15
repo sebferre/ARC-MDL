@@ -407,8 +407,9 @@ type 'a expr =
   | `Incr of 'a * int (* on Int, Vec *)
   | `Decr of 'a * int (* in Int, Vec *)
   | `Modulo of 'a * 'a (* on Int *)
-  | `ScaleUp of 'a * int (* on Int, Vec *)
-  | `ScaleDown of 'a * int (* on Int, Vec *)
+  | `ScaleUp of 'a * int (* on Int, Vec, Mask *)
+  | `ScaleDown of 'a * int (* on Int, Vec, Mask *)
+  | `ScaleTo of 'a * 'a (* Mask, Vec -> Mask *)
   | `Corner of 'a * 'a (* on Vec *)
   | `Min of 'a list (* on Int *)
   | `Max of 'a list (* on Int *)
@@ -604,6 +605,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
+  | `ScaleTo (a,b) -> Xprint.infix " @ " xp print (a,b)
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
   | `Min la -> xp_apply "min" xp print la
   | `Max la -> xp_apply "max" xp print la
@@ -1338,6 +1340,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~bool:(uniform_among [])
     ~color:(uniform_among [])
     ~mask:(uniform_among [
+               `ScaleUp (`X,2); `ScaleTo (`X,`X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ])
@@ -1349,6 +1352,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
+                `ScaleUp (`X,2); `ScaleTo (`X,`X);
                 `Indexing (`X,`X) ])
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
@@ -1392,6 +1396,10 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_plus k
+  | `ScaleTo (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
   | `Corner (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1689,6 +1697,9 @@ let apply_expr_gen
      (match apply ~lookup p e1 with
       | `Int i1 -> `Int (i1 * k)
       | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 * k), `Int (j1 * k))
+      | `Mask mm -> `Mask (Grid.Mask_model.scale_up k k mm)
+      | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
+         `Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask (Grid.Mask_model.scale_up k k mm))
       | _ -> raise (Invalid_expr e))
   | `ScaleDown (e1,k) ->
      (match apply ~lookup p e1 with
@@ -1701,7 +1712,13 @@ let apply_expr_gen
          let remi, remj = i1 mod k, j1 mod k in
          if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
          then `Vec (`Int (i1 / k), `Int (j1 / k))
-         else raise (Undefined_result "ScaleDown: not an integer")                          
+         else raise (Undefined_result "ScaleDown: not an integer")
+      | _ -> raise (Invalid_expr e))
+  | `ScaleTo (e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `Mask mm, `Vec (`Int new_h, `Int new_w) -> `Mask (Grid.Mask_model.scale_to new_h new_w mm)
+      | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int new_h, `Int new_w) ->
+         `Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask (Grid.Mask_model.scale_to new_h new_w mm))
       | _ -> raise (Invalid_expr e))
   | `Corner (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
@@ -1942,6 +1959,7 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
 let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
   try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
   with (* catching runtime error in expression eval *)
+  | (Grid.Undefined_result _ as exn) -> Result.Error exn
   | (Unbound_var _ as exn) -> Result.Error exn
   | (Undefined_result _ as exn) -> Result.Error exn
   | (Out_of_bound _ as exn) -> Result.Error exn
@@ -3165,7 +3183,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       let$ res, n = res, [2;3] in
       let res = (* scaleUp(_,2..3) *)
         match role1 with
-        | `Int _ | `Vec _ -> (role1, `ScaleUp (e1,n), ctx1, size)::res
+        | `Int _ | `Vec _ | `Mask | `Shape -> (role1, `ScaleUp (e1,n), ctx1, size)::res
         | _ -> res in
       let res = (* scaleDown(_,2..3) *)
         match role1 with
@@ -3191,6 +3209,19 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         match role1, role2 with
         | `Int _, `Int (_, `Size _) | `Vec _, `Vec _ when e1 <> e2 ->
            (role1, `Minus (e1,e2), ctx1, size)::res
+        | _ -> res in
+      res
+    else res in
+  let exprs = (* LEVEL 4 *)
+    let res = exprs in
+    let$ res, (role1,e1,ctx1,size1) = res, exprs in
+    let$ res, (role2,e2,ctx2,size2) = res, exprs in
+    if ctx1 = ctx2
+    then
+      let size = 1 + size1 + size2 in
+      let res = (* ScaleTo on masks *)
+        match role1, role2 with
+        | (`Mask | `Shape), `Vec (`Size _) -> (role1, `ScaleTo (e1,e2), ctx1, size)::res
         | _ -> res in
       let res = (* _ and _ *)
         match role1, role2 with
