@@ -470,23 +470,28 @@ ${\bf Vec}(12,14) \sim {\bf Vec}(12,?)$.
 \begin{center}
   \begin{datatype}
     E_\nat \is 0 \alter F_\nat
-    \altis F_\nat + 1..3 \alter F_\nat - 1..3
-    \altis F_\nat \times 2..3 \alter F_\nat \div 2..3
+    \altis {\it Incr/Decr}(F_\nat, 1..3)
+    \altis {\it ScaleUp/ScaleDown}(F_\nat, 2..3)
     \altis F_\nat + F_\nat \alter F_\nat - F_\nat
     \\
     E_{\it Vector} \is (0,0) \alter F_{\it Vector}
-    \altis F_{\it Vector} \times 2..3 \alter F_{\it Vector} \div 2..3
-    \altis {\it Corner}(F_{\it Vector}, F_{\it Vector}) \alter {\it Average}(F_{\it Vector}, F_{\it Vector})
+    \altis {\it Incr/Decr}(F_{\it Vector}, 1..3)
+    \altis {\it ScaleUp/ScaleDown}(F_{\it Vector}, 2..3)
     \altis F_{\it Vector} + F_{\it Vector} \alter F_{\it Vector} - F_{\it Vector}
     \\
     E_{\it Mask} \is {\it And}(F_{\it Mask},F_{\it Mask}) \alter {\it Or}(F_{\it Mask},F_{\it Mask}) \alter {\it XOr}(F_{\it Mask},F_{\it Mask})
     \altis {\it AndNot}(F_{\it Mask},F_{\it Mask}) \alter {\it Not}(F_{\it Mask})
     \\
     \\
-    F_\nat \is P_\nat \alter {\it Area}(P_{\it Shape}) \alter {\it Norm1}(P_{\it Vector})
-    \altis {\it Right}(P_{\it Object}) \alter {\it Center}(P_{\it Object}) \alter {\it Bottom}(P_{\it Object}) \alter {\it Middle}(P_{\it Object})
+    F_\nat \is P_\nat
+    \altis {\it Area}(P_{\it Shape})
+    \altis {\it Right/Center/Bottom/Middle}(P_{\it Object})
+    \altis {\it Span/Average/Min/Max}(P_\nat, P_\nat)
     \\
     F_{\it Vector} \is P_{\it Vector}
+    \altis {\it Corner}(P_{\it Vector}, P_{\it Vector})
+    \altis {\it Span/Average/Min/Max}(P_{\it Vector}, P_{\it Vector})
+    \altis {\it TranslationOnto}(P_{\it Object},P_{\it Object})
     \\
     F_{\it Mask} \is P_{\it Mask}
   \end{datatype}
@@ -512,20 +517,26 @@ constructors would actually be data structures, and are therefore not
 considered as expressions.
 %
 Figure~\ref{fig:expressions} defines the supported expressions in
-Version 2.3. Simple arithmetics on integers and vectors and Boolean
+Version 2.4. Simple arithmetics on integers and vectors and Boolean
 logics on masks account for the majority of operators/functions. There
 are also the constant functions for the zero values, to favor them
 over arbitrary integers (e.g., $(0,0)$ is a common and special value
 for a position). The other functions are defined as follows:
 \begin{itemize}
 \item ${\it Corner}((i_1,j_1), (i_2,j_2)) = (i_1,j_2)$;
+\item ${\it Span}((i_1,j_1), (i_2,j_2)) = (|i_2 - i_1|+1, |j_2 - j_1|+1)$;
 \item ${\it Average}((i_1,j_1), (i_2,j_2)) = (\frac{i_1+i_2}{2}, \frac{j_1+j_2}{2})$ (only valid fractions are integers);
+\item ${\it Min}((i_1,j_1), (i_2,j_2)) = (min(i_1,i_2), min(j_1,j_2))$;
+\item ${\it Max}((i_1,j_1), (i_2,j_2)) = (max(i_1,i_2), max(j_1,j_2))$;
 \item ${\it Area}(shape)$ is the cardinal of its mask (how many cells belong to the shape);
-\item ${\it Norm1}((i,j)) = i+j$;
 \item ${\it Right}(object) = object.pos.i + object.shape.size.i - 1$;
 \item ${\it Center}(object) = object.pos.i + object.shape.size.i / 2$ (only valid when $size.i$ is odd);
 \item ${\it Bottom}(object) = object.pos.j + object.shape.size.j - 1$;
-\item ${\it Middle}(object) = object.pos.j + object.shape.size.j / 2$ (only valid when $size.j$ is odd).  
+\item ${\it Middle}(object) = object.pos.j + object.shape.size.j / 2$ (only valid when $size.j$ is odd);
+\item ${\it TranslationOnto}(o_1,o_2)$ is the vector that would move
+  object $o_1$ in contact with object $o_2$, either straight onto a
+  side or obliquely on a corner (not taking into account the objects'
+  masks, only their bouding box).
 \end{itemize}
 
 The environment of the output grid is the input grid, so that parts of
@@ -1645,7 +1656,9 @@ rectangles.
 %    v2.2 & 2021-10-11 & ~10~ & 30s & 15s & ~44 / 52.5~ & ~30 / 30.5~ & 21s & ~9 / 13.2 & ~7 / 7.0~ \\
     v2.2 & 2021-10-22 & ~10~ & 30s & 14s & ~41 / 50.1~ & ~29 / 29.5~ & 20s & ~8 / 12.7~ & ~6 / 6.5~ \\
     \hline
-    v2.3 & 2022-01-29 & ~10~ & 30s & 14s & ~44 / 56.2~ & ~32 / 33.0~ & 19s & ~11 / 16.3~ & ~7 / 7.5~ \\ 
+    v2.3 & 2022-01-29 & ~10~ & 30s & 14s & ~44 / 56.2~ & ~32 / 33.0~ & 19s & ~11 / 16.3~ & ~7 / 7.5~ \\
+    \hline
+    v2.4 & 2022-02-12 & ~10~ & 30s & 13s & ~49 / 59.6~ & ~42 / 42.5~ & 19s & ~13 / 21.5~ & 6 / 6.5~ \\ % exact same results in eval with timeout 60s (avg runtime = 31s) !
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -1904,6 +1917,19 @@ tasks: {\tt bda2d7a6}, {\tt ddf7fa4f}*.
 The number of considered refinements had to be raised from 20 to 100
 to account for the many new expressions. Various optimizations were
 applied to maintain a similar runtime on average.
+
+\paragraph{Version 2.4.} Here are the main changes in this version:
+\begin{itemize}
+\item a more generic parsing of the background color (chosen before parsing the layers, excluding candidate shapes of that color);
+\item taking into account hidden cells when generating candidate mask models, i.e. partially visible shapes;
+\item more fine-grained generation of candidate expressions by considering path roles, not only path kinds: e.g., adding a position vector and a size vector gives a position vector;
+\item more expressions: Incr/Decr on ints and vectors, Min/Max/Average on ints, Span on ints and vectors, translation vectors between objects;
+\item new parameter for limiting the number of considered expressions, to prevent cases of combinatorial explosion and to control runtime;
+\end{itemize}
+Those changes result in 10 additional successful training tasks, 42
+(10.5\%) in total. Unfortunately, the number of successful evaluation
+tasks does not progress, even loosing one task (with the allocated
+timeout).
 
 %%%
 \section{Discussion and Perspectives}
