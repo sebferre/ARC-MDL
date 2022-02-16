@@ -401,7 +401,7 @@ type var =
 
 type 'a expr =
   [ `Ref of revpath
-  | `ZeroInt | `ZeroVec (* Int, Vec *)
+  | `ConstInt of int | `ConstVec of int (* Int, Vec *)
   | `Plus of 'a * 'a (* on Int, Vec *)
   | `Minus of 'a * 'a (* on Int, Vec *)
   | `Incr of 'a * int (* on Int, Vec *)
@@ -596,8 +596,8 @@ let xp_apply (func : string) (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (a
   
 let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> unit = function
   | `Ref p -> xp_path print p
-  | `ZeroInt -> print#string "'0"
-  | `ZeroVec -> print#string "'(0,0)"
+  | `ConstInt k -> print#string "'"; print#int k
+  | `ConstVec k -> print#string "'("; print#int k; print#string ","; print#int k; print#string ")"
   | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
   | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
   | `Incr (a,k) -> xp print a; print#string " + "; print#int k
@@ -1327,7 +1327,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     if l = [] then infinity else Mdl.Code.uniform (List.length l) in
   KindMap.make
     ~int:(uniform_among [
-              `ZeroInt;
+              `ConstInt 0;
               `Area `X;
               (*`Left `X; *) `Right `X; `Center `X;
               (*`Top `X; *) `Bottom `X; `Middle `X;
@@ -1345,7 +1345,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ])
     ~vec:(uniform_among [
-              `ZeroVec;
+              `ConstVec 0;
               `Plus (`X,`X); `Minus (`X,`X);
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
@@ -1370,8 +1370,9 @@ let rec dl_expr
   | `Ref p -> assert false
   | `Index ->
      code_expr
-  | `ZeroInt | `ZeroVec ->
+  | `ConstInt k | `ConstVec k ->
      code_expr
+     +. Mdl.Code.universal_int_star k
   | `Plus (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1667,8 +1668,8 @@ let apply_expr_gen
      (match lookup (v :> var) with
       | Some d -> (d :> template)
       | None -> raise (Unbound_var (v :> var)))
-  | `ZeroInt -> `Int 0
-  | `ZeroVec -> `Vec (`Int 0, `Int 0)
+  | `ConstInt k -> `Int k
+  | `ConstVec k -> `Vec (`Int k, `Int k)
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
@@ -3146,14 +3147,6 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            (role1, `Average [e1;e2], ctx1, size)::res
         | _ -> res in
-      res
-    else res in
-  let exprs = (* LEVEL 2 *)
-    let$ res, (role1,e1,ctx1,size1) = exprs, exprs in
-    let$ res, (role2,e2,ctx2,size2) = res, exprs in
-    if ctx1 = ctx2
-    then
-      let size = 1 + size1 + size2 in
       let res = (* translationOnto(_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 <> e2 ->
@@ -3161,10 +3154,13 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> res in
       res
     else res in
-  let exprs = (* LEVEL 3 *)
+  let exprs = (* LEVEL 2 *)
     let res = exprs in
-    let res = (`Int (`X, `Pos), `ZeroInt, None, 1)::res in
-    let res = (`Vec `Pos, `ZeroVec, None, 1)::res in
+    let res = (* constants *)
+      let$ res, k = res, [0;1;2] in
+      let res = (`Int (`X, `Pos), `ConstInt k, None, 1)::res in
+      let res = (`Vec `Pos, `ConstVec k, None, 1)::res in
+      res in
     let$ res, (role1,e1,ctx1,size1) = res, exprs in
     (* unary operators *)
     let size = 1 + size1 in
@@ -3212,7 +3208,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> res in
       res
     else res in
-  let exprs = (* LEVEL 4 *)
+  let exprs = (* LEVEL 3 *)
     let res = exprs in
     let$ res, (role1,e1,ctx1,size1) = res, exprs in
     let$ res, (role2,e2,ctx2,size2) = res, exprs in
@@ -3241,6 +3237,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> res in
       res
     else res in
+  (*Printf.printf "== %d expressions ==\n" (List.length exprs);*)
   let exprs = List.rev exprs in (* approximate order in increasing size *)
   Common.sub_list exprs 0 !max_expressions)) (* bounding nb expressions because of combinatorial number in some tasks *)
   
