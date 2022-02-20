@@ -433,10 +433,16 @@ type 'a expr =
   | `Bottom of 'a (* on Object *)
   | `Middle of 'a (* on Object *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
+  | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
+  | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
-
+and symmetry = [
+  | `Id
+  | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
+  | `Rotate180 | `Rotate90 | `Rotate270 ]
+    
 type template =
   [ `U
   | `Repeat of template patt
@@ -595,7 +601,19 @@ let xp_apply (func : string) (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (a
   print#string "(";
   Xprint.sep_list ", " xp print args;
   print#string ")"
-  
+
+let xp_apply_poly (func : string) print (xp_args : (Xprint.t -> unit) list) : unit =
+  print#string func;
+  print#string "(";
+  (match xp_args with
+   | [] -> ()
+   | xp::xps ->
+      xp print;
+      List.iter
+        (fun xp1 -> print#string ", "; xp1 print)
+        xps); 
+  print#string ")"
+
 let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> unit = function
   | `Ref p -> xp_path print p
   | `ConstInt k -> print#string "'"; print#int k
@@ -614,8 +632,12 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Average la -> xp_apply "average" xp print la
   | `Span (a,b) -> xp_apply "span" xp print [a;b]
   | `Norm a -> Xprint.bracket ("|","|") xp print a
-  | `Diag1 (a,k) -> print#string "diag1("; xp print a; print#string ", "; print#int k; print#string ")" 
-  | `Diag2 (a,k) -> print#string "diag2("; xp print a; print#string ", "; print#int k; print#string ")" 
+  | `Diag1 (a,k) -> xp_apply_poly "diag1" print
+                      [(fun print -> xp print a);
+                       (fun print -> print#int k)]
+  | `Diag2 (a,k) -> xp_apply_poly "diag2" print
+                      [(fun print -> xp print a);
+                       (fun print -> print#int k)]
   | `LogAnd (a,b) -> Xprint.infix " and " xp print (a, b)
   | `LogOr (a,b) -> Xprint.infix " or " xp print (a, b)
   | `LogXOr (a,b) -> Xprint.infix " xor " xp print (a, b)
@@ -629,8 +651,25 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Bottom a -> xp_apply "bottom" xp print [a]
   | `Middle a -> xp_apply "middle" xp print [a]
   | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
+  | `ApplySym (sym,a) -> xp_apply_poly "applySym" print
+                           [(fun print -> xp_symmetry print sym);
+                            (fun print -> xp print a)]
+  | `TranslationSym (sym,a,b) -> xp_apply_poly "translationSym" print
+                                   [(fun print -> xp_symmetry print sym);
+                                    (fun print -> xp print a);
+                                    (fun print -> xp print b)]
   | `Index -> print#string string_of_index
   | `Indexing (e1,e2) -> xp print e1; print_string "["; xp print e2; print#string "]"
+and xp_symmetry print : symmetry -> unit = function
+  | `Id -> print#string "id"
+  | `FlipHeight -> print#string "flipHeight"
+  | `FlipWidth -> print#string "flipWidth"
+  | `FlipDiag1 -> print#string "flipDiag1"
+  | `FlipDiag2 -> print#string "flipDiag2"
+  | `Rotate180 -> print#string "rotate180"
+  | `Rotate90 -> print#string "rotate90"
+  | `Rotate270 -> print#string "rotate270"
+                  
 let string_of_expr xp = Xprint.to_string (xp_expr xp)
                          
                    
@@ -1343,6 +1382,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~color:(uniform_among [])
     ~mask:(uniform_among [
                `ScaleUp (`X,2); `ScaleTo (`X,`X);
+               `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
+               `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
+               `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ])
@@ -1352,14 +1394,23 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
+              `TranslationOnto (`X,`X);
+              `TranslationSym (`FlipHeight,`X,`X); `TranslationSym (`FlipWidth,`X,`X); `TranslationSym (`Rotate180,`X,`X);
+              `TranslationSym (`FlipDiag1,`X,`X); `TranslationSym (`FlipDiag2,`X,`X);
+              `TranslationSym (`Rotate90,`X,`X); `TranslationSym (`Rotate270,`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,2); `ScaleTo (`X,`X);
+                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
+                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
+                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
                 `Indexing (`X,`X) ])
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
     ~layer:(uniform_among [
-                `TranslationOnto (`X,`X) ])
+                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
+                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
+                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X) ])
     ~grid:(uniform_among [])
   
 let rec dl_expr
@@ -1449,11 +1500,18 @@ let rec dl_expr
   | `Left e1 | `Right e1 | `Center e1
     | `Top e1 | `Bottom e1 | `Middle e1 ->
      code_expr
-     +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
+     +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
   | `TranslationOnto (e1,e2) ->
      code_expr
-     +. dl ~ctx ~path:(`Arg (1, Some `Object, path)) e1
-     +. dl ~ctx ~path:(`Arg (2, Some `Object, path)) e2
+     +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e2
+  | `ApplySym (sym,e1) ->
+     code_expr (* includes encoding of sym *)
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e1
+  | `TranslationSym (sym,e1,e2) ->
+     code_expr (* includes encoding of sym *)
+     +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
+     +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1657,6 +1715,26 @@ let apply_patt
               (fun item -> apply ~lookup (any_item p) item)
               items)
 
+let apply_symmetry ~(flip_size : bool) (sym_mask_model : Grid.Mask_model.t -> Grid.Mask_model.t) = (* : template expr -> template -> template = *)
+  let sym_size (* : template -> template *) =
+    if flip_size
+    then
+      (function
+       | `Vec (`Int h, `Int w) -> `Vec (`Int w, `Int h)
+       | _ -> assert false)
+    else (fun size -> size)
+  in
+  fun e d ->
+  match d with
+  | `Mask mm -> `Mask (sym_mask_model mm)
+  | `Point col -> d
+  | `Rectangle (size, col, `Mask mm) ->
+     `Rectangle (sym_size size, col, `Mask (sym_mask_model mm))
+  | `PosShape (pos, `Point col) -> d
+  | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
+     `PosShape (pos, `Rectangle (sym_size size, col, `Mask (sym_mask_model mm)))
+  | _ -> raise (Invalid_expr e)
+    
 let apply_expr_gen
           (apply : lookup:apply_lookup -> revpath -> 'a -> template)
           ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template = (* QUICK *)
@@ -1909,6 +1987,62 @@ let apply_expr_gen
                 if maxj1 < minj2 then minj2 - maxj1 - 1
                 else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
                 else 0 in
+              if ti = 0 && tj = 0
+              then raise (Undefined_result "TranslationOnto: two objects overlap")
+              else `Vec (`Int ti, `Int tj)
+           | _ -> raise (Invalid_expr e) )
+      | _ -> raise (Invalid_expr e))
+  | `ApplySym (sym,e1) ->
+     let flip_size, f_sym =
+       match sym with
+       | `Id -> false, (fun m -> m)
+       | `FlipHeight -> false, Grid.Mask_model.flipHeight
+       | `FlipWidth -> false, Grid.Mask_model.flipWidth
+       | `FlipDiag1 -> true, Grid.Mask_model.flipDiag1
+       | `FlipDiag2 -> true, Grid.Mask_model.flipDiag2
+       | `Rotate180 -> false, Grid.Mask_model.rotate180
+       | `Rotate90 -> true, Grid.Mask_model.rotate90
+       | `Rotate270 -> true, Grid.Mask_model.rotate270
+     in
+     apply ~lookup p e1
+     |> apply_symmetry ~flip_size f_sym e
+  | `TranslationSym (sym,e1,e2) ->
+     (match apply ~lookup p e1, apply ~lookup p e2 with
+      | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
+        `PosShape (`Vec (`Int mini2, `Int minj2), shape2) ->
+         ( match shape_size shape1, shape_size shape2 with
+           | `Vec (`Int h1, `Int w1), `Vec (`Int h2, `Int w2) ->
+              let ti, tj =
+                match sym with
+                | `Id -> 0, 0
+                | `FlipHeight -> 2 * (mini2-mini1) + (h2-h1), 0
+                | `FlipWidth -> 0, 2 * (minj2-minj1) + (w2-w1)
+                | `Rotate180 -> 2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1)
+                | `FlipDiag1 ->
+                   if h2 = w2
+                   then
+                     let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
+                     ti, - ti
+                   else raise (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
+                | `FlipDiag2 ->
+                   if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
+                   then
+                     let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
+                     ti, - ti
+                   else raise (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
+                | `Rotate90 ->
+                   if h2 = w2
+                   then
+                     (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
+                     (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1 (* /2 OK because h2=w2 *)
+                   else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+                | `Rotate270 ->
+                   if h2 = w2
+                   then
+                     (minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
+                     (minj2 - minj1) - (mini2 - mini1) (* - (h2 - w2) / 2 *)
+                   else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+              in
               if ti = 0 && tj = 0
               then raise (Undefined_result "TranslationOnto: two objects overlap")
               else `Vec (`Int ti, `Int tj)
@@ -3125,8 +3259,14 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let _ = (* middle(_) *)
       match role1 with
       | `Layer -> push (`Int (`I, `Pos), `Middle e1, ctx1, size)
-      | _ -> ()
-    in
+      | _ -> () in
+    let _ = (* ApplySym *)
+      match role1 with
+      | `Mask | `Shape | `Layer ->
+         let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
+                     `Rotate180; `Rotate90; `Rotate270] in
+         push (role1, `ApplySym (sym, e1), ctx1, size)
+      | _ -> () in
     let& (role2,e2,ctx2,size2) = exprs_0 in
     if ctx1 = ctx2
     then
@@ -3165,10 +3305,12 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Average [e1;e2], ctx1, size)
         | _ -> () in
-      let _ = (* translationOnto(_,_) *)
+      let _ = (* translationOnto(_,_), translationSym(_,_,_) *)
         match role1, role2 with
-        | `Layer, `Layer when e1 <> e2 ->
-           push (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size)
+        | `Layer, `Layer when e1 < e2 ->
+           push (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size);
+           let& sym = [`FlipHeight; `FlipWidth; `Rotate180] in
+           push (`Vec (`Size `X), `TranslationSym (sym,e1,e2), ctx1, size)
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
@@ -3205,7 +3347,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       () in
     let _ = (* not _ *)
       match role1 with
-      | `Mask -> push (`Mask, `LogNot e1, ctx1, size) (* TODO: avoid empty masks as a result *)
+      | `Mask -> push (`Mask, `LogNot e1, ctx1, size)
       | _ -> () in
     let& (role2,e2,ctx2,size2) = exprs_1 in
     if ctx1 = ctx2

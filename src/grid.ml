@@ -608,7 +608,19 @@ module Mask_model =
            | None -> raise (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
       | (`Full false as mm) -> mm
       | mm -> raise (Undefined_result "Grid.Mask_model.scale_to: undefined")
-      
+
+    let symmetry (f : Mask.t -> Mask.t) : t -> t = function
+      | `Mask m -> `Mask (f m)
+      | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> mm
+      | _ -> raise (Undefined_result "Grid.Mask_model.symmetry: undefined")
+    let flipHeight = symmetry Mask.flipHeight
+    let flipWidth = symmetry Mask.flipWidth
+    let flipDiag1 = symmetry Mask.flipDiag1
+    let flipDiag2 = symmetry Mask.flipDiag2
+    let rotate180 = symmetry Mask.rotate180
+    let rotate90 = symmetry Mask.rotate90
+    let rotate270 = symmetry Mask.rotate270
+                   
   end
              
 (* segmenting grids *)
