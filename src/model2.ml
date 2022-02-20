@@ -413,8 +413,8 @@ type 'a expr =
   | `ScaleDown of 'a * int (* on Int, Vec, Mask *)
   | `ScaleTo of 'a * 'a (* Mask, Vec -> Mask *)
   | `Corner of 'a * 'a (* on Vec *)
-  | `Min of 'a list (* on Int *)
-  | `Max of 'a list (* on Int *)
+  | `Min of 'a list (* on Int, Vec *)
+  | `Max of 'a list (* on Int, Vec *)
   | `Average of 'a list (* on Int, Vec *)
   | `Span of 'a * 'a (* on Vec *)
   | `Norm of 'a (* Vec -> Int *)
@@ -432,6 +432,8 @@ type 'a expr =
   | `Top of 'a (* on Object *)
   | `Bottom of 'a (* on Object *)
   | `Middle of 'a (* on Object *)
+  | `ProjI of 'a (* on Vec *)
+  | `ProjJ of 'a (* on Vec *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
@@ -650,6 +652,8 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Top a -> xp_apply "top" xp print [a]
   | `Bottom a -> xp_apply "bottom" xp print [a]
   | `Middle a -> xp_apply "middle" xp print [a]
+  | `ProjI a -> xp_apply "projI" xp print [a]
+  | `ProjJ a -> xp_apply "projJ" xp print [a]
   | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
   | `ApplySym (sym,a) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
@@ -1389,6 +1393,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ])
     ~vec:(uniform_among [
+              `ProjI `X; `ProjJ `X;
               `ConstVec 0;
               `Plus (`X,`X); `Minus (`X,`X);
               `Incr (`X,1); `Decr (`X,1);
@@ -1501,6 +1506,9 @@ let rec dl_expr
     | `Top e1 | `Bottom e1 | `Middle e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
+  | `ProjI e1 | `ProjJ e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
   | `TranslationOnto (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
@@ -1971,6 +1979,14 @@ let apply_expr_gen
          else `Int (i + h/2 + 1)
       | `PosShape _ -> raise (Undefined_result "Middle: not a rectangle")
       | _ -> raise (Invalid_expr e))
+  | `ProjI e1 ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int i, _) -> `Vec (`Int i, `Int 0)
+      | _ -> raise (Invalid_expr e))
+  | `ProjJ e1 ->
+     (match apply ~lookup p e1 with
+      | `Vec (_, `Int j) -> `Vec (`Int 0, `Int j)
+      | _ -> raise (Invalid_expr e))         
   | `TranslationOnto (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
@@ -3259,6 +3275,12 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let _ = (* middle(_) *)
       match role1 with
       | `Layer -> push (`Int (`I, `Pos), `Middle e1, ctx1, size)
+      | _ -> () in
+    let _ = (* ProjI/J *)
+      match role1 with
+      | `Vec _ ->
+         push (role1, `ProjI e1, ctx1, size);
+         push (role1, `ProjJ e1, ctx1, size)
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
