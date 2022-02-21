@@ -403,7 +403,8 @@ type var =
 
 type 'a expr =
   [ `Ref of revpath
-  | `ConstInt of int | `ConstVec of int (* Int, Vec *)
+  | `ConstInt of int (* Int *)
+  | `ConstVec of int * int (* Vec *)
   | `Plus of 'a * 'a (* on Int, Vec *)
   | `Minus of 'a * 'a (* on Int, Vec *)
   | `Incr of 'a * int (* on Int, Vec *)
@@ -435,7 +436,7 @@ type 'a expr =
   | `ProjI of 'a (* on Vec *)
   | `ProjJ of 'a (* on Vec *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
-  | `Tiling of 'a * 'a (* Mask/Shape, Vec -> Mask/Shape *)
+  | `Tiling of 'a * 'a (* Vec/Mask/Shape, Vec -> Vec/Mask/Shape *)
   | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
   | `Index (* Int *)
@@ -620,7 +621,9 @@ let xp_apply_poly (func : string) print (xp_args : (Xprint.t -> unit) list) : un
 let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> unit = function
   | `Ref p -> xp_path print p
   | `ConstInt k -> print#string "'"; print#int k
-  | `ConstVec k -> print#string "'("; print#int k; print#string ","; print#int k; print#string ")"
+  | `ConstVec (k,l) -> xp_apply_poly "'" print
+                         [(fun print -> print#int k);
+                          (fun print -> print#int l)]
   | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
   | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
   | `Incr (a,k) -> xp print a; print#string " + "; print#int k
@@ -1397,10 +1400,11 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `Indexing (`X,`X) ])
     ~vec:(uniform_among [
               `ProjI `X; `ProjJ `X;
-              `ConstVec 0;
+              `ConstVec (0,0);
               `Plus (`X,`X); `Minus (`X,`X);
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `Tiling (`X,`X);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `TranslationOnto (`X,`X);
               `TranslationSym (`FlipHeight,`X,`X); `TranslationSym (`FlipWidth,`X,`X); `TranslationSym (`Rotate180,`X,`X);
@@ -1432,9 +1436,13 @@ let rec dl_expr
   | `Ref p -> assert false
   | `Index ->
      code_expr
-  | `ConstInt k | `ConstVec k ->
+  | `ConstInt k ->
      code_expr
      +. Mdl.Code.universal_int_star k
+  | `ConstVec (k,l) ->
+     code_expr
+     +. Mdl.Code.universal_int_star k
+     +. Mdl.Code.universal_int_star l
   | `Plus (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1765,7 +1773,7 @@ let apply_expr_gen
       | Some d -> (d :> template)
       | None -> raise (Unbound_var (v :> var)))
   | `ConstInt k -> `Int k
-  | `ConstVec k -> `Vec (`Int k, `Int k)
+  | `ConstVec (k,l) -> `Vec (`Int k, `Int l)
   | `Plus (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `Int i1, `Int i2 -> `Int (i1 + i2)
@@ -2017,12 +2025,18 @@ let apply_expr_gen
            | _ -> raise (Invalid_expr e) )
       | _ -> raise (Invalid_expr e))
   | `Tiling (e1,e2) ->
-     (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `Mask mm, `Vec (`Int k, `Int l) ->
-         `Mask (Grid.Mask_model.tile k l mm)
-      | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int k, `Int l) ->
-         `Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask (Grid.Mask_model.tile k l mm))
-      | `Point _, _ -> raise (Undefined_result "Tiling: undefined on points")
+     (match apply ~lookup p e2 with
+      | `Vec (`Int k, `Int l) ->
+         if k = 0 || l = 0
+         then raise (Undefined_result "Tiling: some factor is zero")
+         else
+           (match apply ~lookup p e1 with
+            | `Vec (`Int h, `Int w) -> `Vec (`Int (h*k), `Int (w*l))
+            | `Mask mm -> `Mask (Grid.Mask_model.tile k l mm)
+            | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) -> 
+               `Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask (Grid.Mask_model.tile k l mm))
+            | `Point _ -> raise (Undefined_result "Tiling: undefined on points")
+            | _ -> raise (Invalid_expr e))
       | _ -> raise (Invalid_expr e))
   | `ApplySym (sym,e1) ->
      let flip_size, f_sym =
@@ -3356,8 +3370,9 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
   let _ = 
     let _ = (* constants *)
       let& k = [0;1;2] in
-      push (`Int (`X, `Pos), `ConstInt k, None, 1);
-      push (`Vec `Pos, `ConstVec k, None, 1) in
+      push (`Int (`X, (if k=0 then `Pos else `X)), `ConstInt k, None, 1);
+      let& l = [0;1;2] in
+      push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l), None, 1) in
     let& (role1,e1,ctx1,size1) = exprs_1 in
     (* unary operators *)
     let size = 1 + size1 in
@@ -3418,7 +3433,8 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> () in
       let _ = (* Tiling *)
         match role1, role2 with
-        | (`Mask | `Shape), `Vec (`Size _) -> push (role1, `Tiling (e1,e2), ctx1, size)
+        | (`Vec (`Size _) | `Mask | `Shape), `Vec (`X | `Size _) ->
+           push (role1, `Tiling (e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with
