@@ -436,7 +436,7 @@ type 'a expr =
   | `ProjI of 'a (* on Vec *)
   | `ProjJ of 'a (* on Vec *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
-  | `Tiling of 'a * 'a (* Vec/Mask/Shape, Vec -> Vec/Mask/Shape *)
+  | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
   | `Index (* Int *)
@@ -659,7 +659,10 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ProjI a -> xp_apply "projI" xp print [a]
   | `ProjJ a -> xp_apply "projJ" xp print [a]
   | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
-  | `Tiling (a,b) -> xp_apply "tiling" xp print [a;b]
+  | `Tiling (a,k,l) -> xp_apply_poly "tiling" print
+                         [(fun print -> xp print a);
+                          (fun print -> print#int k);
+                          (fun print -> print#int l)]
   | `ApplySym (sym,a) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
                             (fun print -> xp print a)]
@@ -1391,7 +1394,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~color:(uniform_among [])
     ~mask:(uniform_among [
                `ScaleUp (`X,2); `ScaleTo (`X,`X);
-               `Tiling (`X,`X);
+               `Tiling (`X,1,1);
                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
@@ -1404,7 +1407,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Plus (`X,`X); `Minus (`X,`X);
               `Incr (`X,1); `Decr (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
-              `Tiling (`X,`X);
+              `Tiling (`X,1,1);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `TranslationOnto (`X,`X);
               `TranslationSym (`FlipHeight,`X,`X); `TranslationSym (`FlipWidth,`X,`X); `TranslationSym (`Rotate180,`X,`X);
@@ -1413,7 +1416,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,2); `ScaleTo (`X,`X);
-                `Tiling (`X,`X);
+                `Tiling (`X,1,1);
                 `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                 `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
@@ -1525,10 +1528,11 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e2
-  | `Tiling (e1,e2) ->
+  | `Tiling (e1,k,l) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
-     +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Shape)), path)) e2
+     +. Mdl.Code.universal_int_plus k
+     +. Mdl.Code.universal_int_plus l
   | `ApplySym (sym,e1) ->
      code_expr (* includes encoding of sym *)
      +. dl ~ctx ~path:(`Arg (2, None, path)) e1
@@ -2024,19 +2028,13 @@ let apply_expr_gen
               else `Vec (`Int ti, `Int tj)
            | _ -> raise (Invalid_expr e) )
       | _ -> raise (Invalid_expr e))
-  | `Tiling (e1,e2) ->
-     (match apply ~lookup p e2 with
-      | `Vec (`Int k, `Int l) ->
-         if k = 0 || l = 0
-         then raise (Undefined_result "Tiling: some factor is zero")
-         else
-           (match apply ~lookup p e1 with
-            | `Vec (`Int h, `Int w) -> `Vec (`Int (h*k), `Int (w*l))
-            | `Mask mm -> `Mask (Grid.Mask_model.tile k l mm)
-            | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) -> 
-               `Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask (Grid.Mask_model.tile k l mm))
-            | `Point _ -> raise (Undefined_result "Tiling: undefined on points")
-            | _ -> raise (Invalid_expr e))
+  | `Tiling (e1,k,l) ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int h, `Int w) -> `Vec (`Int (h*k), `Int (w*l))
+      | `Mask mm -> `Mask (Grid.Mask_model.tile k l mm)
+      | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) -> 
+         `Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask (Grid.Mask_model.tile k l mm))
+      | `Point _ -> raise (Undefined_result "Tiling: undefined on points")
       | _ -> raise (Invalid_expr e))
   | `ApplySym (sym,e1) ->
      let flip_size, f_sym =
@@ -3423,6 +3421,15 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
   (* LEVEL 3 *)
   let _ = 
     let& (role1,e1,ctx1,size1) = exprs_2 in
+    let size = 1 + size1 in
+    let _ = (* Tiling *)
+      match role1 with
+      | (`Vec (`Size _) | `Mask | `Shape) ->
+         let& k = [1;2;3] in
+         let& l = [1;2;3] in
+         if k>1 || l>1 then
+           push (role1, `Tiling (e1,k,l), ctx1, size)
+      | _ -> () in
     let& (role2,e2,ctx2,size2) = exprs_2 in
     if ctx1 = ctx2
     then
@@ -3430,11 +3437,6 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
         | (`Mask | `Shape), `Vec (`Size _) -> push (role1, `ScaleTo (e1,e2), ctx1, size)
-        | _ -> () in
-      let _ = (* Tiling *)
-        match role1, role2 with
-        | (`Vec (`Size _) | `Mask | `Shape), `Vec (`X | `Size _) ->
-           push (role1, `Tiling (e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with

@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 43 tasks, 3.6s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 44 tasks, 5.5s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
   [ "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
     "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=21.7s *)
@@ -255,6 +255,7 @@ let solved_train_names = (* 43 tasks, 3.6s/task for timeout=30s, max_nb_parses=6
     "1f85a75f.json"; (* crop of a shape among a random cloud of points. runtime about 1s, timeout trying to explain everything, runtime=10.0 *)
     "23581191.json"; (* 2 colored points, determining the position of horizontal and vertical lines, adding red points at different color crossings, runtime=7.2  *)
     "25ff71a9.json"; (* shape moving 1 pixel down, runtime=0.1s *)
+    "28bf18c6.json"; (* NEW a shape, tile it 1x2 and crop on this. runtime=1.2s *)
     "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=0.6s *)
     "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=1.7s *)
     "4938f0c2.json"; (* NEW red shape on the top left corner of a 2x2 green square, add 3 symmetric copies of the red shape around the green square. runtime=22.9s *)
