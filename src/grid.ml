@@ -609,6 +609,11 @@ module Mask_model =
       | (`Full false as mm) -> mm
       | mm -> raise (Undefined_result "Grid.Mask_model.scale_to: undefined")
 
+    let tile k l : t -> t = function
+      | `Mask m -> `Mask (Mask.tile k l m)
+      | `Full false -> `Full false
+      | _ -> raise (Undefined_result "Grid.Mask_model.tile: undefined")
+                  
     let symmetry (f : Mask.t -> Mask.t) : t -> t = function
       | `Mask m -> `Mask (f m)
       | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> mm
