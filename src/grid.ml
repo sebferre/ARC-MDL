@@ -1129,6 +1129,33 @@ let rectangles (g : t) (mask : Mask.t) (parts : part list) : rectangle list =
 	    let lr = rectangles_of_part ~multipart:true g mask mp in
 	    lr @ res)
       res v_sets in
+(*  let res = (* adding a grid-wide one-color rectangle goes against object-centric modeling, this breaks many solved tasks *)
+    List.fold_left
+      (fun res (c, ps) ->
+        match ps with
+        | [] -> assert false
+        | p::ps1 ->
+           let pixels =
+             List.fold_left
+               (fun pixels p1 -> Mask.union pixels p1.pixels)
+               p.pixels ps1 in
+           let r : rectangle =
+             { height = g.height;
+               width = g.width;
+               offset_i = 0;
+               offset_j = 0;
+               color = c;
+               new_cover = pixels;
+               mask_models = Mask_model.from_box_in_mask ~visible_mask:mask
+                               ~mini:0 ~maxi:(g.height-1) ~minj:0 ~maxj:(g.width-1)
+                               pixels;
+               delta = [];
+               nb_explained_pixels = (Mask.area (Mask.inter mask pixels));
+             } in
+           if List.mem r res
+           then res
+           else r :: res)
+      res c_sets in *)
 (*  let res =
     List.fold_left
       (fun res (_, ps) ->
