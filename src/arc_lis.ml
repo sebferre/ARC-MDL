@@ -20,6 +20,8 @@ let ( let> ) x f =
         
 type 'a triple = 'a Model2.triple
         
+type task_input = (string * Task.task) Focus.input (* name, data *)
+                
 type arc_state =
   { name : string; (* task name *)
     task : Task.task; (* task *)
@@ -31,30 +33,29 @@ type arc_state =
     gsro : Model2.grids_read; (* output reads *)
     dls : Mdl.bits Model2.triple Model2.triple; (* normalized DL components *)
     dl : Mdl.bits; (* global normalized DL *)
+    mutable suggestions : arc_suggestion list;
   }
+and arc_suggestion =
+  | InputTask of task_input
+  | RefinedState of arc_state
 
 type arc_focus = arc_state
                
 type arc_extent = arc_state
 
-type task_input = (string * Task.task) Focus.input (* name, data *)
-                
-type arc_suggestion =
-  | InputTask of task_input
-  | RefinedState of arc_state
-
-let state_of_model (name : string) (task : Task.task) norm_dl_model_data (r : Model2.refinement) (m : Model2.model) : (arc_state, exn) Result.t =
-  let| gprs = Model2.read_grid_pairs m task.Task.train in
+let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (refinement : Model2.refinement) (model : Model2.model) : (arc_state, exn) Result.t =
+  let| gprs = Model2.read_grid_pairs model task.Task.train in
   let gsri, gsro = Model2.split_grid_pairs_read gprs in
   let (_, _, (_,_,dl) as dls) = norm_dl_model_data gprs in
   Result.Ok
     { name; task;
       norm_dl_model_data;
-      refinement = r;
-      model = m;
+      refinement;
+      model;
       gprs; gsri; gsro;
       dls;
-      dl }  
+      dl;
+      suggestions = [] }  
                
 let grid0 = Grid.make 10 10 Grid.black
 let pair0 = {Task.input = grid0; output = grid0}
@@ -74,32 +75,36 @@ object
 
   method eval k_extent k_suggestions =
     k_extent focus;
-    Jsutils.firebug "Computing suggestions...";
-    let _, suggestions = (* selecting up to [refine_degree] compressive refinements, keeping other for information *)
-      Model2.model_refinements focus.refinement focus.model focus.gsri focus.gsro
-      |> Myseq.fold_left
-           (fun (quota_compressive,suggestions as res) (r,m) ->
-             if quota_compressive <= 0
-             then res (* TODO: stop generating sequence *)
-             else
-               match state_of_model focus.name focus.task focus.norm_dl_model_data r m with
-               | Result.Ok state ->
-                  if state.dl < focus.dl
-                  then (quota_compressive - 1, state::suggestions)
-                  else (quota_compressive, state::suggestions)
-               | Result.Error _ -> res)
-           (!Model2.max_refinements, []) in
-    let suggestions = (* sorting in increasing DL *)
-      suggestions
-      |> List.rev (* to preserve ordering from sequence *) 
-      |> List.sort
-           (fun s1 s2 -> Stdlib.compare s1.dl s2.dl) in
+    if focus.suggestions = [] then (
+      Jsutils.firebug "Computing suggestions...";
+      let _, suggestions = (* selecting up to [refine_degree] compressive refinements, keeping other for information *)
+        Model2.model_refinements focus.refinement focus.model focus.gsri focus.gsro
+        |> Myseq.fold_left
+             (fun (quota_compressive,suggestions as res) (r,m) ->
+               if quota_compressive <= 0
+               then res (* TODO: stop generating sequence *)
+               else
+                 match state_of_model focus.name focus.task focus.norm_dl_model_data r m with
+                 | Result.Ok state ->
+                    if state.dl < focus.dl
+                    then (quota_compressive - 1, state::suggestions)
+                    else (quota_compressive, state::suggestions)
+                 | Result.Error _ -> res)
+             (!Model2.max_refinements, []) in
+      let suggestions = (* sorting in increasing DL *)
+        suggestions
+        |> List.rev (* to preserve ordering from sequence *) 
+        |> List.sort
+             (fun s1 s2 -> Stdlib.compare s1.dl s2.dl) in
+      let suggestions =
+        InputTask (new Focus.input (name0,task0))
+        :: List.map (fun s -> RefinedState (s :> arc_state)) suggestions in
+      Jsutils.firebug "Suggestions computed";
+      focus.suggestions <- suggestions
+    );
     let suggestions = (* suggestion list in Fablis format *)
-      `Sugg (InputTask (new Focus.input (name0,task0)))
-      :: List.map
-           (fun s -> `Sugg (RefinedState (s :> arc_state)))
-           suggestions in
-    Jsutils.firebug "Suggestions computed";
+      focus.suggestions
+      |> List.map (fun sugg -> `Sugg sugg) in
     k_suggestions [suggestions]
 
   method activate = function
