@@ -148,7 +148,7 @@ let html_dl dl =
 let xml_of_focus focus =
   [Syntax.Block
      [[Syntax.Kwd (Printf.sprintf "Task %s" focus.name)];
-      [Syntax.Kwd ("DL = " ^ html_dl focus.dl)];
+      [Syntax.Kwd (Printf.sprintf "DL = %f" focus.dl)];
       [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))]]]
                                       
 let html_of_word (w : arc_word) : Html.t = assert false
@@ -197,7 +197,7 @@ type col = ColExample | ColDescr | ColPred
 type cell =
   | Example of Grid.t * Grid.t
   | Descr of Model2.grid_read * Model2.grid_read
-  | Pred of Model2.grid_data * Grid.t
+  | Pred of Grid.t * (Model2.grid_data * Grid.t) list (* expected grid, all preds *)
   | Error of string
                                     
 let html_of_cell : cell -> Html.t = function
@@ -214,12 +214,16 @@ let html_of_cell : cell -> Html.t = function
      ^ Printf.sprintf "<br/>DL = %.3f = %.3f + %.3f" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
      ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
-  | Pred (gd_i,go) ->
-     let d_i = gd_i.Model2.data in
-     html_grid_pair
-       (html_of_grid_from_data d_i)
-       (html_of_grid go)
-     ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
+  | Pred (expected_go, l_gdi_go) ->
+     String.concat ""
+       (List.map
+          (fun (gd_i,go) ->
+            let d_i = gd_i.Model2.data in
+            html_grid_pair
+              (html_of_grid_from_data d_i)
+              (html_of_grid go)
+            ^ Html.pre ("IN " ^ Model2.string_of_data d_i))
+          l_gdi_go)
   | Error msg -> Jsutils.escapeHTML msg
         
 let w_focus : (arc_word, unit, arc_focus) Widget_focus.widget =
@@ -247,10 +251,10 @@ let w_results : (col, cell) Widget_table.widget =
 
 
 let render_place place k =
-  let get_pred m gi =
+  let get_pred ~test m gi go =
     match Model2.apply_model m gi with
-    | Result.Ok ((gdi, go)::_) -> Pred (gdi,go) (* using only first trial *)
     | Result.Ok [] -> Error "No valid prediction"
+    | Result.Ok l_gdi_gopred -> Pred (go, if test then l_gdi_gopred else [List.hd l_gdi_gopred])
     | Result.Error exn -> Error (Printexc.to_string exn)
   in
  Jsutils.jquery "#lis-suggestions" (fun elt_lis ->
@@ -263,7 +267,7 @@ let render_place place k =
         List.map
           (fun pair ->
             let ({input=gi; output=go} : Task.pair) = pair in
-            let pred = get_pred ext.model gi in
+            let pred = get_pred ~test:true ext.model gi go in
             [ ColExample, Example (gi,go);
               ColPred, pred ])
           ext.task.test in
@@ -275,7 +279,7 @@ let render_place place k =
               match reads with
               | (in_r,out_r,dl)::_ -> Descr (in_r,out_r) (* using only first read *)
               | [] -> Error "No valid description" in
-            let pred = get_pred ext.model gi in
+            let pred = get_pred ~test:false ext.model gi go in
             let row =
               [ ColExample, Example (gi,go);
                 ColDescr, descr;
