@@ -2490,7 +2490,10 @@ let state_minus_shape_gen state occ_delta occ_new_cover =
       { state with
 	mask = new_mask;
         delta = add_delta_with_mask ~mask:state.mask state.delta occ_delta;
-	parts = filter_parts_with_mask ~new_mask state.parts } in
+	parts = filter_parts_with_mask ~new_mask state.parts
+                |> List.filter (fun p -> not (Grid.Mask.is_subset occ_new_cover p.Grid.pixels))
+                               (* that would make occ useless if selecting p later *)
+      } in
     Some new_state)
 let state_minus_point state (i,j,c) =
   let occ_delta = [] in
