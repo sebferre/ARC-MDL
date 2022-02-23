@@ -37,6 +37,7 @@ type arc_state =
   }
 and arc_suggestion =
   | InputTask of task_input
+  | ResetTask
   | RefinedState of arc_state
 
 type arc_focus = arc_state
@@ -98,6 +99,7 @@ object
              (fun s1 s2 -> Stdlib.compare s1.dl s2.dl) in
       let suggestions =
         InputTask (new Focus.input (name0,task0))
+        :: ResetTask
         :: List.map (fun s -> RefinedState (s :> arc_state)) suggestions in
       Jsutils.firebug "Suggestions computed";
       focus.suggestions <- suggestions
@@ -112,6 +114,8 @@ object
        let name, task = i#get in
        let state = initial_focus name task in
        Some (new arc_place lis state)
+    | ResetTask ->
+       Some (new arc_place lis (initial_focus focus.name focus.task))
     | RefinedState s ->
        Some (new arc_place lis s)
 
@@ -169,6 +173,8 @@ let html_of_suggestion ~input_dico = function
      let info = html_info_of_input (`Task i) in
      let key = input_dico#add info in
      Html.html_of_input_info key info ^ " a task"
+  | ResetTask ->
+     "reset current task"
   | RefinedState s ->
      Jsutils.escapeHTML (Printf.sprintf "(%f)  " s.dl ^ Model2.string_of_refinement s.refinement)
 
