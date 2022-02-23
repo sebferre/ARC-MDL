@@ -438,6 +438,8 @@ type 'a expr =
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
+  | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
+     (* sym list list = matrix to be filled with symmetries of some mask *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
@@ -446,7 +448,9 @@ and symmetry = [
   | `Id
   | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
   | `Rotate180 | `Rotate90 | `Rotate270 ]
-    
+
+let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
+             
 type template =
   [ `U
   | `Repeat of template patt
@@ -666,6 +670,18 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ApplySym (sym,a) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
                             (fun print -> xp print a)]
+  | `UnfoldSym (sym_array,a) ->
+     xp_apply_poly "unfoldSym" print
+       [(fun print ->
+           List.iter
+             (fun sym_row ->
+               print#string " [ ";
+               List.iter
+                 (fun sym -> xp_symmetry print sym; print#string " ")
+                 sym_row;
+               print#string "]")
+             sym_array);
+        (fun print -> xp print a)]
   | `TranslationSym (sym,a,b) -> xp_apply_poly "translationSym" print
                                    [(fun print -> xp_symmetry print sym);
                                     (fun print -> xp print a);
@@ -1398,6 +1414,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+               `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
                `Indexing (`X,`X) ])
@@ -1420,13 +1437,15 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                 `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                 `Indexing (`X,`X) ])
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
     ~layer:(uniform_among [
                 `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
-                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X) ])
+                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+                `UnfoldSym (sym_matrix_flipHeightWidth, `X) ])
     ~grid:(uniform_among [])
   
 let rec dl_expr
@@ -1535,6 +1554,9 @@ let rec dl_expr
      +. Mdl.Code.universal_int_plus l
   | `ApplySym (sym,e1) ->
      code_expr (* includes encoding of sym *)
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e1
+  | `UnfoldSym (sym_array,e1) ->
+     code_expr (* includes encoding of sym list list *)
      +. dl ~ctx ~path:(`Arg (2, None, path)) e1
   | `TranslationSym (sym,e1,e2) ->
      code_expr (* includes encoding of sym *)
@@ -1743,7 +1765,19 @@ let apply_patt
               (fun item -> apply ~lookup (any_item p) item)
               items)
 
-let apply_symmetry ~(flip_size : bool) (sym_mask_model : Grid.Mask_model.t -> Grid.Mask_model.t) = (* : template expr -> template -> template = *)
+let flip_size__f_sym : symmetry -> bool * (Grid.Mask_model.t -> Grid.Mask_model.t) =
+  function
+  | `Id -> false, (fun mm -> mm)
+  | `FlipHeight -> false, Grid.Mask_model.flipHeight
+  | `FlipWidth -> false, Grid.Mask_model.flipWidth
+  | `FlipDiag1 -> true, Grid.Mask_model.flipDiag1
+  | `FlipDiag2 -> true, Grid.Mask_model.flipDiag2
+  | `Rotate180 -> false, Grid.Mask_model.rotate180
+  | `Rotate90 -> true, Grid.Mask_model.rotate90
+  | `Rotate270 -> true, Grid.Mask_model.rotate270
+
+let apply_symmetry (sym : symmetry) = (* : template expr -> template -> template = *)
+  let flip_size, sym_mask_model = flip_size__f_sym sym in
   let sym_size (* : template -> template *) =
     if flip_size
     then
@@ -1761,6 +1795,49 @@ let apply_symmetry ~(flip_size : bool) (sym_mask_model : Grid.Mask_model.t -> Gr
   | `PosShape (pos, `Point col) -> d
   | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
      `PosShape (pos, `Rectangle (sym_size size, col, `Mask (sym_mask_model mm)))
+  | _ -> raise (Invalid_expr e)
+
+let unfold_symmetry (sym_matrix : symmetry list list) =
+  let rec mask_matrix m = function
+    | [] -> assert false
+    | [row] -> mask_row m row
+    | row::rows -> Grid.Mask.concatHeight (mask_row m row) (mask_matrix m rows)
+  and mask_row m = function
+    | [] -> assert false
+    | [sym] -> mask_sym m sym
+    | sym::syms -> Grid.Mask.concatWidth (mask_sym m sym) (mask_row m syms)
+  and mask_sym m = function
+    | `Id -> m
+    | `FlipHeight -> Grid.Mask.flipHeight m
+    | `FlipWidth -> Grid.Mask.flipWidth m
+    | `FlipDiag1 -> Grid.Mask.flipDiag1 m
+    | `FlipDiag2 -> Grid.Mask.flipDiag2 m
+    | `Rotate180 -> Grid.Mask.rotate180 m
+    | `Rotate90 -> Grid.Mask.rotate90 m
+    | `Rotate270 -> Grid.Mask.rotate270 m
+  in
+  let unfold_size = function
+    | `Vec (`Int h, `Int w) ->
+       let k, l =
+         match sym_matrix with
+         | (_::syms)::rows -> 1 + List.length rows, 1 + List.length syms
+         | _ -> assert false in
+       `Vec (`Int (k*h), `Int (l*w))
+    | _ -> assert false in
+  let unfold_mask = function
+    | `Mask m -> `Mask (mask_matrix m sym_matrix)
+    | `Full _ -> `Full false
+    | _ -> raise (Undefined_result "Model2.unfold_symmetry: not a custom mask")  
+  in
+  fun e d ->
+  match d with
+  | `Mask mm -> `Mask (unfold_mask mm)
+  | `Rectangle (size, col, `Mask mm) ->
+     `Rectangle (unfold_size size, col, `Mask (unfold_mask mm))
+  | `Point _ -> raise (Undefined_result "Model2.unfold_symmetry: point")
+  | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
+     `PosShape (pos, `Rectangle (unfold_size size, col, `Mask (unfold_mask mm)))
+  | `PosShape (_, `Point _) -> raise (Undefined_result "Model2.unfold_symmetry: point")
   | _ -> raise (Invalid_expr e)
     
 let apply_expr_gen
@@ -2037,19 +2114,11 @@ let apply_expr_gen
       | `Point _ -> raise (Undefined_result "Tiling: undefined on points")
       | _ -> raise (Invalid_expr e))
   | `ApplySym (sym,e1) ->
-     let flip_size, f_sym =
-       match sym with
-       | `Id -> false, (fun m -> m)
-       | `FlipHeight -> false, Grid.Mask_model.flipHeight
-       | `FlipWidth -> false, Grid.Mask_model.flipWidth
-       | `FlipDiag1 -> true, Grid.Mask_model.flipDiag1
-       | `FlipDiag2 -> true, Grid.Mask_model.flipDiag2
-       | `Rotate180 -> false, Grid.Mask_model.rotate180
-       | `Rotate90 -> true, Grid.Mask_model.rotate90
-       | `Rotate270 -> true, Grid.Mask_model.rotate270
-     in
      apply ~lookup p e1
-     |> apply_symmetry ~flip_size f_sym e
+     |> apply_symmetry sym e
+  | `UnfoldSym (sym_matrix,e1) ->
+     apply ~lookup p e1
+     |> unfold_symmetry sym_matrix e
   | `TranslationSym (sym,e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
       | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
@@ -3429,6 +3498,12 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
          let& l = [1;2;3] in
          if k>1 || l>1 then
            push (role1, `Tiling (e1,k,l), ctx1, size)
+      | _ -> () in
+    let _ = (* ApplySym *)
+      match role1 with
+      | `Mask | `Shape | `Layer ->
+         let& sym_matrix = [sym_matrix_flipHeightWidth] in
+         push (role1, `UnfoldSym (sym_matrix, e1), ctx1, size)
       | _ -> () in
     let& (role2,e2,ctx2,size2) = exprs_2 in
     if ctx1 = ctx2

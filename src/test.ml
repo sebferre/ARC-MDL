@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 44 tasks, 5.5s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 44 tasks, 5.6s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
   [ "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
     "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=21.7s *)
@@ -302,6 +302,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
                         todo: use Repeat to value the common shape, refine ordering of Grid.rectangles, take into account output delta (objective is zero) *)
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test
                         todo: prevoir un mecanisme de repetition de la transformation *)
+    "3af2c5a8.json"; (* pb: need for disconnected masks (but BEWARE to keep object-centric approach, full-grid bitmaps are too greedy) *)
     "4522001f.json"; (* pb: invariance par rotation
                         todo: construct where parsing gives a rotation angle (or a transpose bool, or a symmetry?) [ A = Rotation(A, angle) for A in layer, shape ]; consider full grid as is *)
     "496994bd.json"; (* diff OK
@@ -330,7 +331,6 @@ let maybe_train_names =
     "47c1f68c.json"; (* pb: need flips and rotate180, and opposite coordinates in grid *)
     "8be77c9e.json"; (* pb: need symmetric extension of masks, expression concatHeight(mask,flipHeight(mask)) *)
     "4c4377d9.json"; (* pb: same as 8be7 *)
-    "3af2c5a8.json"; (* pb: need symmtric extension of masks *)
     "b6afb2da.json"; (* pb: prefers a layer's size to bottom(some layer) *) 
     "d4a91cb9.json"; (* pb: missing position/size expressions, maybe a Segment(pos1,pos2) shape + Corner expr *)
     "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
