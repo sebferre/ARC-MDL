@@ -441,6 +441,7 @@ type 'a expr =
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
      (* sym list list = matrix to be filled with symmetries of some mask *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
+  | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
   ]
@@ -635,7 +636,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
-  | `ScaleTo (a,b) -> Xprint.infix " @ " xp print (a,b)
+  | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
   | `Min la -> xp_apply "min" xp print la
   | `Max la -> xp_apply "max" xp print la
@@ -686,6 +687,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                                    [(fun print -> xp_symmetry print sym);
                                     (fun print -> xp print a);
                                     (fun print -> xp print b)]
+  | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b] 
   | `Index -> print#string string_of_index
   | `Indexing (e1,e2) -> xp print e1; print_string "["; xp print e2; print#string "]"
 and xp_symmetry print : symmetry -> unit = function
@@ -1438,6 +1440,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                 `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
                 `UnfoldSym (sym_matrix_flipHeightWidth, `X);
+                `Coloring (`X,`X);
                 `Indexing (`X,`X) ])
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
@@ -1445,7 +1448,8 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                 `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
-                `UnfoldSym (sym_matrix_flipHeightWidth, `X) ])
+                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
+                `Coloring (`X,`X) ])
     ~grid:(uniform_among [])
   
 let rec dl_expr
@@ -1562,6 +1566,10 @@ let rec dl_expr
      code_expr (* includes encoding of sym *)
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
      +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2
+  | `Coloring (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some (`Color `Shape), path)) e2
   | `Indexing (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -2160,6 +2168,17 @@ let apply_expr_gen
               then raise (Undefined_result "TranslationSym: null translation")
               else `Vec (`Int ti, `Int tj)
            | _ -> raise (Invalid_expr e) )
+      | _ -> raise (Invalid_expr e))
+  | `Coloring (e1,e2) ->
+     (match apply ~lookup p e2 with
+      | (`Color c as new_col) ->
+         let aux = function
+           | `Point _ -> `Point new_col
+           | `Rectangle (size, _, mask)  -> `Rectangle (size, new_col, mask)
+           | _ -> raise (Invalid_expr e) in
+         (match apply ~lookup p e1 with
+         | `PosShape (pos, shape) -> `PosShape (pos, aux shape)
+         | d -> aux d)
       | _ -> raise (Invalid_expr e))
   | `Indexing (`Ref (`Item (None,local,ctx)), e2) ->
      (match lookup (ctx :> var), apply ~lookup p e2 with
@@ -3389,6 +3408,12 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
                      `Rotate180; `Rotate90; `Rotate270] in
          push (role1, `ApplySym (sym, e1), ctx1, size)
       | _ -> () in
+    let _ = (* Coloring(_, const) *)
+      match role1 with
+      | (`Shape | `Layer) ->
+         let& c = Grid.all_colors in
+         push (role1, `Coloring (e1, `Color c), ctx1, size)
+      | _ -> () in
     let& (role2,e2,ctx2,size2) = exprs_0 in
     if ctx1 = ctx2
     then
@@ -3433,6 +3458,10 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
            push (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size);
            let& sym = [`FlipHeight; `FlipWidth; `Rotate180] in
            push (`Vec (`Size `X), `TranslationSym (sym,e1,e2), ctx1, size)
+        | _ -> () in
+      let _ = (* Coloring (_, ref) *)
+        match role1, role2 with
+        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2), ctx1, size)
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
