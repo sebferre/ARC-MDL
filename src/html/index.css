@@ -40,6 +40,12 @@
     display: inline-block;
 }
 
+.compressive {
+}
+.non-compressive {
+    color:darkred;
+}
+
 .computing {
     cursor: progress;
     opacity: 0.33;

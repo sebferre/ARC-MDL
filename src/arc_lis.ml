@@ -38,7 +38,7 @@ type arc_state =
 and arc_suggestion =
   | InputTask of task_input
   | ResetTask
-  | RefinedState of arc_state
+  | RefinedState of arc_state * bool (* compressive *)
 
 type arc_focus = arc_state
                
@@ -100,7 +100,10 @@ object
       let suggestions =
         InputTask (new Focus.input (name0,task0))
         :: ResetTask
-        :: List.map (fun s -> RefinedState (s :> arc_state)) suggestions in
+        :: List.map (fun s ->
+               let compressive = s.dl < focus.dl in
+               RefinedState ((s :> arc_state), compressive))
+             suggestions in
       Jsutils.firebug "Suggestions computed";
       focus.suggestions <- suggestions
     );
@@ -116,7 +119,7 @@ object
        Some (new arc_place lis state)
     | ResetTask ->
        Some (new arc_place lis (initial_focus focus.name focus.task))
-    | RefinedState s ->
+    | RefinedState (s,_) ->
        Some (new arc_place lis s)
 
   method abort = ()
@@ -175,8 +178,11 @@ let html_of_suggestion ~input_dico = function
      Html.html_of_input_info key info ^ " a task"
   | ResetTask ->
      "reset current task"
-  | RefinedState s ->
-     Jsutils.escapeHTML (Printf.sprintf "(%f)  " s.dl ^ Model2.string_of_refinement s.refinement)
+  | RefinedState (s,compressive) ->
+     Html.span ~classe:(if compressive then "compressive" else "non-compressive")
+       (Jsutils.escapeHTML
+          (Printf.sprintf "(%f)  " s.dl
+           ^ Model2.string_of_refinement s.refinement))
 
 let html_of_grid (g : Grid.t) =
   let buf = Buffer.create 1000 in
