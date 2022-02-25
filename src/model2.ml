@@ -3468,9 +3468,9 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
   (* LEVEL 2 *)
   let _ = 
     let _ = (* constants *)
-      let& k = [0;1;2] in
+      let& k = [0;1;2;3] in
       push (`Int (`X, (if k=0 then `Pos else `X)), `ConstInt k, None, 1);
-      let& l = [0;1;2] in
+      let& l = [0;1;2;3] in
       push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l), None, 1) in
     let& (role1,e1,ctx1,size1) = exprs_1 in
     (* unary operators *)
@@ -3525,7 +3525,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let size = 1 + size1 in
     let _ = (* Tiling *)
       match role1 with
-      | (`Vec (`Size _) | `Mask | `Shape) ->
+      | (`Vec (`X | `Size _) | `Mask | `Shape) ->
          let& k = [1;2;3] in
          let& l = [1;2;3] in
          if k>1 || l>1 then
@@ -3543,7 +3543,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       let size = 1 + size1 + size2 in
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
-        | (`Mask | `Shape), `Vec (`Size _) -> push (role1, `ScaleTo (e1,e2), ctx1, size)
+        | (`Mask | `Shape), `Vec (`X | `Size _) -> push (role1, `ScaleTo (e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with

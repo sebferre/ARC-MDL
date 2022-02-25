@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 44 tasks, 5.4s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 45 tasks, 5.4s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
   [ "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
     "0962bcdd.json"; (* NEW two kinds of bi-color flowers, growing in size, runtime=21.7s *)
@@ -262,6 +262,7 @@ let solved_train_names = (* 44 tasks, 5.4s/task for timeout=30s, max_nb_parses=6
     "4c5c2cf0.json"; (* NEW object next to some central x-cross, add 3 symmetric copies of the shape around the x-cross. runtime=24.4s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=1.8s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=0.5s *)
+    "5ad4f10b.json"; (* NEW a big shape, points, return the shape scaled-down to 3x3 with same color as points. runtime=10s *)
     "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=1.1s *)
     "694f12f3.json"; (* NEW 2 yellow rectangles, fill the larger one in red, the smaller in blue, runtime=2.1 *)
     "6b9890af.json"; (* NEW red border, colored shape; crop on border and fit colored shape inside. runtime=4.7s *)
