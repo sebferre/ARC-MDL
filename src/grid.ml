@@ -383,8 +383,8 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       let h, w = m.height, m.width in
       let h_factors = ref (range 1 (h-1)) in
       let w_factors = ref (range 1 (w-1)) in
-      for i = 1 to h-1 do (* starting at 1 OK because 0 mod x = 0 *)
-        for j = 1 to w-1 do
+      for i = 0 to h-1 do
+        for j = 0 to w-1 do
           h_factors := !h_factors |> List.filter (fun h' -> mem i j m = mem (i mod h') j m);
           w_factors := !w_factors |> List.filter (fun w' -> mem i j m = mem i (j mod w') m)
         done
@@ -532,6 +532,7 @@ module Mask_model =
       
     let subsumes (m0 : t) (m1 : t) : bool =
       match m0, m1 with
+      | `Mask m1, `Mask m2 -> Mask.equal m1 m2
       | `Full b0, `Full b1 -> not b0 || b1
       | `Border, `Full true -> true
       | _ -> m0 = m1
@@ -613,7 +614,12 @@ module Mask_model =
       | `Mask m -> `Mask (Mask.tile k l m)
       | `Full false -> `Full false
       | _ -> raise (Undefined_result "Grid.Mask_model.tile: undefined")
-                  
+
+    let resize_alike new_h new_w : t -> t = function
+      | `Mask m -> `Mask (Mask.resize_alike m new_h new_w)
+      | (`Full false | `OddCheckboard | `EvenCheckboard as mm) -> mm
+      | _ -> raise (Undefined_result "Grid.Mask_model.resize_alike: undefined")
+
     let symmetry (f : Mask.t -> Mask.t) : t -> t = function
       | `Mask m -> `Mask (f m)
       | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> mm
