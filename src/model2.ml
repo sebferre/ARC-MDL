@@ -439,7 +439,7 @@ type 'a expr =
   | `ProjJ of 'a (* on Vec *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
-  | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape as T, Vec -> T *)
+  | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
   | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
      (* sym list list = matrix to be filled with symmetries of some mask *)
@@ -1451,6 +1451,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~object_:(uniform_among [
                  `Indexing (`X,`X) ])
     ~layer:(uniform_among [
+                `ResizeAlikeTo (`X,`X);
                 `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
                 `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
                 `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
@@ -2146,12 +2147,16 @@ let apply_expr_gen
   | `ResizeAlikeTo(e1,e2) ->
      (match apply ~lookup p e2 with
       | `Vec (`Int h, `Int w) ->
+         let aux = function
+           | `Point col ->
+              `Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false))
+           | `Rectangle (_size, col, `Mask mm) ->
+              `Rectangle (`Vec (`Int h, `Int w), col, `Mask (Grid.Mask_model.resize_alike h w mm))
+           | _ -> assert false in             
          (match apply ~lookup p e1 with
           | `Mask mm -> `Mask (Grid.Mask_model.resize_alike h w mm)
-          | `Point col ->
-             `Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false))
-          | `Rectangle (_size, col, `Mask mm) ->
-             `Rectangle (`Vec (`Int h, `Int w), col, `Mask (Grid.Mask_model.resize_alike h w mm))
+          | (`Point _ | `Rectangle _ as shape) -> aux shape
+          | `PosShape (pos,shape) -> `PosShape (pos, aux shape)
           | _ -> raise (Invalid_expr e))
       | _ -> raise (Invalid_expr e))
   | `ApplySym (sym,e1) ->
@@ -3587,7 +3592,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | _ -> () in
       let _ = (* ResizeAlikeTo *)
         match role1, role2 with
-        | (`Mask | `Shape), `Vec (`X | `Size _) ->
+        | (`Mask | `Shape | `Layer), `Vec (`X | `Size _) ->
            push (role1, `ResizeAlikeTo (e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* _ and _ *)
