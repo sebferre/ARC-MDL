@@ -407,8 +407,10 @@ type 'a expr =
   | `ConstVec of int * int (* Vec *)
   | `Plus of 'a * 'a (* on Int, Vec *)
   | `Minus of 'a * 'a (* on Int, Vec *)
-  | `Incr of 'a * int (* on Int, Vec *)
-  | `Decr of 'a * int (* in Int, Vec *)
+  | `IncrInt of 'a * int (* on Int *)
+  | `DecrInt of 'a * int (* in Int *)
+  | `IncrVec of 'a * int * int (* on Vec *)
+  | `DecrVec of 'a * int * int (* in Vec *)
   | `Modulo of 'a * 'a (* on Int *)
   | `ScaleUp of 'a * int (* on Int, Vec, Mask *)
   | `ScaleDown of 'a * int (* on Int, Vec, Mask *)
@@ -632,8 +634,10 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                           (fun print -> print#int l)]
   | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
   | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
-  | `Incr (a,k) -> xp print a; print#string " + "; print#int k
-  | `Decr (a,k) -> xp print a; print#string " - "; print#int k
+  | `IncrInt (a,k) -> xp print a; print#string " + "; print#int k
+  | `DecrInt (a,k) -> xp print a; print#string " - "; print#int k
+  | `IncrVec (a,k,l) -> xp print a; print#string " + ("; print#int k; print#string ", "; print_int l; print#string ")"
+  | `DecrVec (a,k,l) -> xp print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
@@ -1405,7 +1409,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               (*`Left `X; *) `Right `X; `Center `X;
               (*`Top `X; *) `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
-              `Incr (`X,1); `Decr (`X,1);
+              `IncrInt (`X,1); `DecrInt (`X,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Min [`X;`X]; `Max [`X;`X]; `Average [`X;`X]; `Span (`X,`X);
               (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*)
@@ -1426,7 +1430,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `ProjI `X; `ProjJ `X;
               `ConstVec (0,0);
               `Plus (`X,`X); `Minus (`X,`X);
-              `Incr (`X,1); `Decr (`X,1);
+              `IncrVec (`X,1,1); `DecrVec (`X,1,1);
               `ScaleUp (`X,2); `ScaleDown (`X,2);
               `Tiling (`X,1,1);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
@@ -1479,10 +1483,15 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
-  | `Incr (e1,k) | `Decr (e1,k) ->
+  | `IncrInt (e1,k) | `DecrInt (e1,k) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_plus k
+  | `IncrVec (e1,k,l) | `DecrVec (e1,k,l) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. Mdl.Code.universal_int_star k
+     +. Mdl.Code.universal_int_star l
   | `Modulo (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1879,15 +1888,22 @@ let apply_expr_gen
       | `Int i1, `Int i2 -> `Int (i1-i2)
       | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1-i2), `Int (j1-j2))
       | _ -> raise (Invalid_expr e))
-  | `Incr (e1,k) ->
+  | `IncrInt (e1,k) ->
      (match apply ~lookup p e1 with
       | `Int i1 -> `Int (i1 + k)
-      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 + k), `Int (j1 + k))
       | _ -> raise (Invalid_expr e))
-  | `Decr (e1,k) ->
+  | `DecrInt (e1,k) ->
      (match apply ~lookup p e1 with
       | `Int i1 -> `Int (i1 - k)
-      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 - k), `Int (j1 - k))
+      | _ -> raise (Invalid_expr e))
+  | `IncrVec (e1,k,l) ->
+     (match apply ~lookup p e1 with
+      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 + k), `Int (j1 + l))
+      | _ -> raise (Invalid_expr e))
+  | `DecrVec (e1,k,l) ->
+     (match apply ~lookup p e1 with
+      | `Int i1 -> `Int (i1 - k)
+      | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 - k), `Int (j1 - l))
       | _ -> raise (Invalid_expr e))
   | `Modulo (e1,e2) ->
      (match apply ~lookup p e1, apply ~lookup p e2 with
@@ -3492,17 +3508,23 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let& (role1,e1,ctx1,size1) = exprs_1 in
     (* unary operators *)
     let size = 1 + size1 in
-    let _ =
-      let& n = [1;2;3] in
-      let _ = (* incr(_,1..3) *)
-        match role1 with
-        | `Int _ | `Vec _ -> push (role1, `Incr (e1,n), ctx1, size)
-        | _ -> () in
-      let _ = (* decr(_,1..3) *)
-        match role1 with
-        | `Int _ | `Vec _ -> push (role1, `Decr (e1,n), ctx1, size)
-        | _ -> () in
-      () in
+    let _ = (* IncrInt, DecrInt *)
+      match role1 with
+      | `Int _ ->
+         let& k = [1;2;3] in
+         push (role1, `IncrInt (e1,k), ctx1, size);
+         push (role1, `DecrInt (e1,k), ctx1, size)
+      | _ -> () in
+    let _ = (* IncrVec, DecrVec *)
+      match role1 with
+      | `Vec _ ->
+         let& k = [0;1;2;3] in
+         let& l = [0;1;2;3] in
+         if k+l > 0 then (
+           push (role1, `IncrVec (e1,k,l), ctx1, size);
+           push (role1, `DecrVec (e1,k,l), ctx1, size)
+         )
+      | _ -> () in
     let _ =
       let& n = [2;3] in
       let _ = (* scaleUp(_,2..3) *)
