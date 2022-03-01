@@ -210,7 +210,9 @@ type role = (* same information as kind + contextual information *)
   | `Layer
   | `Grid ]
 and role_vec =
-  [ `Pos | `Size of role_frame ]
+  [ `Pos (* coordinates in grid, range [0,size-1] *)
+  | `Size of role_frame (* strictly positive, unbounded *)
+  | `Move ] (* translation (pos delta), can be negative *)
 and role_frame =
   [ `Shape | `Grid ]
 
@@ -236,7 +238,7 @@ type role_poly = (* polymorphic extension of role *)
   | `Layer
   | `Grid ]
 and role_vec_poly =
-  [ `Pos | `Size of role_frame_poly | `X ]
+  [ `Pos | `Size of role_frame_poly | `Move | `X ]
 and role_frame_poly =
   [ `Shape | `Grid | `X ]
 
@@ -263,6 +265,7 @@ let role_poly_matches (role_x : role_poly) (role : role) : int option (* relaxat
     | `X, _ -> 0
     | `Pos, `Pos -> 0
     | `Size fr_x, `Size fr -> aux_frame fr_x fr
+    | `Move, `Move -> 0
     | _ -> 1
   and aux_frame fr_x fr =
     match fr_x, fr with
@@ -516,6 +519,7 @@ let rec xp_role (print : Xprint.t) = function
 and xp_role_vec print = function
   | `Pos -> print#string "pos"
   | `Size rf -> print#string "size/"; xp_role_frame print rf
+  | `Move -> print#string "move"
 and xp_role_frame print = function
   | `Shape -> print#string "shape"
   | `Grid -> print#string "grid"
@@ -996,6 +1000,7 @@ let default_shape_color = `Color Grid.no_color
 let default_grid_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
+let default_move = `Vec (`Int 0, `Int 0)
 let default_mask = `Mask (`Full false)
 let default_shape = `Rectangle (default_shape_size, default_shape_color, default_mask)
 let default_object = `PosShape (default_pos, default_shape)
@@ -1006,6 +1011,7 @@ let default_data_of_path (p : revpath) : data =
   | `Int (_, `Pos) -> `Int 0
   | `Int (_, `Size `Grid) -> `Int 10
   | `Int (_, `Size `Shape) -> `Int 2
+  | `Int (_, `Move) -> `Int 0
   | `Index -> `Int 0
   | `Color `Grid -> default_grid_color
   | `Color `Shape -> default_shape_color
@@ -1013,6 +1019,7 @@ let default_data_of_path (p : revpath) : data =
   | `Vec `Pos -> default_pos
   | `Vec (`Size `Grid) -> default_grid_size
   | `Vec (`Size `Shape) -> default_shape_size
+  | `Vec `Move -> default_move
   | `Shape -> default_shape
   | `Object -> default_object
   | `Layer -> default_layer
@@ -1143,6 +1150,7 @@ let dl_patt
        | `Int (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
        | `Int (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
        | `Int (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
+       | `Int (_, `Move) -> assert false (* only computation intermediate value *)
        | `Index -> dl_int_index n
        | _ -> assert false )
 
@@ -3493,9 +3501,9 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       let _ = (* translationOnto(_,_), translationSym(_,_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 < e2 ->
-           push (`Vec (`Size `X), `TranslationOnto (e1,e2), ctx1, size);
+           push (`Vec `Move, `TranslationOnto (e1,e2), ctx1, size);
            let& sym = [`FlipHeight; `FlipWidth; `Rotate180] in
-           push (`Vec (`Size `X), `TranslationSym (sym,e1,e2), ctx1, size)
+           push (`Vec `Move, `TranslationSym (sym,e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* Coloring (_, ref) *)
         match role1, role2 with
@@ -3552,13 +3560,16 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       let size = 1 + size1 + size2 in
       let _ = (* _ + _ *)
         match role1, role2 with
-        | `Int (_, xx1), `Int (_, (`X | `Size _)) | `Vec xx1, `Vec (`X | `Size _)
+        | `Int (_, xx1), `Int (_, (`X | `Size _ | `Move))
+          | `Vec xx1, `Vec (`X | `Size _ | `Move)
              when (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
            push (role1, `Plus (e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* _ - _ *)
         match role1, role2 with
-        | `Int _, `Int (_, (`X | `Size _)) | `Vec _, `Vec (`X | `Size _) when e1 <> e2 ->
+        | `Int _, `Int (_, (`X | `Size _ | `Move))
+          | `Vec _, `Vec (`X | `Size _ | `Move)
+             when e1 <> e2 ->
            push (role1, `Minus (e1,e2), ctx1, size)
         | _ -> () in
       () in
