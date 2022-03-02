@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 46 tasks, 6.3s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 47 tasks, 6.0s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
   [ "017c7c7b.json"; (* NEW some blue shape in 6x3 grid, resize alike to grid size 9x3 and color in blue. runtime=3.0s *)
     "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
@@ -295,6 +295,7 @@ let solved_train_names = (* 46 tasks, 6.3s/task for timeout=30s, max_nb_parses=6
     "e9afcf9a.json"; (* two one-color rows, interleaving them, runtime=0.3s *)
     "ea32f347.json"; (* three grey segments, color them by decreasing length, worked because parses big shapes first. runtime=5.2s *)
     "ea786f4a.json"; (* NEW black point in a colored grid, produce same-size same-color grid with a full-grid x-cross black shape at (0,0), runtime=0.1s *)
+    "ed36ccf7.json"; (* NEW black object, apply rotate270 symmetry to mask and position relative to grid. runtime=2.3s *)
     "f25fbde4.json"; (* NEW yellow shape, double its size and crop on it. runtime=0.2s *)
   ]
 

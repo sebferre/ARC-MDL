@@ -390,11 +390,19 @@ let path_factorize (p1 : revpath) (p2 : revpath) : revpath * revpath * revpath =
   in
   aux_path `Root rev_p1 rev_p2
 
-let shape_size = (* : 'shape -> [`Vec of [`Int of int] * [`Int of int]] = *)
+let get_pos : 'a -> (int * int) option =
   function
-  | `Point _ -> `Vec (`Int 1, `Int 1)
-  | `Rectangle (size,_,_) -> size
-  | _ -> failwith "Model2.shape_size: unexpected shape"
+  | `PosShape (`Vec (`Int i, `Int j), _) -> Some (i,j)
+  | `Background _ -> Some (0, 0)
+  | _ -> None
+          
+let rec get_size : 'a -> (int * int) option =
+  function
+  | `Point _ -> Some (1,1)
+  | `Rectangle (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
+  | `PosShape (_, shape) -> get_size shape
+  | `Background (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
+  | _ -> None
        
 type data = data patt
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
@@ -443,10 +451,10 @@ type 'a expr =
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
-  | `ApplySym of symmetry * 'a (* on Mask, Shape, Object *)
+  | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
      (* sym list list = matrix to be filled with symmetries of some mask *)
-  | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj -> Vec *)
+  | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
   | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
   | `Index (* Int *)
   | `Indexing of 'a * 'a (* (Many A, Int) => A *)
@@ -678,7 +686,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
   | `ResizeAlikeTo (a,b) -> xp_apply "resizeAlikeTo" xp print [a;b]
-  | `ApplySym (sym,a) -> xp_apply_poly "applySym" print
+  | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
                             (fun print -> xp print a)]
   | `UnfoldSym (sym_array,a) ->
@@ -1409,7 +1417,7 @@ let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl 
 let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
   let uniform_among (l : [`X] expr list) =
-    if l = [] then infinity else Mdl.Code.uniform (List.length l) in
+    if l = [] then 0. else Mdl.Code.uniform (List.length l) in
   KindMap.make
     ~int:(uniform_among [
               `ConstInt 0;
@@ -1427,9 +1435,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~mask:(uniform_among [
                `ScaleUp (`X,2); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
-               `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
-               `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
-               `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+               `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X;
@@ -1443,16 +1449,12 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Tiling (`X,1,1);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `TranslationOnto (`X,`X);
-              `TranslationSym (`FlipHeight,`X,`X); `TranslationSym (`FlipWidth,`X,`X); `TranslationSym (`Rotate180,`X,`X);
-              `TranslationSym (`FlipDiag1,`X,`X); `TranslationSym (`FlipDiag2,`X,`X);
-              `TranslationSym (`Rotate90,`X,`X); `TranslationSym (`Rotate270,`X,`X);
+              `TranslationSym (`FlipHeight,`X,`X);
               `Indexing (`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,2); `ScaleTo (`X,`X);
                 `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
-                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
-                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
-                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+                `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                 `Coloring (`X,`X);
                 `Indexing (`X,`X) ])
@@ -1460,9 +1462,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                  `Indexing (`X,`X) ])
     ~layer:(uniform_among [
                 `ResizeAlikeTo (`X,`X);
-                `ApplySym (`FlipHeight, `X); `ApplySym (`FlipWidth, `X);
-                `ApplySym (`FlipDiag1, `X); `ApplySym (`FlipDiag2, `X);
-                `ApplySym (`Rotate180, `X); `ApplySym (`Rotate90, `X); `ApplySym (`Rotate270, `X);
+                `ApplySym (`FlipHeight, `X, `Layer);
                 `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [])
@@ -1580,16 +1580,18 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
-  | `ApplySym (sym,e1) ->
-     code_expr (* includes encoding of sym *)
-     +. dl ~ctx ~path:(`Arg (2, None, path)) e1
+  | `ApplySym (sym,e1,role_e1) ->
+     code_expr (* no need to encode role_e1, deducible from model *)
+     +. Mdl.Code.uniform 8 (* encoding sym *)
+     +. dl ~ctx ~path:(`Arg (2, Some role_e1, path)) e1
   | `UnfoldSym (sym_array,e1) ->
      code_expr (* includes encoding of sym list list *)
      +. dl ~ctx ~path:(`Arg (2, None, path)) e1
   | `TranslationSym (sym,e1,e2) ->
      code_expr (* includes encoding of sym *)
+     +. Mdl.Code.uniform 8 (* encoding sym *)
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
-     +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2
+     +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
   | `Coloring (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
@@ -1797,7 +1799,7 @@ let apply_patt
               (fun item -> apply ~lookup (any_item p) item)
               items)
 
-let flip_size__f_sym : symmetry -> bool * (Grid.Mask_model.t -> Grid.Mask_model.t) =
+(* let flip_size__f_sym : symmetry -> bool * (Grid.Mask_model.t -> Grid.Mask_model.t) =
   function
   | `Id -> false, (fun mm -> mm)
   | `FlipHeight -> false, Grid.Mask_model.flipHeight
@@ -1806,27 +1808,76 @@ let flip_size__f_sym : symmetry -> bool * (Grid.Mask_model.t -> Grid.Mask_model.
   | `FlipDiag2 -> true, Grid.Mask_model.flipDiag2
   | `Rotate180 -> false, Grid.Mask_model.rotate180
   | `Rotate90 -> true, Grid.Mask_model.rotate90
-  | `Rotate270 -> true, Grid.Mask_model.rotate270
+  | `Rotate270 -> true, Grid.Mask_model.rotate270 *)
 
-let apply_symmetry (sym : symmetry) = (* : template expr -> template -> template = *)
-  let flip_size, sym_mask_model = flip_size__f_sym sym in
-  let sym_size (* : template -> template *) =
-    if flip_size
-    then
-      (function
-       | `Vec (`Int h, `Int w) -> `Vec (`Int w, `Int h)
-       | _ -> assert false)
-    else (fun size -> size)
+let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : template expr -> template -> template = *)
+  (* let flip_size, sym_mask_model = flip_size__f_sym sym in *)
+  let sym_pos d = (* symmetry of a point relative to the grid *)
+    let p_grid_size = `Field (`Size, `Root) in
+    match lookup p_grid_size, d with (* getting the grid size *)
+    | Some (`Vec (`Int h, `Int w)), `Vec (`Int i, `Int j) ->
+       let i', j' =
+         match sym with
+         | `Id -> i, j
+         | `FlipHeight -> h-1-i, j
+         | `FlipWidth -> i, w-1-j
+         | `FlipDiag1 -> j, i
+         | `FlipDiag2 -> w-1-j, h-1-i
+         | `Rotate180 -> h-1-i, w-1-j
+         | `Rotate90 -> j, h-1-i
+         | `Rotate270 -> w-1-j, i in
+       `Vec (`Int i', `Int j')
+    | None, _ -> raise (Unbound_var p_grid_size)
+    | _ -> assert false in
+  let sym_size = function
+    | `Vec (`Int h, `Int w) ->
+       let h', w' =
+         match sym with
+         | `Id | `FlipHeight | `FlipWidth | `Rotate180 -> h, w
+         | `FlipDiag1 | `FlipDiag2 | `Rotate90 | `Rotate270 -> w, h in
+       `Vec (`Int h', `Int w')
+    | _ -> assert false in
+  let sym_move = function (* symmetry relative to position (0,0) *)
+    | `Vec (`Int i, `Int j) ->
+       let i', j' =
+         match sym with
+         | `Id -> i, j
+         | `FlipHeight -> -i, j
+         | `FlipWidth -> i, -j
+         | `FlipDiag1 -> j, i
+         | `FlipDiag2 -> -j, -i
+         | `Rotate180 -> -i, -j
+         | `Rotate90 -> j, -i
+         | `Rotate270 -> -j, i in
+       `Vec (`Int i', `Int j')
+    | _ -> assert false in
+  let sym_mask = function
+    | `Mask mm ->
+       let mm' =
+         match sym with
+         | `Id -> mm
+         | `FlipHeight -> Grid.Mask_model.flipHeight mm
+         | `FlipWidth -> Grid.Mask_model.flipWidth mm
+         | `FlipDiag1 -> Grid.Mask_model.flipDiag1 mm
+         | `FlipDiag2 -> Grid.Mask_model.flipDiag2 mm
+         | `Rotate180 -> Grid.Mask_model.rotate180 mm
+         | `Rotate90 -> Grid.Mask_model.rotate90 mm
+         | `Rotate270 -> Grid.Mask_model.rotate270 mm in
+       `Mask mm'
+    | _ -> assert false in
+  let sym_shape = function
+    | `Point col -> `Point col
+    | `Rectangle (size, col, mask) ->
+       `Rectangle (sym_size size, col, sym_mask mask)
+    | _ -> assert false
   in
-  fun e d ->
-  match d with
-  | `Mask mm -> `Mask (sym_mask_model mm)
-  | `Point col -> d
-  | `Rectangle (size, col, `Mask mm) ->
-     `Rectangle (sym_size size, col, `Mask (sym_mask_model mm))
-  | `PosShape (pos, `Point col) -> d
-  | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
-     `PosShape (pos, `Rectangle (sym_size size, col, `Mask (sym_mask_model mm)))
+  match role_e1, d1 with
+  | `Vec `Pos, _ -> sym_pos d1
+  | `Vec (`Size _), _ -> sym_size d1
+  | `Vec `Move, _ -> sym_move d1
+  | `Mask, _ -> sym_mask d1
+  | `Shape, _ -> sym_shape d1
+  | `Layer, `PosShape (pos, shape) -> `PosShape (pos, sym_shape shape) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
   | _ -> raise (Invalid_expr e)
 
 let unfold_symmetry (sym_matrix : symmetry list list) =
@@ -2124,26 +2175,22 @@ let apply_expr_gen
       | `Vec (_, `Int j) -> `Vec (`Int 0, `Int j)
       | _ -> raise (Invalid_expr e))         
   | `TranslationOnto (e1,e2) ->
-     (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
-        `PosShape (`Vec (`Int mini2, `Int minj2), shape2) ->
-         ( match shape_size shape1, shape_size shape2 with
-           | `Vec (`Int h1, `Int w1), `Vec (`Int h2, `Int w2) ->
-              let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
-              let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
-              let ti =
-                if maxi1 < mini2 then mini2 - maxi1 - 1
-                else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
-                else 0 in
-              let tj =
-                if maxj1 < minj2 then minj2 - maxj1 - 1
-                else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
-                else 0 in
-              if ti = 0 && tj = 0
-              then raise (Undefined_result "TranslationOnto: two objects overlap")
-              else `Vec (`Int ti, `Int tj)
-           | _ -> raise (Invalid_expr e) )
-      | _ -> raise (Invalid_expr e))
+     let d1 = apply ~lookup p e1 in
+     let d2 = apply ~lookup p e2 in
+     (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
+      | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
+         let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
+         let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
+         let ti =
+           if maxi1 < mini2 then mini2 - maxi1 - 1
+           else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
+           else 0 in
+         let tj =
+           if maxj1 < minj2 then minj2 - maxj1 - 1
+           else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
+           else 0 in
+         `Vec (`Int ti, `Int tj)
+      | _ -> raise (Invalid_expr e) )
   | `Tiling (e1,k,l) ->
      (match apply ~lookup p e1 with
       | `Vec (`Int h, `Int w) -> `Vec (`Int (h*k), `Int (w*l))
@@ -2167,54 +2214,50 @@ let apply_expr_gen
           | `PosShape (pos,shape) -> `PosShape (pos, aux shape)
           | _ -> raise (Invalid_expr e))
       | _ -> raise (Invalid_expr e))
-  | `ApplySym (sym,e1) ->
+  | `ApplySym (sym,e1,role_e1) ->
      apply ~lookup p e1
-     |> apply_symmetry sym e
+     |> apply_symmetry ~lookup sym role_e1 e
   | `UnfoldSym (sym_matrix,e1) ->
      apply ~lookup p e1
      |> unfold_symmetry sym_matrix e
   | `TranslationSym (sym,e1,e2) ->
-     (match apply ~lookup p e1, apply ~lookup p e2 with
-      | `PosShape (`Vec (`Int mini1, `Int minj1), shape1),
-        `PosShape (`Vec (`Int mini2, `Int minj2), shape2) ->
-         ( match shape_size shape1, shape_size shape2 with
-           | `Vec (`Int h1, `Int w1), `Vec (`Int h2, `Int w2) ->
-              let ti, tj =
-                match sym with
-                | `Id -> 0, 0
-                | `FlipHeight -> 2 * (mini2-mini1) + (h2-h1), 0
-                | `FlipWidth -> 0, 2 * (minj2-minj1) + (w2-w1)
-                | `Rotate180 -> 2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1)
-                | `FlipDiag1 ->
-                   if h2 = w2
-                   then
-                     let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
-                     ti, - ti
-                   else raise (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
-                | `FlipDiag2 ->
-                   if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
-                   then
-                     let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
-                     ti, - ti
-                   else raise (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
-                | `Rotate90 ->
-                   if h2 = w2
-                   then
-                     (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
-                     (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1 (* /2 OK because h2=w2 *)
-                   else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
-                | `Rotate270 ->
-                   if h2 = w2
-                   then
-                     (minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
-                     (minj2 - minj1) - (mini2 - mini1) (* - (h2 - w2) / 2 *)
-                   else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
-              in
-              if ti = 0 && tj = 0
-              then raise (Undefined_result "TranslationSym: null translation")
-              else `Vec (`Int ti, `Int tj)
-           | _ -> raise (Invalid_expr e) )
-      | _ -> raise (Invalid_expr e))
+     let d1 = apply ~lookup p e1 in
+     let d2 = apply ~lookup p e2 in
+     (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
+      | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
+         let ti, tj =
+           match sym with
+           | `Id -> 0, 0
+           | `FlipHeight -> 2 * (mini2-mini1) + (h2-h1), 0
+           | `FlipWidth -> 0, 2 * (minj2-minj1) + (w2-w1)
+           | `Rotate180 -> 2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1)
+           | `FlipDiag1 ->
+              if h2 = w2
+              then
+                let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
+                ti, - ti
+              else raise (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
+           | `FlipDiag2 ->
+              if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
+              then
+                let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
+                ti, - ti
+              else raise (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
+           | `Rotate90 ->
+              if h2 = w2
+              then
+                (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
+                (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1 (* /2 OK because h2=w2 *)
+              else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+           | `Rotate270 ->
+              if h2 = w2
+              then
+                (minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
+                (minj2 - minj1) - (mini2 - mini1) (* - (h2 - w2) / 2 *)
+              else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+         in
+         `Vec (`Int ti, `Int tj)
+      | _ -> raise (Invalid_expr e) )
   | `Coloring (e1,e2) ->
      (match apply ~lookup p e2 with
       | (`Color c as new_col) ->
@@ -3449,10 +3492,10 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
-      | `Mask | `Shape | `Layer ->
+      | (`Mask | `Shape | `Layer as role1) ->
          let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                      `Rotate180; `Rotate90; `Rotate270] in
-         push (role1, `ApplySym (sym, e1), ctx1, size)
+         push (role1, `ApplySym (sym, e1, role1), ctx1, size)
       | _ -> () in
     let _ = (* Coloring(_, const) *)
       match role1 with
@@ -3498,11 +3541,16 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Average [e1;e2], ctx1, size)
         | _ -> () in
-      let _ = (* translationOnto(_,_), translationSym(_,_,_) *)
+      let _ = (* translationOnto(_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 < e2 ->
            push (`Vec `Move, `TranslationOnto (e1,e2), ctx1, size);
-           let& sym = [`FlipHeight; `FlipWidth; `Rotate180] in
+        | _ -> () in
+      let _ = (* translationSym(_,_,_) *)
+        match role1, role2 with
+        | `Layer, (`Layer|`Grid) when e1 <> e2 ->
+           let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
+                       `Rotate180; `Rotate90; `Rotate270] in
            push (`Vec `Move, `TranslationSym (sym,e1,e2), ctx1, size)
         | _ -> () in
       let _ = (* Coloring (_, ref) *)
@@ -3586,7 +3634,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
          if k>1 || l>1 then
            push (role1, `Tiling (e1,k,l), ctx1, size)
       | _ -> () in
-    let _ = (* ApplySym *)
+    let _ = (* UnfoldSym *)
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& sym_matrix = [sym_matrix_flipHeightWidth] in
