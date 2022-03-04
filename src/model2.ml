@@ -3361,7 +3361,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       match role_poly_matches role_e role with
       (* whether the expression role matches the defined path, and relaxation value *)
       | None -> defs
-      | Some role_relax -> 
+      | Some role_relax ->
          let data_opt =
            data_fst
            |> List.find_opt
@@ -3394,20 +3394,14 @@ and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   | None -> false
   | Some te -> defs_check_match te d
 and defs_check_apply ~env (t : template) (ctx : revpath option) : template option =
-  match t with
-  | #patt -> Some t
-  | #expr ->
      (*     print_string "CHECK expr: "; pp_template t; Option.iter (fun p_many -> print_string " at ctx "; pp_path p_many) ctx; print_newline (); *)
-     let e =
-       match ctx with
-       | None -> t
-       | Some p_many -> `For (p_many, t) in
-     ( match apply_template ~env (e :> template) with
-     | Result.Ok t1 -> Some t1
-     | Result.Error _ -> None )
-  | `U -> assert false (* should not be used as def *)
-  | `Repeat _ -> assert false (* should not be used as def *)
-  | `For _ -> assert false
+  let t =
+    match ctx with
+    | None -> t
+    | Some p_many -> `For (p_many, t) in
+  match apply_template ~env t with
+  | Result.Ok t1 -> Some t1
+  | Result.Error _ -> None
 and defs_check_match (t : template) (d : data) : bool = (* QUICK *)
   match t, d with
        (* | `Many (ordered1,items1), `Many (ordered2,items2) ->
