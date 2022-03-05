@@ -242,41 +242,27 @@ and role_vec_poly =
 and role_frame_poly =
   [ `Shape | `Grid | `X ]
 
-let role_poly_matches (role_x : role_poly) (role : role) : int option (* relaxation value, if valid *) =
+let role_poly_matches (role_x : role_poly) (role : role) : bool =
   let rec aux_role r_x r =
     match r_x, r with
-    | `Int (ij_x,vec_x), `Int (ij,vec) ->
-       Option.bind
-         (aux_vec vec_x vec)
-         (fun v -> Some (aux_ij ij_x ij + v))
-    | `Index, `Index -> Some 0
-    | `Color fr_x, `Color fr -> Some (aux_frame fr_x fr)
-    | `Mask, `Mask -> Some 0
+    | `Int (_,vec_x), `Int (_,vec) -> aux_vec vec_x vec
+    | `Index, `Index -> true
+    | `Color fr_x, `Color fr -> true
+    | `Mask, `Mask -> true
     | `Vec vec_x, `Vec vec -> aux_vec vec_x vec
-    | `Shape, `Shape -> Some 0
-    | `Object, `Object -> Some 0
-    | `Layer, `Layer -> Some 0
-    | `Grid, `Grid -> Some 0
-    | _ -> None
-  and aux_ij ij_x ij =
-    match ij_x, ij with
-    | `X, _ -> 0
-    | `I, `I | `J, `J -> 0
-    | _ -> 1
+    | `Shape, `Shape -> true
+    | `Object, `Object -> true
+    | `Layer, `Layer -> true
+    | `Grid, `Grid -> true
+    | _ -> false
   and aux_vec vec_x vec =
     match vec_x, vec with
-    | `X, _ -> Some 0
-    | `Pos, `Pos -> Some 0
-    | `Size fr_x, `Size fr -> Some (aux_frame fr_x fr)
-    | `Move, `Move -> Some 0
-    | `Move, `Pos -> Some 1 (* Move is a valid position: pos = 0 + move *)
-    | _ -> None (* 1 TEST *)
-  and aux_frame fr_x fr =
-    match fr_x, fr with
-    | `X, _ -> 0
-    | `Shape, `Shape -> 0
-    | `Grid, `Grid -> 0
-    | _ -> 1
+    | `X, _ -> true
+    | `Pos, `Pos -> true
+    | `Size fr_x, `Size fr -> true
+    | `Move, `Move -> true
+    | `Move, `Pos -> true (* Move is a valid position: pos = 0 + move *)
+    | _ -> false
   in
   aux_role role_x role
            
@@ -1475,7 +1461,7 @@ let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
           ~(env_sig : signature) ~(ctx : dl_ctx) ~(path : revpath) (e : 'a expr) : dl =
   (* for overloaded functions, rather infer type bottom-up *)
-  let k = path_kind path in
+  let k = path_kind path in (* TODO: would be better to use more fine-grained role *)
   let code_expr = code_expr_by_kind.&(k) in
   match e with
   | `Ref p -> assert false
@@ -3303,13 +3289,6 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
             env, gd, u_val, dl -. dl_best, rank)
           grs)
       grss) in
-  let tprio = (* priority among definitions according to def body, expressions first *)
-    function
-    | `U -> 4
-    | `Repeat _ -> 3
-    | `For _ -> 2
-    | #patt -> 1
-    | #expr -> 0 in
   let reads_fst, reads_others = (* reads for first example, other examples *)
     match reads_matrix with
     | x::l -> x, l
@@ -3357,15 +3336,15 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          then
            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
            let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
-           TMap.add t_ctx (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank, tprio t) res
+           TMap.add t_ctx (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank) res
          else res
       | _ -> TMap.empty in
     TMap.fold
-      (fun (t,ctx) (dl,rank,prio) defs ->
-        (dl,rank,prio,1,p,role,t0,t,ctx)::defs)
+      (fun (t,ctx) (dl,rank) defs ->
+        (dl,p,role,t0,t,ctx)::defs)
       tmap_score_patt defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
-    let$ defs, (role_e,t,ctx,tsize) = defs, defs_expressions ~env_sig in
+    let$ defs, (role_e,t,ctx) = defs, defs_expressions ~env_sig in
     let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
       |> List.filter_map
@@ -3377,48 +3356,47 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     then defs
     else
       let$ defs, (for_p,p,role,t0,dl_t0) = defs, u_vars in
-      match role_poly_matches role_e role with
-      (* whether the expression role matches the defined path, and relaxation value *)
-      | None -> defs
-      | Some role_relax ->
-         let data_opt =
-           data_fst
-           |> List.find_map
-                (fun (te,gd,u_val,dl,rank) ->
-                  let d = try PMap.find p u_val with _ -> assert false in
-                  if defs_check_match te d
-                  then Some (gd,dl,rank,d)
-                  else None) in
-         match data_opt with
-         | None -> defs
-         | Some (gd,dl,rank,d) ->
-            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-            let dl_ctx = dl_ctx_of_data gd.data in
-            let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
-            let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
-            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank, tprio t, tsize + role_relax, p, role, t0, t, ctx)::defs) in
+      if role_poly_matches role_e role
+       (* whether the expression role matches the defined path, and relaxation value *)
+      then
+        let data_opt =
+          data_fst
+          |> List.find_map
+               (fun (te,gd,u_val,dl,rank) ->
+                 let d = try PMap.find p u_val with _ -> assert false in
+                 if defs_check_match te d
+                 then Some (gd,dl,rank,d)
+                 else None) in
+        match data_opt with
+        | None -> defs
+        | Some (gd,dl,rank,d) ->
+           let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+           let dl_ctx = dl_ctx_of_data gd.data in
+           let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
+           let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
+           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t, ctx)::defs
+      else defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
     defs
     |> List.filter_map
-         (fun (dl0,rank0,prio,tsize,p,role,t0,t,ctx) ->
+         (fun (dl0,p,role,t0,t,ctx) ->
            match find_dl_rank t ctx p reads with
            | None -> None
            | Some (gd1,dl1,rank1,d1) ->
               let dl_ctx = dl_ctx_of_data gd1.data in
               let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d1 in
               let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d1 in
-              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, rank0 + rank1, prio, tsize, p, role, t0, t, ctx))) in
+              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t, ctx))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
-  |> List.stable_sort (* increasing DL, increasing delta DL *)
-       (fun (delta_dl1,sum_rank1,prio1,tsize1,_,_,_,_,_) (delta_dl2,sum_rank2,prio2,tsize2,_,_,_,_,_) ->
-         (*         Stdlib.compare (delta_dl1,sum_rank1,prio1,tsize1) (delta_dl2,sum_rank2,prio2,tsize2)) *)
+  |> List.stable_sort (* increasing delta DL *)
+       (fun (delta_dl1,_,_,_,_,_) (delta_dl2,_,_,_,_,_) ->
          Stdlib.compare delta_dl1 delta_dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,_,_,p,_,_,t,ctx) -> RDef (p,t,ctx,false)))
+  |> Myseq.map (fun (_,p,_,_,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   match defs_check_apply ~env t ctx with
   | None -> false
@@ -3439,9 +3417,8 @@ and defs_check_match (t : template) (d : data) : bool = (* QUICK *)
           List.sort Stdlib.compare items1 = List.sort Stdlib.compare items2 (* TODO: avoid sorting here *) *)
   | _, `Many (_,items) -> List.for_all (matches_template t) items
   | _ -> matches_template t d
-and defs_expressions ~env_sig : (role_poly * template * revpath option * int) list =
+and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
-  (* the [int] is expression size, for ranking expressions *)
   Common.prof "Model2.defs_expressions" (fun () ->
   if env_sig = [] then [] (* we are in the input model *)
   else (
@@ -3464,7 +3441,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
     let$ res, (_k,lp) = [], env_sig in (* TODO: make env_sig a flat list *)
     let$ res, p = res, lp in
     ((path_role p :> role_poly), p) :: res in
-  let exprs = ref ([] : (role_poly * template * revpath option * int) list) in (* stack of expressions *)
+  let exprs = ref ([] : (role_poly * template * revpath option) list) in (* stack of expressions *)
   let quota = ref (!max_expressions) in (* bounding nb expressions because of combinatorial number in some tasks *)
   let push e = (* stacking an expression until quota exhausted *)
     exprs := e :: !exprs;
@@ -3477,109 +3454,107 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
   let _ =
     let& (role,p) = paths in
     match path_ctx p with
-    | None -> push (role, `Ref p, None, 1)
+    | None -> push (role, `Ref p, None)
     | Some ctx ->
-       push (role, `Indexing (`Ref p, `Index), Some ctx, 2);
+       push (role, `Indexing (`Ref p, `Index), Some ctx);
        let& i = [0; 1; 2] in
-       push (role, `Indexing (`Ref p, `Int i), None, 2) in
+       push (role, `Indexing (`Ref p, `Int i), None) in
   let exprs_0 = List.rev !exprs in
   (* LEVEL 1 *)
   let _ =
-    let& (role1,e1,ctx1,size1) = exprs_0 in
+    let& (role1,e1,ctx1) = exprs_0 in
     (* unary operators *)
-    let size = 1 + size1 in
     let _ = (* area(_) *)
       match role1 with
-      | `Shape -> push (`Int (`X, `Size `X), `Area e1, ctx1, size)
+      | `Shape -> push (`Int (`X, `Size `X), `Area e1, ctx1)
       | _ -> () in
     let _ = (* right(_) *)
       match role1 with
-      | `Layer -> push (`Int (`J, `Pos), `Right e1, ctx1, size)
+      | `Layer -> push (`Int (`J, `Pos), `Right e1, ctx1)
       | _ -> () in
     let _ = (* center(_) *)
       match role1 with
-      | `Layer -> push (`Int (`J, `Pos), `Center e1, ctx1, size)
+      | `Layer -> push (`Int (`J, `Pos), `Center e1, ctx1)
       | _ -> () in
     let _ = (* bottom(_) *)
       match role1 with
-      | `Layer -> push (`Int (`I, `Pos), `Bottom e1, ctx1, size)
+      | `Layer -> push (`Int (`I, `Pos), `Bottom e1, ctx1)
       | _ -> () in
     let _ = (* middle(_) *)
       match role1 with
-      | `Layer -> push (`Int (`I, `Pos), `Middle e1, ctx1, size)
+      | `Layer -> push (`Int (`I, `Pos), `Middle e1, ctx1)
       | _ -> () in
     let _ = (* ProjI/J *)
       match role1 with
       | `Vec _ ->
-         push (role1, `ProjI e1, ctx1, size);
-         push (role1, `ProjJ e1, ctx1, size)
+         push (role1, `ProjI e1, ctx1);
+         push (role1, `ProjJ e1, ctx1)
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
       | (`Mask | `Shape | `Layer as role1) ->
          let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                      `Rotate180; `Rotate90; `Rotate270] in
-         push (role1, `ApplySym (sym, e1, role1), ctx1, size)
+         push (role1, `ApplySym (sym, e1, role1), ctx1)
       | _ -> () in
     let _ = (* Coloring(_, const) *)
       match role1 with
       | (`Shape | `Layer) ->
          let& c = Grid.all_colors in
-         push (role1, `Coloring (e1, `Color c), ctx1, size)
+         push (role1, `Coloring (e1, `Color c), ctx1)
       | _ -> () in
-    let& (role2,e2,ctx2,size2) = exprs_0 in
+    let& (role2,e2,ctx2) = exprs_0 in
     if ctx1 = ctx2
     then
       (* binary operators *)
-      let size = 1 + size1 + size2 in
       let _ = (* corner(_,_) *)
         match role1, role2 with
         | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           push (role1, `Corner (e1,e2), ctx1, size)
+           push (role1, `Corner (e1,e2), ctx1)
         | _ -> () in (* TEST: var/feat *)
       let _ = (* span(_,_) *)
         match role1, role2 with
         | `Int ((`I | `J as ij1), `Pos), `Int ((`I | `J as ij2), `Pos) when ij1=ij2 && e1 < e2 ->
-           push (`Int (ij1, `Pos), `Span (e1,e2), ctx1, size)
+           push (`Int (ij1, `Pos), `Span (e1,e2), ctx1)
         | `Vec `Pos, `Vec `Pos when e1 < e2 ->
-           push (`Vec (`Size `X), `Span (e1,e2), ctx1, size)
+           push (`Vec (`Size `X), `Span (e1,e2), ctx1)
         | _ -> () in
       let _ = (* min([_;_]) *)
         match role1, role2 with
         | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Min [e1;e2], ctx1, size)
+           push (role1, `Min [e1;e2], ctx1)
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Min [e1;e2], ctx1, size)
+           push (role1, `Min [e1;e2], ctx1)
         | _ -> () in
       let _ = (* max([_;_]) *)
         match role1, role2 with
         | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Max [e1;e2], ctx1, size)
+           push (role1, `Max [e1;e2], ctx1)
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Max [e1;e2], ctx1, size)
+           push (role1, `Max [e1;e2], ctx1)
         | _ -> () in
       let _ = (* average([_;_]) *)
         match role1, role2 with
         | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Average [e1;e2], ctx1, size)
+           push (role1, `Average [e1;e2], ctx1)
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Average [e1;e2], ctx1, size)
+           push (role1, `Average [e1;e2], ctx1)
         | _ -> () in
       let _ = (* translationOnto(_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 < e2 ->
-           push (`Vec `Move, `TranslationOnto (e1,e2), ctx1, size);
+           push (`Vec `Move, `TranslationOnto (e1,e2), ctx1);
         | _ -> () in
       let _ = (* translationSym(_,_,_) *)
         match role1, role2 with
         | `Layer, (`Layer|`Grid) when e1 <> e2 ->
            let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                        `Rotate180; `Rotate90; `Rotate270] in
-           push (`Vec `Move, `TranslationSym (sym,e1,e2), ctx1, size)
+           push (`Vec `Move, `TranslationSym (sym,e1,e2), ctx1)
         | _ -> () in
       let _ = (* Coloring (_, ref) *)
         match role1, role2 with
-        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2), ctx1, size)
+        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2), ctx1)
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
@@ -3587,18 +3562,17 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
   let _ = 
     let _ = (* constants *)
       let& k = [0;1;2;3] in
-      push (`Int (`X, (if k=0 then `Pos else `X)), `ConstInt k, None, 1);
+      push (`Int (`X, (if k=0 then `Pos else `X)), `ConstInt k, None);
       let& l = [0;1;2;3] in
-      push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l), None, 1) in
-    let& (role1,e1,ctx1,size1) = exprs_1 in
+      push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l), None) in
+    let& (role1,e1,ctx1) = exprs_1 in
     (* unary operators *)
-    let size = 1 + size1 in
     let _ = (* IncrInt, DecrInt *)
       match role1 with
       | `Int _ ->
          let& k = [1;2;3] in
-         push (role1, `IncrInt (e1,k), ctx1, size);
-         push (role1, `DecrInt (e1,k), ctx1, size)
+         push (role1, `IncrInt (e1,k), ctx1);
+         push (role1, `DecrInt (e1,k), ctx1)
       | _ -> () in
     let _ = (* IncrVec, DecrVec *)
       match role1 with
@@ -3606,97 +3580,94 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option * int) li
          let& k = [0;1;2;3] in
          let& l = [0;1;2;3] in
          if k+l > 0 then (
-           push (role1, `IncrVec (e1,k,l), ctx1, size);
-           push (role1, `DecrVec (e1,k,l), ctx1, size)
+           push (role1, `IncrVec (e1,k,l), ctx1);
+           push (role1, `DecrVec (e1,k,l), ctx1)
          )
       | _ -> () in
     let _ =
       let& n = [2;3] in
       let _ = (* scaleUp(_,2..3) *)
         match role1 with
-        | `Int _ | `Vec _ | `Mask | `Shape -> push (role1, `ScaleUp (e1,n), ctx1, size)
+        | `Int _ | `Vec _ | `Mask | `Shape -> push (role1, `ScaleUp (e1,n), ctx1)
         | _ -> () in
       let _ = (* scaleDown(_,2..3) *)
         match role1 with
-        | `Int _ | `Vec _ -> push (role1, `ScaleDown (e1,n), ctx1, size)
+        | `Int _ | `Vec _ -> push (role1, `ScaleDown (e1,n), ctx1)
         | _ -> () in
       () in
     let _ = (* not _ *)
       match role1 with
-      | `Mask -> push (`Mask, `LogNot e1, ctx1, size)
+      | `Mask -> push (`Mask, `LogNot e1, ctx1)
       | _ -> () in
-    let& (role2,e2,ctx2,size2) = exprs_1 in
+    let& (role2,e2,ctx2) = exprs_1 in
     if ctx1 = ctx2
     then
       (* binary operators *)
-      let size = 1 + size1 + size2 in
       let _ = (* _ + _ *)
         match role1, role2 with
         | `Int (_, xx1), `Int (_, (`X | `Size _ | `Move))
           | `Vec xx1, `Vec (`X | `Size _ | `Move)
              when (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
-           push (role1, `Plus (e1,e2), ctx1, size)
+           push (role1, `Plus (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ - _ *)
         match role1, role2 with
         | `Int (ij1, `Pos), `Int (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
-           push (`Int (ij1, `Move), `Minus (e1,e2), ctx1, size)
+           push (`Int (ij1, `Move), `Minus (e1,e2), ctx1)
         | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           push (`Vec `Move, `Minus (e1,e2), ctx1, size)
+           push (`Vec `Move, `Minus (e1,e2), ctx1)
         | `Int _, `Int (_, (`X | `Size _ | `Move)) when e1 <> e2 ->
-           push (role1, `Minus (e1,e2), ctx1, size)
+           push (role1, `Minus (e1,e2), ctx1)
         | `Vec _, `Vec (`X | `Size _ | `Move) when e1 <> e2 ->
-           push (role1, `Minus (e1,e2), ctx1, size)
+           push (role1, `Minus (e1,e2), ctx1)
         | _ -> () in
       () in
   let exprs_2 = List.rev !exprs in
   (* LEVEL 3 *)
   let _ = 
-    let& (role1,e1,ctx1,size1) = exprs_2 in
-    let size = 1 + size1 in
+    let& (role1,e1,ctx1) = exprs_2 in
     let _ = (* Tiling *)
       match role1 with
       | (`Vec (`X | `Size _) | `Mask | `Shape) ->
          let& k = [1;2;3] in
          let& l = [1;2;3] in
          if k>1 || l>1 then
-           push (role1, `Tiling (e1,k,l), ctx1, size)
+           push (role1, `Tiling (e1,k,l), ctx1)
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& sym_matrix = [sym_matrix_flipHeightWidth] in
-         push (role1, `UnfoldSym (sym_matrix, e1), ctx1, size)
+         push (role1, `UnfoldSym (sym_matrix, e1), ctx1)
       | _ -> () in
-    let& (role2,e2,ctx2,size2) = exprs_2 in
+    let& (role2,e2,ctx2) = exprs_2 in
     if ctx1 = ctx2
     then
-      let size = 1 + size1 + size2 in
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
         | (`Mask | `Shape), `Vec (`X | `Size _) ->
-           push (role1, `ScaleTo (e1,e2), ctx1, size)
+           push (role1, `ScaleTo (e1,e2), ctx1)
         | _ -> () in
       let _ = (* ResizeAlikeTo *)
         match role1, role2 with
         | (`Mask | `Shape | `Layer), `Vec (`X | `Size _) ->
-           push (role1, `ResizeAlikeTo (e1,e2), ctx1, size)
+           push (role1, `ResizeAlikeTo (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogAnd (e1,e2), ctx1, size)
+        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogAnd (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ or _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogOr (e1,e2), ctx1, size)
+        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogOr (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ xor _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogXOr (e1,e2), ctx1, size)
+        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogXOr (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ and not _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 <> e2 -> push (`Mask, `LogAndNot (e1,e2), ctx1, size)
+        | `Mask, `Mask when e1 <> e2 -> push (`Mask, `LogAndNot (e1,e2), ctx1)
         | _ -> () in
       () in
   ()
