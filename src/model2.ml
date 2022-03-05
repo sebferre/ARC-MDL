@@ -12,7 +12,7 @@ let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_la
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
-let max_refinements = def_param "max_refinements" 50 string_of_int (* max nb of considered refinements *)
+let max_refinements = def_param "max_refinements" 20 (* TEST 50 *) string_of_int (* max nb of considered refinements *)
 let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
 
 exception TODO
@@ -1137,7 +1137,7 @@ let dl_ctx0 =
   { box_height = Grid.max_size;
     box_width = Grid.max_size }
   
-let dl_ctx_of_data (d : data) : dl_ctx =
+let dl_ctx_of_data (d : data) : dl_ctx = (* QUICK *)
   (* retrieving grid size: make assumption on paths *)
   let box_height =
     match find_data (`Field (`I, `Field (`Size, `Root))) d with
@@ -1707,7 +1707,7 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | `Repeat _, _ -> assert false (* only parses into unordered collections *)
   | `For _, _ -> assert false (* should have been evaluated out *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
-  | #expr, _ -> assert false (* should have been evaluated out *)
+  | #expr, _ -> 0. (* will be evaluated out *)
               
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
@@ -3270,7 +3270,9 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                 | `Grid -> false (* not grids *)
                 | _ -> true in
               if definable_var
-              then (for_p,p,role,t0)::res
+              then
+                let dl0 = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t0 in
+                (for_p,p,role,t0,dl0)::res
               else res)
          [] None path0 t []) in
   let module PMap = (* mappings from defining templates *)
@@ -3283,18 +3285,22 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     List.map
       (fun grs ->
         assert (grs <> []); (* otherwise, should be parse failure *)
+        let dl_best =
+          match grs with
+          | (_,_,dl)::_ -> dl (* DL of first parse *)
+          | [] -> assert false in (* otherwise, should be parse failure *)
         List.mapi
           (fun rank (env,gd,dl) ->
             let u_val =
               List.fold_left
-                (fun res (for_p,p,role,t0) ->
+                (fun res (for_p,p,role,t0,dl_t0) ->
                   match find_data p gd.data with
                   | Some d -> PMap.add p d res
                   | None ->
                      pp_path p; print_string ": "; pp_data gd.data; print_newline ();
                      assert false)
                 PMap.empty u_vars in
-            env, u_val, dl, rank)
+            env, gd, u_val, dl -. dl_best, rank)
           grs)
       grss) in
   let tprio = (* priority among definitions according to def body, expressions first *)
@@ -3308,15 +3314,19 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     match reads_matrix with
     | x::l -> x, l
     | [] -> assert false in
-  let rec find_dl_rank t ctx p reads : (Mdl.bits * int) option = (* proper QUICK *)
+  let rec find_dl_rank ?dl_best t ctx p reads : (grid_data * Mdl.bits * int * data) option = (* proper QUICK *)
     match reads with
     | [] -> None
-    | (env,u_val,dl,rank)::rem ->
+    | (env,gd,u_val,dl,rank)::rem ->
+       let dl_best =
+         match dl_best with
+         | None -> dl
+         | Some dl -> dl in
        let d = try PMap.find p u_val
                with _ -> pp_path p; assert false in
        if defs_check ~env t ctx d
-       then Some (dl,rank)
-       else find_dl_rank t ctx p rem
+       then Some (gd, dl -. dl_best, rank, d) (* recording current_dl - best_dl *)
+       else find_dl_rank ~dl_best t ctx p rem
   in
   let module TMap = (* mappings from defining templates *)
     Map.Make
@@ -3327,12 +3337,14 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   (* defs from first example *)
   let defs = [] in
   let defs = Common.prof "Model2.defs_refinements/first/patterns" (fun () ->
-    let$ defs, (for_p,p,role,t0) = defs, u_vars in
+    let$ defs, (for_p,p,role,t0,dl_t0) = defs, u_vars in
     let tmap_score_patt =
       match t0 with
       | `U ->
-         let$ res, (env,u_val,dl,rank) = TMap.empty, reads_fst in
+         let$ res, (env,gd,u_val,dl,rank) = TMap.empty, reads_fst in
          let d = try PMap.find p u_val with _ -> assert false in
+         let dl_ctx = dl_ctx_of_data gd.data in
+         let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
          let$ res, t = res, root_template_of_data ~in_output d in
          let (t, ctx as t_ctx) =
            match t, for_p with
@@ -3342,57 +3354,71 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          if t <> t0 (* a different pattern *)
             && not (TMap.mem t_ctx res) (* that was not already seen *)
                    (* && defs_check ~env t ctx d (* and that checks. true by construction *) *)
-         then TMap.add t_ctx (dl, rank, tprio t) res
+         then
+           let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+           let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
+           TMap.add t_ctx (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank, tprio t) res
          else res
       | _ -> TMap.empty in
     TMap.fold
       (fun (t,ctx) (dl,rank,prio) defs ->
-        (dl,rank,prio,1,p,role,t,ctx)::defs)
+        (dl,rank,prio,1,p,role,t0,t,ctx)::defs)
       tmap_score_patt defs) in
   let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
     let$ defs, (role_e,t,ctx,tsize) = defs, defs_expressions ~env_sig in
     let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
       |> List.filter_map
-           (fun (env,u_val,dl,rank) ->
+           (fun (env,gd,u_val,dl,rank) ->
              match defs_check_apply ~env t ctx with
              | None -> None
-             | Some te -> Some (te,u_val,dl,rank))) in
+             | Some te -> Some (te,gd,u_val,dl,rank))) in
     if data_fst = []
     then defs
     else
-      let$ defs, (for_p,p,role,t0) = defs, u_vars in
+      let$ defs, (for_p,p,role,t0,dl_t0) = defs, u_vars in
       match role_poly_matches role_e role with
       (* whether the expression role matches the defined path, and relaxation value *)
       | None -> defs
       | Some role_relax ->
          let data_opt =
            data_fst
-           |> List.find_opt
-                (fun (te,u_val,dl,rank) ->
+           |> List.find_map
+                (fun (te,gd,u_val,dl,rank) ->
                   let d = try PMap.find p u_val with _ -> assert false in
-                  defs_check_match te d) in
+                  if defs_check_match te d
+                  then Some (gd,dl,rank,d)
+                  else None) in
          match data_opt with
          | None -> defs
-         | Some (_,_,dl,rank) ->
-            (dl, rank, tprio t, tsize + role_relax, p, role, t, ctx)::defs) in
+         | Some (gd,dl,rank,d) ->
+            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+            let dl_ctx = dl_ctx_of_data gd.data in
+            let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
+            let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
+            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank, tprio t, tsize + role_relax, p, role, t0, t, ctx)::defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
     defs
     |> List.filter_map
-         (fun (dl0,rank0,prio,tsize,p,role,t,ctx) ->
+         (fun (dl0,rank0,prio,tsize,p,role,t0,t,ctx) ->
            match find_dl_rank t ctx p reads with
            | None -> None
-           | Some (dl1,rank1) -> Some (dl0 +. dl1, rank0 + rank1, prio, tsize, p, role, t, ctx))) in
+           | Some (gd1,dl1,rank1,d1) ->
+              let dl_ctx = dl_ctx_of_data gd1.data in
+              let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d1 in
+              let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d1 in
+              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, rank0 + rank1, prio, tsize, p, role, t0, t, ctx))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
-  |> List.stable_sort (* increasing DL, increasing rank sum *)
-       (fun (sum_dl1,sum_rank1,prio1,tsize1,_,_,_,_) (sum_dl2,sum_rank2,prio2,tsize2,_,_,_,_) ->
-         Stdlib.compare (sum_dl1,sum_rank1,prio1,tsize1) (sum_dl2,sum_rank2,prio2,tsize2))
+  |> List.stable_sort (* increasing DL, increasing delta DL *)
+       (fun (delta_dl1,sum_rank1,prio1,tsize1,_,_,_,_,_) (delta_dl2,sum_rank2,prio2,tsize2,_,_,_,_,_) ->
+         (*         Stdlib.compare (delta_dl1,sum_rank1,prio1,tsize1) (delta_dl2,sum_rank2,prio2,tsize2)) *)
+         Stdlib.compare delta_dl1 delta_dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (_,_,_,_,p,_,t,ctx) -> RDef (p,t,ctx,false)))
+  |> Myseq.map (fun (_,_,_,_,p,_,_,t,ctx) -> RDef (p,t,ctx,false)))
 and defs_check ~env (t : template) (ctx : revpath option) (d : data) : bool =
   match defs_check_apply ~env t ctx with
   | None -> false
