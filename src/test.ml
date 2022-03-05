@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 47 tasks, 6.0s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 47 tasks, 6.2s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
   [ "017c7c7b.json"; (* NEW some blue shape in 6x3 grid, resize alike to grid size 9x3 and color in blue. runtime=3.0s *)
     "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
@@ -322,7 +322,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
     "d9fac9be.json"; (* pb: no way to choose point with 'other' color or inside 3x3 rect
                         todo: relative position; filling color *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefers having a diff, missing part
-                        todo: add full grid for each color as part *)
+                        todo: add full grid for each color as part. NO, too strong, not object-centric *)
   ]
   
 let maybe_train_names =
@@ -339,7 +339,6 @@ let maybe_train_names =
     "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
-    "6b9890af.json"; (* TODO pb: need for scale-invariant masks/bitmaps *)
     "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "72ca375d.json"; (* SUCCESS: by trying the different options, not understanding proper *)
     "0b148d64.json"; (* SUCCESS crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)
