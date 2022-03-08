@@ -246,7 +246,7 @@ let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
 let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
-let solved_train_names = (* 47 tasks, 6.2s/task for timeout=30s, max_nb_parses=64, max_refs=50, max_exprs=10000 *)
+let solved_train_names = (* 48 tasks, 4.9s/task for timeout=30s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   [ "017c7c7b.json"; (* NEW some blue shape in 6x3 grid, resize alike to grid size 9x3 and color in blue. runtime=3.0s *)
     "05f2a901.json"; (* NEW two objects, a red and a cyan, the red object moves onto the cyan object, runtime=0.8s *)
     "08ed6ac7.json"; (* 4 grey bars, colored in size order, runtime=9.6s *)
@@ -260,6 +260,7 @@ let solved_train_names = (* 47 tasks, 6.2s/task for timeout=30s, max_nb_parses=6
     "445eab21.json"; (* output a 2x2 grid with color from the larger rectangle. runtime=0.6s *)
     "48d8fb45.json"; (* crop on one shape among several, should choose next to grey point but works by choosing 2nd layer (decreasing size). runtime=1.7s *)
     "4938f0c2.json"; (* NEW red shape on the top left corner of a 2x2 green square, add 3 symmetric copies of the red shape around the green square. runtime=22.9s *)
+    "496994bd.json"; (* NEW two colored horizontal stripes at top, add their flipHeight symmetries at bottom. runtime=1.9s *)
     "4c5c2cf0.json"; (* NEW object next to some central x-cross, add 3 symmetric copies of the shape around the x-cross. runtime=24.4s *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=1.8s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=0.5s *)

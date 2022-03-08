@@ -261,7 +261,6 @@ let role_poly_matches (role_x : role_poly) (role : role) : bool =
     | `Pos, `Pos -> true
     | `Size fr_x, `Size fr -> true
     | `Move, `Move -> true
-    | `Move, `Pos -> true (* Move is a valid position: pos = 0 + move *)
     | _ -> false
   in
   aux_role role_x role
@@ -3540,6 +3539,13 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Average [e1;e2], ctx1)
         | _ -> () in
+      let _ = (* translation = pos - pos *)
+        match role1, role2 with
+        | `Int (ij1, `Pos), `Int (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
+           push (`Int (ij1, `Move), `Minus (e1,e2), ctx1)
+        | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
+           push (`Vec `Move, `Minus (e1,e2), ctx1)
+        | _ -> () in
       let _ = (* translationOnto(_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 < e2 ->
@@ -3558,7 +3564,7 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
-  (* LEVEL 2 *)
+  (* LEVEL 2, not generating Move at this level *)
   let _ = 
     let _ = (* constants *)
       let& k = [0;1;2;3] in
@@ -3569,14 +3575,14 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
     (* unary operators *)
     let _ = (* IncrInt, DecrInt *)
       match role1 with
-      | `Int _ ->
+      | `Int (_,rvec) when rvec <> `Move ->
          let& k = [1;2;3] in
          push (role1, `IncrInt (e1,k), ctx1);
          push (role1, `DecrInt (e1,k), ctx1)
       | _ -> () in
     let _ = (* IncrVec, DecrVec *)
       match role1 with
-      | `Vec _ ->
+      | `Vec rvec when rvec <> `Move ->
          let& k = [0;1;2;3] in
          let& l = [0;1;2;3] in
          if k+l > 0 then (
@@ -3586,18 +3592,23 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
       | _ -> () in
     let _ =
       let& n = [2;3] in
-      let _ = (* scaleUp(_,2..3) *)
+      let _ = (* ScaleUp, ScaleDown *)
         match role1 with
-        | `Int _ | `Vec _ | `Mask | `Shape -> push (role1, `ScaleUp (e1,n), ctx1)
-        | _ -> () in
-      let _ = (* scaleDown(_,2..3) *)
-        match role1 with
-        | `Int _ | `Vec _ -> push (role1, `ScaleDown (e1,n), ctx1)
+        | `Int (_,rvec) | `Vec rvec when rvec <> `Move ->
+           push (role1, `ScaleUp (e1,n), ctx1);
+           push (role1, `ScaleDown (e1,n), ctx1)
+        | `Mask | `Shape ->
+           push (role1, `ScaleUp (e1,n), ctx1)
         | _ -> () in
       () in
     let _ = (* not _ *)
       match role1 with
       | `Mask -> push (`Mask, `LogNot e1, ctx1)
+      | _ -> () in
+    let _ = (* 0 + move -> pos *)
+      match role1 with
+      | `Int (ij, `Move) -> push (`Int (ij, `Pos), `Plus (`ConstInt 0, e1), ctx1)
+      | `Vec `Move -> push (`Vec `Pos, `Plus (`ConstVec (0,0), e1), ctx1)
       | _ -> () in
     let& (role2,e2,ctx2) = exprs_1 in
     if ctx1 = ctx2
@@ -3607,18 +3618,14 @@ and defs_expressions ~env_sig : (role_poly * template * revpath option) list =
         match role1, role2 with
         | `Int (_, xx1), `Int (_, (`X | `Size _ | `Move))
           | `Vec xx1, `Vec (`X | `Size _ | `Move)
-             when (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
+             when xx1 <> `Move && (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
            push (role1, `Plus (e1,e2), ctx1)
         | _ -> () in
       let _ = (* _ - _ *)
-        match role1, role2 with
-        | `Int (ij1, `Pos), `Int (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
-           push (`Int (ij1, `Move), `Minus (e1,e2), ctx1)
-        | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           push (`Vec `Move, `Minus (e1,e2), ctx1)
-        | `Int _, `Int (_, (`X | `Size _ | `Move)) when e1 <> e2 ->
+        match role1, role2 with (* not generating Moves *)
+        | `Int (_, rvec), `Int (_, (`X | `Size _ | `Move)) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2), ctx1)
-        | `Vec _, `Vec (`X | `Size _ | `Move) when e1 <> e2 ->
+        | `Vec rvec, `Vec (`X | `Size _ | `Move) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2), ctx1)
         | _ -> () in
       () in
