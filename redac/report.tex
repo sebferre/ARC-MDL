@@ -1660,6 +1660,8 @@ rectangles.
     \hline
     v2.4 & 2022-02-12 & ~10~ & 30s & 13s & ~49 / 59.6~ & ~42 / 42.5~ & 19s & ~13 / 21.5~ & 6 / 6.5~ \\ % exact same results in eval with timeout 60s (avg runtime = 31s) !
     \hline
+    v2.5 & 2022-03-08 & ~10~ & 30s & 15s & ~59 / 71.6~ & ~52 / 52.5~ & 20s & ~15 / 20.9~ & ~9 / 9.5~ \\
+    \hline
   \end{tabular}
   \label{tab:eval}
 \end{table}
@@ -1910,9 +1912,10 @@ selects an input object, and makes an attempt for each object.
 \paragraph{Version 2.3.} The main change in this version is the
 introduction of various operators/functions for integers, vectors, and
 masks. Unfortunately, this only brings 3 more successful tasks. There
-are 5 new successful tasks: {\tt b230c067}, {\tt d631b094} (uses the area of a shape), {\tt
-  d9fac9be}*, {\tt de1cd16c}*, {\tt ea786f4a}. There are two lost
-tasks: {\tt bda2d7a6}, {\tt ddf7fa4f}*.
+are 5 new successful tasks: {\tt b230c067}, {\tt d631b094} (uses the
+area of a shape), {\tt d9fac9be}*, {\tt de1cd16c}*, {\tt
+  ea786f4a}. There are two lost tasks: {\tt bda2d7a6}, {\tt
+  ddf7fa4f}*.
 %
 The number of considered refinements had to be raised from 20 to 100
 to account for the many new expressions. Various optimizations were
@@ -1920,16 +1923,58 @@ applied to maintain a similar runtime on average.
 
 \paragraph{Version 2.4.} Here are the main changes in this version:
 \begin{itemize}
-\item a more generic parsing of the background color (chosen before parsing the layers, excluding candidate shapes of that color);
-\item taking into account hidden cells when generating candidate mask models, i.e. partially visible shapes;
-\item more fine-grained generation of candidate expressions by considering path roles, not only path kinds: e.g., adding a position vector and a size vector gives a position vector;
-\item more expressions: Incr/Decr on ints and vectors, Min/Max/Average on ints, Span on ints and vectors, translation vectors between objects;
-\item new parameter for limiting the number of considered expressions, to prevent cases of combinatorial explosion and to control runtime;
+\item a more generic parsing of the background color (chosen before
+  parsing the layers, excluding candidate shapes of that color);
+\item taking into account hidden cells when generating candidate mask
+  models, i.e. partially visible shapes;
+\item more fine-grained generation of candidate expressions by
+  considering path roles, not only path kinds: e.g., adding a position
+  vector and a size vector gives a position vector;
+\item more expressions: {\tt Incr}/{\tt Decr} on ints and vectors,
+  {\tt Min}/{\tt Max}/{\tt Average} on ints, {\tt Span} on ints and
+  vectors, translation vectors between objects;
+\item new parameter for limiting the number of considered expressions,
+  to prevent cases of combinatorial explosion and to control runtime
+  (set to 10,000);
 \end{itemize}
 Those changes result in 10 additional successful training tasks, 42
 (10.5\%) in total. Unfortunately, the number of successful evaluation
 tasks does not progress, even loosing one task (with the allocated
 timeout).
+
+\paragraph{Version 2.5.} Here are the main changes in this version:
+\begin{itemize}
+\item when parsing layers, discarding the remaining parts that contain
+  the currently selected part (optimization);
+\item sorting candidate expressions (and values) by increasing DL gain
+  estimate rather than ad-hoc measures. This enables to reduce the
+  number of refinements to be evaluated (now set to 20 instead of 50);
+\item an additional role for ints and vectors: ``move'' in addition to
+  ``position'' and ``size''. For example, a difference between two
+  positions is now a move rather than a size. Moves can have negative
+  values unlike positions and sizes;
+\item added a number of new expressions:
+  \begin{itemize}
+  \item vector computations: {\tt ConstVec} for small constant
+    vectors, {\tt ProjI} and {\tt ProjJ} for projecting a vector on
+    either axis;
+  \item {\tt Coloring} to change the color of an object or shape;
+  \item scaling and resizing objects, shapes, masks and vectors: {\tt
+      ScaleUp} and {\tt ScaleDown} with some constant factor, {\tt
+      ScaleTo} to rescale to some vector as size, {\tt ResizeAlikeTo}
+    to extend any pattern up to some vector as size, {\tt Tiling} to
+    repeat some pattern a constant number of times on each axis;
+  \item expressions based on the 8 grid symmetries ({\tt flipHeight},
+    {\tt flipWidth}, {\tt flipDiag1}, {\tt flipDiag2}, {\tt rotate180}, {\tt rotate90}, {\tt rotate270}):
+    {\tt ApplySym} applies a symmetry to an object, shape or mask,
+    {\tt TranslationSym} measures the translation of an object
+    relative to some pivot object and some symmetry, and {\tt
+      UnfoldSym} that unfolds an object, shape or mask according to a
+    symmetry pattern.
+  \end{itemize}
+\end{itemize}
+Those changes result in 10 additional successful training tasks, 52
+(13\%) in total.
 
 %%%
 \section{Discussion and Perspectives}
