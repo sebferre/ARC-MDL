@@ -637,7 +637,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
   | `IncrInt (a,k) -> xp print a; print#string " + "; print#int k
   | `DecrInt (a,k) -> xp print a; print#string " - "; print#int k
-  | `IncrVec (a,k,l) -> xp print a; print#string " + ("; print#int k; print#string ", "; print_int l; print#string ")"
+  | `IncrVec (a,k,l) -> xp print a; print#string " + ("; print#int k; print#string ", "; print#int l; print#string ")"
   | `DecrVec (a,k,l) -> xp print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
