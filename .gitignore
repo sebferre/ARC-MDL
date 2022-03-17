@@ -16,4 +16,4 @@ redac/*.pdf
 redac/*.bst
 redac/fig/*.bak
 redac/fig/*.pdf
-
+results/*.txt
