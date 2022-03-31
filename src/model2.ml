@@ -393,7 +393,9 @@ let rec get_size : 'a -> (int * int) option =
   | `Background (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
   | _ -> None
        
-type data = data patt
+type data =
+  [ data patt
+  | `Seq of data list ]
 let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
 
 type var =
@@ -460,6 +462,7 @@ type template =
   | `Repeat of template patt
   | `For of revpath * template (* revpath is a many-valued ref *)
   | template patt
+  | `Seq of template list
   | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
 
 let u_vec : template = `Vec (`U, `U)
@@ -590,7 +593,7 @@ let rec xp_patt (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a patt -> un
      print#string " and layers"; xp_ilist xp print layers
   | `Many (ordered,l) ->
      Xprint.bracket
-       (if ordered then "[", "]" else "{\n\t", " }")
+       (if ordered then "[\n\t", " ]" else "{\n\t", " }")
        (Xprint.sep_list ",\n\t" xp)
        print
        l
@@ -599,6 +602,12 @@ let pp_patt_dummy patt = pp_patt (fun print _ -> print#string "_") patt
 
 let rec xp_data (print : Xprint.t) : data -> unit = function
   | #patt as patt -> xp_patt xp_data print patt
+  | `Seq items ->
+     Xprint.bracket
+       ("<\n\t", " >")
+       (Xprint.sep_list ",\n\t" xp_data)
+       print
+       items
 let pp_data = Xprint.to_stdout xp_data
 let string_of_data = Xprint.to_string xp_data
 
@@ -715,6 +724,12 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Repeat patt -> print#string "repeat "; xp_patt xp_template print patt
   | `For (p,e1) -> print#string "for {"; xp_path print p; print#string "}: "; xp_template print e1
   | #patt as patt -> xp_patt xp_template print patt
+  | `Seq items ->
+     Xprint.bracket
+       ("<\n\t", " >")
+       (Xprint.sep_list ",\n\t" xp_template)
+       print
+       items
   | #expr as e -> xp_expr xp_template print e
 let pp_template = Xprint.to_stdout xp_template
 let string_of_template = Xprint.to_string xp_template
@@ -843,7 +858,7 @@ let rec find_field_patt (find : 'a -> 'a option) (f : field) (patt_parent : 'a p
      print_newline ();
      assert false
 
-let rec find_patt (find : 'a -> 'a option) (p : revpath) (patt_parent : 'a patt) : 'a option =
+let rec find_patt (find : 'a -> 'a option) (p : revpath) (patt_parent : 'a patt) : 'a option = (* find only used by Item-paths *)
   match p, patt_parent with
   | `Root, _ -> assert false (* there should be no parent *)
   | `Field (f,_), _ -> find_field_patt find f patt_parent
@@ -864,10 +879,15 @@ let find_data (p : revpath) (d : data) : data option = (* QUICK *)
     match path_parent p with
     | None -> find d
     | Some parent ->
-       aux
-         (function
-          | #patt as d_parent -> find_patt find p d_parent)
-         parent
+       let rec parent_find =
+         function
+         | #patt as d_parent -> find_patt find p d_parent
+         | `Seq ld_parents ->
+            option_list_bind ld_parents
+              (fun d_parent -> parent_find d_parent)
+            |> Option.map (fun lx -> `Seq lx)
+       in
+       aux parent_find parent
   in
   aux (fun x -> Some x) p
   
@@ -877,14 +897,19 @@ let find_template (p : revpath) (t : template) : template option =
     match path_parent p with
     | None -> find t
     | Some parent ->
-       aux
-         (function
-          | `Repeat t1 -> find (t1 :> template) (* assuming p ~ `Item (None,`Root,_) *)
-          | `For (_,t1) -> find t1 (* assuming p ~ `Item (None,`Root,_) *)
-          | #patt as patt_parent -> find_patt find p patt_parent
-          (* `U and #expr are not explorable *)
-          | _ -> assert false)
-         parent
+       let rec parent_find =
+         function
+         | `Repeat t1 -> find (t1 :> template) (* assuming p ~ `Item (None,`Root,_) *)
+         | `For (_,t1) -> find t1 (* assuming p ~ `Item (None,`Root,_) *)
+         | #patt as patt_parent -> find_patt find p patt_parent
+         | `Seq ld_parents ->
+            option_list_bind ld_parents
+              (fun d_parent -> parent_find d_parent)
+            |> Option.map (fun lx -> `Seq lx)
+         (* `U and #expr are not explorable *)
+         | _ -> assert false
+       in
+       aux parent_find parent
   in
   aux (fun x -> Some x) p)
 
@@ -925,7 +950,15 @@ let fold_patt (fold : 'b -> revpath -> 'a -> 'a list (* ancestry *) -> 'b) (acc 
 
 let rec fold_data (f : 'b -> revpath -> data -> data list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (d : data) (ancestry : data list) : 'b =
   let acc = f acc p d ancestry in
-  fold_patt (fold_data f) acc p d (d::ancestry)
+  let d_ancestry = d::ancestry in
+  match d with
+  | #patt as d -> fold_patt (fold_data f) acc p d d_ancestry
+  | `Seq items ->
+     items
+     |> List.fold_left
+          (fun acc item ->
+            fold_data f acc p item d_ancestry)
+          acc
   
 let rec fold_template (f : 'b -> revpath option -> revpath -> template -> template list (* ancestry *) -> 'b) (acc : 'b) (for_p : revpath option) (p : revpath) (t : template) (ancestry : template list) : 'b =
   let acc = f acc for_p p t ancestry in
@@ -948,6 +981,12 @@ let rec fold_template (f : 'b -> revpath option -> revpath -> template -> templa
        (fun acc p t anc -> fold_template f acc for_p p t anc)
        acc p patt t_ancestry
   | #expr -> acc
+  | `Seq items ->
+     items
+     |> List.fold_left
+          (fun acc item ->
+            fold_template f acc for_p p item t_ancestry)
+          acc
        
 let size_of_data (d : data) : int =
   Common.prof "Model2.size_of_data" (fun () ->
@@ -1025,13 +1064,13 @@ let default_data_of_path (p : revpath) : data =
 let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (* QUICK *)
   match d with
   | `Bool _ -> []
-  | `Int i ->
+  | `Int i as d ->
      if in_output && i >= 1 && i <= 3
      then [(d :> template)]
      else [] (* position- and size-invariance of inputs *)
-  | `Color _ -> [(d :> template)] (* colors can be seen as patterns *)
+  | `Color _ as d -> [(d :> template)] (* colors can be seen as patterns *)
   | `Mask (`Full true) -> [`Mask `Border; `Mask (`Full false)]
-  | `Mask _ -> [(d :> template)] (* masks can be seen as patterns *)
+  | `Mask _ as d -> [(d :> template)] (* masks can be seen as patterns *)
   | `Vec _ -> [`Vec (`U, `U)]
   | `Point _ -> [`Point (`U)]
   | `Rectangle _ -> [`Rectangle (u_vec, `U, `U)]
@@ -1039,7 +1078,12 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `Background _ -> assert false (* should not happen *)
   | `Many (ordered,items) ->
      let llt_items = List.map (root_template_of_data ~in_output) items in
-     (d :> template) :: List.sort_uniq Stdlib.compare (List.concat llt_items)
+     (* (d :> template) :: *) List.sort_uniq Stdlib.compare (List.concat llt_items)
+  | `Seq items ->
+     (* `Seq (List.map (fun _ -> `U) items) :: *)
+     List.map (root_template_of_data ~in_output) items
+     |> List.concat
+     |> List.sort_uniq Stdlib.compare
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -1068,6 +1112,15 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   | `Many (ordered1,items1), `Many (ordered2,items2) ->
      ordered1 = ordered2 (* TODO: better handle ordered *)
      && List.for_all2 (fun item1 item2 -> matches_template item1 item2) items1 items2
+  | `Seq lt, `Seq ld -> (* TODO: allow equality modulo list length (periodic template)? *)
+     List.length lt = List.length ld
+     && List.for_all2
+          (fun t d -> matches_template t d)
+          lt ld
+  | _, `Seq items ->
+     List.for_all
+       (fun item -> matches_template t item)
+       items
   | _ -> false
     
 (* description lengths *)
@@ -1209,9 +1262,15 @@ let dl_patt
      assert false                        
 
 let dl_data, reset_dl_data =
-  let rec aux ~ctx ~path d =
-    dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
-    +. dl_patt aux ~ctx ~path d
+  let rec aux ~ctx ~path (d : data) =
+    match d with
+    | #patt as d ->
+       dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
+       +. dl_patt aux ~ctx ~path d
+    | `Seq items ->
+       assert (items <> []);
+       dl_patt_as_template
+       +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
   in
   (*  aux *)
   let mem = Hashtbl.create 1003 in
@@ -1596,14 +1655,16 @@ type code_template = (* dls must correspond to a valid prob distrib *)
     c_for : dl;
     c_patt : dl;
     c_ref : dl;
-    c_expr : dl }
+    c_expr : dl;
+    c_seq : dl }
 let code_template0 =
   { c_u = Mdl.Code.usage 0.1;
     c_repeat = infinity;
     c_for = infinity;
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
     c_ref = Mdl.Code.usage 0.5;
-    c_expr = Mdl.Code.usage 0.2 }
+    c_expr = Mdl.Code.usage 0.2;
+    c_seq = infinity }
 
 let code_template_by_kind : code_template KindMap.t =
   KindMap.make
@@ -1645,11 +1706,14 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | #expr as e ->
        code.c_expr
        +. dl_expr aux ~env_sig ~ctx ~path e
+    | `Seq items ->
+       code.c_seq
+       +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
   in
   aux ~ctx ~path t)
 
     
-let dl_data_given_patt
+let rec dl_data_given_patt
       (dl : ctx:dl_ctx -> ?path:revpath -> 'a -> data -> dl)
       ~ctx ~(path : revpath) (patt : 'a patt) (d : data) : dl =
   match patt, d with
@@ -1680,6 +1744,9 @@ let dl_data_given_patt
      List.fold_left2
        (fun res item ditem -> res +. dl ~ctx ~path:(any_item path) item ditem)
        0. items ditems
+  | _, `Seq items ->
+     assert (items <> []);
+     Mdl.Code.list_plus (fun item -> dl_data_given_patt dl ~ctx ~path patt item) items
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d : data) : dl = (* cannot be profiled because of indirect recursion *)
@@ -1693,6 +1760,12 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | `For _, _ -> assert false (* should have been evaluated out *)
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> 0. (* will be evaluated out *)
+  | `Seq lt, `Seq ld ->
+     assert (List.length lt = List.length ld && lt <> []);
+     Mdl.Code.list_plus
+       (fun (lt,ld) -> dl_data_given_template ~ctx ~path t d)
+       (List.combine lt ld)
+  | `Seq _, _ -> assert false
               
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
@@ -2306,6 +2379,8 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
       | _ -> raise (Unbound_var (p_many :> var)))
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
+  | `Seq items -> `Seq (List.map (fun item -> apply_template_gen ~lookup p item) items)
+     
 
 let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
   try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
@@ -2323,14 +2398,15 @@ let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
 let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
   match t with
   | `U -> default_data_of_path p (* default data *)
-  | `Repeat patt1 -> apply_patt
-                       (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
-                       (any_item p) patt1
+  | `Repeat patt1 -> (apply_patt
+                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
+                        (any_item p) patt1 :> data)
   | `For _ -> assert false (* should be eliminated by call to apply_template *)
-  | #patt as patt -> apply_patt
-                       (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
-                       p patt
+  | #patt as patt -> (apply_patt
+                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
+                        p patt :> data)
   | #expr -> assert false (* should be eliminated by call to apply_template *)
+  | `Seq items -> `Seq (List.map (fun item -> generate_template p item) items)
 
   
 exception Invalid_data_as_grid of data
@@ -2365,6 +2441,8 @@ and draw_layer g = function
        done;
      done
   | `Many (ordered,items) ->
+     items |> List.rev |> List.iter (draw_layer g)
+  | `Seq items ->
      items |> List.rev |> List.iter (draw_layer g)
   | d -> raise (Invalid_data_as_grid d)
 
@@ -2496,6 +2574,7 @@ let rec parse_template
   | `For _ -> assert false
   | #patt as patt -> parse_patt patt
   | #expr -> assert false
+  | `Seq items -> raise TODO
 
 let parse_bool t : (bool,data) p_x_parse = (* QUICK *)
   parse_template
@@ -2744,6 +2823,24 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
       | _ -> assert false)
     t
 
+let parse_layer (shape : template) : (unit,data) p_x_parse =
+  let parse_sh = parse_shape shape in
+  fun p () state ->
+  let rec parse_seq_sh state =
+    Myseq.concat [
+        (let* item, state = parse_sh p () state in
+         let* items, state = parse_seq_sh state in
+         (*let items = [] in *)
+         Myseq.return (item::items, state));
+        Myseq.return ([],state)
+      ] 
+  in
+  let* items, state = (*Myseq.slice ~limit:1*) (parse_seq_sh state) in
+  match items with
+  | [] -> Myseq.empty
+  | [x] -> Myseq.return (x, state)
+  | _ -> Myseq.return (`Seq items, state)
+  
   
 type parse_layer_data (* pld *) =
   { parseur : (unit,data) x_parse; (* parseur for this layer *)
