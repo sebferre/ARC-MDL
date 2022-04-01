@@ -70,6 +70,7 @@ let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
         | None -> None
         | Some ly1 -> Some (y::ly1)
 
+(*
 let concat_rev_list_seq (revl : 'a list) (seq : 'a Myseq.t) : 'a Myseq.t =
   (* generates elements in revl in reverse, then elements from seq *)
   (fun () ->
@@ -89,7 +90,7 @@ object
     | Nil -> None
     | Cons (x,next) -> s <- next; Some x
 end
-
+ *)
 
 (** Part 1: grids *)
 
@@ -138,7 +139,20 @@ let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c) (acc : 'c) (lp :
      acc
   | _ -> invalid_arg "Model2.fold2_ilist: inconsistent ilists"
             
-let rec fill_ilist_with_rev_list il l = (* QUICK *)
+let rec fill_ilist_with_list il l = (* QUICK *)
+  (* replacing elements in il with elements in l, taken in order *)
+  (* first element goes leftmost, last element rightmost *)
+  match il with
+  | `Nil -> l, `Nil
+  | `Insert (left,_,right) ->
+     let l, left' = fill_ilist_with_list left l in
+     match l with
+     | [] -> assert false
+     | x::l ->
+        let l, right' = fill_ilist_with_list right l in
+        l, `Insert (left', x, right')
+
+(* let rec fill_ilist_with_rev_list il l = (* QUICK *)
   (* replacing elements in il with elements in l, taken in reverse order *)
   (* first element goes rightmost, last element leftmost *)
   match il with
@@ -149,7 +163,7 @@ let rec fill_ilist_with_rev_list il l = (* QUICK *)
      | [] -> assert false
      | x::l ->
         let l, left' = fill_ilist_with_rev_list left l in
-        l, `Insert (left', x, right')
+        l, `Insert (left', x, right') *)
 
 (* type definitions for data, expressions, templates *)
 
@@ -2823,6 +2837,7 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
       | _ -> assert false)
     t
 
+(* tentative *)
 let parse_layer (shape : template) : (unit,data) p_x_parse =
   let parse_sh = parse_shape shape in
   fun p () state ->
@@ -2841,76 +2856,25 @@ let parse_layer (shape : template) : (unit,data) p_x_parse =
   | [x] -> Myseq.return (x, state)
   | _ -> Myseq.return (`Seq items, state)
   
-  
-type parse_layer_data (* pld *) =
-  { parseur : (unit,data) x_parse; (* parseur for this layer *)
-    mutable iterators : (data list * parse_state) iterator list } (* for each choice of parsed data for the above layers, an iterator for each parsed data of the current layer *)
-  
+
 let parse_layers layers : (unit, data ilist) p_x_parse =
-  if layers = `Nil
-  then
-    fun p () state -> Myseq.return (`Nil, state)
-  else
-    fun p -> Common.prof "Model2.parse_layers/prep" (fun () ->
-    let n, rev_l_pld = (* nb of layers, list of parse_layer_data, in reverse *)
-      fold_ilist
-        (fun (n,revl) lp layer ->
-          n+1,
-          { parseur = parse_shape layer (p ++ `Layer lp);
-            iterators = [] }
-          ::revl)
-        (0,[]) `Root layers in
-    (* array of parse_layer_data, index by layer rank, 0 is top-most layer, n-1 is bottom-most *)
-    let arr_pld : parse_layer_data array = Array.of_list (List.rev rev_l_pld) in
-    fun () state ->
-    (* initialization *)
-    let pld0 = arr_pld.(0) in
-    let iter0 =
-      new iterator
-        (let* d0, state0 = pld0.parseur () state in
-         Myseq.return ([d0], state0)) in
-    (*pld0.iterators <- [iter0]; (* unnecessary *) *)
-    (* recursion through layers [i] *)
-    let rec aux_i all_empty k i : (data list * parse_state) iterator Myseq.t =
-      let pld = arr_pld.(i) in
-      if i = 0
-      then
-        Myseq.return iter0
-      else
-        concat_rev_list_seq
-          pld.iterators
-          (let*? iter1 = aux_i all_empty k (i-1) in
-           match iter1#pop with
-           | None -> None
-           | Some (rev_ld1,state1) ->
-              let new_iter =
-                new iterator
-                  (let*! d2, state2 = pld.parseur () state1 in
-                   d2::rev_ld1, state2) in
-              pld.iterators <- new_iter :: pld.iterators;
-              all_empty := false;
-              Some new_iter) in
-    (* generation of layers parsed data, starting at relaxation level *) 
-    let rec aux_n k : (data ilist * parse_state) Myseq.t =
-      let all_empty = ref true in (* to know if there was any iterator or solution generated for this [k] *)
-      Myseq.append
-        (let*? iter = aux_i all_empty k (n-1) in
-         match iter#pop with (* QUICK *)
-         | None -> None
-         | Some (rev_ld, state) ->
-            let l, dlayers = fill_ilist_with_rev_list layers rev_ld in
-            assert (l = []);
-            all_empty := false;
-            Some (dlayers, state))
-        (fun () ->
-          if !all_empty (* STOP when nothing more to generate *)
-             || k >= !max_relaxation_level_parse_layers (* max relaxation level reached *)
-          then Myseq.Nil
-          else aux_n (k+1) ())
-    in
-    Myseq.prof "Model2.parse_layers/seq" (
-    aux_n 0))
-    
+  fun p ->
+  let rev_layer_parseurs =
+    fold_ilist
+      (fun revl lp layer ->
+        let parseur = parse_shape layer (p ++ `Layer lp) () in
+        parseur::revl)
+      [] `Root layers in
+  let gen = Myseq.product_dependent_fair
+              ~max_relaxation_level:(!max_relaxation_level_parse_layers)
+              (List.rev rev_layer_parseurs) in
+  fun () state ->
+  Myseq.prof "Model2.parse_layers/seq" (
+      let* ld, state = gen state in
+      let l, dlayers = fill_ilist_with_list layers ld in
+      assert (l = []);
+      Myseq.return (dlayers, state))
+  
 let parse_grid t : (Grid.t, data) p_x_parse = Common.prof "Model2.parse_grid" (fun () ->
   parse_template
     ~parse_u:(fun () -> parse_empty)
