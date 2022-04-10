@@ -92,14 +92,16 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
           | `TRAIN gpsr ->
              print_endline "\n> Input and output best reading:";
              let reads_pair = try List.nth gpsr.reads (i-1) with _ -> assert false in
-             let gri, gro, _ = try List.hd reads_pair with _ -> assert false in
-             let envi, gdi, dli = gri in
-             let envo, gdo, dlo = gro in
-             Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
-             Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
-             if !grid_viz then
-               Grid.pp_grids [Model.grid_of_data_failsafe gdi.data;
-                              Model.grid_of_data_failsafe gdo.data]
+             Common.sub_list reads_pair 0 1
+             |> List.iter (fun (gri, gro, _) ->
+                    let envi, gdi, dli = gri in
+                    let envo, gdo, dlo = gro in
+                    print_newline ();
+                    Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
+                    Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
+                    if !grid_viz then
+                      Grid.pp_grids [Model.grid_of_data_failsafe gdi.data;
+                                     Model.grid_of_data_failsafe gdo.data])
           | `TEST -> ()
         );
         if !verbose then (
@@ -328,6 +330,7 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
   
 let maybe_train_names =
   [
+    "3de23699.json"; (* pb: collection or disconnected object *)
     "5ad4f10b.json"; (* pb: need function to compact a mask (scaleDownMax ou scaleDownTo(3)) *)
     "56dc2b01.json"; (* pb: would need translationOnto(..) minus some number along the translation vector *) 
     "3345333e.json"; (* pb: needs to recover hidden part by symmetry *)

@@ -6,13 +6,13 @@ let def_param name v to_str =
   ref v
    
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" 64 string_of_int (* max nb of considered grid parses *)
+let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
-let max_refinements = def_param "max_refinements" 20 (* TEST 50 *) string_of_int (* max nb of considered refinements *)
+let max_refinements = def_param "max_refinements" 20 string_of_int (* max nb of considered refinements *)
 let use_repeat = def_param "use_repeat" false string_of_bool (* whether to use the Repeat/For constructs in models *)
 
 exception TODO
@@ -1282,9 +1282,7 @@ let dl_data, reset_dl_data =
        dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
        +. dl_patt aux ~ctx ~path d
     | `Seq items ->
-       assert (items <> []);
-       dl_patt_as_template
-       +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
+       Mdl.Code.list_star (fun item -> aux ~ctx ~path item) items
   in
   (*  aux *)
   let mem = Hashtbl.create 1003 in
@@ -1759,8 +1757,7 @@ let rec dl_data_given_patt
        (fun res item ditem -> res +. dl ~ctx ~path:(any_item path) item ditem)
        0. items ditems
   | _, `Seq items ->
-     assert (items <> []);
-     Mdl.Code.list_plus (fun item -> dl_data_given_patt dl ~ctx ~path patt item) items
+     Mdl.Code.list_star (fun item -> dl_data_given_patt dl ~ctx ~path patt item) items
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d : data) : dl = (* cannot be profiled because of indirect recursion *)
@@ -1798,7 +1795,8 @@ let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
          diff
 
 let dl_delta_path = any_item (`Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
-let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *)
+(* let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *) *)
+let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask (`Full false))) (* dummy point shape as rectangle *)
 let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
   if delta = []
   then 0.
@@ -1807,7 +1805,8 @@ let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
     -. 1. (* some normalization to get 0 for empty grid data *)
     +. Mdl.Code.universal_int_star n
     +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape
-  (*
+  
+(* OLD
   -. 1. (* some normalization to get 0 for empty grid data *)
   +. Mdl.Code.list_star
        (fun (i,j,c) -> (* TODO: optimize: hint, all points have the same DL ? *)
@@ -2800,20 +2799,22 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
     (fun () ->
       fun p () state ->
       Myseq.concat
-        [parse_all_points state
-         |> Myseq.map
-              (fun ((i,j,c), state) ->
-                `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
-                state);
-         (let* r, state = parse_all_rectangles state in
+        [(let* r, state = parse_all_rectangles state in
           let open Grid in
           let* m = Myseq.from_list r.mask_models in
-          Myseq.return
+          if r.height = 1 && r.width = 1 (* point *)
+          then Myseq.empty
+          else Myseq.return
             (`PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
                         `Rectangle (`Vec (`Int r.height, `Int r.width),
                                     `Color r.color,
                                     `Mask m)),
-             state)) ])
+             state));
+         (let* (i,j,c), state = parse_all_points state in
+          Myseq.return
+            (`PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
+             state))
+    ])
     ~parse_repeat:(
       function
       | `PosShape (pos, `Point (color)) ->
@@ -2837,36 +2838,36 @@ let rec parse_shape (t : template) : (unit,data) p_x_parse =
       | _ -> assert false)
     t
 
-(* tentative *)
+(* TEST *)
 let parse_layer (shape : template) : (unit,data) p_x_parse =
   let parse_sh = parse_shape shape in
   fun p () state ->
-  let rec parse_seq_sh state =
-    Myseq.concat [
-        (let* item, state = parse_sh p () state in
-         let* items, state = parse_seq_sh state in
-         (*let items = [] in *)
-         Myseq.return (item::items, state));
-        Myseq.return ([],state)
-      ] 
-  in
-  let* items, state = (*Myseq.slice ~limit:1*) (parse_seq_sh state) in
-  match items with
-  | [] -> Myseq.empty
-  | [x] -> Myseq.return (x, state)
-  | _ -> Myseq.return (`Seq items, state)
-  
+  let parseur = parse_sh p () in
+  let parse_seq_sh =
+    Myseq.star_dependent_fair
+      (*~max_relaxation_level:(!max_relaxation_level_parse_layers)*)
+      (Myseq.const parseur) in
+  let* items, state = parse_seq_sh state in
+  let items, state = (* deterministically parsing other items, as much as possible *)
+    let rec aux res state =
+      match Myseq.hd_opt (parseur state) with
+      | None -> res, state
+      | Some (item,state) -> aux (item::res) state
+    in
+    let rev_items, state = aux (List.rev items) state in
+    List.rev rev_items, state in
+  Myseq.return (`Seq items, state)
 
 let parse_layers layers : (unit, data ilist) p_x_parse =
   fun p ->
   let rev_layer_parseurs =
     fold_ilist
       (fun revl lp layer ->
-        let parseur = parse_shape layer (p ++ `Layer lp) () in
+        let parseur = parse_shape (* TEST parse_layer *) layer (p ++ `Layer lp) () in
         parseur::revl)
       [] `Root layers in
   let gen = Myseq.product_dependent_fair
-              ~max_relaxation_level:(!max_relaxation_level_parse_layers)
+              ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations *)
               (List.rev rev_layer_parseurs) in
   fun () state ->
   Myseq.prof "Model2.parse_layers/seq" (
@@ -2888,23 +2889,23 @@ let parse_grid t : (Grid.t, data) p_x_parse = Common.prof "Model2.parse_grid" (f
           | `Color bc -> (fun g -> Myseq.return bc)
           | `U -> (fun g -> Myseq.from_list (Grid.background_colors g))
           | _ -> assert false in
+        let parse_bg_color p_color g state =
+          let* bc = seq_background_colors g in
+          let* dcolor, state = parse_color p_color bc state in
+          let state = { state with (* ignoring parts belonging to background *)
+                        parts = List.filter (fun (p : Grid.part) -> p.color <> bc) state.parts } in
+          Myseq.return ((bc,dcolor),state) in          
         let parse_layers = parse_layers layers in
         fun p ->
         let parse_size = parse_size (p ++ `Size) in
-        let parse_color = parse_color (p ++ `Color) in
+        let parse_bg_color = parse_bg_color (p ++ `Color) in
         let parse_layers = parse_layers p in
         fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid/seq" (
         let* dsize, state = parse_size (g.height,g.width) state in
-        let* bc = seq_background_colors g in                              
-        let* dcolor, state = parse_color bc state in
-        let state = { state with (* ignoring parts belonging to background *)
-                      parts = List.filter (fun (p : Grid.part) -> p.color <> bc) state.parts } in
+        let* (bc,dcolor), state = parse_bg_color g state in
         let* dlayers, state = parse_layers () state in
-(*        let bc = (* background color *)
-	  match Grid.majority_colors state.mask g with
-	  | bc::_ -> bc (* TODO: return sequence of colors *)
-	  | [] -> Grid.black in
-        let* dcolor, state = parse_color bc state in *)
+        (*let* ((bc,dcolor),dlayers), state =
+          Myseq.pair_dependent_fair (parse_bg_color g) (parse_layers ()) state in*)
         let data = `Background (dsize,dcolor,dlayers) in
 	(* adding mask pixels with other color than background to delta *)
         let new_state =
@@ -3037,7 +3038,10 @@ type model = (* input->output models *)
   }
 
 let init_template =
-  `Background (u_vec, `U, `Nil)
+(*  let u_rect = `PosShape (u_vec, `Rectangle (u_vec, `U, `U)) in
+  let u_point = `PosShape (u_vec, `Point (`U)) in *)
+  let u_layers = `Nil (* TEST `Insert (`Nil, `U, `Nil) *) in
+  `Background (u_vec, `U, u_layers )
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -3775,6 +3779,8 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
              | _ -> (ap,ar,rap,rar))
            (false,false,false,false) `Root layers
        else true, true, false, false in
+     (* TEST let su =
+       aux ~objs:[`U] `Root layers in *)
      let sp =
        let objs =
          if rep_any_point
@@ -3819,7 +3825,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
                 | Some p_many -> `For (p_many, obj) in
               aux ~objs:[obj] `Root layers)
             ps_layer) in
-     Myseq.concat [so; ss; sr; sp]
+     Myseq.concat [so; ss; sr; sp (* TEST; su*)]
   | _ -> assert false)
 
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
