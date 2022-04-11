@@ -406,11 +406,53 @@ let rec get_size : 'a -> (int * int) option =
   | `PosShape (_, shape) -> get_size shape
   | `Background (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
   | _ -> None
+
+
+(* abstract type for concrete types including sequences of themselves *)
+type 'a seq = ([> `Seq of 'a list] as 'a)
+  
+(* broadcasting functions to align sequences and atoms of templates when evaluating expressions *) 
+let broadcast1 (t : 'a seq) (f : 'a -> 'b) : 'b seq =
+  match t with
+  | `Seq lt -> `Seq (List.map f lt)
+  | _ -> f t
+let broadcast2 (t : 'a seq * 'b seq) (f : 'a * 'b -> 'c) : 'c seq =
+  let rec aux lt1 lt2 =
+    match lt1, lt2 with
+    | [], _ | _, [] -> []
+    | t1::l1, t2::l2 -> f (t1,t2) :: aux l1 l2
+  in
+  match t with
+  | `Seq lt1, `Seq lt2 -> `Seq (aux lt1 lt2)
+  | `Seq lt1, t2 -> `Seq (List.map (fun t1 -> f (t1,t2)) lt1)
+  | t1, `Seq lt2 -> `Seq (List.map (fun t2 -> f (t1,t2)) lt2)
+  | _ -> f t
+let broadcast_list (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b) : 'b seq =
+  let rec aux (ts : 'a seq list) =
+    let heads_tails_opt =
+      List.fold_right
+        (fun t -> function
+          | None -> None
+          | Some (heads,tails) ->
+             match t with
+             | `Seq [] -> None
+             | `Seq (head0::tail0) -> Some (head0::heads, (`Seq tail0)::tails)
+             | _ -> Some (t::heads, t::tails))
+        ts (Some ([],[])) in
+    match heads_tails_opt with
+    | None -> []
+    | Some (heads,tails) -> f heads :: aux tails
+  in
+  if List.exists (function `Seq _ -> true | _ -> false) ts
+  then `Seq (aux ts)
+  else f ts
+
        
 type data =
   [ data patt
   | `Seq of data list ]
-let data0 = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
+let data0 : data = `Background (`Vec (`Int 0, `Int 0), `Color Grid.black, `Nil)
+let _ = (data0 :> data seq) (* data is an instance of data seq *)
 
 type var =
   [ revpath
@@ -471,13 +513,15 @@ and symmetry = [
 
 let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
              
-type template =
+type template = (* a template seq *)
   [ `U
   | `Repeat of template patt
   | `For of revpath * template (* revpath is a many-valued ref *)
   | template patt
   | `Seq of template list
   | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
+let template0 : template = `U
+let _ = (template0 :> template seq) (* template is an instance of template seq *)
 
 let u_vec : template = `Vec (`U, `U)
 
@@ -1987,42 +2031,6 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
   | `PosShape (_, `Point _) -> raise (Undefined_result "Model2.unfold_symmetry: point")
   | _ -> raise (Invalid_expr e)
 
-(* broadcasting functions to align sequences and atoms of templates when evaluating expressions *) 
-let broadcast1 (t : template) (f : template -> template) : template =
-  match t with
-  | `Seq lt -> `Seq (List.map f lt)
-  | _ -> f t
-let broadcast2 (t : template * template) (f : template * template -> template) : template =
-  let rec aux lt1 lt2 =
-    match lt1, lt2 with
-    | [], _ | _, [] -> []
-    | t1::l1, t2::l2 -> f (t1,t2) :: aux l1 l2
-  in
-  match t with
-  | `Seq lt1, `Seq lt2 -> `Seq (aux lt1 lt2)
-  | `Seq lt1, t2 -> `Seq (List.map (fun t1 -> f (t1,t2)) lt1)
-  | t1, `Seq lt2 -> `Seq (List.map (fun t2 -> f (t1,t2)) lt2)
-  | _ -> f t
-let broadcast_list (ts : template list) (f : (* non-seq *) template list -> template) : template =
-  let rec aux (ts : template list) =
-    let heads_tails_opt =
-      List.fold_right
-        (fun t -> function
-          | None -> None
-          | Some (heads,tails) ->
-             match t with
-             | `Seq [] -> None
-             | `Seq (head0::tail0) -> Some (head0::heads, (`Seq tail0)::tails)
-             | _ -> Some (t::heads, t::tails))
-        ts (Some ([],[])) in
-    match heads_tails_opt with
-    | None -> []
-    | Some (heads,tails) -> f heads :: aux tails
-  in
-  if List.exists (function `Seq _ -> true | _ -> false) ts
-  then `Seq (aux ts)
-  else f ts
-
 let apply_expr_gen
           (apply : lookup:apply_lookup -> revpath -> 'a -> template)
           ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template = (* QUICK *)
@@ -2469,16 +2477,45 @@ let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
 
 (* grid generation from data and template *)
 
+let generate_patt (generate : revpath -> 'b -> 'a seq) (p : revpath) : 'b patt -> 'a seq = function
+  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
+  | `Vec (si,sj) ->
+     broadcast2 (generate (p ++ `I) si,
+                 generate (p ++ `J) sj)
+       (fun (i,j) -> `Vec (i,j))
+  | `Point (scolor) ->
+     broadcast1 (generate (p ++ `Color) scolor)
+       (fun color -> `Point color)
+  | `Rectangle (ssize,scolor,smask) ->
+     broadcast_list [generate (p ++ `Size) ssize;
+                     generate (p ++ `Color) scolor;
+                     generate (p ++ `Mask) smask]
+       (function
+        | [size; color; mask] -> `Rectangle (size, color, mask)
+        | _ -> assert false)
+  | `PosShape (spos,sshape) ->
+     broadcast2 (generate (p ++ `Pos) spos,
+                 generate (p ++ `Shape) sshape)
+       (fun (pos,shape) -> `PosShape (pos,shape))
+  | `Background (size,color,layers) ->
+     `Background (generate (p ++ `Size) size, (* assumes size <> `Seq _ *)
+                  generate (p ++ `Color) color, (* assumes color <> `Seq _ *)
+                  map_ilist
+                    (fun lp shape -> generate (p ++ `Layer lp) shape) (* keep `Seq's as layers *)
+                    `Root layers)
+  | `Many (ordered,items) ->
+     `Many (ordered,
+            List.map
+              (fun item -> generate (any_item p) item)
+              items)
+
 let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
+  (* should be named 'ground_template' *)
   match t with
   | `U -> default_data_of_path p (* default data *)
-  | `Repeat patt1 -> (apply_patt
-                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
-                        (any_item p) patt1 :> data)
+  | `Repeat patt1 -> (generate_patt generate_template (any_item p) patt1 :> data)
   | `For _ -> assert false (* should be eliminated by call to apply_template *)
-  | #patt as patt -> (apply_patt
-                        (fun ~lookup -> generate_template) ~lookup:(fun _ -> assert false)
-                        p patt :> data)
+  | #patt as patt -> (generate_patt generate_template p patt :> data)
   | #expr -> assert false (* should be eliminated by call to apply_template *)
   | `Seq items -> `Seq (List.map (fun item -> generate_template p item) items)
 
