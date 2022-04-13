@@ -1816,14 +1816,14 @@ let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d
   | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
   | #expr, _ -> 0. (* will be evaluated out *)
   | `Seq lt, `Seq ld ->
-     assert (List.length lt = List.length ld && lt <> []);
-     Mdl.Code.list_plus
-       (fun (lt,ld) -> dl_data_given_template ~ctx ~path t d)
+     assert (List.length lt = List.length ld);
+     Mdl.Code.list_star
+       (fun (ti,di) -> dl_data_given_template ~ctx ~path ti di)
        (List.combine lt ld)
   | `Seq _, _ ->
-     print_string "dl_data_given_template: "; pp_data d;
-     print_string " ~ "; pp_template t; print_newline ();
-     assert false
+     (*print_string "UNEXPECTED in dl_data_given_template: "; pp_data d;
+     print_string " ~ "; pp_template t; print_newline ();*)
+     assert false (* pb: comes from inner explicit Seq in templates. TODO: use similar mechanism to parsing *)
               
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
@@ -2606,8 +2606,8 @@ let filter_parts_with_mask ~new_mask parts = (* QUICK *)
     parts
 
 type ('a,'b) parseur = (* input -> state -> results *)
-  Parseur of ('a -> parse_state -> ('b * parse_state * ('a,'b) parseur) Myseq.t)
-(* each result contains: a parsed value, the new state, and a parser for the sequence continuation *) 
+  Parseur of ('a -> parse_state -> ('b * parse_state * bool * ('a,'b) parseur) Myseq.t)
+(* each result contains: a parsed value, the new state, a valid sequence 'stop' flag, and a parser for the sequence continuation *) 
 
 let parseur_empty : ('a,'b) parseur =
   Parseur (fun x state -> Myseq.empty)
@@ -2617,44 +2617,47 @@ let rec parse_const (map : 'a -> 'b Myseq.t) (history : 'b option) : ('a,'b) par
   | None ->
      Parseur (fun x state ->
          let*! y = map x in
-         (y, state, parse_const map (Some y)))
+         (y, state, true, parse_const map (Some y)))
   | Some y0 ->
      Parseur (fun x state ->
          let* y = map x in
          if y = y0
-         then Myseq.return (y, state, parse_const map history)
+         then Myseq.return (y, state, true, parse_const map history)
          else Myseq.empty)
 
     
 let rec parseur_rec (f : 'a -> parse_state -> ('b * parse_state) Myseq.t) : ('a,'b) parseur =
   Parseur (fun x state ->
       let*! y, state = f x state in
-      (y, state, parseur_rec f))
+      (y, state, true, parseur_rec f))
 let rec parseur_rec1 (Parseur parse1) f =
   Parseur (fun x state ->
-      let*! y, state, parseur1 = f parse1 x state in
-      (y, state, parseur_rec1 parseur1 f))
+      let*! y, state, stop1, parseur1 = f parse1 x state in
+      (y, state, stop1, parseur_rec1 parseur1 f))
 let rec parseur_rec2 (Parseur parse1) (Parseur parse2) f =
   Parseur (fun x state ->
-      let*! y, state, parseur1, parseur2 = f parse1 parse2 x state in
-      (y, state, parseur_rec2 parseur1 parseur2 f))
+      let*! y, state, stop1, stop2, parseur1, parseur2 =
+        f parse1 parse2 x state in
+      (y, state, stop1 && stop2, parseur_rec2 parseur1 parseur2 f))
 let rec parseur_rec3 (Parseur parse1) (Parseur parse2) (Parseur parse3) f =
   Parseur (fun x state ->
-      let*! y, state, parseur1, parseur2, parseur3 = f parse1 parse2 parse3 x state in
-      (y, state, parseur_rec3 parseur1 parseur2 parseur3 f))
+      let*! y, state, stop1, stop2, stop3, parseur1, parseur2, parseur3 =
+        f parse1 parse2 parse3 x state in
+      (y, state, stop1 && stop2 && stop3, parseur_rec3 parseur1 parseur2 parseur3 f))
 let rec parseur_rec4 (Parseur parse1) (Parseur parse2) (Parseur parse3) (Parseur parse4) f =
   Parseur (fun x state ->
-      let*! y, state, parseur1, parseur2, parseur3, parseur4 =
+      let*! y, state, stop1, stop2, stop3, stop4, parseur1, parseur2, parseur3, parseur4 =
         f parse1 parse2 parse3 parse4 x state in
-      (y, state, parseur_rec4 parseur1 parseur2 parseur3 parseur4 f))  
+      (y, state, stop1 && stop2 && stop3 && stop4, parseur_rec4 parseur1 parseur2 parseur3 parseur4 f))  
 
 let rec parseur_seq (lparseur : ('a,'b) parseur list) : ('a,'b seq) parseur =
   let rec aux = function
     | [] -> parseur_empty
     | (Parseur parse_item)::l1 ->
        Parseur (fun x state ->
-           let*! y, state, _next = parse_item x state in (* assuming no sequence nesting *)
-           (y, state, parseur_seq l1))
+           let*! y, state, stop, _next = parse_item x state in (* assuming no sequence nesting *)
+           assert stop;
+           (y, state, (l1=[]), parseur_seq l1))
   in
   aux lparseur
   
@@ -2663,15 +2666,17 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
     match max_depth, sols () with
     | Some maxd, _ when depth >= maxd -> Myseq.return ([], state)
     | _, Myseq.Nil -> Myseq.return ([], state)
-    | _, Myseq.Cons ((y, state, Parseur parse_seq), next_sols) ->
+    | _, Myseq.Cons ((y, state, stop, Parseur parse_seq), next_sols) ->
        Myseq.interleave [ (* sequence not in fair order *)
            (let* ly, state = aux ~depth:(depth+1) x state (parse_seq x state) in
-            Myseq.return (y::ly, state));
+            if ly=[] && not stop
+            then Myseq.empty (* failure, not stopping at a valid step *)
+            else Myseq.return (y::ly, state));
            (fun () -> aux ~depth x state next_sols ())
          ] in
   Parseur (fun x state ->
       let* ly, state = aux ~depth:0 x state (parse x state) in
-      Myseq.return (ly, state, parseur_empty))
+      Myseq.return (ly, state, true, parseur_empty))
 
 (*let _ = (* unit test for parseur_collect *)
   let rec parse_count n =
@@ -2696,7 +2701,7 @@ let parseur_repeat
     Parseur (fun parts state ->
     (fun () -> (* thumbing is key for efficiency *)
       ( match parts with
-        | [] -> Myseq.return ([], state, parseur_empty)
+        | [] -> Myseq.return ([], state, true, parseur_empty)
         | part0::parts1 ->
            if valid_part part0 state
            then
@@ -2706,9 +2711,9 @@ let parseur_repeat
                   let i1 = i+1 in
                   let p_item1 = ith_item i1 p in
                   let Parseur parse1 = aux i1 p_item1 in
-                  let* data0, state0, _ = parse_item part0 state in
-                  let* ldata1, state1, _ = parse1 parts1 state0 in
-                  Myseq.return (data0::ldata1, state1, parseur_empty));
+                  let* data0, state0, _, _ = parse_item part0 state in
+                  let* ldata1, state1, _, _ = parse1 parts1 state0 in
+                  Myseq.return (data0::ldata1, state1, true, parseur_empty));
                  (* skipping data0 *)
                  (let Parseur parse = aux i p_item in
                   parse parts1 state)
@@ -2723,14 +2728,14 @@ let parseur_repeat
     Parseur (fun parts state ->
       parse0 parts state
       |> Myseq.filter_map
-           (fun (items,state,next) ->
+           (fun (items,state,stop,next) ->
              if items = []
              then None
              else
                let state =
                  { state with
                    parts = filter_parts_with_mask ~new_mask:state.mask state.parts } in
-               Some (items,state,next))) in
+               Some (items,state,stop,next))) in
 (*
   print_string "parse_repeat[0] = ";
   (match Myseq.hd_opt res with
@@ -2743,12 +2748,12 @@ let parseur_repeat
 let parseur_many (parseur_item : int -> ('a,data) parseur) : ('a list, data list) parseur =
   Parseur (fun items state ->
   let rec aux i state = function
-    | [] -> Myseq.return ([], state, parseur_empty)
+    | [] -> Myseq.return ([], state, true, parseur_empty)
     | item::items1 ->
        let Parseur parse_item = parseur_item i in
-       let* ditem, state, _ = parse_item item state in
-       let* ditems1, state, _ = aux (i+1) state items1 in
-       Myseq.return (ditem::ditems1, state, parseur_empty)
+       let* ditem, state, _, _ = parse_item item state in
+       let* ditems1, state, _, _ = aux (i+1) state items1 in
+       Myseq.return (ditem::ditems1, state, true, parseur_empty)
   in
   aux 0 state items) (* TODO: apply slice to the keep only the first parse? *)
 
@@ -2763,10 +2768,10 @@ let rec parseur_template
   | `Repeat patt1 ->
      let Parseur parse = parseur_repeat patt1 in
      Parseur (fun x state ->
-       let* items, state, _ = parse x state in
+       let* items, state, _, _ = parse x state in
        assert (items <> []);
        let data = `Many (false, items) in
-       Myseq.return (data,state,parseur_empty))
+       Myseq.return (data,state,true,parseur_empty))
   | `For _ -> assert false
   | #patt as patt -> parseur_patt patt
   | #expr -> assert false
@@ -2849,9 +2854,9 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
            (parseur_int i (p ++ `I))
            (parseur_int j (p ++ `J))
            (fun parse_i parse_j (i,j) state ->
-             let* di, state, next_i = parse_i i state in
-             let* dj, state, next_j = parse_j j state in
-             Myseq.return (`Vec (di,dj), state, next_i, next_j))
+             let* di, state, stop_i, next_i = parse_i i state in
+             let* dj, state, stop_j, next_j = parse_j j state in
+             Myseq.return (`Vec (di,dj), state, stop_i, stop_j, next_i, next_j))
       | _ -> parseur_empty)
     t p
 
@@ -2883,9 +2888,10 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
       (parseur_vec pos (p ++ `Pos))
       (parseur_color color (p ++ `Shape ++ `Color))
       (fun parse_pos parse_color (i,j,c) state ->
-        let* dpos, state, pr1 = parse_pos (i,j) state in
-        let* dcolor, state, pr2 = parse_color c state in
-        Myseq.return (`PosShape (dpos, `Point (dcolor)), state, pr1, pr2)) in
+        let* dpos, state, stop_pos, next_pos = parse_pos (i,j) state in
+        let* dcolor, state, stop_color, next_color = parse_color c state in
+        Myseq.return (`PosShape (dpos, `Point (dcolor)), state,
+                      stop_pos, stop_color, next_pos, next_color)) in
   let parseur_rectangle pos size color mask p : (Grid.rectangle, data) parseur = (* QUICK *)
     parseur_rec4
       (parseur_vec pos (p ++ `Pos))
@@ -2894,11 +2900,12 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
       (parseur_mask mask (p ++ `Shape ++ `Mask))
       (fun parse_pos parse_size parse_color parse_mask rect state ->
         let open Grid in
-        let* dpos, state, next_pos = parse_pos (rect.offset_i,rect.offset_j) state in
-        let* dsize, state, next_size = parse_size (rect.height,rect.width) state in
-        let* dcolor, state, next_color = parse_color rect.color state in
-        let* dmask, state, next_mask = parse_mask rect.mask_models state in
+        let* dpos, state, stop_pos, next_pos = parse_pos (rect.offset_i,rect.offset_j) state in
+        let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
+        let* dcolor, state, stop_color, next_color = parse_color rect.color state in
+        let* dmask, state, stop_mask, next_mask = parse_mask rect.mask_models state in
         Myseq.return (`PosShape (dpos, `Rectangle (dsize,dcolor,dmask)), state,
+                      stop_pos, stop_size, stop_color, stop_mask,
                       next_pos, next_size, next_color, next_mask))
   in
   let parse_all_points state =
@@ -2921,9 +2928,9 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
         let points = Grid.points state.grid state.mask state.parts in
         Myseq.prof "Model2.parse_single_point/seq" (
         let* point = Myseq.from_list points in
-        let* dpoint, state, next_point = parse_point point state in
+        let* dpoint, state, stop_point, next_point = parse_point point state in
         let* state = Myseq.from_option (state_minus_point state point) in
-        Myseq.return (dpoint, state, next_point))) in
+        Myseq.return (dpoint, state, stop_point, next_point))) in
   let parseur_single_rectangle pos size color mask p : (unit,data) parseur =    
     parseur_rec1
       (parseur_rectangle pos size color mask p)
@@ -2931,9 +2938,9 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
         let rectangles = Grid.rectangles state.grid state.mask state.parts in
         Myseq.prof "Model2.parse_single_rectangle/seq" (
         let* rect = Myseq.from_list rectangles in
-        let* drect, state, next_rectangle = parse_rectangle rect state in
+        let* drect, state, stop_rectangle, next_rectangle = parse_rectangle rect state in
         let* state = Myseq.from_option (state_minus_rectangle state rect) in
-        Myseq.return (drect, state, next_rectangle)))
+        Myseq.return (drect, state, stop_rectangle, next_rectangle)))
   in
   let parseur_repeat_point pos color p : (unit,data list) parseur =
     Parseur (fun () state ->
@@ -2946,14 +2953,14 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
             (fun i p_item ->
               let Parseur parse_point = parseur_point pos color p_item in
               Parseur (fun (x,y,c as point) state ->
-              let* data, state, _ = parse_point point state in
+              let* data, state, _, _ = parse_point point state in
               let state = { state with
                             mask = Grid.Mask.remove x y state.mask;
                             delta = state.delta } in
-              Myseq.return (data, state, parseur_empty)))
+              Myseq.return (data, state, true, parseur_empty)))
             p in
-        let* ld, state, _ = parse_repeat_point points state in
-        Myseq.return (ld,state,parseur_empty))) in
+        let* ld, state, _, _ = parse_repeat_point points state in
+        Myseq.return (ld,state,true,parseur_empty))) in
   let parseur_repeat_rectangle pos size color mask p : (unit, data list) parseur =
     Parseur (fun () state ->
         let rectangles = Grid.rectangles state.grid state.mask state.parts in
@@ -2969,17 +2976,17 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
             (fun i p_item ->
               let Parseur parse_rectangle = parseur_rectangle pos size color mask p_item in
               Parseur (fun rect state ->
-              let* data, state, _ = parse_rectangle rect state in
+              let* data, state, _, _ = parse_rectangle rect state in
               let state =
                 let new_mask = Grid.Mask.diff state.mask rect.new_cover in
                 { state with
                   mask = new_mask;
                   delta = add_delta_with_mask ~mask:state.mask state.delta rect.delta;
                 } in
-              Myseq.return (data, state, parseur_empty)))
+              Myseq.return (data, state, true, parseur_empty)))
             p in
-        let* ld, state, _ = parse_repeat_rectangle rectangles state in
-        Myseq.return (ld,state,parseur_empty)))
+        let* ld, state, _, _ = parse_repeat_rectangle rectangles state in
+        Myseq.return (ld,state,true,parseur_empty)))
   in
   parseur_template
     ~parseur_u:
@@ -3022,11 +3029,12 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
                  (fun shape -> parseur_shape (`PosShape (`U, shape)) p)
                  shapes))
            (fun parse_pos parse_object () state ->
-             let* dobj, state, next_object = parse_object () state in
+             let* dobj, state, stop_object, next_object = parse_object () state in
              match dobj with
              | `PosShape (`Vec (`Int di, `Int dj), dshape) ->
-                let* dpos, state, next_pos = parse_pos (di,dj) state in
-                Myseq.return (`PosShape (dpos, dshape), state, next_pos, next_object)
+                let* dpos, state, stop_pos, next_pos = parse_pos (di,dj) state in
+                Myseq.return (`PosShape (dpos, dshape), state,
+                              stop_pos, stop_object, next_pos, next_object)
              | _ -> assert false)
              
       | `Many (ordered,items) ->
@@ -3035,11 +3043,11 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
              (fun i ->
                Parseur (fun item state ->
                    let Parseur parse_shape = parseur_shape (item :> template) (ith_item i p) in
-                   let* dsh, state, _ = parse_shape () state in
-                   Myseq.return (dsh, state, parseur_empty))) in
+                   let* dsh, state, _, _ = parse_shape () state in
+                   Myseq.return (dsh, state, true, parseur_empty))) in
          Parseur (fun () state ->
-             let* ditems, state, _ = parse_many items state in
-             Myseq.return (`Many (ordered,ditems),state,parseur_empty))
+             let* ditems, state, _, _ = parse_many items state in
+             Myseq.return (`Many (ordered,ditems),state,true,parseur_empty))
       | _ -> assert false)
     t p
 
@@ -3066,11 +3074,11 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
 let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
   let Parseur parse_shapes = parseur_collect ~max_depth:1 (parseur_shape shape p) in
   Parseur (fun () state ->
-      let* ld, state, _ = parse_shapes () state in
+      let* ld, state, _, _ = parse_shapes () state in
       match ld with
       | [] -> Myseq.empty
-      | [d] -> Myseq.return (d, state, parseur_empty)
-      | _ -> Myseq.return (`Seq ld, state, parseur_empty))
+      | [d] -> Myseq.return (d, state, true, parseur_empty)
+      | _ -> Myseq.return (`Seq ld, state, true, parseur_empty))
   
 let parseur_layers layers p : (unit, data ilist) parseur =
   let rev_layer_parses =
@@ -3079,7 +3087,7 @@ let parseur_layers layers p : (unit, data ilist) parseur =
         let Parseur parse = (* parseur_shape TEST *) parseur_layer layer (p ++ `Layer lp) in
         let simple_parse =
           fun state ->
-          let* d, state, _next = parse () state in (* TODO: handle _next to get sequences *)
+          let* d, state, _stop, _next = parse () state in (* TODO: handle _next to get sequences *)
           Myseq.return (d,state) in
         simple_parse::revl)
       [] `Root layers in
@@ -3091,7 +3099,7 @@ let parseur_layers layers p : (unit, data ilist) parseur =
       let* ld, state = gen state in
       let l, dlayers = fill_ilist_with_list layers ld in
       assert (l = []);
-      Myseq.return (dlayers, state, parseur_empty)))
+      Myseq.return (dlayers, state, true, parseur_empty)))
   
 let parseur_grid t p : (Grid.t, data) parseur = Common.prof "Model2.parse_grid" (fun () ->
   parseur_template
@@ -3108,15 +3116,15 @@ let parseur_grid t p : (Grid.t, data) parseur = Common.prof "Model2.parse_grid" 
           | _ -> assert false in
         let parse_bg_color g state =
           let* bc = seq_background_colors g in
-          let* dcolor, state, _ = parse_color bc state in
+          let* dcolor, state, _, _ = parse_color bc state in
           let state = { state with (* ignoring parts belonging to background *)
                         parts = List.filter (fun (p : Grid.part) -> p.color <> bc) state.parts } in
-          Myseq.return ((bc,dcolor),state,parseur_empty) in          
+          Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
         Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid/seq" (
-          let* dsize, state, _ = parse_size (g.height,g.width) state in
-          let* (bc,dcolor), state, _ = parse_bg_color g state in
-          let* dlayers, state, _ = parse_layers () state in
+          let* dsize, state, _, _ = parse_size (g.height,g.width) state in
+          let* (bc,dcolor), state, _, _ = parse_bg_color g state in
+          let* dlayers, state, _, _ = parse_layers () state in
           (*let* ((bc,dcolor),dlayers), state =
             Myseq.pair_dependent_fair (parse_bg_color g) (parse_layers ()) state in*)
           let data = `Background (dsize,dcolor,dlayers) in
@@ -3133,7 +3141,7 @@ let parseur_grid t p : (Grid.t, data) parseur = Common.prof "Model2.parse_grid" 
               delta = (!new_delta);
 	      mask = Grid.Mask.empty g.height g.width;
 	      parts = [] } in
-	  Myseq.return (data, new_state, parseur_empty)))
+	  Myseq.return (data, new_state, true, parseur_empty)))
      | _ -> parseur_empty)
     t p)
 
@@ -3171,7 +3179,8 @@ let read_grid
                 grid = g } in
   let parses =
     let* qdiff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
-    let* data, state, _next = parse_grid g {state with quota_diff = qdiff} in (* parse with this quota *)
+    let* data, state, stop, _next = parse_grid g {state with quota_diff = qdiff} in (* parse with this quota *)
+    assert stop;
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
@@ -3253,7 +3262,8 @@ type model = (* input->output models *)
 let init_template =
 (*  let u_rect = `PosShape (u_vec, `Rectangle (u_vec, `U, `U)) in
   let u_point = `PosShape (u_vec, `Point (`U)) in *)
-  let u_layers = `Nil (* TEST `Insert (`Nil, `U, `Nil) *) in
+  let u_layers = `Nil in
+  (*let u_layers = `Insert (`Nil, u_layer, `Nil) in*)
   `Background (u_vec, `U, u_layers )
 let init_model =
   { input_pattern = init_template;
