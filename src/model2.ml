@@ -1768,62 +1768,80 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   in
   aux ~ctx ~path t)
 
+type dl_seq = [`DL of dl | `Seq of dl_seq list]
+
+let rec dl_dl_seq : dl_seq -> dl = function  (* TODO: should we encode choice? *)
+  | `DL dl -> dl
+  | `Seq l -> Mdl.Code.list_star dl_dl_seq l
     
 let rec dl_data_given_patt
-      (dl : ctx:dl_ctx -> ?path:revpath -> 'a -> data -> dl)
-      ~ctx ~(path : revpath) (patt : 'a patt) (d : data) : dl =
+          (dl : ctx:dl_ctx -> path:revpath -> 'a -> data -> dl_seq)
+      ~ctx ~(path : revpath) (patt : 'a patt) (d : data) : dl_seq =
   match patt, d with
-  | `Int _, `Int _ -> 0.
-  | `Color _, `Color _ -> 0.
-  | `Mask _, `Mask _ -> 0.
+  | `Int _, `Int _ -> `DL 0.
+  | `Color _, `Color _ -> `DL 0.
+  | `Mask _, `Mask _ -> `DL 0.
   | `Vec (i,j), `Vec (di,dj) ->
-     dl ~ctx i di ~path:(path ++ `I)
-     +. dl ~ctx j dj ~path:(path ++ `J)
+     broadcast2
+       (dl ~ctx i di ~path:(path ++ `I),
+        dl ~ctx j dj ~path:(path ++ `J))
+       (function
+        | (`DL dli, `DL dlj) -> `DL (dli +. dlj)
+        | _ -> assert false) (* TODO: revise type 'a seq to avoid this? *)
   | `Point (color), `Point (dcolor) ->
-     dl ~ctx color dcolor ~path:(path ++ `Color)
+     broadcast1
+       (dl ~ctx color dcolor ~path:(path ++ `Color))
+       (fun dl1 -> dl1)
   | `Rectangle (size,color,mask), `Rectangle (dsize,dcolor,dmask) ->
-     dl ~ctx size dsize ~path:(path ++ `Size)
-     +. dl ~ctx color dcolor ~path:(path ++ `Color)
-     +. dl ~ctx mask dmask ~path:(path ++ `Mask)
+     broadcast_list
+       [dl ~ctx size dsize ~path:(path ++ `Size);
+        dl ~ctx color dcolor ~path:(path ++ `Color);
+        dl ~ctx mask dmask ~path:(path ++ `Mask)]
+       (function
+        | [`DL dl1; `DL dl2; `DL dl3] -> `DL (dl1 +. dl2 +. dl3)
+        | _ -> assert false)
   | `PosShape (pos,shape), `PosShape (dpos,dshape) ->
-     dl ~ctx pos dpos ~path:(path ++ `Pos)
-     +. dl ~ctx shape dshape ~path:(path ++ `Shape)
+     broadcast2
+       (dl ~ctx pos dpos ~path:(path ++ `Pos),
+        dl ~ctx shape dshape ~path:(path ++ `Shape))
+       (function
+        | (`DL dl1, `DL dl2) -> `DL (dl1 +. dl2)
+        | _ -> assert false)
   | `Background (size,color,layers), `Background (dsize,dcolor,dlayers) ->
-     dl ~ctx size dsize ~path:(path ++ `Size)
-     +. dl ~ctx color dcolor ~path:(path ++ `Color)
-     +. fold2_ilist
-          (fun sum lp shape dshape -> sum +. dl ~ctx shape dshape ~path:(path ++ `Layer lp))
-          0. `Root layers dlayers
+     broadcast_list
+       [dl ~ctx size dsize ~path:(path ++ `Size);
+        dl ~ctx color dcolor ~path:(path ++ `Color);
+        `DL (fold2_ilist
+               (fun sum lp shape dshape ->
+                 sum +. dl_dl_seq (dl ~ctx shape dshape ~path:(path ++ `Layer lp)))
+               0. `Root layers dlayers)]
+       (function
+        | [`DL dl1; `DL dl2; `DL dl3] -> `DL (dl1 +. dl2 +. dl3)
+        | _ -> assert false)
   | `Many (ordered,items), `Many (dordered,ditems) ->
      assert (ordered = dordered);
      assert (List.length items = List.length ditems);
-     List.fold_left2
-       (fun res item ditem -> res +. dl ~ctx ~path:(any_item path) item ditem)
-       0. items ditems
-  | _, `Seq items ->
-     Mdl.Code.list_star (fun item -> dl_data_given_patt dl ~ctx ~path patt item) items
+     `DL (List.fold_left2
+       (fun res item ditem -> res +. dl_dl_seq (dl ~ctx ~path:(any_item path) item ditem))
+       0. items ditems)
   | _ -> assert false (* data inconsistent with pattern *)
     
-let rec dl_data_given_template ~(ctx : dl_ctx) ?(path = `Root) (t : template) (d : data) : dl = (* cannot be profiled because of indirect recursion *)
-  match t, d with
-  | `U, _ -> dl_data ~ctx ~path d
-  | `Repeat patt1, `Many (false,items) ->
-     Mdl.Code.list_plus (fun item ->
-         dl_data_given_patt dl_data_given_template ~ctx ~path:(any_item path) patt1 item)
-       items
-  | `Repeat _, _ -> assert false (* only parses into unordered collections *)
-  | `For _, _ -> assert false (* should have been evaluated out *)
-  | #patt as patt, _ -> dl_data_given_patt dl_data_given_template ~ctx ~path patt d
-  | #expr, _ -> 0. (* will be evaluated out *)
-  | `Seq lt, `Seq ld ->
-     assert (List.length lt = List.length ld);
-     Mdl.Code.list_star
-       (fun (ti,di) -> dl_data_given_template ~ctx ~path ti di)
-       (List.combine lt ld)
-  | `Seq _, _ ->
-     (*print_string "UNEXPECTED in dl_data_given_template: "; pp_data d;
-     print_string " ~ "; pp_template t; print_newline ();*)
-     assert false (* pb: comes from inner explicit Seq in templates. TODO: use similar mechanism to parsing *)
+let rec dl_data_given_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) (d : data) : dl_seq = (* cannot be profiled because of indirect recursion *)
+  broadcast2 (t,d)
+    (function
+     | `U, d -> `DL (dl_data ~ctx ~path d)
+     | `Repeat patt1, `Many (false,items) ->
+        `DL (Mdl.Code.list_plus
+               (fun item -> dl_dl_seq (dl_data_given_patt dl_data_given_template_aux ~ctx ~path:(any_item path) patt1 item))
+               items)
+     | `Repeat _, _ -> assert false (* only parses into unordered collections *)
+     | `For _, _ -> assert false (* should have been evaluated out *)
+     | #patt as patt, d -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d
+     | #expr, _ -> `DL 0. (* will be evaluated out *)
+     | _ -> assert false)
+  
+let dl_data_given_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) (d : data) : dl =
+  dl_dl_seq (dl_data_given_template_aux ~ctx ~path t d)
               
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
