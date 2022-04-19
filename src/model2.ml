@@ -1039,12 +1039,7 @@ let rec fold_template (f : 'b -> revpath option -> revpath -> template -> templa
        (fun acc p t anc -> fold_template f acc for_p p t anc)
        acc p patt t_ancestry
   | #expr -> acc
-  | `Seq items ->
-     items
-     |> List.fold_left
-          (fun acc item ->
-            fold_template f acc for_p p item t_ancestry)
-          acc
+  | `Seq items -> acc
        
 let size_of_data (d : data) : int =
   Common.prof "Model2.size_of_data" (fun () ->
@@ -1137,11 +1132,19 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `Many (ordered,items) ->
      let llt_items = List.map (root_template_of_data ~in_output) items in
      (* (d :> template) :: *) List.sort_uniq Stdlib.compare (List.concat llt_items)
-  | `Seq items ->
-     (* `Seq (List.map (fun _ -> `U) items) :: *)
-     List.map (root_template_of_data ~in_output) items
-     |> List.concat
-     |> List.sort_uniq Stdlib.compare
+  | `Seq [] -> []
+  | `Seq (item::items) ->
+     let common_patterns =
+       List.fold_left
+         (fun res item ->
+           let item_patterns = root_template_of_data ~in_output item in
+           List.filter
+             (fun t -> List.mem t item_patterns)
+             res)
+         (root_template_of_data ~in_output item) items in
+     if common_patterns = []
+     then [(d :> template)]
+     else common_patterns
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -1151,6 +1154,17 @@ let matches_ilist (matches : 'a -> 'b -> bool)
 
 let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   match t, d with
+  (* explicit broadcasting *)
+  | `Seq lt, `Seq ld ->
+     let rec aux lt ld =
+       match lt, ld with
+       | [], _ | _, [] -> true
+       | t::lt1, d::ld1 -> matches_template t d && aux lt1 ld1
+     in
+     aux lt ld
+  | `Seq lt, _ -> List.for_all (fun t -> matches_template t d) lt
+  | _, `Seq ld -> List.for_all (fun d -> matches_template t d) ld
+  (* on patterns *)
   | `U, _ -> true
   | `Bool b1, `Bool b2 when b1 = b2 -> true
   | `Int i1, `Int i2 when i1 = i2 -> true
@@ -1170,15 +1184,6 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
   | `Many (ordered1,items1), `Many (ordered2,items2) ->
      ordered1 = ordered2 (* TODO: better handle ordered *)
      && List.for_all2 (fun item1 item2 -> matches_template item1 item2) items1 items2
-  | `Seq lt, `Seq ld -> (* TODO: allow equality modulo list length (periodic template)? *)
-     List.length lt = List.length ld
-     && List.for_all2
-          (fun t d -> matches_template t d)
-          lt ld
-  | _, `Seq items ->
-     List.for_all
-       (fun item -> matches_template t item)
-       items
   | _ -> false
     
 (* description lengths *)
@@ -1718,9 +1723,9 @@ let code_template0 =
     c_repeat = infinity;
     c_for = infinity;
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
-    c_ref = Mdl.Code.usage 0.5;
+    c_ref = Mdl.Code.usage 0.4;
     c_expr = Mdl.Code.usage 0.2;
-    c_seq = infinity }
+    c_seq = Mdl.Code.usage 0.1 }
 
 let code_template_by_kind : code_template KindMap.t =
   KindMap.make
@@ -1731,11 +1736,11 @@ let code_template_by_kind : code_template KindMap.t =
     ~vec:code_template0
     ~shape:code_template0
     ~object_:code_template0
-    ~layer:{ code_template0 with
-      c_repeat = Mdl.Code.usage 0.05;
+    ~layer:code_template0
+(*    c_repeat = Mdl.Code.usage 0.05;
       c_for = Mdl.Code.usage 0.05;
       c_ref = Mdl.Code.usage 0.5;
-      c_expr = Mdl.Code.usage 0.1 }
+      c_expr = Mdl.Code.usage 0.1 } *)
     ~grid:code_template0
     
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
@@ -2630,17 +2635,17 @@ type ('a,'b) parseur = (* input -> state -> results *)
 let parseur_empty : ('a,'b) parseur =
   Parseur (fun x state -> Myseq.empty)
 
-let rec parse_const (map : 'a -> 'b Myseq.t) (history : 'b option) : ('a,'b) parseur =
+let rec parseur_const ?(history : 'b option = None) (f : 'a -> parse_state -> ('b * parse_state) Myseq.t) : ('a,'b) parseur =
   match history with
   | None ->
      Parseur (fun x state ->
-         let*! y = map x in
-         (y, state, true, parse_const map (Some y)))
+         let*! y, state = f x state in
+         (y, state, true, parseur_const f ~history:(Some y)))
   | Some y0 ->
      Parseur (fun x state ->
-         let* y = map x in
+         let* y, state = f x state in
          if y = y0
-         then Myseq.return (y, state, true, parse_const map history)
+         then Myseq.return (y, state, true, parseur_const f ~history)
          else Myseq.empty)
 
     
@@ -2684,30 +2689,36 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
     match max_depth, sols () with
     | Some maxd, _ when depth >= maxd -> Myseq.return ([], state)
     | _, Myseq.Nil -> Myseq.return ([], state)
-    | _, Myseq.Cons ((y, state, stop, Parseur parse_seq), next_sols) ->
-       Myseq.interleave [ (* sequence not in fair order *)
-           (let* ly, state = aux ~depth:(depth+1) x state (parse_seq x state) in
+    | _, Myseq.Cons ((y, state1, stop, Parseur parse_seq), next_sols) ->
+       Myseq.concat [ (* sequence not in fair order *)
+           (let* ly, stateN = aux ~depth:(depth+1) x state1 (parse_seq x state1) in
             if ly=[] && not stop
             then Myseq.empty (* failure, not stopping at a valid step *)
-            else Myseq.return (y::ly, state));
+            else Myseq.return (y::ly, stateN));
            (fun () -> aux ~depth x state next_sols ())
          ] in
   Parseur (fun x state ->
       let* ly, state = aux ~depth:0 x state (parse x state) in
       Myseq.return (ly, state, true, parseur_empty))
 
-(*let _ = (* unit test for parseur_collect *)
-  let rec parse_count n =
+(* let _ = (* unit test for parseur_collect *)
+  let rec parseur_count n =
     Parseur (fun x state ->
-        if n >= 10
+        if n >= 9
         then Myseq.empty
         else
           let*! k = Myseq.range n 9 in
-          (k, state, parse_count (k+1))) in
-  let Parseur parse_all = parseur_collect ~max_depth:1 (parse_count 0) in
+          (k, state, true, parseur_count (k+1))) in
+  let rec parseur_perm l =
+    Parseur (fun x state ->
+        let* y = Myseq.from_list l in
+        let l1 = List.filter ((<>) y) l in
+        Myseq.return (y, state, l1=[], parseur_perm l1)) in
+  let Parseur parse_all = parseur_collect (* ~max_depth:1 *) (parseur_perm [1;2;3;4]) in
   parse_all () (Obj.magic [|1;2;3|] : parse_state)
   |> Myseq.slice ~limit:10000
-  |> Myseq.iter (fun (l,_,_) -> print_endline (String.concat " " (List.map string_of_int l)))*)
+  |> Myseq.iter (fun (l,_,_,_) ->
+         print_endline (String.concat " " (List.map string_of_int l))) *)
 
   
 let parseur_repeat
