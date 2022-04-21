@@ -1083,6 +1083,11 @@ let dl0 = 0.
 
 let dl_round dl = Float.round (dl *. 1e9) /. 1e9
 
+let dl_compare (dl1 : float) (dl2 : float) =
+  if dl1 < dl2 then -1
+  else if dl1 = dl2 then 0
+  else 1 [@@inline]
+                
 let dl_zero = Mdl.Code.universal_int_star 0
                 
 let dl_bool : bool -> dl =
@@ -2830,7 +2835,7 @@ let read_grid
     let best_parses =
       Common.prof "Model2.read_grid/best_parses" (fun () ->
           l_parses
-          |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
+          |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
           |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
           |> limit_dl (fun (_,_,dl) -> dl)) in
     Result.Ok best_parses)
@@ -2963,7 +2968,7 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
       Result.Ok [(gri,gro,dl)] in
     let reads_pair =
       reads_pair
-      |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> Stdlib.compare dl1 dl2)
+      |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
       |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
     Result.Ok (reads_input, reads_pair) in
   let input_reads, reads = List.split input_reads_reads in
@@ -3253,7 +3258,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
   |> List.stable_sort (* increasing delta DL *)
        (fun (delta_dl1,_,_,_,_) (delta_dl2,_,_,_,_) ->
-         Stdlib.compare delta_dl1 delta_dl2)
+         dl_compare delta_dl1 delta_dl2)
   |> Myseq.from_list
   |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
 and defs_check ~env (t : template) (d : data) : bool =
