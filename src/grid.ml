@@ -210,141 +210,171 @@ module type MaskCore =
     val iter : (int -> int -> unit) -> t -> unit
     val fold : ('a -> int -> int -> 'a) -> 'a -> t -> 'a
 
-    val to_string : t -> string
   end
 
-module MaskCoreBigarray : MaskCore =
+module MaskCoreBitmap : MaskCore =
+  (* SEE mask_core_alt.ml for alternative implementations *)
+  (* only MaskCoreZ is a bit more efficient in native code but catastrophic in JS code *)
   struct
-    open Bigarray
-
-    (* pure interface, functions must not change their argument arrays *)
+    module Bmp = Intmap.Bitmap_base
        
-    type t = (int, int8_unsigned_elt, c_layout) Array2.t
+    type t = { height : int;
+               width : int;
+               bits : (int, int_elt, c_layout) Array1.t }
 
-    let height m = Array2.dim1 m
-    let width m = Array2.dim2 m
+    let base = Intmap.base
+    let array_size height width = (* k bound, l bound for last k *)
+      let size = height * width in
+      let m = (size + base - 1) / base in
+      let n = base - (m * base - size) in
+      m, n [@@inline]
+    let offsets width i j = (* array index, bit index *)
+      let h = i * width + j in
+      h / base, h mod base [@@inline]
+    let coords width k l = (* i, j *)
+      let h = k * base + l in
+      h / width, h mod width [@@inline]
+           
+    let height m = m.height [@@inline]
+    let width m = m.width [@@inline]
 
     let empty height width =
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 0;
-      m
+      let m, _n = array_size height width in
+      let bits = Array1.create Int C_layout m in
+      Array1.fill bits Bmp.empty;
+      { height; width; bits }
     let full height width =
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 1;
-      m
+      let m, n = array_size height width in
+      let bits = Array1.create Int C_layout m in
+      Array1.fill bits Bmp.full;
+      if n < base then Array1.set bits (m-1) (1 lsl n - 1);
+      { height; width; bits }
     let singleton height width i j =
-      let m = Array2.create Int8_unsigned C_layout height width in
-      Array2.fill m 0;
-      Array2.set m i j 1;
-      m
-    let copy m =
-      let m' = Array2.create Int8_unsigned C_layout (Array2.dim1 m) (Array2.dim2 m) in
-      Array2.blit m m';
-      m' [@@inline]
-
-    let fold f acc m =
-      let h, w = Array2.dim1 m, Array2.dim2 m in
-      let rec aux2 acc i j =
-        if j >= w
-        then acc
-        else
-          let acc =
-            if Array2.get m i j <> 0
-            then f acc i j
-            else acc in (* processing cell *)
-          aux2 acc i (j+1) in (* processing next cells *)
-      let rec aux acc i =
-        if i >= h
-        then acc
-        else
-          let acc = aux2 acc i 0 in (* processing row *)
-          aux acc (i+1) (* processing next rows *)
-      in
-      aux acc 0
+      let m, _n = array_size height width in
+      let bits = Array1.create Int C_layout m in
+      Array1.fill bits Bmp.empty;
+      let k, l = offsets width i j in
+      Array1.set bits k (Bmp.singleton l);
+      { height; width; bits }
       
-    let for_all f m =
-      let h, w = Array2.dim1 m, Array2.dim2 m in
-      let rec aux2 i j =
-        j >= w
-        || (if Array2.get m i j <> 0
-            then f i j && aux2 i (j+1)
-            else aux2 i (j+1)) in
-      let rec aux i =
-        i >= h
-        || (aux2 i 0 && aux (i+1))
+    let bits_copy bits =
+      let bits' = Array1.create Int C_layout (Array1.dim bits) in
+      Array1.blit bits bits';
+      bits' [@@inline]
+    let bits_for_all f bits =
+      let dim = Array1.dim bits in
+      let rec aux k =
+        k >= dim
+        || f k (Array1.get bits k) && aux (k+1)
       in
       aux 0
-      
-    let iter f m =
-      let h, w = Array2.dim1 m, Array2.dim2 m in
-      for i = 0 to h-1 do
-        for j = 0 to w-1 do
-          if Array2.get m i j <> 0 then
-            f i j
-        done
+    let bits_fold f acc bits =
+      let dim = Array1.dim bits in
+      let rec aux acc k =
+        if k >= dim
+        then acc
+        else
+          let acc = f acc k (Array1.get bits k) in
+          aux acc (k+1)
+      in
+      aux acc 0
+    let bits_iter f bits =
+      let dim = Array1.dim bits in
+      for k = 0 to dim-1 do
+        f k (Array1.get bits k)
       done
-
-    let map f m =
-      let h, w = Array2.dim1 m, Array2.dim2 m in
-      let res = Array2.create Int8_unsigned C_layout h w in
-      for i = 0 to h-1 do
-        for j = 0 to w-1 do
-          Array2.set res i j (f i j (Array2.get m i j))
-        done
+    let bits_map f bits =
+      let dim = Array1.dim bits in
+      let res = Array1.create Int C_layout dim in
+      for k = 0 to dim-1 do
+        Array1.set res k (f k (Array1.get bits k))
       done;
-      res
-
-    let map2 f m1 m2 =
-      let h1, w1 = Array2.dim1 m1, Array2.dim2 m1 in
-      let h2, w2 = Array2.dim1 m2, Array2.dim2 m2 in
-      assert (h1=h2 && w1=w2);
-      let res = Array2.create Int8_unsigned C_layout h1 w1 in
-      for i = 0 to h1-1 do
-        for j = 0 to w1-1 do
-          Array2.set res i j (f i j (Array2.get m1 i j) (Array2.get m2 i j))
-        done
+      res [@@inline]
+    let bits_map2 f bits1 bits2 =
+      let dim1 = Array1.dim bits1 in
+      let res = Array1.create Int C_layout dim1 in
+      for k = 0 to dim1 - 1 do
+        Array1.set res k (f (Array1.get bits1 k) (Array1.get bits2 k))
       done;
-      res   
-
-    let area m = fold (fun res i j -> res+1) 0 m
+      res [@@inline]
       
     let equal m1 m2 = (m1 = m2)
-    let is_empty m = for_all (fun i j -> false) m
-    let is_subset m1 m2 = for_all (fun i j -> Array2.get m2 i j <> 0) m1
-      
-    let mem i j m =
-      i >= 0 && i < Array2.dim1 m
-      && j >= 0 && j < Array2.dim2 m
-      && Array2.get m i j <> 0
-    let add i j m =
-      let m' = copy m in
-      Array2.set m' i j 1;
-      m'
-    let remove i j m =
-      let m' = copy m in
-      Array2.set m' i j 0;
-      m'
+    let is_empty m =
+      bits_for_all (fun k bmp -> Bmp.is_empty bmp) m.bits
+    let is_subset m1 m2 =
+      bits_for_all (fun k bmp -> Bmp.subset bmp (Array1.get m2.bits k)) m1.bits
 
-    let union m1 m2 = map2 (fun i j b1 b2 -> b1 lor b2) m1 m2
-    let inter m1 m2 = (* map2 (fun i j b1 b2 -> b1 land b2) m1 m2 *)
-      let res = copy m1 in
-      iter
-        (fun i j ->
-          if Array2.get m2 i j = 0 then
-            Array2.set res i j 0)
-        m1;
-      res
-    let diff m1 m2 = (* map2 (fun i j b1 b2 -> b1 land (1 - b2)) m1 m2 *)
-      let res = copy m1 in
-      iter
-        (fun i j -> Array2.set res i j 0)
-        m2;
-      res
-    let diff_sym m1 m2 = map2 (fun i j b1 b2 -> b1 lxor b2) m1 m2
-    let compl m = map (fun i j b -> 1 - b) m
-               
+    let mem i j m =
+      i >= 0 && i < m.height
+      && j >= 0 && j < m.width
+      && (let k, l = offsets m.width i j in
+          Bmp.mem l (Array1.get m.bits k))
+    let add i j m =
+      let bits' = bits_copy m.bits in
+      let k, l = offsets m.width i j in
+      Array1.set bits' k (Bmp.add l (Array1.get m.bits k));
+      { m with bits = bits'}
+    let remove i j m =
+      let bits' = bits_copy m.bits in
+      let k, l = offsets m.width i j in
+      Array1.set bits' k (Bmp.remove l (Array1.get m.bits k));
+      { m with bits = bits'}
+
+    let area m =
+      bits_fold
+        (fun res k bmp -> res + Bmp.cardinal bmp)
+        0 m.bits
+
+    let union m1 m2 =
+      { m1 with bits = bits_map2 (fun bmp1 bmp2 -> bmp1 lor bmp2) m1.bits m2.bits }
+    let inter m1 m2 =
+      { m1 with bits = bits_map2 (fun bmp1 bmp2 -> bmp1 land bmp2) m1.bits m2.bits }
+    let diff m1 m2 =
+      { m1 with bits = bits_map2 (fun bmp1 bmp2 -> bmp1 land (lnot bmp2)) m1.bits m2.bits }
+    let diff_sym m1 m2 =
+      { m1 with bits = bits_map2 (fun bmp1 bmp2 -> bmp1 lxor bmp2) m1.bits m2.bits }
+    let compl m = diff (full m.height m.width) m
+
+    let fold f acc m =
+      let width = m.width in
+      bits_fold
+        (fun acc k bmp ->
+          if bmp = 0
+          then acc
+          else
+            Bmp.fold
+              (fun acc l ->
+                let i, j = coords width k l in
+                f acc i j)
+              acc bmp)
+        acc m.bits
+
+    let iter f m =
+      let width = m.width in
+      let dim = Array1.dim m.bits in
+      for k = 0 to dim-1 do
+        let bmp = Array1.get m.bits k in
+        if bmp = 0
+        then ()
+        else
+          Bmp.iter
+            (fun l ->
+              let i, j = coords width k l in
+              f i j)
+            bmp
+      done
+      
+  end
+  
+module Mask =
+  struct
+    include MaskCoreBitmap
+          
+    let dims m = height m, width m [@@inline]
+    let same_size m1 m2 = (dims m1 = dims m2)
+
     let to_string m =
-      let h, w = Array2.dim1 m, Array2.dim2 m in
+      let h, w = dims m in
       let bytes = Bytes.create (h * w + h - 1) in
       let pos = ref 0 in
       for i = 0 to h - 1 do
@@ -353,111 +383,15 @@ module MaskCoreBigarray : MaskCore =
           incr pos
         );
         for j = 0 to w - 1 do
-          if Array2.get m i j <> 0
+          if mem i j m
           then Bytes.set bytes !pos 'x'
           else Bytes.set bytes !pos '.';
           incr pos
         done
       done;
       Bytes.to_string bytes
-      let pp m = print_string (to_string m)
-  end
-  
-module MaskCoreZ : MaskCore =
-  struct
-    type t = { height : int;
-	       width : int;
-	       bits : Z.t; }
+    let pp m = print_string (to_string m)
 
-    let height m = m.height [@@inline]
-    let width m = m.width [@@inline]
-    let area m = Z.hamdist Z.zero m.bits
-               
-    let empty height width =
-      { height; width; bits = Z.zero }
-    let full height width =
-      { height; width; bits = Z.pred (Z.shift_left Z.one (height * width)) }
-    let singleton height width i j =
-      { height; width; bits = Z.shift_left Z.one (i * width + j) }
-
-    let equal m1 m2 =
-      m1.height = m2.height
-      && m1.width = m2.width
-      && Z.equal m1.bits m2.bits
-    let is_empty m =
-      Z.equal m.bits Z.zero
-    let is_subset m1 m2 =
-      Z.equal (Z.logand m1.bits (Z.lognot m2.bits)) Z.zero
-
-    let mem i j m =
-      i >=0 && i < m.height
-      && j >= 0 && j < m.width
-      && Z.testbit m.bits (i * m.width + j)
-
-    let add i j m =
-      { m with
-	bits = Z.logor m.bits (Z.shift_left Z.one (i * m.width + j)) }
-    let remove i j m =
-      { m with
-	bits = Z.logand m.bits (Z.lognot (Z.shift_left Z.one (i * m.width + j))) }
-
-    let union m1 m2 =
-      { m1 with bits = Z.logor m1.bits m2.bits }
-    let inter m1 m2 =
-      { m1 with bits = Z.logand m1.bits m2.bits }
-    let diff m1 m2 =
-      { m1 with bits = Z.logand m1.bits (Z.lognot m2.bits) }
-    let diff_sym m1 m2 =
-      { m1 with bits = Z.logxor m1.bits m2.bits }
-    let compl m1 =
-      { m1 with bits = Z.lognot m1.bits }
-
-    let iter f m =
-      for i = 0 to m.height - 1 do
-        let i_w = i * m.width in
-	for j = 0 to m.width - 1 do
-	  if Z.testbit m.bits (i_w + j) then
-	    f i j
-	done
-      done
-
-    let fold f acc m =
-      let res = ref acc in
-      for i = 0 to m.height - 1 do
-        let i_w = i * m.width in
-	for j = 0 to m.width - 1 do
-	  if Z.testbit m.bits (i_w + j) then
-	    res := f !res i j
-	done
-      done;
-      !res
-
-    let to_string m = (*Z.format "%b" m.bits*)
-      let bytes = Bytes.create (m.height * m.width + m.height - 1) in
-      let pos = ref 0 in
-      for i = 0 to m.height - 1 do
-        if i > 0 then (
-          Bytes.set bytes !pos '|';
-          incr pos
-        );
-        for j = 0 to m.width - 1 do
-          if Z.testbit m.bits (i * m.width + j)
-          then Bytes.set bytes !pos 'x'
-          else Bytes.set bytes !pos '.';
-          incr pos
-        done
-      done;
-      Bytes.to_string bytes
-      let pp m = print_string (to_string m)
-end
-                                                 
-module Mask = (* based on Z arithmetics, as compact bitsets *)
-  struct
-    include MaskCoreBigarray
-          
-    let dims m = height m, width m [@@inline]
-    let same_size m1 m2 = (dims m1 = dims m2)
-               
     (* isometric transformations *)
       
     let flipHeight m =
