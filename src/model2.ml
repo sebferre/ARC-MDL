@@ -2319,7 +2319,7 @@ let apply_expr_gen
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | d1, `Vec (`Int h, `Int w) ->
+        | d1, `Vec (`Int h, `Int w) when h > 0 && w > 0 ->
            let aux = function
              | `Point col ->
                 Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false)))
