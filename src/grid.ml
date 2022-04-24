@@ -179,47 +179,206 @@ let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun 
 
 (* grid masks *)
 
-module Mask = (* based on Z arithmetics, as compact bitsets *)
-  struct
-    type t = { height : int;
-	       width : int;
-	       bits : Z.t; }
-
-    exception Invalid_dim (* height/width are invalid for the operation *)
+exception Invalid_dim (* height/width are invalid for the operation *)
            
-    let height m = m.height
-    let width m = m.width
-    let area m = Z.hamdist Z.zero m.bits
+module type MaskCore =
+  sig
+    type t
+       
+    val height : t -> int
+    val width : t -> int
+    val area : t -> int
 
-    let same_size m1 m2 =
-      m1.height = m2.height && m1.width = m2.width
+    val empty : int -> int -> t
+    val full : int -> int -> t
+    val singleton : int -> int -> int -> int -> t
+
+    val equal : t -> t -> bool
+    val is_empty : t -> bool
+    val is_subset : t -> t -> bool
+
+    val mem : int -> int -> t -> bool
+    val add : int -> int -> t -> t
+    val remove : int -> int -> t -> t
+      
+    val union : t -> t -> t
+    val inter : t -> t -> t
+    val diff : t -> t -> t
+    val diff_sym : t -> t -> t
+    val compl : t -> t
+
+    val iter : (int -> int -> unit) -> t -> unit
+    val fold : ('a -> int -> int -> 'a) -> 'a -> t -> 'a
+
+    val to_string : t -> string
+  end
+
+module MaskCoreBigarray : MaskCore =
+  struct
+    open Bigarray
+
+    (* pure interface, functions must not change their argument arrays *)
+       
+    type t = (int, int8_unsigned_elt, c_layout) Array2.t
+
+    let height m = Array2.dim1 m
+    let width m = Array2.dim2 m
+
+    let empty height width =
+      let m = Array2.create Int8_unsigned C_layout height width in
+      Array2.fill m 0;
+      m
+    let full height width =
+      let m = Array2.create Int8_unsigned C_layout height width in
+      Array2.fill m 1;
+      m
+    let singleton height width i j =
+      let m = Array2.create Int8_unsigned C_layout height width in
+      Array2.fill m 0;
+      Array2.set m i j 1;
+      m
+    let copy m =
+      let m' = Array2.create Int8_unsigned C_layout (Array2.dim1 m) (Array2.dim2 m) in
+      Array2.blit m m';
+      m' [@@inline]
+
+    let fold f acc m =
+      let h, w = Array2.dim1 m, Array2.dim2 m in
+      let rec aux2 acc i j =
+        if j >= w
+        then acc
+        else
+          let acc =
+            if Array2.get m i j <> 0
+            then f acc i j
+            else acc in (* processing cell *)
+          aux2 acc i (j+1) in (* processing next cells *)
+      let rec aux acc i =
+        if i >= h
+        then acc
+        else
+          let acc = aux2 acc i 0 in (* processing row *)
+          aux acc (i+1) (* processing next rows *)
+      in
+      aux acc 0
+      
+    let for_all f m =
+      let h, w = Array2.dim1 m, Array2.dim2 m in
+      let rec aux2 i j =
+        j >= w
+        || (if Array2.get m i j <> 0
+            then f i j && aux2 i (j+1)
+            else aux2 i (j+1)) in
+      let rec aux i =
+        i >= h
+        || (aux2 i 0 && aux (i+1))
+      in
+      aux 0
+      
+    let iter f m =
+      let h, w = Array2.dim1 m, Array2.dim2 m in
+      for i = 0 to h-1 do
+        for j = 0 to w-1 do
+          if Array2.get m i j <> 0 then
+            f i j
+        done
+      done
+
+    let map f m =
+      let h, w = Array2.dim1 m, Array2.dim2 m in
+      let res = Array2.create Int8_unsigned C_layout h w in
+      for i = 0 to h-1 do
+        for j = 0 to w-1 do
+          Array2.set res i j (f i j (Array2.get m i j))
+        done
+      done;
+      res
+
+    let map2 f m1 m2 =
+      let h1, w1 = Array2.dim1 m1, Array2.dim2 m1 in
+      let h2, w2 = Array2.dim1 m2, Array2.dim2 m2 in
+      assert (h1=h2 && w1=w2);
+      let res = Array2.create Int8_unsigned C_layout h1 w1 in
+      for i = 0 to h1-1 do
+        for j = 0 to w1-1 do
+          Array2.set res i j (f i j (Array2.get m1 i j) (Array2.get m2 i j))
+        done
+      done;
+      res   
+
+    let area m = fold (fun res i j -> res+1) 0 m
+      
+    let equal m1 m2 = (m1 = m2)
+    let is_empty m = for_all (fun i j -> false) m
+    let is_subset m1 m2 = for_all (fun i j -> Array2.get m2 i j <> 0) m1
+      
+    let mem i j m =
+      i >= 0 && i < Array2.dim1 m
+      && j >= 0 && j < Array2.dim2 m
+      && Array2.get m i j <> 0
+    let add i j m =
+      let m' = copy m in
+      Array2.set m' i j 1;
+      m'
+    let remove i j m =
+      let m' = copy m in
+      Array2.set m' i j 0;
+      m'
+
+    let union m1 m2 = map2 (fun i j b1 b2 -> b1 lor b2) m1 m2
+    let inter m1 m2 = (* map2 (fun i j b1 b2 -> b1 land b2) m1 m2 *)
+      let res = copy m1 in
+      iter
+        (fun i j ->
+          if Array2.get m2 i j = 0 then
+            Array2.set res i j 0)
+        m1;
+      res
+    let diff m1 m2 = (* map2 (fun i j b1 b2 -> b1 land (1 - b2)) m1 m2 *)
+      let res = copy m1 in
+      iter
+        (fun i j -> Array2.set res i j 0)
+        m2;
+      res
+    let diff_sym m1 m2 = map2 (fun i j b1 b2 -> b1 lxor b2) m1 m2
+    let compl m = map (fun i j b -> 1 - b) m
                
-    let to_string m = (*Z.format "%b" m.bits*)
-      let bytes = Bytes.create (m.height * m.width + m.height - 1) in
+    let to_string m =
+      let h, w = Array2.dim1 m, Array2.dim2 m in
+      let bytes = Bytes.create (h * w + h - 1) in
       let pos = ref 0 in
-      for i = 0 to m.height - 1 do
+      for i = 0 to h - 1 do
         if i > 0 then (
           Bytes.set bytes !pos '|';
           incr pos
         );
-        for j = 0 to m.width - 1 do
-          if Z.testbit m.bits (i * m.width + j)
+        for j = 0 to w - 1 do
+          if Array2.get m i j <> 0
           then Bytes.set bytes !pos 'x'
           else Bytes.set bytes !pos '.';
           incr pos
         done
       done;
       Bytes.to_string bytes
-    let pp m = print_string (to_string m)
-		    
+      let pp m = print_string (to_string m)
+  end
+  
+module MaskCoreZ : MaskCore =
+  struct
+    type t = { height : int;
+	       width : int;
+	       bits : Z.t; }
+
+    let height m = m.height [@@inline]
+    let width m = m.width [@@inline]
+    let area m = Z.hamdist Z.zero m.bits
+               
     let empty height width =
       { height; width; bits = Z.zero }
     let full height width =
       { height; width; bits = Z.pred (Z.shift_left Z.one (height * width)) }
     let singleton height width i j =
       { height; width; bits = Z.shift_left Z.one (i * width + j) }
-	
-    let copy m = m
 
     let equal m1 m2 =
       m1.height = m2.height
@@ -273,10 +432,36 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       done;
       !res
 
+    let to_string m = (*Z.format "%b" m.bits*)
+      let bytes = Bytes.create (m.height * m.width + m.height - 1) in
+      let pos = ref 0 in
+      for i = 0 to m.height - 1 do
+        if i > 0 then (
+          Bytes.set bytes !pos '|';
+          incr pos
+        );
+        for j = 0 to m.width - 1 do
+          if Z.testbit m.bits (i * m.width + j)
+          then Bytes.set bytes !pos 'x'
+          else Bytes.set bytes !pos '.';
+          incr pos
+        done
+      done;
+      Bytes.to_string bytes
+      let pp m = print_string (to_string m)
+end
+                                                 
+module Mask = (* based on Z arithmetics, as compact bitsets *)
+  struct
+    include MaskCoreBigarray
+          
+    let dims m = height m, width m [@@inline]
+    let same_size m1 m2 = (dims m1 = dims m2)
+               
     (* isometric transformations *)
       
     let flipHeight m =
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty h w) in
       iter
         (fun i j -> res := add (h - 1 - i) j !res)
@@ -284,7 +469,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
       
     let flipWidth m =
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty h w) in
       iter
         (fun i j -> res := add i (w - 1 - j) !res)
@@ -292,7 +477,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
 
     let flipDiag1 m =
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty w h) in
       iter
         (fun i j -> res := add j i !res)
@@ -300,7 +485,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
 
     let flipDiag2 m =
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty w h) in
       iter
         (fun i j -> res := add (w - 1 - j) (h - 1 - i) !res)
@@ -308,7 +493,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
 
     let rotate90 m = (* clockwise *)
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty w h) in
       iter
         (fun i j -> res := add j (h - 1 - i) !res)
@@ -316,7 +501,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
       
     let rotate180 m = (* clockwise *)
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty h w) in
       iter
         (fun i j -> res := add (h - 1 - i) (w - 1 - j) !res)
@@ -324,7 +509,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
       
     let rotate270 m = (* clockwise *)
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let res = ref (empty w h) in
       iter
         (fun i j -> res := add (w - 1 - j) i !res)
@@ -334,7 +519,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
     (* scaling *)
       
     let scale_up (k : int) (l : int) m = (* scaling up mask [m] by a factor (k,l) *)
-      let res = ref (empty (m.height * k) (m.width * l)) in
+      let res = ref (empty (height m * k) (width m * l)) in
       iter
         (fun i j ->
           for i' = k*i to k*(i+1)-1 do
@@ -347,14 +532,14 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
 
     let scale_down (k : int) (l : int) m = (* scaling down *)
       (* each resulting pixel is a OR of the corresponding source pixels *)
-      let res = ref (empty (m.height / k) (m.width / l)) in
+      let res = ref (empty (height m / k) (width m / l)) in
       iter
         (fun i j -> res := add (i/k) (j/l) !res)
         m;
       !res
 
     let scale_to (new_h : int) (new_w : int) (m : t) : t option =
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
         Some (scale_up (new_h / h) (new_w / w) m)
       else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
@@ -364,7 +549,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
     (* resize and factor *)
 
     let tile (k : int) (l : int) m = (* k x l tiling of m *)
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let h', w' = h * k, w * l in
       let res = ref (empty h' w') in
       iter
@@ -382,7 +567,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
         if a > b then []
         else a :: range (a+1) b
       in
-      let h, w = m.height, m.width in
+      let h, w = dims m in
       let h_factors = ref (range 1 (h-1)) in
       let w_factors = ref (range 1 (w-1)) in
       for i = 0 to h-1 do
@@ -396,6 +581,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       (h', w')
 
     let resize_alike (m : t) (new_h : int) (new_w : int) : t = (* change size while preserving the repeating pattern *)
+      assert (new_h > 0 && new_w > 0);
       let h', w' = factor m in
       let res = ref (empty new_h new_w) in
       for i' = 0 to h' - 1 do (* for each position in the factor *)
@@ -425,9 +611,9 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res      
 
     let concatHeight m1 m2 =
-      if m1.width <> m2.width then raise Invalid_dim;
-      let h1, h2 = m1.height, m2.height in
-      let res = ref (empty (h1+h2) m1.width) in
+      if width m1 <> width m2 then raise Invalid_dim;
+      let h1, h2 = height m1, height m2 in
+      let res = ref (empty (h1+h2) (width m1)) in
       iter
         (fun i1 j1 -> res := add i1 j1 !res)
         m1;
@@ -437,9 +623,9 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       !res
       
     let concatWidth m1 m2 =
-      if m1.height <> m2.height then raise Invalid_dim;
-      let w1, w2 = m1.width, m2.width in
-      let res = ref (empty m1.height (w1+w2)) in
+      if height m1 <> height m2 then raise Invalid_dim;
+      let w1, w2 = width m1, width m2 in
+      let res = ref (empty (height m1) (w1+w2)) in
       iter
         (fun i1 j1 -> res := add i1 j1 !res)
         m1;
@@ -456,8 +642,8 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
     (* TODO: selecting halves and quarters *)
 
     let compose m1 m2 = (* repeating m2 for each 1-bit of m1 *)
-      let h1, w1 = m1.height, m1.width in
-      let h2, w2 = m2.height, m2.width in
+      let h1, w1 = dims m1 in
+      let h2, w2 = dims m2 in
       let res = ref (empty (h1*h2) (w1*w2)) in
       iter
         (fun i1 j1 ->
@@ -475,19 +661,19 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
     let sym_rotate180_inplace m = union m (rotate180 m)
     let sym_flipHeightWidth_inplace m = union (union m (flipHeight m)) (flipWidth m) (* also includes rotate180(m) *)
     let sym_flipDiag1_inplace m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       union m (flipDiag1 m)
     let sym_flipDiag2_inplace m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       union m (flipDiag2 m)
     let sym_flipDiag1Diag2_inplace m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       union (union m (flipDiag1 m)) (flipDiag2 m)
     let sym_rotate90_inplace m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       union m (rotate90 m)
     let sym_full_inplace m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       union (union m (rotate90 m)) (flipHeight m) (* includes all symmetries *)
 
     let sym_flipHeight_unfold m =
@@ -509,7 +695,7 @@ module Mask = (* based on Z arithmetics, as compact bitsets *)
       [ concatHeight m1 m1'; concatHeight m1' m1;
         concatHeight m2 m2'; concatHeight m2' m2 ]
     let sym_rotate90_unfold m =
-      if m.height <> m.width then raise Invalid_dim;
+      if height m <> width m then raise Invalid_dim;
       let m90 = rotate90 m in
       let m180 = rotate180 m in
       let m270 = rotate270 m in
@@ -595,8 +781,8 @@ module Mask_model =
       
     let from_mask (mask : Mask.t) : t list =
       from_box_in_mask
-        ~mini:0 ~maxi:(mask.height-1)
-        ~minj:0 ~maxj:(mask.width-1)
+        ~mini:0 ~maxi:(Mask.height mask - 1)
+        ~minj:0 ~maxj:(Mask.width mask - 1)
         mask
 
     let scale_up k l : t -> t result = function
@@ -686,7 +872,7 @@ let merge_parts (ps : part list) : part = (* QUICK *)
   | [] -> invalid_arg "Grid.merge_parts: empty list"
   | [p1] -> p1
   | p1::ps1 ->
-     let pixels = ref (Mask.copy p1.pixels) in
+     let pixels = ref p1.pixels in (* TODO: do not use a ref here *)
      let mini, maxi, minj, maxj, nb_pixels =
        List.fold_left
 	 (fun (mini, maxi, minj, maxj, nb_pixels) p2 ->
