@@ -16,14 +16,26 @@ let max_refinements = def_param "max_refinements" 20 string_of_int (* max nb of 
 
 exception TODO
 
+module TEST = (* for profiling visually, used for the JS version *)
+  struct
+    let prof name f =
+      print_endline (name ^ "...");
+      let res = f () in
+      print_endline ("DONE " ^ name);
+      res
+  end
+        
 (* binders and syntactic sugar *)
 
 let ( %* ) = Myseq.empty
 let ( !* ) = Myseq.return
 let ( ** ) = Myseq.cons
 let ( @* ) = fun seq1 seq2 -> Myseq.concat [seq1; seq2]
-        
+
+type 'a result = ('a,exn) Result.t
+
 let ( let| ) res f = Result.bind res f [@@inline]
+                   
 let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
 let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
 let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
@@ -33,14 +45,14 @@ let ( let$ ) (init,l) f =
 let ( let& ) l f =
   l |> List.iter (fun x -> f x) [@@inline]
 
-let rec result_list_bind (lx : 'a list) (f : 'a -> ('b,'c) Result.t) : ('b list, 'c) Result.t =
+let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 'c) Result.t =
   match lx with
   | [] -> Result.Ok []
   | x::lx1 ->
      let| y = f x in
-     let| ly1 = result_list_bind lx1 f in
+     let| ly1 = list_map_result f lx1 in
      Result.Ok (y::ly1)
-let ( let+| ) = result_list_bind
+let ( let+| ) lx f = list_map_result f lx [@@inline]
                    
 let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'c) Result.t) : ('b list, 'c) Result.t =
   let rec aux = function
@@ -97,6 +109,15 @@ let rec map_ilist (f : ilist_revpath -> 'a -> 'b) (lp : ilist_revpath) (l : 'a i
      let elt = f lp elt in
      let right = map_ilist f (`Right lp) right in
      `Insert (left,elt,right)
+
+let rec map_ilist_result (f : ilist_revpath -> 'a -> ('b,'c) Result.t) (lp : ilist_revpath) (l : 'a ilist) : ('b ilist,'c) Result.t =
+  match l with
+  | `Nil -> Result.Ok `Nil
+  | `Insert (left,elt,right) ->
+     let| left = map_ilist_result f (`Left lp) left in
+     let| elt = f lp elt in
+     let| right = map_ilist_result f (`Right lp) right in
+     Result.Ok (`Insert (left,elt,right))
 
 let rec fold_ilist (f : 'b -> ilist_revpath -> 'a -> 'b) (acc : 'b) (lp : ilist_revpath) (l : 'a ilist) : 'b =
   match l with
@@ -365,19 +386,30 @@ type 'a seq = ([> `Seq of 'a list] as 'a)
 (* broadcasting functions to align sequences and atoms of templates when evaluating expressions *) 
 let broadcast1 (t : 'a seq) (f : 'a -> 'b) : 'b seq =
   match t with
-  | `Seq lt -> `Seq (List.map f lt)
-  | _ -> f t
+  | `Seq lt ->
+     let lr = List.map f lt in
+     `Seq lr
+  | _ -> f t [@@inline]
 let broadcast2 (t : 'a seq * 'b seq) (f : 'a * 'b -> 'c) : 'c seq =
   let rec aux lt1 lt2 =
     match lt1, lt2 with
     | [], _ | _, [] -> []
-    | t1::l1, t2::l2 -> f (t1,t2) :: aux l1 l2
+    | t1::l1, t2::l2 ->
+       let r = f (t1,t2) in
+       let rs = aux l1 l2 in
+       r::rs
   in
   match t with
-  | `Seq lt1, `Seq lt2 -> `Seq (aux lt1 lt2)
-  | `Seq lt1, t2 -> `Seq (List.map (fun t1 -> f (t1,t2)) lt1)
-  | t1, `Seq lt2 -> `Seq (List.map (fun t2 -> f (t1,t2)) lt2)
-  | _ -> f t
+  | `Seq lt1, `Seq lt2 ->
+     let lr = aux lt1 lt2 in
+     `Seq lr
+  | `Seq lt1, t2 ->
+     let lr = List.map (fun t1 -> f (t1,t2)) lt1 in
+     `Seq lr
+  | t1, `Seq lt2 ->
+     let lr = List.map (fun t2 -> f (t1,t2)) lt2 in
+     `Seq lr
+  | _ -> f t [@@inline]
 let broadcast_list (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b) : 'b seq =
   let rec aux (ts : 'a seq list) =
     let heads_tails_opt =
@@ -392,10 +424,66 @@ let broadcast_list (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b) : 'b seq
         ts (Some ([],[])) in
     match heads_tails_opt with
     | None -> []
-    | Some (heads,tails) -> f heads :: aux tails
+    | Some (heads,tails) ->
+       let r = f heads in
+       let rs = aux tails in
+       r::rs
   in
   if List.exists (function `Seq _ -> true | _ -> false) ts
-  then `Seq (aux ts)
+  then
+    let lr = aux ts in
+    `Seq lr
+  else f ts
+
+let broadcast1_result (t : 'a seq) (f : 'a -> 'b result) : 'b seq result =
+  match t with
+  | `Seq lt ->
+     let| lr = list_map_result f lt in
+     Result.Ok (`Seq lr)
+  | _ -> f t [@@inline]
+let broadcast2_result (t : 'a seq * 'b seq) (f : 'a * 'b -> 'c result) : 'c seq result =
+  let rec aux lt1 lt2 =
+    match lt1, lt2 with
+    | [], _ | _, [] -> Result.Ok []
+    | t1::l1, t2::l2 ->
+       let| r = f (t1,t2) in
+       let| rs = aux l1 l2 in
+       Result.Ok (r::rs)
+  in
+  match t with
+  | `Seq lt1, `Seq lt2 ->
+     let| lr = aux lt1 lt2 in
+     Result.Ok (`Seq lr)
+  | `Seq lt1, t2 ->
+     let| lr = list_map_result (fun t1 -> f (t1,t2)) lt1 in
+     Result.Ok (`Seq lr)
+  | t1, `Seq lt2 ->
+     let| lr = list_map_result (fun t2 -> f (t1,t2)) lt2 in
+     Result.Ok (`Seq lr)
+  | _ -> f t [@@inline]
+let broadcast_list_result (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b result) : 'b seq result =
+  let rec aux (ts : 'a seq list) =
+    let heads_tails_opt =
+      List.fold_right
+        (fun t -> function
+          | None -> None
+          | Some (heads,tails) ->
+             match t with
+             | `Seq [] -> None
+             | `Seq (head0::tail0) -> Some (head0::heads, (`Seq tail0)::tails)
+             | _ -> Some (t::heads, t::tails))
+        ts (Some ([],[])) in
+    match heads_tails_opt with
+    | None -> Result.Ok []
+    | Some (heads,tails) ->
+       let| r = f heads in
+       let| rs = aux tails in
+       Result.Ok (r::rs)
+  in
+  if List.exists (function `Seq _ -> true | _ -> false) ts
+  then
+    let| lr = aux ts in
+    Result.Ok (`Seq lr)
   else f ts
 
        
@@ -1705,42 +1793,51 @@ let _ =
      | Undefined_result msg -> Some ("undefined expression: " ^ msg)
      | Negative_integer -> Some ("negative integer")
      | _ -> None)
-  
-type apply_lookup = var -> data option
+
+type apply_lookup = var -> data result
 
 let lookup_of_env (env : data) : apply_lookup =
-  fun p -> find_data p env
+  fun p ->
+  match find_data p env with
+  | Some d -> Result.Ok d
+  | None -> Result.Error (Unbound_var (p :> var))
 
 let apply_patt
-      (apply : lookup:apply_lookup -> revpath -> 'a -> 'b)
-      ~(lookup : apply_lookup) (p : revpath) : 'a patt -> 'b patt = function
+      (apply : lookup:apply_lookup -> revpath -> 'a -> 'b result)
+      ~(lookup : apply_lookup) (p : revpath) : 'a patt -> 'b patt result = function
   (* SHOULD NOT use [p] *)
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
+  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> Result.Ok d
   | `Vec (i,j) ->
-     `Vec (apply ~lookup (p ++ `I) i,
-           apply ~lookup (p ++ `J) j)
+     let| ri = apply ~lookup (p ++ `I) i in
+     let| rj = apply ~lookup (p ++ `J) j in
+     Result.Ok (`Vec (ri,rj))
   | `Point (color) ->
-     `Point (apply ~lookup (p ++ `Color) color)
+     let| rcolor = apply ~lookup (p ++ `Color) color in
+     Result.Ok (`Point rcolor)
   | `Rectangle (size,color,mask) ->
-     `Rectangle (apply ~lookup (p ++ `Size) size,
-                 apply ~lookup (p ++ `Color) color,
-                 apply ~lookup (p ++ `Mask) mask)
+     let| rsize = apply ~lookup (p ++ `Size) size in
+     let| rcolor = apply ~lookup (p ++ `Color) color in
+     let| rmask = apply ~lookup (p ++ `Mask) mask in
+     Result.Ok (`Rectangle (rsize,rcolor,rmask))
   | `PosShape (pos,shape) ->
-     `PosShape (apply ~lookup (p ++ `Pos) pos,
-                apply ~lookup (p ++ `Shape) shape)
+     let| rpos = apply ~lookup (p ++ `Pos) pos in
+     let| rshape = apply ~lookup (p ++ `Shape) shape in
+     Result.Ok (`PosShape (rpos,rshape))
   | `Background (size,color,layers) ->
-     `Background (apply ~lookup (p ++ `Size) size,
-                  apply ~lookup (p ++ `Color) color,
-                  map_ilist
-                    (fun lp shape -> apply ~lookup (p ++ `Layer lp) shape)
-                    `Root layers)
+     let| rsize = apply ~lookup (p ++ `Size) size in
+     let| rcolor = apply ~lookup (p ++ `Color) color in
+     let| rlayers =
+       map_ilist_result
+         (fun lp shape -> apply ~lookup (p ++ `Layer lp) shape)
+         `Root layers in
+     Result.Ok (`Background (rsize,rcolor,rlayers))
 
 let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : template expr -> template -> template = *)
   (* let flip_size, sym_mask_model = flip_size__f_sym sym in *)
   let sym_pos d = (* symmetry of a point relative to the grid *)
     let p_grid_size = `Field (`Size, `Root) in
     match lookup p_grid_size, d with (* getting the grid size *)
-    | Some (`Vec (`Int h, `Int w)), `Vec (`Int i, `Int j) ->
+    | Result.Ok (`Vec (`Int h, `Int w)), `Vec (`Int i, `Int j) ->
        let i', j' =
          match sym with
          | `Id -> i, j
@@ -1752,7 +1849,7 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
          | `Rotate90 -> j, h-1-i
          | `Rotate270 -> w-1-j, i in
        `Vec (`Int i', `Int j')
-    | None, _ -> raise (Unbound_var p_grid_size)
+    (* | None, _ -> raise (Unbound_var p_grid_size) *)
     | _ -> assert false in
   let sym_size = function
     | `Vec (`Int h, `Int w) ->
@@ -1778,9 +1875,9 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
     | _ -> assert false in
   let sym_mask = function
     | `Mask mm ->
-       let mm' =
+       let| mm' =
          match sym with
-         | `Id -> mm
+         | `Id -> Result.Ok mm
          | `FlipHeight -> Grid.Mask_model.flipHeight mm
          | `FlipWidth -> Grid.Mask_model.flipWidth mm
          | `FlipDiag1 -> Grid.Mask_model.flipDiag1 mm
@@ -1788,22 +1885,25 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
          | `Rotate180 -> Grid.Mask_model.rotate180 mm
          | `Rotate90 -> Grid.Mask_model.rotate90 mm
          | `Rotate270 -> Grid.Mask_model.rotate270 mm in
-       `Mask mm'
+       Result.Ok (`Mask mm')
     | _ -> assert false in
   let sym_shape = function
-    | `Point col -> `Point col
+    | `Point col -> Result.Ok (`Point col)
     | `Rectangle (size, col, mask) ->
-       `Rectangle (sym_size size, col, sym_mask mask)
+       let| mask' = sym_mask mask in
+       Result.Ok (`Rectangle (sym_size size, col, mask'))
     | _ -> assert false
   in
   match role_e1, d1 with
-  | `Vec `Pos, _ -> sym_pos d1
-  | `Vec (`Size _), _ -> sym_size d1
-  | `Vec `Move, _ -> sym_move d1
+  | `Vec `Pos, _ -> Result.Ok (sym_pos d1)
+  | `Vec (`Size _), _ -> Result.Ok (sym_size d1)
+  | `Vec `Move, _ -> Result.Ok (sym_move d1)
   | `Mask, _ -> sym_mask d1
   | `Shape, _ -> sym_shape d1
-  | `Layer, `PosShape (pos, shape) -> `PosShape (pos, sym_shape shape) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
-  | _ -> raise (Invalid_expr e)
+  | `Layer, `PosShape (pos, shape) ->
+     let| shape' = sym_shape shape in
+     Result.Ok (`PosShape (pos, shape')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
+  | _ -> Result.Error (Invalid_expr e)
 
 let unfold_symmetry (sym_matrix : symmetry list list) =
   let rec mask_matrix m = function
@@ -1833,303 +1933,359 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
        `Vec (`Int (k*h), `Int (l*w))
     | _ -> assert false in
   let unfold_mask = function
-    | `Mask m -> `Mask (mask_matrix m sym_matrix)
-    | `Full _ -> `Full false
-    | _ -> raise (Undefined_result "Model2.unfold_symmetry: not a custom mask")  
+    | `Mask m -> Result.Ok (`Mask (mask_matrix m sym_matrix))
+    | `Full _ -> Result.Ok (`Full false)
+    | _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: not a custom mask")  
   in
   fun e d ->
   match d with
-  | `Mask mm -> `Mask (unfold_mask mm)
+  | `Mask mm ->
+     let| mm = unfold_mask mm in
+     Result.Ok (`Mask mm)
   | `Rectangle (size, col, `Mask mm) ->
-     `Rectangle (unfold_size size, col, `Mask (unfold_mask mm))
-  | `Point _ -> raise (Undefined_result "Model2.unfold_symmetry: point")
+     let| mm = unfold_mask mm in
+     Result.Ok (`Rectangle (unfold_size size, col, `Mask mm))
+  | `Point _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
-     `PosShape (pos, `Rectangle (unfold_size size, col, `Mask (unfold_mask mm)))
-  | `PosShape (_, `Point _) -> raise (Undefined_result "Model2.unfold_symmetry: point")
-  | _ -> raise (Invalid_expr e)
+     let| mm = unfold_mask mm in
+     Result.Ok (`PosShape (pos, `Rectangle (unfold_size size, col, `Mask mm)))
+  | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
+  | _ -> Result.Error (Invalid_expr e)
 
 let apply_expr_gen
-          (apply : lookup:apply_lookup -> revpath -> 'a -> template)
-          ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template = (* QUICK *)
+      (apply : lookup:apply_lookup -> revpath -> 'a -> template result)
+      ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
   match e with
-  | `Ref p ->
-     (match lookup (p :> var) with
-      | Some d -> (d :> template)
-      | None -> raise (Unbound_var (p :> var)))
-  | `ConstInt k -> `Int k
-  | `ConstVec (k,l) -> `Vec (`Int k, `Int l)
+  | `Ref p -> (lookup (p :> var) :> template result)
+  | `ConstInt k -> Result.Ok (`Int k)
+  | `ConstVec (k,l) -> Result.Ok (`Vec (`Int k, `Int l))
   | `Plus (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
-        | `Int i1, `Int i2 -> `Int (i1 + i2)
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1+i2), `Int (j1+j2))
-        | _ -> raise (Invalid_expr e))
+        | `Int i1, `Int i2 -> Result.Ok (`Int (i1 + i2))
+        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1+i2), `Int (j1+j2)))
+        | _ -> Result.Error (Invalid_expr e))
   | `Minus (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
-        | `Int i1, `Int i2 -> `Int (i1-i2)
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> `Vec (`Int (i1-i2), `Int (j1-j2))
-        | _ -> raise (Invalid_expr e))
+        | `Int i1, `Int i2 -> Result.Ok (`Int (i1-i2))
+        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1-i2), `Int (j1-j2)))
+        | _ -> Result.Error (Invalid_expr e))
   | `IncrInt (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        (*     (match apply ~lookup p e1 with *)
-      | `Int i1 -> `Int (i1 + k)
-      | _ -> raise (Invalid_expr e))
+        | `Int i1 -> Result.Ok (`Int (i1 + k))
+        | _ -> Result.Error (Invalid_expr e))
   | `DecrInt (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Int i1 -> `Int (i1 - k)
-        | _ -> raise (Invalid_expr e))
+        | `Int i1 -> Result.Ok (`Int (i1 - k))
+        | _ -> Result.Error (Invalid_expr e))
   | `IncrVec (e1,k,l) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 + k), `Int (j1 + l))
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 + k), `Int (j1 + l)))
+        | _ -> Result.Error (Invalid_expr e))
   | `DecrVec (e1,k,l) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Int i1 -> `Int (i1 - k)
-        | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 - k), `Int (j1 - l))
-        | _ -> raise (Invalid_expr e))
+        | `Int i1 -> Result.Ok (`Int (i1 - k))
+        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 - k), `Int (j1 - l)))
+        | _ -> Result.Error (Invalid_expr e))
   | `Modulo (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
-        | `Int i1, `Int i2 -> `Int (i1 mod i2)
-        | _ -> raise (Invalid_expr e))
+        | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
+        | _ -> Result.Error (Invalid_expr e))
   | `ScaleUp (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Int i1 -> `Int (i1 * k)
-        | `Vec (`Int i1, `Int j1) -> `Vec (`Int (i1 * k), `Int (j1 * k))
-        | `Mask mm -> `Mask (Grid.Mask_model.scale_up k k mm)
+        | `Int i1 -> Result.Ok (`Int (i1 * k))
+        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
+        | `Mask mm ->
+           let| mm' = Grid.Mask_model.scale_up k k mm in
+           Result.Ok (`Mask mm')
         | `Point col ->
-           `Rectangle (`Vec (`Int k, `Int k), col, `Mask (`Full false))
+           Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask (`Full false)))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
-           `Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask (Grid.Mask_model.scale_up k k mm))
-        | _ -> raise (Invalid_expr e))
+           let| mm' = Grid.Mask_model.scale_up k k mm in
+           Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
+        | _ -> Result.Error (Invalid_expr e))
   | `ScaleDown (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
         | `Int i1 ->
            let rem = i1 mod k in
            if rem = 0 || rem = k - 1 (* account for separators *)
-           then `Int (i1 / k)
-           else raise (Undefined_result "ScaleDown: not an integer")
+           then Result.Ok (`Int (i1 / k))
+           else Result.Error (Undefined_result "ScaleDown: not an integer")
         | `Vec (`Int i1, `Int j1) ->
            let remi, remj = i1 mod k, j1 mod k in
            if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
-           then `Vec (`Int (i1 / k), `Int (j1 / k))
-           else raise (Undefined_result "ScaleDown: not an integer")
-        | _ -> raise (Invalid_expr e))
+           then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
+           else Result.Error (Undefined_result "ScaleDown: not an integer")
+        | _ -> Result.Error (Invalid_expr e))
   | `ScaleTo (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
-        | `Mask mm, `Vec (`Int new_h, `Int new_w) -> `Mask (Grid.Mask_model.scale_to new_h new_w mm)
+        | `Mask mm, `Vec (`Int new_h, `Int new_w) ->
+           let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
+           Result.Ok (`Mask mm')
         | `Point col, `Vec (`Int new_h, `Int new_w) ->
-           `Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask (`Full false))
+           Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask (`Full false)))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int new_h, `Int new_w) ->
-           `Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask (Grid.Mask_model.scale_to new_h new_w mm))
-        | _ -> raise (Invalid_expr e))
+           let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
+           Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask mm'))
+        | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
            if i1 <> i2 && j1 <> j2
-           then `Vec (`Int i1, `Int j2)
-           else raise (Undefined_result "Corner: vectors on same row/column")
-        | _ -> raise (Invalid_expr e))
+           then Result.Ok (`Vec (`Int i1, `Int j2))
+           else Result.Error (Undefined_result "Corner: vectors on same row/column")
+        | _ -> Result.Error (Invalid_expr e))
   | `Min le1 ->
-     broadcast_list (le1 |> List.map (fun e1 -> apply ~lookup p e1))
+     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     broadcast_list_result lres1
        (fun lt1 ->
-         lt1
-         |> List.fold_left
-              (fun (is_int,is_vec,mini,minj) -> function
-                | `Int i -> (true, is_vec, min i mini, minj)
-                | `Vec (`Int i, `Int j) -> (is_int, true, min i mini, min j minj)
-                | _ -> raise (Invalid_expr e))
-              (false, false, max_int, max_int)
-         |> (fun (is_int,is_vec,mini,minj) ->
-          match is_int, is_vec with
-          | true, false -> `Int mini
-          | false, true -> `Vec (`Int mini, `Int minj)
-          | _ -> assert false))
+         let| is_int, is_vec, mini, minj =
+           lt1
+           |> List.fold_left
+                (fun res t ->
+                  let| is_int,is_vec,mini,minj = res in
+                  match t with
+                  | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
+                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, min i mini, min j minj)
+                  | _ -> Result.Error (Invalid_expr e))
+                (Result.Ok (false, false, max_int, max_int)) in
+         match is_int, is_vec with
+         | true, false -> Result.Ok (`Int mini)
+         | false, true -> Result.Ok (`Vec (`Int mini, `Int minj))
+         | _ -> assert false)
   | `Max le1 ->
-     broadcast_list (le1 |> List.map (fun e1 -> apply ~lookup p e1))
+     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     broadcast_list_result lres1
        (fun lt1 ->
-         lt1
-         |> List.fold_left
-              (fun (is_int,is_vec,maxi,maxj) -> function
-                | `Int i -> (true, is_vec, max i maxi, maxj)
-                | `Vec (`Int i, `Int j) -> (is_int, true, max i maxi, max j maxj)
-                | _ -> raise (Invalid_expr e))
-              (false, false, min_int, min_int)
-         |> (fun (is_int,is_vec,maxi,maxj) ->
-          match is_int, is_vec with
-          | true, false -> `Int maxi
-          | false, true -> `Vec (`Int maxi, `Int maxj)
-          | _ -> assert false))
+         let| is_int,is_vec,maxi,maxj =
+           lt1
+           |> List.fold_left
+                (fun res t ->
+                  let| is_int,is_vec,maxi,maxj = res in
+                  match t with
+                  | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
+                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
+                  | _ -> Result.Error (Invalid_expr e))
+                (Result.Ok (false, false, min_int, min_int)) in
+         match is_int, is_vec with
+         | true, false -> Result.Ok (`Int maxi)
+         | false, true -> Result.Ok (`Vec (`Int maxi, `Int maxj))
+         | _ -> assert false)
   | `Average le1 ->
-     broadcast_list (le1 |> List.map (fun e1 -> apply ~lookup p e1))
+     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     broadcast_list_result lres1
        (fun lt1 ->
-         lt1
-         |> List.fold_left
-              (fun (is_int,is_vec,n,sumi,sumj) -> function
-                | `Int i -> (true, is_vec, n+1, sumi+i, sumj)
-                | `Vec (`Int i, `Int j) -> (is_int, true, n+1, sumi+i, sumj+j)
-                | _ -> raise (Invalid_expr e))
-              (false, false, 0, 0, 0)
-         |> (fun (is_int,is_vec,n,sumi,sumj) ->
-          match is_int, is_vec with
-          | true, false ->
-             if sumi mod n = 0
-             then `Int (sumi / n)
-             else raise (Undefined_result "Average: not an integer")
-          | false, true ->
-             if sumi mod n = 0 && sumj mod n = 0
-             then `Vec (`Int (sumi / n), `Int (sumj / n))
-             else raise (Undefined_result "Average: not an integer")
-          | _ -> assert false)) (* empty or ill-typed list *)
+         let| is_int,is_vec,n,sumi,sumj =
+           lt1
+           |> List.fold_left
+                (fun res t ->
+                  let| is_int,is_vec,n,sumi,sumj = res in
+                  match t with
+                  | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
+                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
+                  | _ -> Result.Error (Invalid_expr e))
+              (Result.Ok (false, false, 0, 0, 0)) in
+         match is_int, is_vec with
+         | true, false ->
+            if sumi mod n = 0
+            then Result.Ok (`Int (sumi / n))
+            else Result.Error (Undefined_result "Average: not an integer")
+         | false, true ->
+            if sumi mod n = 0 && sumj mod n = 0
+            then Result.Ok (`Vec (`Int (sumi / n), `Int (sumj / n)))
+            else Result.Error (Undefined_result "Average: not an integer")
+         | _ -> assert false) (* empty or ill-typed list *)
   | `Span (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Int i1, `Int i2 ->
            if i1=i2
-           then raise (Undefined_result "Span: same int")
-           else `Int (abs (i2-i1) + 1)
+           then Result.Error (Undefined_result "Span: same int")
+           else Result.Ok (`Int (abs (i2-i1) + 1))
         | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
            if i1=i2 && j1=j2
-           then raise (Undefined_result "Span: same vector")
-           else `Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1))
-        | _ -> raise (Invalid_expr e))
+           then Result.Error (Undefined_result "Span: same vector")
+           else Result.Ok (`Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1)))
+        | _ -> Result.Error (Invalid_expr e))
   | `Norm e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int i, `Int j) -> `Int (i+j)
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int i, `Int j) -> Result.Ok (`Int (i+j))
+        | _ -> Result.Error (Invalid_expr e))
   | `Diag1 (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int i, `Int j) -> `Int ((i+j) mod k)
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i+j) mod k))
+        | _ -> Result.Error (Invalid_expr e))
   | `Diag2 (e1,k) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int i, `Int j) -> `Int ((i-j) mod k)
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i-j) mod k))
+        | _ -> Result.Error (Invalid_expr e))
   | `LogAnd (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, _ -> `Mask m2
-            | _, `Full _ -> `Mask m1
+            | `Full _, _ -> Result.Ok (`Mask m2)
+            | _, `Full _ -> Result.Ok (`Mask m1)
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               `Mask (`Mask (Grid.Mask.inter bm1 bm2))
-            | _ -> raise (Undefined_result "LogAnd: undefined"))
-        | _ -> raise (Invalid_expr e))
+               Result.Ok (`Mask (`Mask (Grid.Mask.inter bm1 bm2)))
+            | _ -> Result.Error (Undefined_result "LogAnd: undefined"))
+        | _ -> Result.Error (Invalid_expr e))
   | `LogOr (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, _ -> `Mask m1
-            | _, `Full _ -> `Mask m2
+            | `Full _, _ -> Result.Ok (`Mask m1)
+            | _, `Full _ -> Result.Ok (`Mask m2)
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               `Mask (`Mask (Grid.Mask.union bm1 bm2))
-            | _ -> raise (Undefined_result "LogOr: undefined"))
-        | _ -> raise (Invalid_expr e))
+               Result.Ok (`Mask (`Mask (Grid.Mask.union bm1 bm2)))
+            | _ -> Result.Error (Undefined_result "LogOr: undefined"))
+        | _ -> Result.Error (Invalid_expr e))
   | `LogXOr (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
-            | `Mask bm1, `Full _ -> `Mask (`Mask (Grid.Mask.compl bm1))
+            | `Full _, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
+            | `Mask bm1, `Full _ -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               `Mask (`Mask (Grid.Mask.diff_sym bm1 bm2))
-            | _ -> raise (Undefined_result "LogXOr: undefined"))
-        | _ -> raise (Invalid_expr e))
+               Result.Ok (`Mask (`Mask (Grid.Mask.diff_sym bm1 bm2)))
+            | _ -> Result.Error (Undefined_result "LogXOr: undefined"))
+        | _ -> Result.Error (Invalid_expr e))
   | `LogAndNot (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, `Mask bm2 -> `Mask (`Mask (Grid.Mask.compl bm2))
+            | `Full _, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               `Mask (`Mask (Grid.Mask.diff bm1 bm2))
-            | _ -> raise (Undefined_result "LogAndNot: undefined"))
-        | _ -> raise (Invalid_expr e))
+               Result.Ok (`Mask (`Mask (Grid.Mask.diff bm1 bm2)))
+            | _ -> Result.Error (Undefined_result "LogAndNot: undefined"))
+        | _ -> Result.Error (Invalid_expr e))
   | `LogNot e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
         | `Mask m1 ->
            (match m1 with
-            | `Mask bm1 -> `Mask (`Mask (Grid.Mask.compl bm1))
-          | _ -> raise (Undefined_result "LogNot: undefined"))
-        | _ -> raise (Invalid_expr e))
+            | `Mask bm1 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
+          | _ -> Result.Error (Undefined_result "LogNot: undefined"))
+        | _ -> Result.Error (Invalid_expr e))
   | `Area e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Point _ -> `Int 1
+        | `Point _ -> Result.Ok (`Int 1)
         | `Rectangle (`Vec (`Int height, `Int width), _, `Mask m) ->
-           `Int (Grid.Mask_model.area ~height ~width m)
-        | _ -> raise (Invalid_expr e))
+           Result.Ok (`Int (Grid.Mask_model.area ~height ~width m))
+        | _ -> Result.Error (Invalid_expr e))
   | `Left e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `PosShape (`Vec (_, `Int j), `Rectangle _) -> `Int j
-        | `PosShape _ -> raise (Undefined_result "Left: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+        | `PosShape (`Vec (_, `Int j), `Rectangle _) -> Result.Ok (`Int j)
+        | `PosShape _ -> Result.Error (Undefined_result "Left: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `Right e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `PosShape (`Vec (_, `Int j), `Rectangle (`Vec (_, `Int w), _, _)) -> `Int (j+w-1)
-        | `PosShape _ -> raise (Undefined_result "Right: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+        | `PosShape (`Vec (_, `Int j), `Rectangle (`Vec (_, `Int w), _, _)) -> Result.Ok (`Int (j+w-1))
+        | `PosShape _ -> Result.Error (Undefined_result "Right: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `Center e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
         | `PosShape (`Vec (_, `Int j), `Rectangle (`Vec (_, `Int w), _, _)) ->
            if w mod 2 = 0
-           then raise (Undefined_result "Center: no center, even width")
-           else `Int (j + w/2 + 1)
-        | `PosShape _ -> raise (Undefined_result "Center: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+           then Result.Error (Undefined_result "Center: no center, even width")
+           else Result.Ok (`Int (j + w/2 + 1))
+        | `PosShape _ -> Result.Error (Undefined_result "Center: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `Top e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `PosShape (`Vec (`Int i, _), `Rectangle _) -> `Int i
-        | `PosShape _ -> raise (Undefined_result "Top: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+        | `PosShape (`Vec (`Int i, _), `Rectangle _) -> Result.Ok (`Int i)
+        | `PosShape _ -> Result.Error (Undefined_result "Top: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `Bottom e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `PosShape (`Vec (`Int i, _), `Rectangle (`Vec (`Int h, _), _, _)) -> `Int (i+h-1)
-        | `PosShape _ -> raise (Undefined_result "Bottom: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+        | `PosShape (`Vec (`Int i, _), `Rectangle (`Vec (`Int h, _), _, _)) -> Result.Ok (`Int (i+h-1))
+        | `PosShape _ -> Result.Error (Undefined_result "Bottom: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `Middle e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
         | `PosShape (`Vec (`Int i, _), `Rectangle (`Vec (`Int h, _), _, _)) ->
            if h mod 2 = 0
-           then raise (Undefined_result "Middle: no middle, even height")
-           else `Int (i + h/2 + 1)
-        | `PosShape _ -> raise (Undefined_result "Middle: not a rectangle")
-        | _ -> raise (Invalid_expr e))
+           then Result.Error (Undefined_result "Middle: no middle, even height")
+           else Result.Ok (`Int (i + h/2 + 1))
+        | `PosShape _ -> Result.Error (Undefined_result "Middle: not a rectangle")
+        | _ -> Result.Error (Invalid_expr e))
   | `ProjI e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int i, _) -> `Vec (`Int i, `Int 0)
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int i, _) -> Result.Ok (`Vec (`Int i, `Int 0))
+        | _ -> Result.Error (Invalid_expr e))
   | `ProjJ e1 ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (_, `Int j) -> `Vec (`Int 0, `Int j)
-        | _ -> raise (Invalid_expr e))         
+        | `Vec (_, `Int j) -> Result.Ok (`Vec (`Int 0, `Int j))
+        | _ -> Result.Error (Invalid_expr e))         
   | `TranslationOnto (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
     (fun (d1,d2) ->
       match get_pos d1, get_size d1, get_pos d2, get_size d2 with
       | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
@@ -2143,109 +2299,135 @@ let apply_expr_gen
            if maxj1 < minj2 then minj2 - maxj1 - 1
            else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
            else 0 in
-         `Vec (`Int ti, `Int tj)
-      | _ -> raise (Invalid_expr e))
+         Result.Ok (`Vec (`Int ti, `Int tj))
+      | _ -> Result.Error (Invalid_expr e))
   | `Tiling (e1,k,l) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (function
-        | `Vec (`Int h, `Int w) -> `Vec (`Int (h*k), `Int (w*l))
-        | `Mask mm -> `Mask (Grid.Mask_model.tile k l mm)
-        | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) -> 
-           `Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask (Grid.Mask_model.tile k l mm))
-        | `Point _ -> raise (Undefined_result "Tiling: undefined on points")
-        | _ -> raise (Invalid_expr e))
+        | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
+        | `Mask mm ->
+           let| mm' = Grid.Mask_model.tile k l mm in
+           Result.Ok (`Mask mm')
+        | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
+           let| mm' = Grid.Mask_model.tile k l mm in
+           Result.Ok (`Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask mm'))
+        | `Point _ -> Result.Error (Undefined_result "Tiling: undefined on points")
+        | _ -> Result.Error (Invalid_expr e))
   | `ResizeAlikeTo (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | d1, `Vec (`Int h, `Int w) ->
            let aux = function
              | `Point col ->
-                `Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false))
+                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false)))
              | `Rectangle (_size, col, `Mask mm) ->
-                `Rectangle (`Vec (`Int h, `Int w), col, `Mask (Grid.Mask_model.resize_alike h w mm))
+                let| mm' = Grid.Mask_model.resize_alike h w mm in
+                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask mm'))
              | _ -> assert false in             
            (match d1 with
-            | `Mask mm -> `Mask (Grid.Mask_model.resize_alike h w mm)
+            | `Mask mm ->
+               let| mm' = Grid.Mask_model.resize_alike h w mm in
+               Result.Ok (`Mask mm')
             | (`Point _ | `Rectangle _ as shape) -> aux shape
-            | `PosShape (pos,shape) -> `PosShape (pos, aux shape)
-            | _ -> raise (Invalid_expr e))
-        | _ -> raise (Invalid_expr e))
+            | `PosShape (pos,shape) ->
+               let| shape' = aux shape in
+               Result.Ok (`PosShape (pos, shape'))
+            | _ -> Result.Error (Invalid_expr e))
+        | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (apply_symmetry ~lookup sym role_e1 e)
   | `UnfoldSym (sym_matrix,e1) ->
-     broadcast1 (apply ~lookup p e1)
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
        (unfold_symmetry sym_matrix e)
   | `TranslationSym (sym,e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (fun (d1,d2) ->
          match get_pos d1, get_size d1, get_pos d2, get_size d2 with
          | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
-            let ti, tj =
+            let| ti, tj =
               match sym with
-              | `Id -> 0, 0
-              | `FlipHeight -> 2 * (mini2-mini1) + (h2-h1), 0
-              | `FlipWidth -> 0, 2 * (minj2-minj1) + (w2-w1)
-              | `Rotate180 -> 2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1)
+              | `Id -> Result.Ok (0, 0)
+              | `FlipHeight -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 0)
+              | `FlipWidth -> Result.Ok (0, 2 * (minj2-minj1) + (w2-w1))
+              | `Rotate180 -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1))
               | `FlipDiag1 ->
                  if h2 = w2
                  then
                    let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
-                   ti, - ti
-                 else raise (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
+                   Result.Ok (ti, - ti)
+                 else Result.Error (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
               | `FlipDiag2 ->
                  if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
                  then
                    let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
-                   ti, - ti
-                 else raise (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
+                   Result.Ok (ti, - ti)
+                 else Result.Error (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
               | `Rotate90 ->
                  if h2 = w2
                  then
-                   (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
-                   (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1 (* /2 OK because h2=w2 *)
-                 else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+                   Result.Ok
+                     ((mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
+                      (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1) (* /2 OK because h2=w2 *)
+                 else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
               | `Rotate270 ->
                  if h2 = w2
                  then
-                   (minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
-                   (minj2 - minj1) - (mini2 - mini1) (* - (h2 - w2) / 2 *)
-                 else raise (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+                   Result.Ok
+                     ((minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
+                      (minj2 - minj1) - (mini2 - mini1)) (* - (h2 - w2) / 2 *)
+                 else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
             in
-            `Vec (`Int ti, `Int tj)
-         | _ -> raise (Invalid_expr e))
+            Result.Ok (`Vec (`Int ti, `Int tj))
+         | _ -> Result.Error (Invalid_expr e))
   | `Coloring (e1,e2) ->
-     broadcast2 (apply ~lookup p e1, apply ~lookup p e2)
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
        (function
         | d1, (`Color c as new_col) ->
            let aux = function
-           | `Point _ -> `Point new_col
-           | `Rectangle (size, _, mask)  -> `Rectangle (size, new_col, mask)
-           | _ -> raise (Invalid_expr e) in
+             | `Point _ -> Result.Ok (`Point new_col)
+             | `Rectangle (size, _, mask)  -> Result.Ok (`Rectangle (size, new_col, mask))
+             | _ -> Result.Error (Invalid_expr e) in
            (match d1 with
-            | `PosShape (pos, shape) -> `PosShape (pos, aux shape)
+            | `PosShape (pos, shape) ->
+               let| shape = aux shape in
+               Result.Ok (`PosShape (pos, shape))
             | _ -> aux d1)
-        | _ -> raise (Invalid_expr e))
+        | _ -> Result.Error (Invalid_expr e))
 
 let apply_expr apply ~(env : data) e =
   apply_expr_gen apply ~lookup:(lookup_of_env env) `Root e
   
-let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template = (* QUICK *)
+let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
   match t with
-  | `U -> `U
-  | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template)
+  | `U -> Result.Ok `U
+  | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template result)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
-  | `Seq items -> `Seq (List.map (fun item -> apply_template_gen ~lookup p item) items)
-     
+  | `Seq items ->
+     let| applied_items =
+       list_map_result
+         (fun item -> apply_template_gen ~lookup p item)
+         items in
+     Result.Ok (`Seq applied_items)
 
-let rec apply_template ~(env : data) (t : template) : (template,exn) Result.t =
-  try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
+let rec apply_template ~(env : data) (t : template) : template result =
+  apply_template_gen ~lookup:(lookup_of_env env) `Root t
+  (* try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
   with (* catching runtime error in expression eval *)
   | (Grid.Undefined_result _ as exn) -> Result.Error exn
   | (Unbound_var _ as exn) -> Result.Error exn
   | (Undefined_result _ as exn) -> Result.Error exn
-  | (Negative_integer  as exn) -> Result.Error exn
+  | (Negative_integer  as exn) -> Result.Error exn *)
 (* DO NOT remove path argument, useful in generate_template (through apply_patt) *)
 
 
@@ -2275,7 +2457,8 @@ let generate_patt (generate : revpath -> 'b -> 'a seq) (p : revpath) : 'b patt -
      `Background (generate (p ++ `Size) size, (* assumes size <> `Seq _ *)
                   generate (p ++ `Color) color, (* assumes color <> `Seq _ *)
                   map_ilist
-                    (fun lp shape -> generate (p ++ `Layer lp) shape) (* keep `Seq's as layers *)
+                    (fun lp shape ->
+                      generate (p ++ `Layer lp) shape) (* keep `Seq's as layers *)
                     `Root layers)
 
 let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
@@ -3260,7 +3443,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (delta_dl1,_,_,_,_) (delta_dl2,_,_,_,_) ->
          dl_compare delta_dl1 delta_dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
+             |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
 and defs_check ~env (t : template) (d : data) : bool =
   match defs_check_apply ~env t with
   | None -> false
@@ -3271,7 +3454,7 @@ and defs_check_apply ~env (t : template) : template option =
   | Result.Error _ -> None
 and defs_expressions ~env_sig : (role_poly * template) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
-  Common.prof "Model2.defs_expressions" (fun () ->
+  Common.prof "Model2.defs_expressions" (fun () -> (* QUICK *)
   if env_sig = [] then [] (* we are in the input model *)
   else (
   let paths =

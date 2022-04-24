@@ -2,7 +2,9 @@
 open Bigarray
 
 exception Undefined_result of string (* for undefined computations *)
-   
+
+type 'a result = ('a,exn) Result.t
+                            
 type color = int
 
 (* conventional colors like in web app *)
@@ -597,33 +599,33 @@ module Mask_model =
         ~minj:0 ~maxj:(mask.width-1)
         mask
 
-    let scale_up k l : t -> t (* may fail *) = function
-      | `Mask m -> `Mask (Mask.scale_up k l m)
-      | (`Full false as mm) -> mm
-      | mm -> raise (Undefined_result "Grid.Mask_model.scale_up: undefined")
+    let scale_up k l : t -> t result = function
+      | `Mask m -> Result.Ok (`Mask (Mask.scale_up k l m))
+      | (`Full false as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
 
-    let scale_to new_h new_w : t -> t (* may fail *) = function
+    let scale_to new_h new_w : t -> t result = function
       | `Mask m ->
          ( match Mask.scale_to new_h new_w m with
-           | Some m -> `Mask m
-           | None -> raise (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
-      | (`Full false as mm) -> mm
-      | mm -> raise (Undefined_result "Grid.Mask_model.scale_to: undefined")
+           | Some m -> Result.Ok (`Mask m)
+           | None -> Result.Error (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
+      | (`Full false as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
 
-    let tile k l : t -> t = function
-      | `Mask m -> `Mask (Mask.tile k l m)
-      | `Full false -> `Full false
-      | _ -> raise (Undefined_result "Grid.Mask_model.tile: undefined")
+    let tile k l : t -> t result = function
+      | `Mask m -> Result.Ok (`Mask (Mask.tile k l m))
+      | `Full false -> Result.Ok (`Full false)
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
 
-    let resize_alike new_h new_w : t -> t = function
-      | `Mask m -> `Mask (Mask.resize_alike m new_h new_w)
-      | (`Full false | `OddCheckboard | `EvenCheckboard as mm) -> mm
-      | _ -> raise (Undefined_result "Grid.Mask_model.resize_alike: undefined")
+    let resize_alike new_h new_w : t -> t result = function
+      | `Mask m -> Result.Ok (`Mask (Mask.resize_alike m new_h new_w))
+      | (`Full false | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
 
-    let symmetry (f : Mask.t -> Mask.t) : t -> t = function
-      | `Mask m -> `Mask (f m)
-      | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> mm
-      | _ -> raise (Undefined_result "Grid.Mask_model.symmetry: undefined")
+    let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
+      | `Mask m -> Result.Ok (`Mask (f m))
+      | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.symmetry: undefined")
     let flipHeight = symmetry Mask.flipHeight
     let flipWidth = symmetry Mask.flipWidth
     let flipDiag1 = symmetry Mask.flipDiag1
