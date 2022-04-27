@@ -1109,7 +1109,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `PosShape _ -> [`PosShape (u_vec, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Seq [] -> []
-  | `Seq (item::items as l) ->
+  | `Seq (item::items (*as l*)) ->
      let common_patterns =
        List.fold_left
          (fun res item ->
@@ -1118,12 +1118,13 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
              (fun t -> List.mem t item_patterns)
              res)
          (root_template_of_data ~in_output item) items in
-     `Seq (List.map
+     (* NOT YET SUPPORTED BY dl_data_given_template
+        `Seq (List.map
              (function
               | `Vec _ -> u_vec
               | _ -> `U)
              l)
-     :: common_patterns
+     :: *) common_patterns
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -1682,9 +1683,9 @@ let rec dl_data_given_patt
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> data -> dl_seq)
       ~ctx ~(path : revpath) (patt : 'a patt) (d : data) : dl_seq =
   match patt, d with
-  | `Int _, `Int _ -> `DL 0.
-  | `Color _, `Color _ -> `DL 0.
-  | `Mask _, `Mask _ -> `DL 0.
+  | `Int i, `Int di -> `DL 0. (* maybe i<>di due to diffs *)
+  | `Color c, `Color dc -> `DL 0. (* maybe c<>dc due to diffs *)
+  | `Mask m, `Mask dm -> `DL 0. (* maybe m<>dm due ti diffs *)
   | `Vec (i,j), `Vec (di,dj) ->
      broadcast2
        (dl ~ctx i di ~path:(path ++ `I),
@@ -1724,16 +1725,17 @@ let rec dl_data_given_patt
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) (d : data) : dl_seq = (* cannot be profiled because of indirect recursion *)
-  broadcast2 (t,d)
-    (function
-     | `U, d1 -> `DL (dl_data ~ctx ~path d1)
-     | #patt as patt, d1 -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d1
-     | #expr, d1 -> `DL 0. (* [d1] will be evaluated out *)
-     | _ -> assert false)
+  broadcast1 d (* TODO: broadcast on [t], not trivial, similar to parsing *)
+    (fun d1 ->
+      match t with
+      | `U -> `DL (dl_data ~ctx ~path d1)
+      | #patt as patt -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d1
+      | #expr -> `DL 0. (* [d1] will be evaluated out *)
+      | _ -> assert false)
   
 let dl_data_given_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) (d : data) : dl =
   dl_dl_seq (dl_data_given_template_aux ~ctx ~path t d)
-              
+
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
   then 0.
@@ -2975,10 +2977,10 @@ let limit_dl (f_dl : 'a -> dl) (l : 'a list) : 'a list =
 
 let read_grid
       ~(quota_diff : int)
-      ~(env : data) (t : template) (g : Grid.t)
+      ~(env : data) (t0 : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
   Common.prof "Model2.read_grid" (fun () ->
-  let| t = apply_template ~env t in (* reducing expressions *)
+  let| t = apply_template ~env t0 in (* reducing expressions *)
   let Parseur parse_grid = parseur_grid t path0 in    
   let state = { quota_diff;
                 diff = diff0;
@@ -2993,7 +2995,7 @@ let read_grid
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
-      let dl_data = dl_data_given_template ~ctx t data in
+      let dl_data = dl_data_given_template ~ctx t0 data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
       (* rounding before sorting to absorb float error accumulation *)

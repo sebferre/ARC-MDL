@@ -658,7 +658,7 @@ module Mask_model =
     let subsumes (m0 : t) (m1 : t) : bool =
       match m0, m1 with
       | `Mask m1, `Mask m2 -> Mask.equal m1 m2
-      | `Full b0, `Full b1 -> not b0 || b1
+      | `Full b0, `Full b1 -> not b0 || b1 (* TODO: check orientation *)
       | `Border, `Full true -> true
       | _ -> m0 = m1
   
