@@ -155,7 +155,7 @@ type diff =
 			    tgt_height: int; tgt_width: int }
   | Grid_diff_pixels of { height: int; width: int; pixels: pixel list }
 							  
-let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun () ->
+let diff (source : t) (target : t) : diff option = (* QUICK *)
   if source.height <> target.height || source.width <> target.width
   then Some (Grid_size_mismatch
 	       { src_height = source.height;
@@ -175,7 +175,7 @@ let diff (source : t) (target : t) : diff option = Common.prof "Grid.diff" (fun 
     done;
     if !res = []
     then None
-    else Some (Grid_diff_pixels {height; width; pixels=(!res)}))
+    else Some (Grid_diff_pixels {height; width; pixels=(!res)})
 
 (* grid masks *)
 
@@ -196,6 +196,7 @@ module type MaskCore =
     val equal : t -> t -> bool
     val is_empty : t -> bool
     val is_subset : t -> t -> bool
+    val inter_is_empty : t -> t -> bool
 
     val mem : int -> int -> t -> bool
     val add : int -> int -> t -> t
@@ -303,6 +304,8 @@ module MaskCoreBitmap : MaskCore =
       bits_for_all (fun k bmp -> Bmp.is_empty bmp) m.bits
     let is_subset m1 m2 =
       bits_for_all (fun k bmp -> Bmp.subset bmp (Array1.get m2.bits k)) m1.bits
+    let inter_is_empty m1 m2 =
+      bits_for_all (fun k bmp -> bmp land (Array1.get m2.bits k) = 0) m1.bits
 
     let mem i j m =
       i >= 0 && i < m.height
@@ -1021,8 +1024,7 @@ let segment_by_color, reset_segment_by_color =
 
 (* locating shapes *)
 
-let background_colors (g : t) : color list = (* in decreasing frequency order *)
-  Common.prof "Grid.background_colors" (fun () ->
+let background_colors (g : t) : color list = (* QUICK, in decreasing frequency order *)
   let area = g.height * g.width in
   let l = ref [] in
   for c = 0 to nb_color - 1 do
@@ -1040,7 +1042,7 @@ let background_colors (g : t) : color list = (* in decreasing frequency order *)
     | [] -> [] in
   if List.mem black l
   then l
-  else l @ [black]) (* ensure black is considered as a background color *)
+  else l @ [black] (* ensure black is considered as a background color *)
 
   
 type point = pixel

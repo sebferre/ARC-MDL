@@ -1030,8 +1030,7 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
   | #expr -> acc
        
 let size_of_data (d : data) : int =
-  Common.prof "Model2.size_of_data" (fun () ->
-  fold_data (fun res _ _ _ -> res+1) 0 path0 d [])
+  fold_data (fun res _ _ _ -> res+1) 0 path0 d []
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ _ -> res+1) 0 path0 t []
 
@@ -1651,8 +1650,7 @@ let code_template_by_kind : code_template KindMap.t =
     ~layer:code_template0
     ~grid:code_template0
     
-let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl =
-  Common.prof "Model2.dl_template" (fun () ->
+let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl = (* QUICK *)
   let rec aux ~ctx ~path t =
     let k = path_kind path in
     let code = KindMap.find k code_template_by_kind in
@@ -1672,7 +1670,7 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        code.c_seq
        +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
   in
-  aux ~ctx ~path t)
+  aux ~ctx ~path t
 
 type dl_seq = [`DL of dl | `Seq of dl_seq list]
 
@@ -1714,24 +1712,23 @@ let rec dl_data_given_patt
         | (`DL dl1, `DL dl2) -> `DL (dl1 +. dl2)
         | _ -> assert false)
   | `Background (size,color,layers), `Background (dsize,dcolor,dlayers) ->
-     broadcast_list
-       [dl ~ctx size dsize ~path:(path ++ `Size);
-        dl ~ctx color dcolor ~path:(path ++ `Color);
-        `DL (fold2_ilist
-               (fun sum lp shape dshape ->
-                 sum +. dl_dl_seq (dl ~ctx shape dshape ~path:(path ++ `Layer lp)))
-               0. `Root layers dlayers)]
-       (function
-        | [`DL dl1; `DL dl2; `DL dl3] -> `DL (dl1 +. dl2 +. dl3)
-        | _ -> assert false)
+     (match
+        dl ~ctx size dsize ~path:(path ++ `Size),
+        dl ~ctx color dcolor ~path:(path ++ `Color),
+        fold2_ilist
+          (fun sum lp layer dlayer ->
+            sum +. dl_dl_seq (dl ~ctx layer dlayer ~path:(path ++ `Layer lp)))
+          0. `Root layers dlayers with
+      | `DL dl1, `DL dl2, dl3 -> `DL (dl1 +. dl2 +. dl3)
+      | _ -> assert false)
   | _ -> assert false (* data inconsistent with pattern *)
     
 let rec dl_data_given_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) (d : data) : dl_seq = (* cannot be profiled because of indirect recursion *)
   broadcast2 (t,d)
     (function
-     | `U, d -> `DL (dl_data ~ctx ~path d)
-     | #patt as patt, d -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d
-     | #expr, _ -> `DL 0. (* will be evaluated out *)
+     | `U, d1 -> `DL (dl_data ~ctx ~path d1)
+     | #patt as patt, d1 -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d1
+     | #expr, d1 -> `DL 0. (* [d1] will be evaluated out *)
      | _ -> assert false)
   
 let dl_data_given_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) (d : data) : dl =
@@ -2546,8 +2543,7 @@ let add_delta_with_mask ~mask delta new_delta =
 let filter_parts_with_mask ~new_mask parts = (* QUICK *)
   List.filter
     (fun p ->
-      not (Grid.Mask.is_empty
-	     (Grid.Mask.inter p.Grid.pixels new_mask)))
+      not (Grid.Mask.inter_is_empty p.Grid.pixels new_mask))
     parts
 
 type ('a,'b) parseur = (* input -> state -> results *)
@@ -2739,8 +2735,7 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
 
-let state_minus_shape_gen state occ_delta occ_new_cover =
-  Common.prof "Model2.state_minus_shape_gen" (fun () ->
+let state_minus_shape_gen state occ_delta occ_new_cover = (* QUICK *)
   let new_mask = Grid.Mask.diff state.mask occ_new_cover in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
@@ -2753,7 +2748,7 @@ let state_minus_shape_gen state occ_delta occ_new_cover =
                 |> List.filter (fun p -> not (Grid.Mask.is_subset occ_new_cover p.Grid.pixels))
                                (* that would make occ useless if selecting p later *)
       } in
-    Some new_state)
+    Some new_state
 let state_minus_point state (i,j,c) =
   let occ_delta = [] in
   let occ_new_cover = Grid.Mask.singleton state.grid.height state.grid.width i j in
@@ -2805,21 +2800,19 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
       (parseur_point pos color p)
       (fun parse_point () state ->
         let points = Grid.points state.grid state.mask state.parts in
-        Myseq.prof "Model2.parse_single_point/seq" (
-        let* point = Myseq.from_list points in
+        let* point = Myseq.from_list points in (* QUICK *)
         let* dpoint, state, stop_point, next_point = parse_point point state in
         let* state = Myseq.from_option (state_minus_point state point) in
-        Myseq.return (dpoint, state, stop_point, next_point))) in
+        Myseq.return (dpoint, state, stop_point, next_point)) in
   let parseur_single_rectangle pos size color mask p : (unit,data) parseur =    
     parseur_rec1
       (parseur_rectangle pos size color mask p)
       (fun parse_rectangle () state ->
         let rectangles = Grid.rectangles state.grid state.mask state.parts in
-        Myseq.prof "Model2.parse_single_rectangle/seq" (
-        let* rect = Myseq.from_list rectangles in
+        let* rect = Myseq.from_list rectangles in (* QUICK *)
         let* drect, state, stop_rectangle, next_rectangle = parse_rectangle rect state in
         let* state = Myseq.from_option (state_minus_rectangle state rect) in
-        Myseq.return (drect, state, stop_rectangle, next_rectangle)))
+        Myseq.return (drect, state, stop_rectangle, next_rectangle))
   in
   parseur_template
     ~parseur_u:
@@ -2916,7 +2909,7 @@ let parseur_layers layers p : (unit, data ilist) parseur =
       assert (l = []);
       Myseq.return (dlayers, state, true, parseur_empty)))
   
-let parseur_grid t p : (Grid.t, data) parseur = Common.prof "Model2.parse_grid" (fun () ->
+let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
     ~parseur_u:(fun () -> parseur_empty)
     ~parseur_patt:
@@ -2959,7 +2952,7 @@ let parseur_grid t p : (Grid.t, data) parseur = Common.prof "Model2.parse_grid" 
 	      parts = [] } in
 	  Myseq.return (data, new_state, true, parseur_empty)))
      | _ -> parseur_empty)
-    t p)
+    t p
 
 exception Parse_failure
 let _ = Printexc.register_printer
@@ -3016,11 +3009,10 @@ let read_grid
   then Result.Error Parse_failure
   else
     let best_parses =
-      Common.prof "Model2.read_grid/best_parses" (fun () ->
-          l_parses
-          |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
-          |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
-          |> limit_dl (fun (_,_,dl) -> dl)) in
+      l_parses (* QUICK *)
+      |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
+      |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
+      |> limit_dl (fun (_,_,dl) -> dl) in
     Result.Ok best_parses)
 
 (* result of reading a list of grids with a grid model *)
@@ -3188,8 +3180,7 @@ let rec insert_seq (f : 'a option -> 'a) (i : int) (l : 'a list) : 'a list =
      then f (Some x) :: r
      else x :: insert_seq f (i-1) r
   
-let rec insert_patt (f : 'a option -> 'a) (field : field) (patt_parent : 'a patt) : 'a patt = (* one-step down insertion only *)
-  Common.prof "Model2.insert_patt" (fun () ->
+let rec insert_patt (f : 'a option -> 'a) (field : field) (patt_parent : 'a patt) : 'a patt = (* QUICK, one-step down insertion only *)
   match field, patt_parent with
   | `I, `Vec (i,j) -> `Vec (f (Some i), j)
   | `J, `Vec (i,j) -> `Vec (i, f (Some j))
@@ -3213,11 +3204,10 @@ let rec insert_patt (f : 'a option -> 'a) (field : field) (patt_parent : 'a patt
      pp_field field; print_string ": ";
      pp_patt_dummy patt_parent;
      print_newline ();
-     assert false)
+     assert false
 
        
-let rec insert_template (f : template option -> template) (p : revpath) (t : template) : template =
-  Common.prof "Model2.insert_template" (fun () ->
+let rec insert_template (f : template option -> template) (p : revpath) (t : template) : template = (* QUICK *)
   match path_parent p with
   | None -> f (Some t)
   | Some parent ->
@@ -3233,7 +3223,7 @@ let rec insert_template (f : template option -> template) (p : revpath) (t : tem
               `Seq new_items
            (* `U and other #expr are not explorable *)
            | _ -> assert false)
-       parent t)
+       parent t
                                                                                     
 (* model refinements and learning *)
 
@@ -3443,7 +3433,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (delta_dl1,_,_,_,_) (delta_dl2,_,_,_,_) ->
          dl_compare delta_dl1 delta_dl2)
   |> Myseq.from_list
-             |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
+  |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
 and defs_check ~env (t : template) (d : data) : bool =
   match defs_check_apply ~env t with
   | None -> false
@@ -3839,8 +3829,7 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
         [ref_shapis; ref_shapos; ref_defis; ref_defos]
     ))
 
-let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
-  Common.prof "Model2.dl_model_data" (fun () ->
+let dl_model_data (gpsr : grid_pairs_read) : dl triple triple = (* QUICK *)
   let lmi = gpsr.dl_mi in
   let lmo = gpsr.dl_mo in
   let ldi, ldo =
@@ -3855,7 +3844,7 @@ let dl_model_data (gpsr : grid_pairs_read) : dl triple triple =
   let lmdo = lmo +. ldo in
   (lmi, lmo, lmi +. lmo),
   (ldi, ldo, ldi +. ldo),
-  (lmdi, lmdo, lmdi +. lmdo))
+  (lmdi, lmdo, lmdi +. lmdo)
 
 let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
   let lmdi0 = ref (-1.) in
