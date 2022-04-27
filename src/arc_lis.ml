@@ -31,8 +31,9 @@ type arc_state =
     gprs : Model2.grid_pairs_read; (* pair reads *)
     gsri : Model2.grids_read; (* input reads *)
     gsro : Model2.grids_read; (* output reads *)
-    dls : Mdl.bits Model2.triple Model2.triple; (* normalized DL components *)
-    dl : Mdl.bits; (* global normalized DL *)
+    dls : Mdl.bits Model2.triple Model2.triple; (* DL components *)
+    norm_dls : Mdl.bits Model2.triple Model2.triple; (* normalized DL components *)
+    norm_dl : Mdl.bits; (* global normalized DL *)
     mutable suggestions : arc_suggestion list;
   }
 and arc_suggestion =
@@ -47,7 +48,8 @@ type arc_extent = arc_state
 let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (refinement : Model2.refinement) (model : Model2.model) : (arc_state, exn) Result.t =
   let| gprs = Model2.read_grid_pairs model task.Task.train in
   let gsri, gsro = Model2.split_grid_pairs_read gprs in
-  let (_, _, (_,_,dl) as dls) = norm_dl_model_data gprs in
+  let dls = Model2.dl_model_data gprs in
+  let (_, _, (_,_,norm_dl) as norm_dls) = norm_dl_model_data gprs in
   Result.Ok
     { name; task;
       norm_dl_model_data;
@@ -55,7 +57,8 @@ let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (re
       model;
       gprs; gsri; gsro;
       dls;
-      dl;
+      norm_dls;
+      norm_dl;
       suggestions = [] }  
                
 let grid0 = Grid.make 10 10 Grid.black
@@ -87,7 +90,7 @@ object
                else
                  match state_of_model focus.name focus.task focus.norm_dl_model_data r m with
                  | Result.Ok state ->
-                    if state.dl < focus.dl
+                    if state.norm_dl < focus.norm_dl
                     then (quota_compressive - 1, state::suggestions)
                     else (quota_compressive, state::suggestions)
                  | Result.Error _ -> res)
@@ -96,12 +99,12 @@ object
         suggestions
         |> List.rev (* to preserve ordering from sequence *) 
         |> List.sort
-             (fun s1 s2 -> Stdlib.compare s1.dl s2.dl) in
+             (fun s1 s2 -> Stdlib.compare s1.norm_dl s2.norm_dl) in
       let suggestions =
         InputTask (new Focus.input (name0,task0))
         :: ResetTask
         :: List.map (fun s ->
-               let compressive = s.dl < focus.dl in
+               let compressive = s.norm_dl < focus.norm_dl in
                RefinedState ((s :> arc_state), compressive))
              suggestions in
       Jsutils.firebug "Suggestions computed";
@@ -153,9 +156,11 @@ let html_dl dl =
   Printf.sprintf "%.3f" dl
    
 let xml_of_focus focus =
+  let (mi,mo,m), (di,do_,d), (mdi,mdo,md) = focus.dls in
   [Syntax.Block
      [[Syntax.Kwd (Printf.sprintf "Task %s" focus.name)];
-      [Syntax.Kwd (Printf.sprintf "DL = %f" focus.dl)];
+      [Syntax.Kwd (Printf.sprintf "DL = %f" focus.norm_dl)];
+      [Syntax.Kwd (Printf.sprintf "DL = %.3f = %.3fm + %.3fd = (%.3fmi + %.3fmo) + (%.3fdi + %.3fdo) = %.3fi + %.3fo" md m d mi mo di do_ mdi mdo)];
       [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))]]]
                                       
 let html_of_word (w : arc_word) : Html.t = assert false
@@ -181,7 +186,7 @@ let html_of_suggestion ~input_dico = function
   | RefinedState (s,compressive) ->
      Html.span ~classe:(if compressive then "compressive" else "non-compressive")
        (Jsutils.escapeHTML
-          (Printf.sprintf "(%f)  " s.dl
+          (Printf.sprintf "(%f)  " s.norm_dl
            ^ Model2.string_of_refinement s.refinement))
 
 let html_of_grid (g : Grid.t) =
@@ -223,7 +228,7 @@ let html_of_cell : cell -> Html.t = function
      html_grid_pair
        (html_of_grid_from_data d_i)
        (html_of_grid_from_data d_o)
-     ^ Printf.sprintf "<br/>DL = %.3f = %.3f + %.3f" (dli +. dlo) dli dlo
+     ^ Printf.sprintf "<br/>DL = %.3f = %.3fi + %.3fo" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
      ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
   | Pred (expected_go, l_gdi_go) ->
