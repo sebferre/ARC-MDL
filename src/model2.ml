@@ -9,6 +9,7 @@ let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
+let max_seq_length = def_param "max_seq_length" 1 string_of_int (* max size of collected sequences *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -2882,7 +2883,7 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
   Myseq.return (`Seq items, state))
    *)
 let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
-  let Parseur parse_shapes = parseur_collect ~max_depth:1 (* TEST *) (parseur_shape shape p) in
+  let Parseur parse_shapes = parseur_collect ~max_depth:!max_seq_length (parseur_shape shape p) in
   Parseur (fun () state ->
       let* ld, state, _, _ = parse_shapes () state in
       match ld with
