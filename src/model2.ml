@@ -1676,7 +1676,7 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
 
-type encoder = Encoder of (data -> dl * encoder) (* TEST [@@unboxed] *) (* the returned encoder is for the next sequence items, if any *)
+type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* TEST [@@unboxed] *) (* the returned encoder is for the next sequence items, if any *)
 
 let rec encoder_zero : encoder =
   Encoder (fun _ -> 0., encoder_zero)
@@ -2615,7 +2615,7 @@ let filter_parts_with_mask ~new_mask parts = (* QUICK *)
     parts
 
 type ('a,'b) parseur = (* input -> state -> results *)
-  Parseur of ('a -> parse_state -> ('b * parse_state * bool * ('a,'b) parseur) Myseq.t)
+  Parseur of ('a -> parse_state -> ('b * parse_state * bool * ('a,'b) parseur) Myseq.t) [@@unboxed]
 (* each result contains: a parsed value, the new state, a valid sequence 'stop' flag, and a parser for the sequence continuation *) 
 
 let parseur_empty : ('a,'b) parseur =
