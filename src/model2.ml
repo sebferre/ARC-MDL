@@ -9,7 +9,7 @@ let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" 1 string_of_int (* max size of collected sequences *)
+let max_seq_length = def_param "max_seq_length" 1 (* TEST *) string_of_int (* max size of collected sequences *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -1110,7 +1110,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `PosShape _ -> [`PosShape (u_vec, `U)]
   | `Background _ -> assert false (* should not happen *)
   | `Seq [] -> []
-  | `Seq (item::items (*as l*)) ->
+  | `Seq (item::items as l) ->
      let common_patterns =
        List.fold_left
          (fun res item ->
@@ -1119,13 +1119,12 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
              (fun t -> List.mem t item_patterns)
              res)
          (root_template_of_data ~in_output item) items in
-     (* NOT YET SUPPORTED BY dl_data_given_template
-        `Seq (List.map
+     `Seq (List.map
              (function
               | `Vec _ -> u_vec
               | _ -> `U)
              l)
-     :: *) common_patterns
+     :: common_patterns
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -1235,7 +1234,7 @@ let dl_ctx_of_data (d : data) : dl_ctx = (* QUICK *)
     | Some (`Int j) -> j
     | _ -> Grid.max_size in
   { box_height; box_width }
-
+   
 
 let dl_patt_as_template = Mdl.Code.usage 0.2
 
@@ -1674,69 +1673,135 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   in
   aux ~ctx ~path t
 
-type dl_seq = [`DL of dl | `Seq of dl_seq list]
+(* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
-let rec dl_dl_seq : dl_seq -> dl = function  (* TODO: should we encode choice? *)
-  | `DL dl -> dl
-  | `Seq l -> Mdl.Code.list_star dl_dl_seq l
-    
-let rec dl_data_given_patt
-          (dl : ctx:dl_ctx -> path:revpath -> 'a -> data -> dl_seq)
-      ~ctx ~(path : revpath) (patt : 'a patt) (d : data) : dl_seq =
-  match patt, d with
-  | `Int i, `Int di -> `DL 0. (* maybe i<>di due to diffs *)
-  | `Color c, `Color dc -> `DL 0. (* maybe c<>dc due to diffs *)
-  | `Mask m, `Mask dm -> `DL 0. (* maybe m<>dm due ti diffs *)
-  | `Vec (i,j), `Vec (di,dj) ->
-     broadcast2
-       (dl ~ctx i di ~path:(path ++ `I),
-        dl ~ctx j dj ~path:(path ++ `J))
-       (function
-        | (`DL dli, `DL dlj) -> `DL (dli +. dlj)
-        | _ -> assert false) (* TODO: revise type 'a seq to avoid this? *)
-  | `Point (color), `Point (dcolor) ->
-     broadcast1
-       (dl ~ctx color dcolor ~path:(path ++ `Color))
-       (fun dl1 -> dl1)
-  | `Rectangle (size,color,mask), `Rectangle (dsize,dcolor,dmask) ->
-     broadcast_list
-       [dl ~ctx size dsize ~path:(path ++ `Size);
-        dl ~ctx color dcolor ~path:(path ++ `Color);
-        dl ~ctx mask dmask ~path:(path ++ `Mask)]
-       (function
-        | [`DL dl1; `DL dl2; `DL dl3] -> `DL (dl1 +. dl2 +. dl3)
-        | _ -> assert false)
-  | `PosShape (pos,shape), `PosShape (dpos,dshape) ->
-     broadcast2
-       (dl ~ctx pos dpos ~path:(path ++ `Pos),
-        dl ~ctx shape dshape ~path:(path ++ `Shape))
-       (function
-        | (`DL dl1, `DL dl2) -> `DL (dl1 +. dl2)
-        | _ -> assert false)
-  | `Background (size,color,layers), `Background (dsize,dcolor,dlayers) ->
-     (match
-        dl ~ctx size dsize ~path:(path ++ `Size),
-        dl ~ctx color dcolor ~path:(path ++ `Color),
-        fold2_ilist
-          (fun sum lp layer dlayer ->
-            sum +. dl_dl_seq (dl ~ctx layer dlayer ~path:(path ++ `Layer lp)))
-          0. `Root layers dlayers with
-      | `DL dl1, `DL dl2, dl3 -> `DL (dl1 +. dl2 +. dl3)
-      | _ -> assert false)
-  | _ -> assert false (* data inconsistent with pattern *)
-    
-let rec dl_data_given_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) (d : data) : dl_seq = (* cannot be profiled because of indirect recursion *)
-  broadcast1 d (* TODO: broadcast on [t], not trivial, similar to parsing *)
-    (fun d1 ->
-      match t with
-      | `U -> `DL (dl_data ~ctx ~path d1)
-      | #patt as patt -> dl_data_given_patt dl_data_given_template_aux ~ctx ~path patt d1
-      | #expr -> `DL 0. (* [d1] will be evaluated out *)
-      | _ -> assert false)
+
+type encoder = Encoder of (data -> dl * encoder) (* TEST [@@unboxed] *) (* the returned encoder is for the next sequence items, if any *)
+
+let rec encoder_zero : encoder =
+  Encoder (fun _ -> 0., encoder_zero)
+let encoder_fail : encoder =
+  Encoder (fun _ -> assert false)
+
+let encoder_seq (make_encoder : 'a -> encoder) (items : 'a list) : encoder =
+  assert (items <> []);
+  let rec aux = function
+    | [] -> encoder_fail
+    | (Encoder encoder_item)::next_encoders ->
+       Encoder (fun d ->
+           let dl, _ = encoder_item d in
+           dl, aux next_encoders)
+  in
+  let encoder_items = List.map make_encoder items in
+  aux encoder_items
+
+let encoder_collect (Encoder encoder_item : encoder) : encoder =
+  let rec aux encoder_item n dl = function
+    | [] -> n, dl
+    | item::items ->
+       let dl1, Encoder next_encoder = encoder_item item in
+       aux next_encoder (n+1) (dl +. dl1) items
+  in
+  Encoder (fun d ->
+      let n, dl =
+        match d with
+        | `Seq items ->
+           assert (items <> []);
+           aux encoder_item 0 0. items
+        | d ->
+           let dl, _ = encoder_item d in
+           1, dl in
+      Mdl.Code.universal_int_plus n +. dl, encoder_fail)
   
-let dl_data_given_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) (d : data) : dl =
-  dl_dl_seq (dl_data_given_template_aux ~ctx ~path t d)
+let encoder_patt
+          (encoder : ctx:dl_ctx -> path:revpath -> 'a -> encoder)
+      ~ctx ~(path : revpath) (patt : 'a patt) : encoder =
+  match patt with
+  | `Bool b -> encoder_zero
+  | `Int i -> encoder_zero
+  | `Color c -> encoder_zero
+  | `Mask m -> encoder_zero
+  | `Vec (i,j) ->
+     let rec encoder_vec (Encoder encoder_i) (Encoder encoder_j) =
+       Encoder (function
+           | `Vec (di,dj) ->
+              let dl1, next_i = encoder_i di in
+              let dl2, next_j = encoder_j dj in
+              dl1 +. dl2, encoder_vec next_i next_j
+           | _ -> assert false) in
+     encoder_vec
+       (encoder ~ctx ~path:(path ++ `I) i)
+       (encoder ~ctx ~path:(path ++ `J) j)
+  | `Point color ->
+     let rec encoder_point (Encoder encoder_color) =
+       Encoder (function
+           | `Point dcolor ->
+              let dl1, next_color = encoder_color dcolor in
+              dl1, encoder_point next_color
+           | _ -> assert false) in
+     encoder_point
+       (encoder ~ctx ~path:(path ++ `Color) color)
+  | `Rectangle (size,color,mask) ->
+       let rec encoder_rectangle (Encoder encoder_size) (Encoder encoder_color) (Encoder encoder_mask) =
+         Encoder (function
+             | `Rectangle (dsize,dcolor,dmask) ->
+                let dl1, next_size = encoder_size dsize in
+                let dl2, next_color = encoder_color dcolor in
+                let dl3, next_mask = encoder_mask dmask in
+                dl1 +. dl2 +. dl3, encoder_rectangle next_size next_color next_mask
+             | _ -> assert false) in
+       encoder_rectangle
+         (encoder ~ctx ~path:(path ++ `Size) size)
+         (encoder ~ctx ~path:(path ++ `Color) color)
+         (encoder ~ctx ~path:(path ++ `Mask) mask)
+  | `PosShape (pos,shape) ->
+     let rec encoder_posshape (Encoder encoder_pos) (Encoder encoder_shape) =
+       Encoder (function
+           | `PosShape (dpos,dshape) ->
+              let dl1, next_pos = encoder_pos dpos in
+              let dl2, next_shape = encoder_shape dshape in
+              dl1 +. dl2, encoder_posshape next_pos next_shape
+           | _ -> assert false) in
+     encoder_posshape
+       (encoder ~ctx ~path:(path ++ `Pos) pos)
+       (encoder ~ctx ~path:(path ++ `Shape) shape)
+  | `Background (size,color,layers) ->
+     let Encoder encoder_size = encoder ~ctx ~path:(path ++ `Size) size in
+     let Encoder encoder_color = encoder ~ctx ~path:(path ++ `Color) color in
+     let ilist_encoder_layers =
+       map_ilist
+         (fun lp layer -> encoder_collect (encoder ~ctx ~path:(path ++ `Layer lp) layer))
+         `Root layers in
+     Encoder (function
+         | `Background (dsize,dcolor,dlayers) ->
+            let dl1, _ = encoder_size dsize in
+            let dl2, _ = encoder_color dcolor in
+            let dl3 =
+              fold2_ilist
+                (fun sum lp (Encoder encoder_layer) dlayer ->
+                  let dl, _ = encoder_layer dlayer in
+                  sum +. dl)
+                0. `Root ilist_encoder_layers dlayers in
+            dl1 +. dl2 +. dl3, encoder_fail
+         | _ -> assert false)
 
+let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : encoder =
+  match t with
+  | `U ->
+     let rec encoder_u =
+       Encoder (fun d -> dl_data ~ctx ~path d, encoder_u) in (* TODO: compute once [dl_data ~ctx ~path], dl_data should return an encoder too ? *)
+     encoder_u
+  | #patt as patt -> encoder_patt encoder_template_aux ~ctx ~path patt
+  | #expr -> encoder_zero (* nothing to code *)
+  | `Seq lt -> encoder_seq (encoder_template_aux ~ctx ~path) lt
+     
+let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : data -> dl =
+  let Encoder encoder = encoder_collect (encoder_template_aux ~ctx ~path t) in
+  fun d ->
+  let dl, _ = encoder d in
+  dl
+
+  
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
   then 0.
@@ -2420,7 +2485,7 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          items in
      Result.Ok (`Seq applied_items)
 
-let rec apply_template ~(env : data) (t : template) : template result =
+let apply_template ~(env : data) (t : template) : template result =
   apply_template_gen ~lookup:(lookup_of_env env) `Root t
   (* try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
   with (* catching runtime error in expression eval *)
@@ -2996,7 +3061,7 @@ let read_grid
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
-      let dl_data = dl_data_given_template ~ctx t0 data in
+      let dl_data = encoder_template ~ctx t0 data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
       (* rounding before sorting to absorb float error accumulation *)
@@ -3368,14 +3433,14 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          let$ res, (env,gd,u_val,dl,rank) = TMap.empty, reads_fst in
          let d = try PMap.find p u_val with _ -> assert false in
          let dl_ctx = dl_ctx_of_data gd.data in
-         let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
+         let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
          let$ res, t = res, root_template_of_data ~in_output d in
          if t <> t0 (* a different pattern *)
             && not (TMap.mem t res) (* that was not already seen *)
                    (* && defs_check ~env t d (* and that checks. true by construction *) *)
          then
            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-           let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
+           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
            TMap.add t (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank) res
          else res
       | _ -> TMap.empty in
@@ -3412,8 +3477,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         | Some (gd,dl,rank,d) ->
            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
            let dl_ctx = dl_ctx_of_data gd.data in
-           let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d in
-           let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d in
+           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
       else defs) in
   (* checking defs w.r.t. other examples *)
@@ -3426,8 +3491,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            | None -> None
            | Some (gd1,dl1,rank1,d1) ->
               let dl_ctx = dl_ctx_of_data gd1.data in
-              let dl_d_t0 = dl_data_given_template ~ctx:dl_ctx ~path:p t0 d1 in
-              let dl_d_t = dl_data_given_template ~ctx:dl_ctx ~path:p t d1 in
+              let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d1 in
+              let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d1 in
               Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in
   (* sorting defs, and returning them as a sequence *)
   defs
