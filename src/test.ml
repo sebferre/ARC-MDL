@@ -380,11 +380,11 @@ let task_model =
   let open Model2 in
   [ "ba97ae07.json",
     {input_pattern =
-       `Background (`U, `Color Grid.black,
+       `Background (u_any, `Color Grid.black,
                     `Insert (`Nil,
-                             `PosShape (`U, `Rectangle (`U,`U,`U)),
+                             `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Insert (`Nil,
-                                      `PosShape (`U, `Rectangle (`U,`U,`U)),
+                                      `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                                       `Nil)));
      output_template =
        `Background (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
@@ -395,9 +395,9 @@ let task_model =
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
-       `Background (`U, `Color Grid.black,
+       `Background (u_any, `Color Grid.black,
                     `Insert (`Nil,
-                             `PosShape (`U, `Rectangle (`U,`U,`U)),
+                             `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Nil));
      output_template =
        `Background (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),

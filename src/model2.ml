@@ -9,7 +9,7 @@ let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" 1 (* TEST *) string_of_int (* max size of collected sequences *)
+let max_seq_length = def_param "max_seq_length" 10 (* TEST *) string_of_int (* max size of collected sequences *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -548,15 +548,22 @@ and symmetry = [
 
 let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
              
-type template = (* a template seq *)
-  [ `U
+type template =
+  [ `U of template_seq
   | template patt
   | `Seq of template list
   | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
-let template0 : template = `U
+and template_seq =
+  [ `Any (* sequence of independent items *)
+  | `Prefix of template list (* sequence starting with some items, followed by an Any-sequence *)
+  | `Cst ] (* all sequence items are the same *)  
+let template0 : template = `U `Any
 let _ = (template0 :> template seq) (* template is an instance of template seq *)
 
-let u_vec : template = `Vec (`U, `U)
+let u_any = `U `Any
+let u_cst = `U `Cst
+let u_vec_any : template = `Vec (u_any, u_any)
+let u_vec_cst : template = `Vec (u_cst, u_cst)
 
 type signature = (kind * revpath list) list (* map from kinds to path lists *)
 let signature0 = []
@@ -800,7 +807,13 @@ let string_of_expr xp = Xprint.to_string (xp_expr xp)
                          
                    
 let rec xp_template (print : Xprint.t) : template -> unit = function
-  | `U -> print#string "?"
+  | `U `Any -> print#string "?"
+  | `U (`Prefix lt) ->
+     Xprint.bracket
+       ("<"," | ?>")
+       (Xprint.sep_list ", " xp_template)
+       print lt
+  | `U `Cst -> print#string "?cst"
   | #patt as patt -> xp_patt xp_template print patt
   | `Seq items ->
      Xprint.bracket
@@ -945,11 +958,11 @@ let rec find_data (p : revpath) (d : data) : data option = (* QUICK *)
   | `Item (i, p1) ->
      (match find_data p1 d with
       | None -> None
-      | Some (#patt as patt1) -> Some (patt1 :> data)
+      | Some (#patt as patt1) -> Some (patt1 :> data) (* data seen as singleton sequence *)
       | Some (`Seq items) -> List.nth_opt items i)
   | `Arg _ -> assert false
   
-let rec find_template (p : revpath) (t : template) : template option =
+(* let rec find_template (p : revpath) (t : template) : template option =
   Common.prof "Model2.find_template" (fun () ->
   match p with
   | `Root -> Some t
@@ -965,7 +978,7 @@ let rec find_template (p : revpath) (t : template) : template option =
       | Some (#patt as patt1) -> Some (patt1 :> template)
       | Some (`Seq items) -> List.nth_opt items i
       | Some _ -> assert false) (* `U and expr not explorable *)
-  | `Arg _ -> assert false)
+  | `Arg _ -> assert false) *)
 
 
 let fold_patt (fold : 'b -> revpath -> 'a -> 'a list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (patt : 'a patt) (patt_ancestry : 'a list) : 'b =
@@ -1015,8 +1028,16 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
   let acc = f acc p t ancestry in
   let t_ancestry = t::ancestry in
   match t with
-  | `U -> acc
+  | `U `Any ->
+     f acc (`Item (0,p)) (`U `Any) t_ancestry (* to initiate prefix *) (* TODO: should use `U `Singleton instead of `U `Any *)
+  | `U (`Prefix lt) ->
+     let n, acc =
+       let$ (i, acc), ti = (0,acc), lt in
+       i+1, fold_template f acc (`Item (i,p)) ti t_ancestry in
+     f acc (`Item (n,p)) (`U `Any) t_ancestry (* to extend prefix *)
+  | `U `Cst -> acc
   | #patt as patt ->
+     (* let acc = f acc (`Item (0,p)) t t_ancestry in *) (* to introduce Prefix but need thinking more *)
      fold_patt
        (fun acc p t anc -> fold_template f acc p t anc)
        acc p patt t_ancestry
@@ -1047,14 +1068,15 @@ let signature_of_template (t : template) : signature =
           | None -> []
           | Some ps -> ps in
         let ps = p::ps0 in
-        Hashtbl.replace ht k ps;
-        if k = Vec && t1 = `U then (
+        Hashtbl.replace ht k ps
+      (* deprecated by the use of u_vec_any 
+          if k = Vec && t1 = `U then (
           let ps0 =
             match Hashtbl.find_opt ht Int with
             | None -> []
             | Some ps -> ps in
-          Hashtbl.replace ht Int (p ++ `I :: p ++ `J :: ps0)
-        ))
+          Hashtbl.replace ht In t (p ++ `I :: p ++ `J :: ps0)) *)
+      )
       () path0 t [] in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
@@ -1104,13 +1126,15 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `Color _ as d -> [(d :> template)] (* colors can be seen as patterns *)
   | `Mask (`Full true) -> [`Mask `Border; `Mask (`Full false)]
   | `Mask _ as d -> [(d :> template)] (* masks can be seen as patterns *)
-  | `Vec _ -> [`Vec (`U, `U)]
-  | `Point _ -> [`Point (`U)]
-  | `Rectangle _ -> [`Rectangle (u_vec, `U, `U)]
-  | `PosShape _ -> [`PosShape (u_vec, `U)]
+  | `Vec _ -> [`Vec (u_cst, u_cst)]
+  | `Point _ -> [`Point u_cst]
+  | `Rectangle _ -> [`Rectangle (u_vec_cst, u_cst, u_cst)]
+  | `PosShape _ -> [`PosShape (u_vec_cst, u_cst)]
   | `Background _ -> assert false (* should not happen *)
   | `Seq [] -> []
-  | `Seq (item::items as l) ->
+  | `Seq (item::items) ->
+     let all_the_same =
+       List.for_all ((=) item) items in
      let common_patterns =
        List.fold_left
          (fun res item ->
@@ -1119,12 +1143,13 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
              (fun t -> List.mem t item_patterns)
              res)
          (root_template_of_data ~in_output item) items in
-     `Seq (List.map
+     (*`Seq (List.map
              (function
-              | `Vec _ -> u_vec
-              | _ -> `U)
-             l)
-     :: common_patterns
+              | `Vec _ -> u_vec_cst
+              | _ -> u_cst)
+             l) :: *)
+     (if all_the_same then [`U `Cst] else []) @
+       common_patterns
 
 let matches_ilist (matches : 'a -> 'b -> bool)
       (il1 : 'a ilist) (il2 : 'b ilist) : bool =
@@ -1143,10 +1168,22 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
        | t::lt1, d::ld1 -> matches_template t d && aux lt1 ld1
      in
      aux lt ld
-  | `Seq lt, _ -> List.for_all (fun t -> matches_template t d) lt
-  | _, `Seq ld -> List.for_all (fun d -> matches_template t d) ld
+  (* on unknowns *) 
+  | `Seq lt, _ -> false (* expecting a proper sequence in data // List.for_all (fun t -> matches_template t d) lt *)
+  | `U `Any, _ -> true
+  | `U (`Prefix lt), `Seq ld ->
+     let rec aux lt ld =
+       match lt, ld with
+       | [], _ -> true
+       | _, [] -> false
+       | t0::lt1, d0::ld1 -> matches_template t0 d0 && aux lt1 ld1
+     in
+     aux lt ld
+  | `U `Cst, `Seq [] -> true
+  | `U `Cst, `Seq (d::ld) -> List.for_all (fun d1 -> d1 = d) ld (* TODO: handle Full true = Full false *)
+  | `U `Cst, _ -> true
   (* on patterns *)
-  | `U, _ -> true
+  | #patt, `Seq ld -> List.for_all (fun d -> matches_template t d) ld
   | `Bool b1, `Bool b2 when b1 = b2 -> true
   | `Int i1, `Int i2 when i1 = i2 -> true
   | `Color c1, `Color c2 when c1 = c2 -> true
@@ -1650,14 +1687,24 @@ let code_template_by_kind : code_template KindMap.t =
     ~object_:code_template0
     ~layer:code_template0
     ~grid:code_template0
-    
+
+type code_template_seq =
+  { c_any : dl;
+    c_cst : dl;
+    c_prefix : dl }
+let code_template_seq0 =
+  { c_any = Mdl.Code.usage 0.5;
+    c_cst = Mdl.Code.usage 0.3;
+    c_prefix = Mdl.Code.usage 0.2 }
+  
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl = (* QUICK *)
   let rec aux ~ctx ~path t =
     let k = path_kind path in
     let code = KindMap.find k code_template_by_kind in
     match t with
-    | `U ->
+    | `U tseq ->
        code.c_u
+       +. aux_seq ~ctx ~path tseq
     | #patt as patt ->
        code.c_patt
        +. dl_patt aux ~ctx ~path patt
@@ -1670,13 +1717,24 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | `Seq items ->
        code.c_seq
        +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
+  and aux_seq ~ctx ~path tseq =
+    match tseq with
+    | `Any -> code_template_seq0.c_any
+    | `Cst -> code_template_seq0.c_cst
+    | `Prefix lt ->
+       let n, sum_dl =
+         let$ (i,sum_dl), ti = (0,0.), lt in
+         i+1, aux ~ctx ~path:(`Item (i,path)) ti in
+       code_template_seq0.c_prefix
+       +. Mdl.Code.universal_int_star n (* how many items in prefix *)
+       +. sum_dl (* coding prefix items as templates *)
   in
   aux ~ctx ~path t
 
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
 
-type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* TEST [@@unboxed] *) (* the returned encoder is for the next sequence items, if any *)
+type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *)
 
 let rec encoder_zero : encoder =
   Encoder (fun _ -> 0., encoder_zero)
@@ -1785,15 +1843,29 @@ let encoder_patt
             dl1 +. dl2 +. dl3, encoder_fail
          | _ -> assert false)
 
+let rec encoder_u_any ~ctx ~path =
+  Encoder (fun d -> dl_data ~ctx ~path d, encoder_u_any ~ctx ~path)
+(* TODO: compute once [dl_data ~ctx ~path], dl_data should return an encoder too ? *)
+let encoder_u_cst ~ctx ~path =
+  Encoder (fun d -> dl_data ~ctx ~path d, encoder_zero)
+     
 let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : encoder =
   match t with
-  | `U ->
-     let rec encoder_u =
-       Encoder (fun d -> dl_data ~ctx ~path d, encoder_u) in (* TODO: compute once [dl_data ~ctx ~path], dl_data should return an encoder too ? *)
-     encoder_u
+  | `U `Any -> encoder_u_any ~ctx ~path
+  | `U `Cst -> encoder_u_cst ~ctx ~path
+  | `U (`Prefix lt) -> encoder_u_prefix ~ctx ~path lt
   | #patt as patt -> encoder_patt encoder_template_aux ~ctx ~path patt
   | #expr -> encoder_zero (* nothing to code *)
   | `Seq lt -> encoder_seq (encoder_template_aux ~ctx ~path) lt
+and encoder_u_prefix ~ctx ~path lt =
+  let rec aux = function
+  | [] -> encoder_u_any ~ctx ~path
+  | (Encoder encoder_item)::next_encoders ->
+     Encoder (fun d ->
+         let dl, _ = encoder_item d in
+         dl, aux next_encoders)
+  in
+  aux (List.mapi (fun i ti -> encoder_template_aux ~ctx ~path:(`Item (i,path)) ti) lt)
      
 let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : data -> dl =
   let Encoder encoder = encoder_collect (encoder_template_aux ~ctx ~path t) in
@@ -2475,7 +2547,9 @@ let apply_expr apply ~(env : data) e =
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
   match t with
-  | `U -> Result.Ok `U
+  | `U tseq ->
+     let| applied_tseq = apply_template_seq ~lookup p tseq in
+     Result.Ok (`U applied_tseq)
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template result)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
   | `Seq items ->
@@ -2484,6 +2558,15 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          (fun item -> apply_template_gen ~lookup p item)
          items in
      Result.Ok (`Seq applied_items)
+and apply_template_seq ~lookup p = function
+  | `Any -> Result.Ok `Any
+  | `Cst -> Result.Ok `Cst
+  | `Prefix lt ->
+     let| applied_lt =
+       list_map_result
+         (fun item -> apply_template_gen ~lookup p item) (* TODO: should use `Item (i,p) ? *)
+         lt in
+     Result.Ok (`Prefix applied_lt)
 
 let apply_template ~(env : data) (t : template) : template result =
   apply_template_gen ~lookup:(lookup_of_env env) `Root t
@@ -2529,11 +2612,18 @@ let generate_patt (generate : revpath -> 'b -> 'a seq) (p : revpath) : 'b patt -
 let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
   (* should be named 'ground_template' *)
   match t with
-  | `U -> default_data_of_path p (* default data *)
+  | `U tseq -> generate_template_seq p tseq
   | #patt as patt -> (generate_patt generate_template p patt :> data)
   | #expr -> assert false (* should be eliminated by call to apply_template *)
   | `Seq items -> `Seq (List.map (fun item -> generate_template p item) items)
-
+and generate_template_seq p = function (* TODO: properly generate dependent sequences *)
+  | `Any -> default_data_of_path p (* default data *)
+  | `Cst ->
+     let d = default_data_of_path p in
+     `Seq [d; d]
+  | `Prefix lt ->
+     let ld = List.map (generate_template p) lt in (* TODO: use `Item (i,p) ? *)
+     `Seq ld
   
 exception Invalid_data_as_grid of data
 let _ = Printexc.register_printer
@@ -2659,17 +2749,18 @@ let rec parseur_rec4 (Parseur parse1) (Parseur parse2) (Parseur parse3) (Parseur
         f parse1 parse2 parse3 parse4 x state in
       (y, state, stop1 && stop2 && stop3 && stop4, parseur_rec4 parseur1 parseur2 parseur3 parseur4 f))  
 
-let rec parseur_seq (lparseur : ('a,'b) parseur list) : ('a,'b seq) parseur =
+let parseur_prefix ?(partial = false) (lparseur : ('a,'b) parseur list) (rparseur : ('a,'b seq) parseur) : ('a,'b seq) parseur =
   let rec aux = function
-    | [] -> parseur_empty
+    | [] -> rparseur
     | (Parseur parse_item)::l1 ->
        Parseur (fun x state ->
            let* y, state, stop, _next = parse_item x state in (* assuming no sequence nesting *)
            if stop
-           then Myseq.return (y, state, (l1=[]), parseur_seq l1)
+           then Myseq.return (y, state, (partial || l1=[]), aux l1)
            else Myseq.empty)
   in
   aux lparseur
+let parseur_seq lparseur = parseur_prefix lparseur parseur_empty
   
 let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) parseur =
   let rec aux ~depth x state sols =
@@ -2710,25 +2801,35 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
   
 
 let rec parseur_template
-          ~(parseur_u : unit -> ('a,data) parseur)
+          ~(parseur_any : unit -> ('a,data) parseur)
+          ~(parseur_cst : unit -> ('a,data) parseur)
           ~(parseur_patt : template patt -> ('a,data) parseur)
           (t : template) (p : revpath)
         : ('a,data) parseur =
   match t with
-  | `U -> parseur_u ()
+  | `U `Any -> parseur_any ()
+  | `U `Cst -> parseur_cst ()
+  | `U (`Prefix lt) ->
+     parseur_prefix
+       (List.map
+          (fun ti -> parseur_template ~parseur_any ~parseur_cst ~parseur_patt ti p)
+          lt)
+       (parseur_any ())
   | #patt as patt -> parseur_patt patt
   | #expr -> assert false
   | `Seq items ->
      parseur_seq
        (List.map
-          (fun item -> parseur_template ~parseur_u ~parseur_patt item p)
+          (fun item -> parseur_template ~parseur_any ~parseur_cst ~parseur_patt item p)
           items)
-         
+
 
 let parseur_bool t p : (bool,data) parseur = (* QUICK *)
   parseur_template
-    ~parseur_u:(fun () ->
+    ~parseur_any:(fun () ->
       parseur_rec (fun b state -> Myseq.return (`Bool b, state)))
+    ~parseur_cst:(fun () ->
+      parseur_const (fun b state -> Myseq.return (`Bool b, state)))
     ~parseur_patt:(function
       | `Bool b0 ->
          parseur_rec (fun b state ->
@@ -2741,8 +2842,10 @@ let parseur_bool t p : (bool,data) parseur = (* QUICK *)
 
 let parseur_int t p : (int,data) parseur = (* QUICK *)
   parseur_template
-    ~parseur_u:(fun () ->
+    ~parseur_any:(fun () ->
       parseur_rec (fun i state -> Myseq.return (`Int i, state)))
+    ~parseur_cst:(fun () ->
+      parseur_const (fun i state -> Myseq.return (`Int i, state)))
     ~parseur_patt:(function
       | `Int i0 ->
          parseur_rec (fun i state ->
@@ -2755,8 +2858,10 @@ let parseur_int t p : (int,data) parseur = (* QUICK *)
 
 let parseur_color t p : (Grid.color,data) parseur = (* QUICK *)
   parseur_template
-    ~parseur_u:(fun () ->
+    ~parseur_any:(fun () ->
       parseur_rec (fun c state -> Myseq.return (`Color c, state)))
+    ~parseur_cst:(fun () ->
+      parseur_const (fun c state -> Myseq.return (`Color c, state)))
     ~parseur_patt:(function
       | `Color c0 ->
          parseur_rec (fun c state ->
@@ -2769,9 +2874,12 @@ let parseur_color t p : (Grid.color,data) parseur = (* QUICK *)
   
 let parseur_mask t p : (Grid.Mask_model.t list, data) parseur = (* QUICK *)
   parseur_template
-    ~parseur_u:
-    (fun () ->
+    ~parseur_any:(fun () ->
       parseur_rec (fun ms state ->
+          let* m = Myseq.from_list ms in
+          Myseq.return (`Mask m, state)))
+    ~parseur_cst:(fun () ->
+      parseur_const (fun ms state ->
           let* m = Myseq.from_list ms in
           Myseq.return (`Mask m, state)))
     ~parseur_patt:(function
@@ -2788,8 +2896,11 @@ let parseur_mask t p : (Grid.Mask_model.t list, data) parseur = (* QUICK *)
 
 let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
   parseur_template
-    ~parseur_u:(fun () ->
+    ~parseur_any:(fun () ->
       parseur_rec (fun (vi,vj) state ->
+          Myseq.return (`Vec (`Int vi, `Int vj), state)))
+    ~parseur_cst:(fun () ->
+      parseur_const (fun (vi,vj) state ->
           Myseq.return (`Vec (`Int vi, `Int vj), state)))
     ~parseur_patt:(function
       | `Vec (i,j) ->
@@ -2883,7 +2994,7 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
         Myseq.return (drect, state, stop_rectangle, next_rectangle))
   in
   parseur_template
-    ~parseur_u:
+    ~parseur_any:
     (fun () ->
       parseur_rec (fun () state ->
           Myseq.concat
@@ -2902,18 +3013,26 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
               Myseq.return
                 (`PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                  state))
-    ]))        
+    ]))
+    ~parseur_cst:(fun () -> parseur_empty) (* not meaningful to have the same object repeated *)
     ~parseur_patt:(function
-      | `PosShape (pos, `Point (color)) ->
-         parseur_single_point pos color p
-      | `PosShape (pos, `Rectangle (size,color,mask)) ->
-         parseur_single_rectangle pos size color mask p
-      | `PosShape (pos, `Seq shapes) ->
+      | `PosShape (pos, shape) ->
+         parseur_template
+           ~parseur_any:(fun () -> parseur_empty) (* TODO: like any PosShape *)
+           ~parseur_cst:(fun () -> parseur_empty) (* TODO *)
+           ~parseur_patt:(function
+             | `Point (color) ->
+                parseur_single_point pos color p
+             | `Rectangle (size,color,mask) ->
+                parseur_single_rectangle pos size color mask p
+             | _ -> assert false)
+           shape (p ++ `Shape)
+(*      | `PosShape (pos, `Seq shapes) ->
          parseur_rec2
            (parseur_vec pos (p ++ `Pos))
            (parseur_seq
               (List.map
-                 (fun shape -> parseur_shape (`PosShape (`U, shape)) p)
+                 (fun shape -> parseur_shape (`PosShape (u_vec_any, shape)) p)
                  shapes))
            (fun parse_pos parse_object () state ->
              let* dobj, state, stop_object, next_object = parse_object () state in
@@ -2922,8 +3041,7 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
                 let* dpos, state, stop_pos, next_pos = parse_pos (di,dj) state in
                 Myseq.return (`PosShape (dpos, dshape), state,
                               stop_pos, stop_object, next_pos, next_object)
-             | _ -> assert false)
-             
+             | _ -> assert false) *)
       | _ -> assert false)
     t p
 
@@ -2979,7 +3097,8 @@ let parseur_layers layers p : (unit, data ilist) parseur =
   
 let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
-    ~parseur_u:(fun () -> parseur_empty)
+    ~parseur_any:(fun () -> parseur_empty)
+    ~parseur_cst:(fun () -> parseur_empty)
     ~parseur_patt:
     (function
      | `Background (size,color,layers) ->
@@ -2988,7 +3107,7 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
         let seq_background_colors =
           match color with
           | `Color bc -> (fun g -> Myseq.return bc)
-          | `U -> (fun g -> Myseq.from_list (Grid.background_colors g))
+          | `U _ -> (fun g -> Myseq.from_list (Grid.background_colors g))
           | `Seq _ -> (fun g -> Myseq.empty) (* TODO: avoid sequence insertion where not expected *)
           | _ -> assert false in
         let parse_bg_color g state =
@@ -3136,11 +3255,11 @@ type model = (* input->output models *)
   }
 
 let init_template =
-(*  let u_rect = `PosShape (u_vec, `Rectangle (u_vec, `U, `U)) in
-  let u_point = `PosShape (u_vec, `Point (`U)) in *)
+(*  let u_rect = `PosShape (u_vec_cst, `Rectangle (u_vec_cst, `U, `U)) in
+  let u_point = `PosShape (u_vec_cst, `Point (`U)) in *)
   let u_layers = `Nil in
   (*let u_layers = `Insert (`Nil, u_layer, `Nil) in*)
-  `Background (u_vec, `U, u_layers )
+  `Background (u_vec_any, u_any, u_layers )
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -3274,7 +3393,16 @@ let rec insert_patt (f : 'a option -> 'a) (field : field) (patt_parent : 'a patt
      print_newline ();
      assert false
 
-       
+let rec insert_prefix (i : int) (f : template option -> template) (lt : template list) : template list =
+  match lt with
+  | [] ->
+     assert (i = 0);
+     [f None]
+  | t0::lt1 ->
+     if i = 0
+     then f (Some t0) :: lt1
+     else t0 :: insert_prefix (i-1) f lt1
+     
 let rec insert_template (f : template option -> template) (p : revpath) (t : template) : template = (* QUICK *)
   match path_parent p with
   | None -> f (Some t)
@@ -3289,6 +3417,15 @@ let rec insert_template (f : template option -> template) (p : revpath) (t : tem
            | `Item (i,_), `Seq items ->
               let new_items = insert_seq f i items in 
               `Seq new_items
+           | `Item (0,_), `U `Any ->
+              `U (`Prefix [f None])
+           | `Item (0,_), `U `Cst ->
+              f None
+           | `Item (0,_), #patt ->
+              `U (`Prefix [f (Some t_parent)]) (* TODO: extend Prefix to keep pattern for next items *)
+           | `Item (n,_), `U (`Prefix lt) ->
+              let lt = insert_prefix n f lt in
+              `U (`Prefix lt)
            (* `U and other #expr are not explorable *)
            | _ -> assert false)
        parent t
@@ -3335,7 +3472,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                | Some x when x = obj -> raise Refinement_no_change
                | _ -> obj)
               path
-         |> insert_template (fun _ -> `U) (`Field (`Color,`Root)) (* because background color is defined as remaining color after covering shapes *)
+              (*         |> insert_template (fun _ -> u_any) (`Field (`Color,`Root)) (* because background color is defined as remaining color after covering shapes. TODO: remove, should be deprecated *) *)
     in
 (*    print_string "New grid template: ";
     pp_template t;
@@ -3390,9 +3527,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
             let u_val =
               List.fold_left
                 (fun res (p,role,t0,dl_t0) ->
-                  match find_data p gd.data with
-                  | Some d -> PMap.add p d res
-                  | None ->
+                  match p, find_data p gd.data with
+                  | _, Some d -> PMap.add p d res
+                  | `Item _, None -> res (* to cope with `Prrefix growing *)
+                  | _, None ->
                      pp_path p; print_string ": "; pp_data gd.data; print_newline ();
                      assert false)
                 PMap.empty u_vars in
@@ -3411,11 +3549,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          match dl_best with
          | None -> dl
          | Some dl -> dl in
-       let d = try PMap.find p u_val
-               with _ -> pp_path p; assert false in
-       if defs_check ~env t d
-       then Some (gd, dl -. dl_best, rank, d) (* recording current_dl - best_dl *)
-       else find_dl_rank ~dl_best t p rem
+       (match PMap.find_opt p u_val with
+        | Some d when defs_check ~env t d ->
+           Some (gd, dl -. dl_best, rank, d) (* recording current_dl - best_dl *)
+        | _ -> find_dl_rank ~dl_best t p rem)
   in
   let module TMap = (* mappings from defining templates *)
     Map.Make
@@ -3429,20 +3566,22 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
     let tmap_score_patt =
       match t0 with
-      | `U | `Vec (`U, `U) ->
+      | `U _ | `Vec (`U _, `U _) -> (* including Vec because present initially *)
          let$ res, (env,gd,u_val,dl,rank) = TMap.empty, reads_fst in
-         let d = try PMap.find p u_val with _ -> assert false in
-         let dl_ctx = dl_ctx_of_data gd.data in
-         let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-         let$ res, t = res, root_template_of_data ~in_output d in
-         if t <> t0 (* a different pattern *)
-            && not (TMap.mem t res) (* that was not already seen *)
+         (match PMap.find_opt p u_val with
+          | Some d ->
+             let dl_ctx = dl_ctx_of_data gd.data in
+             let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+             let$ res, t = res, root_template_of_data ~in_output d in
+             if t <> t0 (* a different pattern *)
+                && not (TMap.mem t res) (* that was not already seen *)
                    (* && defs_check ~env t d (* and that checks. true by construction *) *)
-         then
-           let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-           TMap.add t (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank) res
-         else res
+             then
+               let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+               TMap.add t (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank) res
+             else res
+          | None -> res)
       | _ -> TMap.empty in
     TMap.fold
       (fun t (dl,rank) defs ->
@@ -3468,10 +3607,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
           data_fst
           |> List.find_map
                (fun (te,gd,u_val,dl,rank) ->
-                 let d = try PMap.find p u_val with _ -> assert false in
-                 if matches_template te d
-                 then Some (gd,dl,rank,d)
-                 else None) in
+                 match PMap.find_opt p u_val with
+                 | Some d when matches_template te d ->
+                    Some (gd,dl,rank,d)
+                 | _ -> None) in
         match data_opt with
         | None -> defs
         | Some (gd,dl,rank,d) ->
@@ -3493,7 +3632,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               let dl_ctx = dl_ctx_of_data gd1.data in
               let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d1 in
               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d1 in
-              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in
+              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in (* TODO: penalize higher ranks to favor default parse *)
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
@@ -3767,17 +3906,17 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
      (* TEST let su =
        aux ~objs:[`U] `Root layers in *)
      let sp =
-       let objs = [`PosShape (u_vec, `Point (`U))] in
+       let objs = [`PosShape (u_vec_cst, `Point (u_cst))] in (* TEST *)
        aux ~objs `Root layers in
      let sr =
-       let objs = [`PosShape (u_vec, `Rectangle (u_vec, `U, `U))] in
+       let objs = [`PosShape (u_vec_cst, `Rectangle (u_vec_cst, u_cst, u_cst))] in (* TEST *)
        aux ~objs `Root layers in
      let ss =
        let ps_shape = signature_of_kind env_sig Shape in
        Myseq.concat
          (List.map
             (fun p_shape ->
-              let objs = [`PosShape (u_vec, `Ref p_shape)] in
+              let objs = [`PosShape (u_vec_cst, `Ref p_shape)] in
               aux ~objs `Root layers)
             ps_shape) in
      let so =
