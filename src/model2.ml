@@ -2678,47 +2678,118 @@ let apply_template ~(env : data) (t : template) : template result =
 
 (* grid generation from data and template *)
 
-let generate_patt (generate : revpath -> 'b -> 'a seq) (p : revpath) : 'b patt -> 'a seq = function
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) -> d
-  | `Vec (si,sj) ->
-     broadcast2 (generate (p ++ `I) si,
-                 generate (p ++ `J) sj)
-       (fun (i,j) -> `Vec (i,j))
-  | `Point (scolor) ->
-     broadcast1 (generate (p ++ `Color) scolor)
-       (fun color -> `Point color)
-  | `Rectangle (ssize,scolor,smask) ->
-     broadcast_list [generate (p ++ `Size) ssize;
-                     generate (p ++ `Color) scolor;
-                     generate (p ++ `Mask) smask]
-       (function
-        | [size; color; mask] -> `Rectangle (size, color, mask)
-        | _ -> assert false)
-  | `PosShape (spos,sshape) ->
-     broadcast2 (generate (p ++ `Pos) spos,
-                 generate (p ++ `Shape) sshape)
-       (fun (pos,shape) -> `PosShape (pos,shape))
-  | `Background (size,color,layers) ->
-     `Background (generate (p ++ `Size) size, (* assumes size <> `Seq _ *)
-                  generate (p ++ `Color) color, (* assumes color <> `Seq _ *)
-                  map_ilist
-                    (fun lp shape ->
-                      generate (p ++ `Layer lp) shape) (* keep `Seq's as layers *)
-                    `Root layers)
+type generator = Generator of (unit -> data * generator) [@@unboxed] (* analogous to parseur *)
 
-let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
-  (* should be named 'ground_template' *)
-  match t with (* TODO: properly generate dependent sequences ? *)
-  | `Any -> default_data_of_path p (* default data *)
-  | #patt as patt -> (generate_patt generate_template p patt :> data)
+let rec generator_fail : generator =
+  Generator (fun () -> failwith "nothing to generate")
+
+let generator_collect (gen_item : generator) (n : int) : generator =
+  let rec aux (Generator gen_item) n =
+    if n = 0 then []
+    else
+      try
+        let d, next_item = gen_item () in
+        d :: aux next_item (n-1)
+      with _ -> [] in
+  Generator (fun () ->
+      let ld = aux gen_item n in
+      `Seq ld, generator_fail)
+
+let generator_patt (gen : revpath -> 'a -> generator) (p : revpath) : 'a patt -> generator = function
+  | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) ->
+     let rec gen_d = Generator (fun () -> d, gen_d) in
+     gen_d
+  | `Vec (i,j) ->
+     let rec gen_vec (Generator gen_i) (Generator gen_j) =
+       Generator (fun () ->
+           let di, next_i = gen_i () in
+           let dj, next_j = gen_j () in
+           `Vec (di,dj), gen_vec next_i next_j) in
+     gen_vec (gen (p ++ `I) i) (gen (p ++ `J) j)
+  | `Point color ->
+     let rec gen_point (Generator gen_color) =
+       Generator (fun () ->
+           let dcolor, next_color = gen_color () in
+           `Point dcolor, gen_point next_color) in
+     gen_point (gen (p ++ `Color) color)
+  | `Rectangle (size,color,mask) ->
+     let rec gen_rectangle (Generator gen_size) (Generator gen_color) (Generator gen_mask) =
+       Generator (fun () ->
+           let dsize, next_size = gen_size () in
+           let dcolor, next_color = gen_color () in
+           let dmask, next_mask = gen_mask () in
+           `Rectangle (dsize,dcolor,dmask), gen_rectangle next_size next_color next_mask) in
+     gen_rectangle (gen (p ++ `Size) size) (gen (p ++ `Color) color) (gen (p ++ `Mask) mask)
+  | `PosShape (pos,shape) ->
+     let rec gen_ps (Generator gen_pos) (Generator gen_shape) =
+       Generator (fun () ->
+           let dpos, next_pos = gen_pos () in
+           let dshape, next_shape = gen_shape () in
+           `PosShape (dpos,dshape), gen_ps next_pos next_shape) in
+     gen_ps (gen (p ++ `Pos) pos) (gen (p ++ `Shape) shape)
+  | `Background (size,color,layers) ->
+     let Generator gen_size = gen (p ++ `Size) size in
+     let Generator gen_color = gen (p ++ `Color) color in
+     let ilist_gen_layers =
+       map_ilist
+         (fun lp layer -> generator_collect (gen (p ++ `Layer lp) layer) 1) (* TODO: how to do better than fixed nb of collected items? *)
+         `Root layers in
+     Generator (fun () ->
+         let dsize, _ = gen_size () in
+         let dcolor, _ = gen_color () in
+         let dlayers =
+           map_ilist
+             (fun lp (Generator gen_layer) ->
+               let dlayer, _ = gen_layer () in
+               dlayer)
+             `Root ilist_gen_layers in
+         `Background (dsize,dcolor,dlayers), generator_fail)
+
+let rec generator_template (p : revpath) (t : template) : generator =
+  match t with
+  | `Any ->
+     let rec gen_any =
+       Generator (fun () ->
+           default_data_of_path p, gen_any) in
+     gen_any
+  | #patt as patt -> generator_patt generator_template p patt
   | #expr -> assert false (* should be eliminated by call to apply_template *)
-  | `Seq items -> `Seq (List.map (fun item -> generate_template p item) items)
+  | `Seq items ->
+     let rec gen_seq = function
+       | [] -> generator_fail
+       | (Generator gen_item)::next_gens ->
+          Generator (fun () ->
+              let d, _ = gen_item () in
+              d, gen_seq next_gens) in
+     gen_seq (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
   | `Cst main ->
-     let d = generate_template p main in
-     `Seq [d; d]
+     let Generator gen_main = generator_template p main in
+     let rec gen_cst = function
+       | None ->
+          Generator (fun () ->
+              let d, _ = gen_main () in
+              d, gen_cst (Some d))
+       | Some d0 as hist ->
+          Generator (fun () ->
+              d0, gen_cst hist) in
+     gen_cst None
   | `Prefix (main,items) ->
-     let ld = List.map (generate_template p) items in (* TODO: use `Item (i,p) ? *)
-     `Seq ld
+     let gen_main = generator_template p main in
+     let rec gen_prefix = function
+       | [] -> gen_main
+       | (Generator gen_item)::next_gens ->
+          Generator (fun () ->
+              let d1, _ = gen_item () in
+              d1, gen_prefix next_gens) in
+     gen_prefix (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
+     
+let generate_template ?(p = `Root) (t : template) : data =
+  (* should be named 'ground_template' *)
+  let Generator gen = generator_template p t in
+  let data, _ = gen () in
+  data
+
+(* from data to grid *)
   
 exception Invalid_data_as_grid of data
 let _ = Printexc.register_printer
@@ -2763,7 +2834,7 @@ let grid_of_data_failsafe d =
 
 let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
   let| t' = apply_template ~env t in
-  let d = generate_template `Root t' in
+  let d = generate_template t' in
   let| g = grid_of_data d in
   List.iter
     (fun (i,j,c) -> Grid.set_pixel g i j c)
