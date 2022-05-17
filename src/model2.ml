@@ -1154,57 +1154,150 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
      (if all_the_same then [`Cst `Any] else []) @ (* TODO: should be handled elsewhere *)
        common_patterns
 
-let matches_ilist (matches : 'a -> 'b -> bool)
-      (il1 : 'a ilist) (il2 : 'b ilist) : bool =
-  let rev_l1 = fold_ilist (fun res _ t -> t::res) [] `Root il1 in
-  let rev_l2 = fold_ilist (fun res _ d -> d::res) [] `Root il2 in
-  List.for_all2 matches rev_l1 rev_l2
+(* returning matchers from templates, i.e. functions (data -> bool) *)
 
-let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
-  match t, d with
-  (* explicit broadcasting *)
-  | `Seq lt, `Seq ld ->
-     let rec aux lt ld =
-       match lt, ld with
-       | [], [] -> true
-       | [], _ | _, [] -> false
-       | t::lt1, d::ld1 -> matches_template t d && aux lt1 ld1
-     in
-     aux lt ld
-  (* on unknowns *) 
-  | `Seq lt, _ -> false (* expecting a proper sequence in data // List.for_all (fun t -> matches_template t d) lt *)
-  | `Any, _ -> true
-  | `Cst main, `Seq [] -> true
-  | `Cst main, `Seq (d::ld) ->
-     matches_template main d
-     && List.for_all (fun d1 -> d1 = d) ld (* TODO: handle Full true = Full false *)
-  | `Cst main, _ -> matches_template main d (* singleton data *)
-  | `Prefix (main,items), `Seq ld ->
-     let rec aux items ld =
-       match items, ld with
-       | [], _ -> List.for_all (fun d -> matches_template main d) ld
-       | _, [] -> false
-       | t0::lt1, d0::ld1 -> matches_template t0 d0 && aux lt1 ld1 (* assuming that t0 is subsumed by main *)
-     in
-     aux items ld
-  (* on patterns *)
-  | #patt, `Seq ld -> List.for_all (fun d -> matches_template t d) ld (* TODO: wrong, do like for template_encoder *)
-  | `Bool b1, `Bool b2 when b1 = b2 -> true
-  | `Int i1, `Int i2 when i1 = i2 -> true
-  | `Color c1, `Color c2 when c1 = c2 -> true
-  | `Mask m1, `Mask m2 -> Grid.Mask_model.subsumes m1 m2
-  | `Vec (i1,j1), `Vec (i2,j2) ->
-     matches_template i1 i2 && matches_template j1 j2
-  | `Point (color1), `Point (color2) ->
-     matches_template color1 color2
-  | `Rectangle (size1,color1,mask1), `Rectangle (size2,color2,mask2) ->
-     matches_template size1 size2 && matches_template color1 color2 && matches_template mask1 mask2
-  | `PosShape (pos1,shape1), `PosShape (pos2,shape2) ->
-     matches_template pos1 pos2 && matches_template shape1 shape2
-  | `Background (size1,color1,layers1), `Background (size2,color2,layers2) ->
-     matches_template size1 size2 && matches_template color1 color2
-     && matches_ilist matches_template layers1 layers2
-  | _ -> false
+type matcher = Matcher of (data -> bool * matcher) [@@unboxed] (* the returned matcher is for the next sequence items, if any *)
+
+let rec matcher_success : matcher =
+  Matcher (fun _ -> true, matcher_success)
+let rec matcher_fail : matcher =
+  Matcher (fun _ -> false, matcher_fail)
+                          
+let matcher_collect (Matcher matcher_item : matcher) : matcher =
+  let rec aux matcher_item = function
+    | [] -> true
+    | item::items ->
+       let ok1, Matcher next_matcher = matcher_item item in
+       ok1 && aux next_matcher items
+  in
+  Matcher (function
+      | `Seq items ->
+         assert (items <> []);
+         aux matcher_item items, matcher_fail
+      | d ->
+         let ok, _ = matcher_item d in
+         ok, matcher_fail)
+  
+let matcher_patt (matcher : 'a -> matcher) (patt : 'a patt) : matcher =
+  match patt with
+  | `Bool b ->
+     let rec matcher_bool =
+       Matcher (function
+           | `Bool db -> db = b, matcher_bool
+           | _ -> false, matcher_fail) in
+     matcher_bool
+  | `Int i ->
+     let rec matcher_int =
+       Matcher (function
+           | `Int di -> di = i, matcher_int
+           | _ -> false, matcher_fail) in
+     matcher_int
+  | `Color c ->
+     let rec matcher_color =
+       Matcher (function
+           | `Color dc -> dc = c, matcher_color
+           | _ -> false, matcher_fail) in
+     matcher_color
+  | `Mask m ->
+     let rec matcher_mask =
+       Matcher (function
+           | `Mask dm -> Grid.Mask_model.subsumes m dm, matcher_mask
+           | _ -> false, matcher_fail) in
+     matcher_mask
+  | `Vec (i,j) ->
+     let rec matcher_vec (Matcher matcher_i) (Matcher matcher_j) =
+       Matcher (function
+           | `Vec (di,dj) ->
+              let ok1, next_i = matcher_i di in
+              let ok2, next_j = matcher_j dj in
+              ok1 && ok2, matcher_vec next_i next_j
+           | _ -> false, matcher_fail) in
+     matcher_vec (matcher i) (matcher j)
+  | `Point color ->
+     let rec matcher_point (Matcher matcher_color) =
+       Matcher (function
+           | `Point dcolor ->
+              let ok1, next_color = matcher_color dcolor in
+              ok1, matcher_point next_color
+           | _ -> false, matcher_fail) in
+     matcher_point (matcher color)
+  | `Rectangle (size,color,mask) ->
+     let rec matcher_rectangle (Matcher matcher_size) (Matcher matcher_color) (Matcher matcher_mask) =
+       Matcher (function
+           | `Rectangle (dsize,dcolor,dmask) ->
+              let ok1, next_size = matcher_size dsize in
+              let ok2, next_color = matcher_color dcolor in
+              let ok3, next_mask = matcher_mask dmask in
+              ok1 && ok2 && ok3, matcher_rectangle next_size next_color next_mask
+           | _ -> false, matcher_fail) in
+     matcher_rectangle (matcher size) (matcher color) (matcher mask)
+  | `PosShape (pos,shape) ->
+     let rec matcher_ps (Matcher matcher_pos) (Matcher matcher_shape) =
+       Matcher (function
+           | `PosShape (dpos,dshape) ->
+              let ok1, next_pos = matcher_pos dpos in
+              let ok2, next_shape = matcher_shape dshape in
+              ok1 && ok2, matcher_ps next_pos next_shape
+           | _ -> false, matcher_fail) in
+     matcher_ps (matcher pos) (matcher shape)
+  | `Background (size,color,layers) ->
+     let Matcher matcher_size = matcher size in
+     let Matcher matcher_color = matcher color in
+     let ilist_matcher_layers =
+       map_ilist
+         (fun lp layer -> matcher_collect (matcher layer))
+         `Root layers in
+     Matcher (function
+         | `Background (dsize,dcolor,dlayers) ->
+            let ok1, _ = matcher_size dsize in
+            let ok2, _ = matcher_color dcolor in
+            let ok3 =
+              fold2_ilist
+                (fun ok_all lp (Matcher matcher_layer) dlayer ->
+                  ok_all && fst (matcher_layer dlayer))
+                true `Root ilist_matcher_layers dlayers in
+            ok1 && ok2 && ok3, matcher_fail
+         | _ -> false, matcher_fail)
+
+
+let rec matcher_template_aux (t : template) : matcher =
+  match t with
+  | `Any -> matcher_success
+  | #patt as patt -> matcher_patt matcher_template_aux patt
+  | #expr -> assert false
+  | `Seq items ->
+     let rec matcher_seq = function
+       | [] -> matcher_fail
+       | (Matcher matcher_item)::next_matchers ->
+          Matcher (fun d ->
+              let ok1, _ = matcher_item d in
+              ok1, matcher_seq next_matchers) in
+     matcher_seq (List.map matcher_template_aux items)
+  | `Cst main ->
+     let Matcher matcher_main = matcher_template_aux main in
+     let rec matcher_cst = function
+       | None ->
+          Matcher (fun d ->
+              let ok1, _next = matcher_main d in
+              ok1, matcher_cst (Some d))
+       | Some d0 as hist ->
+          Matcher (fun d ->
+              d = d0, matcher_cst hist) in
+     matcher_cst None     
+  | `Prefix (main,items) ->
+     let matcher_main = matcher_template_aux main in
+     let rec matcher_prefix = function
+       | [] -> matcher_main
+       | (Matcher matcher_item)::next_matchers ->
+          Matcher (fun d ->
+              let ok1, _ = matcher_item d in
+              ok1, matcher_prefix next_matchers) in
+     matcher_prefix (List.map matcher_template_aux items)
+
+let matches_template (t : template) : data -> bool =
+  let Matcher matcher = matcher_collect (matcher_template_aux t) in
+  fun d -> fst (matcher d)
+     
     
 (* description lengths *)
 
@@ -3467,13 +3560,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               if definable_var
               then
                 let dl0 = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t0 in
-                let res = (* for initiating prefixes *)
+                (* TEST TODO let res = (* for initiating prefixes *)
                   if role_can_be_sequence role
                   then
                     match anc0 with
                     | (`Cst _ | `Prefix _)::_ -> res
                     | _ -> (`Item (0,p), role,t0,dl0)::res
-                  else res in
+                  else res in*)
                 (p,role,t0,dl0)::res
               else res)
          [] path0 t []) in
