@@ -9,7 +9,7 @@ let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" 10 (* TEST *) string_of_int (* max size of collected sequences *)
+let max_seq_length = def_param "max_seq_length" 1 (* TEST *) string_of_int (* max size of collected sequences *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -239,6 +239,12 @@ let kind_of_role : role -> kind = function
   | `Layer -> Layer
   | `Grid -> Grid
 
+let role_can_be_sequence = function
+  | `Int (_, `Size `Grid)
+    | `Vec (`Size `Grid)
+    | `Color `Grid -> false (* grid attributes are singletons *)
+  | _ -> true (* layer attributes can be sequences *)
+           
 type role_poly = (* polymorphic extension of role *)
   [ `Int of [`I | `J | `X] * role_vec_poly
   | `Color of role_frame_poly
@@ -549,19 +555,18 @@ and symmetry = [
 let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
              
 type template =
-  [ `U of template_seq
-  | template patt
-  | `Seq of template list
-  | template expr ] (* TODO: should sub-expressions be restricted to patt and expr ? *)
-and template_seq =
-  [ `Any (* sequence of independent items *)
-  | `Prefix of template list (* sequence starting with some items, followed by an Any-sequence *)
-  | `Cst ] (* all sequence items are the same *)  
-let template0 : template = `U `Any
+  [ `Any (* an item of sequence items with no constraint (anything) *)
+  | template patt (* an item or sequence of items matching the pattern *)
+  | template expr (* an expression that evaluates into a template *)
+  | `Seq of template list (* a sequence where items match the given template list *)
+  | `Cst of template (* all sequence items are the same, and match the item template *)  
+  | `Prefix of template * template list (* a sequence whose items match the main template, and whose K first items match the template list *)
+  ]
+let template0 : template = `Any
 let _ = (template0 :> template seq) (* template is an instance of template seq *)
 
-let u_any = `U `Any
-let u_cst = `U `Cst
+let u_any = `Any
+let u_cst = (* `Cst *) u_any (* TEST *)
 let u_vec_any : template = `Vec (u_any, u_any)
 let u_vec_cst : template = `Vec (u_cst, u_cst)
 
@@ -807,21 +812,27 @@ let string_of_expr xp = Xprint.to_string (xp_expr xp)
                          
                    
 let rec xp_template (print : Xprint.t) : template -> unit = function
-  | `U `Any -> print#string "?"
-  | `U (`Prefix lt) ->
-     Xprint.bracket
-       ("<"," | ?>")
-       (Xprint.sep_list ", " xp_template)
-       print lt
-  | `U `Cst -> print#string "?cst"
+  | `Any -> print#string "?"
   | #patt as patt -> xp_patt xp_template print patt
+  | #expr as e -> xp_expr xp_template print e
   | `Seq items ->
      Xprint.bracket
        ("<\n\t", " >")
        (Xprint.sep_list ",\n\t" xp_template)
        print
        items
-  | #expr as e -> xp_expr xp_template print e
+  | `Cst t ->
+     Xprint.bracket
+       ("[CST ", "]")
+       xp_template
+       print t
+  | `Prefix (t,items) ->
+     print#string "[";
+     xp_template print t;
+     Xprint.bracket
+       (" PREFIX <"," ...>]")
+       (Xprint.sep_list ", " xp_template)
+       print items
 let pp_template = Xprint.to_stdout xp_template
 let string_of_template = Xprint.to_string xp_template
 
@@ -1028,19 +1039,12 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
   let acc = f acc p t ancestry in
   let t_ancestry = t::ancestry in
   match t with
-  | `U `Any ->
-     f acc (`Item (0,p)) (`U `Any) t_ancestry (* to initiate prefix *) (* TODO: should use `U `Singleton instead of `U `Any *)
-  | `U (`Prefix lt) ->
-     let n, acc =
-       let$ (i, acc), ti = (0,acc), lt in
-       i+1, fold_template f acc (`Item (i,p)) ti t_ancestry in
-     f acc (`Item (n,p)) (`U `Any) t_ancestry (* to extend prefix *)
-  | `U `Cst -> acc
+  | `Any -> acc
   | #patt as patt ->
-     (* let acc = f acc (`Item (0,p)) t t_ancestry in *) (* to introduce Prefix but need thinking more *)
      fold_patt
        (fun acc p t anc -> fold_template f acc p t anc)
        acc p patt t_ancestry
+  | #expr -> acc
   | `Seq items ->
      let _, acc =
        items
@@ -1049,7 +1053,14 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
               i+1, fold_template f acc (`Item (i,p)) item t_ancestry)
             (0,acc) in
      acc
-  | #expr -> acc
+  | `Cst main ->
+     fold_template f acc p main t_ancestry (* p points both at sequence and item levels *)
+  | `Prefix (main,items) ->
+     let acc = fold_template f acc p main t_ancestry in
+     let n, acc =
+       let$ (i, acc), item = (0,acc), items in
+       i+1, fold_template f acc (`Item (i,p)) item t_ancestry in
+     acc
        
 let size_of_data (d : data) : int =
   fold_data (fun res _ _ _ -> res+1) 0 path0 d []
@@ -1068,15 +1079,7 @@ let signature_of_template (t : template) : signature =
           | None -> []
           | Some ps -> ps in
         let ps = p::ps0 in
-        Hashtbl.replace ht k ps
-      (* deprecated by the use of u_vec_any 
-          if k = Vec && t1 = `U then (
-          let ps0 =
-            match Hashtbl.find_opt ht Int with
-            | None -> []
-            | Some ps -> ps in
-          Hashtbl.replace ht In t (p ++ `I :: p ++ `J :: ps0)) *)
-      )
+        Hashtbl.replace ht k ps)
       () path0 t [] in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
@@ -1148,7 +1151,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
               | `Vec _ -> u_vec_cst
               | _ -> u_cst)
              l) :: *)
-     (if all_the_same then [`U `Cst] else []) @
+     (if all_the_same then [`Cst `Any] else []) @ (* TODO: should be handled elsewhere *)
        common_patterns
 
 let matches_ilist (matches : 'a -> 'b -> bool)
@@ -1170,20 +1173,22 @@ let rec matches_template (t : template) (d : data) : bool = (* QUICK *)
      aux lt ld
   (* on unknowns *) 
   | `Seq lt, _ -> false (* expecting a proper sequence in data // List.for_all (fun t -> matches_template t d) lt *)
-  | `U `Any, _ -> true
-  | `U (`Prefix lt), `Seq ld ->
-     let rec aux lt ld =
-       match lt, ld with
-       | [], _ -> true
+  | `Any, _ -> true
+  | `Cst main, `Seq [] -> true
+  | `Cst main, `Seq (d::ld) ->
+     matches_template main d
+     && List.for_all (fun d1 -> d1 = d) ld (* TODO: handle Full true = Full false *)
+  | `Cst main, _ -> matches_template main d (* singleton data *)
+  | `Prefix (main,items), `Seq ld ->
+     let rec aux items ld =
+       match items, ld with
+       | [], _ -> List.for_all (fun d -> matches_template main d) ld
        | _, [] -> false
-       | t0::lt1, d0::ld1 -> matches_template t0 d0 && aux lt1 ld1
+       | t0::lt1, d0::ld1 -> matches_template t0 d0 && aux lt1 ld1 (* assuming that t0 is subsumed by main *)
      in
-     aux lt ld
-  | `U `Cst, `Seq [] -> true
-  | `U `Cst, `Seq (d::ld) -> List.for_all (fun d1 -> d1 = d) ld (* TODO: handle Full true = Full false *)
-  | `U `Cst, _ -> true
+     aux items ld
   (* on patterns *)
-  | #patt, `Seq ld -> List.for_all (fun d -> matches_template t d) ld
+  | #patt, `Seq ld -> List.for_all (fun d -> matches_template t d) ld (* TODO: wrong, do like for template_encoder *)
   | `Bool b1, `Bool b2 when b1 = b2 -> true
   | `Int i1, `Int i2 when i1 = i2 -> true
   | `Color c1, `Color c2 when c1 = c2 -> true
@@ -1664,20 +1669,24 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (2, Some (`Color `Shape), path)) e2
 
 type code_template = (* dls must correspond to a valid prob distrib *)
-  { c_u : dl;
+  { c_any : dl;
     c_patt : dl;
     c_ref : dl;
     c_expr : dl;
-    c_seq : dl }
+    c_seq : dl;
+    c_cst : dl;
+    c_prefix : dl }
 let code_template0 =
-  { c_u = Mdl.Code.usage 0.1;
+  { c_any = Mdl.Code.usage 0.1;
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
     c_ref = Mdl.Code.usage 0.4;
     c_expr = Mdl.Code.usage 0.2;
-    c_seq = Mdl.Code.usage 0.1 }
+    c_seq = Mdl.Code.usage 0.02;
+    c_cst = Mdl.Code.usage 0.05;
+    c_prefix = Mdl.Code.usage 0.03 }
 
 let code_template_by_kind : code_template KindMap.t =
-  KindMap.make
+  KindMap.make (* TODO: customize sequence constructions *)
     ~int:code_template0
     ~bool:code_template0
     ~color:code_template0
@@ -1688,23 +1697,13 @@ let code_template_by_kind : code_template KindMap.t =
     ~layer:code_template0
     ~grid:code_template0
 
-type code_template_seq =
-  { c_any : dl;
-    c_cst : dl;
-    c_prefix : dl }
-let code_template_seq0 =
-  { c_any = Mdl.Code.usage 0.5;
-    c_cst = Mdl.Code.usage 0.3;
-    c_prefix = Mdl.Code.usage 0.2 }
-  
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl = (* QUICK *)
   let rec aux ~ctx ~path t =
     let k = path_kind path in
     let code = KindMap.find k code_template_by_kind in
     match t with
-    | `U tseq ->
-       code.c_u
-       +. aux_seq ~ctx ~path tseq
+    | `Any ->
+       code.c_any
     | #patt as patt ->
        code.c_patt
        +. dl_patt aux ~ctx ~path patt
@@ -1717,17 +1716,19 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | `Seq items ->
        code.c_seq
        +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
-  and aux_seq ~ctx ~path tseq =
-    match tseq with
-    | `Any -> code_template_seq0.c_any
-    | `Cst -> code_template_seq0.c_cst
-    | `Prefix lt ->
-       let n, sum_dl =
-         let$ (i,sum_dl), ti = (0,0.), lt in
-         i+1, aux ~ctx ~path:(`Item (i,path)) ti in
-       code_template_seq0.c_prefix
+    | `Cst main ->
+       code.c_cst
+       +. aux ~ctx ~path main
+    | `Prefix (main,items) ->
+       let dl_main = aux ~ctx ~path main in
+       let n, dl_items =
+         let$ (i,sum_dl), item = (0,0.), items in
+         i+1, aux ~ctx ~path:(`Item (i,path)) item in
+       (* TODO: should encode item template according to main template ! *)
+       code.c_prefix
+       +. dl_main (* coding the main template *)
        +. Mdl.Code.universal_int_star n (* how many items in prefix *)
-       +. sum_dl (* coding prefix items as templates *)
+       +. dl_items (* coding prefix items as templates *)
   in
   aux ~ctx ~path t
 
@@ -1740,6 +1741,11 @@ let rec encoder_zero : encoder =
   Encoder (fun _ -> 0., encoder_zero)
 let encoder_fail : encoder =
   Encoder (fun _ -> assert false)
+let encoder_lift (dl : 'a -> dl) : encoder =
+  Encoder (fun d -> dl d, encoder_fail)
+let encoder_pop (Encoder encoder) (d : data) : dl =
+  let dl, _ = encoder d in
+  dl
 
 let encoder_seq (make_encoder : 'a -> encoder) (items : 'a list) : encoder =
   assert (items <> []);
@@ -1843,29 +1849,34 @@ let encoder_patt
             dl1 +. dl2 +. dl3, encoder_fail
          | _ -> assert false)
 
-let rec encoder_u_any ~ctx ~path =
-  Encoder (fun d -> dl_data ~ctx ~path d, encoder_u_any ~ctx ~path)
+let rec encoder_any ~ctx ~path =
+  Encoder (fun d -> dl_data ~ctx ~path d, encoder_any ~ctx ~path)
 (* TODO: compute once [dl_data ~ctx ~path], dl_data should return an encoder too ? *)
-let encoder_u_cst ~ctx ~path =
-  Encoder (fun d -> dl_data ~ctx ~path d, encoder_zero)
-     
-let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : encoder =
-  match t with
-  | `U `Any -> encoder_u_any ~ctx ~path
-  | `U `Cst -> encoder_u_cst ~ctx ~path
-  | `U (`Prefix lt) -> encoder_u_prefix ~ctx ~path lt
-  | #patt as patt -> encoder_patt encoder_template_aux ~ctx ~path patt
-  | #expr -> encoder_zero (* nothing to code *)
-  | `Seq lt -> encoder_seq (encoder_template_aux ~ctx ~path) lt
-and encoder_u_prefix ~ctx ~path lt =
-  let rec aux = function
-  | [] -> encoder_u_any ~ctx ~path
+
+let encoder_cst (Encoder encoder_item) =
+  Encoder (fun d ->
+      let dl, _ = encoder_item d in
+      dl, encoder_zero) (* enough to encode the first, all other items are the same *)
+
+let rec encoder_prefix (encoder_main : encoder) (encoders_item : encoder list) : encoder =
+  match encoders_item with
+  | [] -> encoder_main
   | (Encoder encoder_item)::next_encoders ->
      Encoder (fun d ->
          let dl, _ = encoder_item d in
-         dl, aux next_encoders)
-  in
-  aux (List.mapi (fun i ti -> encoder_template_aux ~ctx ~path:(`Item (i,path)) ti) lt)
+         dl, encoder_prefix encoder_main next_encoders)
+    
+let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : encoder =
+  match t with
+  | `Any -> encoder_any ~ctx ~path
+  | #patt as patt -> encoder_patt encoder_template_aux ~ctx ~path patt
+  | #expr -> encoder_zero (* nothing to code *)
+  | `Seq lt -> encoder_seq (encoder_template_aux ~ctx ~path) lt
+  | `Cst main -> encoder_cst (encoder_template_aux ~ctx ~path main)
+  | `Prefix (main,items) ->
+     encoder_prefix
+       (encoder_template_aux ~ctx ~path main)
+       (List.mapi (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items)
      
 let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : data -> dl =
   let Encoder encoder = encoder_collect (encoder_template_aux ~ctx ~path t) in
@@ -2547,9 +2558,7 @@ let apply_expr apply ~(env : data) e =
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
   match t with
-  | `U tseq ->
-     let| applied_tseq = apply_template_seq ~lookup p tseq in
-     Result.Ok (`U applied_tseq)
+  | `Any -> Result.Ok `Any
   | #patt as patt -> (apply_patt apply_template_gen ~lookup p patt :> template result)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
   | `Seq items ->
@@ -2558,24 +2567,19 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          (fun item -> apply_template_gen ~lookup p item)
          items in
      Result.Ok (`Seq applied_items)
-and apply_template_seq ~lookup p = function
-  | `Any -> Result.Ok `Any
-  | `Cst -> Result.Ok `Cst
-  | `Prefix lt ->
-     let| applied_lt =
+  | `Cst main ->
+     let| applied_main = apply_template_gen ~lookup p main in
+     Result.Ok (`Cst main)
+  | `Prefix (main,items) ->
+     let| applied_main = apply_template_gen ~lookup p main in
+     let| applied_items =
        list_map_result
          (fun item -> apply_template_gen ~lookup p item) (* TODO: should use `Item (i,p) ? *)
-         lt in
-     Result.Ok (`Prefix applied_lt)
+         items in
+     Result.Ok (`Prefix (applied_main,applied_items))
 
 let apply_template ~(env : data) (t : template) : template result =
   apply_template_gen ~lookup:(lookup_of_env env) `Root t
-  (* try Result.Ok (apply_template_gen ~lookup:(lookup_of_env env) `Root t)
-  with (* catching runtime error in expression eval *)
-  | (Grid.Undefined_result _ as exn) -> Result.Error exn
-  | (Unbound_var _ as exn) -> Result.Error exn
-  | (Undefined_result _ as exn) -> Result.Error exn
-  | (Negative_integer  as exn) -> Result.Error exn *)
 (* DO NOT remove path argument, useful in generate_template (through apply_patt) *)
 
 
@@ -2611,18 +2615,16 @@ let generate_patt (generate : revpath -> 'b -> 'a seq) (p : revpath) : 'b patt -
 
 let rec generate_template (p : revpath) (t : template) : data = (* QUICK *)
   (* should be named 'ground_template' *)
-  match t with
-  | `U tseq -> generate_template_seq p tseq
+  match t with (* TODO: properly generate dependent sequences ? *)
+  | `Any -> default_data_of_path p (* default data *)
   | #patt as patt -> (generate_patt generate_template p patt :> data)
   | #expr -> assert false (* should be eliminated by call to apply_template *)
   | `Seq items -> `Seq (List.map (fun item -> generate_template p item) items)
-and generate_template_seq p = function (* TODO: properly generate dependent sequences *)
-  | `Any -> default_data_of_path p (* default data *)
-  | `Cst ->
-     let d = default_data_of_path p in
+  | `Cst main ->
+     let d = generate_template p main in
      `Seq [d; d]
-  | `Prefix lt ->
-     let ld = List.map (generate_template p) lt in (* TODO: use `Item (i,p) ? *)
+  | `Prefix (main,items) ->
+     let ld = List.map (generate_template p) items in (* TODO: use `Item (i,p) ? *)
      `Seq ld
   
 exception Invalid_data_as_grid of data
@@ -2710,20 +2712,6 @@ type ('a,'b) parseur = (* input -> state -> results *)
 
 let parseur_empty : ('a,'b) parseur =
   Parseur (fun x state -> Myseq.empty)
-
-let rec parseur_const ?(history : 'b option = None) (f : 'a -> parse_state -> ('b * parse_state) Myseq.t) : ('a,'b) parseur =
-  match history with
-  | None ->
-     Parseur (fun x state ->
-         let*! y, state = f x state in
-         (y, state, true, parseur_const f ~history:(Some y)))
-  | Some y0 ->
-     Parseur (fun x state ->
-         let* y, state = f x state in
-         if y = y0
-         then Myseq.return (y, state, true, parseur_const f ~history)
-         else Myseq.empty)
-
     
 let rec parseur_rec (f : 'a -> parse_state -> ('b * parse_state) Myseq.t) : ('a,'b) parseur =
   Parseur (fun x state ->
@@ -2749,9 +2737,26 @@ let rec parseur_rec4 (Parseur parse1) (Parseur parse2) (Parseur parse3) (Parseur
         f parse1 parse2 parse3 parse4 x state in
       (y, state, stop1 && stop2 && stop3 && stop4, parseur_rec4 parseur1 parseur2 parseur3 parseur4 f))  
 
-let parseur_prefix ?(partial = false) (lparseur : ('a,'b) parseur list) (rparseur : ('a,'b seq) parseur) : ('a,'b seq) parseur =
+let parseur_cst (Parseur parse_item : ('a,'b) parseur) : ('a,'b) parseur =
   let rec aux = function
-    | [] -> rparseur
+    | None ->
+       Parseur (fun x state ->
+           let* y, state, stop, _next = parse_item x state in
+           if stop
+           then Myseq.return (y, state, true, aux (Some y))
+           else Myseq.empty)
+    | Some y0 as hist ->
+       Parseur (fun x state ->
+           let* y, state, stop, _next = parse_item x state in
+           if stop && y = y0
+           then Myseq.return (y, state, true, aux hist)
+           else Myseq.empty)
+  in
+  aux None
+  
+let parseur_prefix ?(partial = false) (parseur_main : ('a,'b) parseur) (parseur_items : ('a,'b) parseur list) : ('a,'b) parseur =
+  let rec aux = function
+    | [] -> parseur_main
     | (Parseur parse_item)::l1 ->
        Parseur (fun x state ->
            let* y, state, stop, _next = parse_item x state in (* assuming no sequence nesting *)
@@ -2759,8 +2764,8 @@ let parseur_prefix ?(partial = false) (lparseur : ('a,'b) parseur list) (rparseu
            then Myseq.return (y, state, (partial || l1=[]), aux l1)
            else Myseq.empty)
   in
-  aux lparseur
-let parseur_seq lparseur = parseur_prefix lparseur parseur_empty
+  aux parseur_items
+let parseur_seq lparseur = parseur_prefix parseur_empty lparseur
   
 let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) parseur =
   let rec aux ~depth x state sols =
@@ -2797,30 +2802,29 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
   |> Myseq.slice ~limit:10000
   |> Myseq.iter (fun (l,_,_,_) ->
          print_endline (String.concat " " (List.map string_of_int l))) *)
-
   
 
 let rec parseur_template
           ~(parseur_any : unit -> ('a,data) parseur)
-          ~(parseur_cst : unit -> ('a,data) parseur)
           ~(parseur_patt : template patt -> ('a,data) parseur)
           (t : template) (p : revpath)
         : ('a,data) parseur =
   match t with
-  | `U `Any -> parseur_any ()
-  | `U `Cst -> parseur_cst ()
-  | `U (`Prefix lt) ->
-     parseur_prefix
-       (List.map
-          (fun ti -> parseur_template ~parseur_any ~parseur_cst ~parseur_patt ti p)
-          lt)
-       (parseur_any ())
+  | `Any -> parseur_any ()
   | #patt as patt -> parseur_patt patt
   | #expr -> assert false
   | `Seq items ->
      parseur_seq
-       (List.map
-          (fun item -> parseur_template ~parseur_any ~parseur_cst ~parseur_patt item p)
+       (List.mapi
+          (fun i item -> parseur_template ~parseur_any ~parseur_patt item (`Item (i,p)))
+          items)
+  | `Cst main ->
+     parseur_cst (parseur_template ~parseur_any ~parseur_patt main p)
+  | `Prefix (main,items) ->
+     parseur_prefix
+       (parseur_template ~parseur_any ~parseur_patt main p)
+       (List.mapi
+          (fun i item -> parseur_template ~parseur_any ~parseur_patt item (`Item (i,p)))
           items)
 
 
@@ -2828,8 +2832,6 @@ let parseur_bool t p : (bool,data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun b state -> Myseq.return (`Bool b, state)))
-    ~parseur_cst:(fun () ->
-      parseur_const (fun b state -> Myseq.return (`Bool b, state)))
     ~parseur_patt:(function
       | `Bool b0 ->
          parseur_rec (fun b state ->
@@ -2844,8 +2846,6 @@ let parseur_int t p : (int,data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun i state -> Myseq.return (`Int i, state)))
-    ~parseur_cst:(fun () ->
-      parseur_const (fun i state -> Myseq.return (`Int i, state)))
     ~parseur_patt:(function
       | `Int i0 ->
          parseur_rec (fun i state ->
@@ -2860,8 +2860,6 @@ let parseur_color t p : (Grid.color,data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun c state -> Myseq.return (`Color c, state)))
-    ~parseur_cst:(fun () ->
-      parseur_const (fun c state -> Myseq.return (`Color c, state)))
     ~parseur_patt:(function
       | `Color c0 ->
          parseur_rec (fun c state ->
@@ -2876,10 +2874,6 @@ let parseur_mask t p : (Grid.Mask_model.t list, data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun ms state ->
-          let* m = Myseq.from_list ms in
-          Myseq.return (`Mask m, state)))
-    ~parseur_cst:(fun () ->
-      parseur_const (fun ms state ->
           let* m = Myseq.from_list ms in
           Myseq.return (`Mask m, state)))
     ~parseur_patt:(function
@@ -2898,9 +2892,6 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun (vi,vj) state ->
-          Myseq.return (`Vec (`Int vi, `Int vj), state)))
-    ~parseur_cst:(fun () ->
-      parseur_const (fun (vi,vj) state ->
           Myseq.return (`Vec (`Int vi, `Int vj), state)))
     ~parseur_patt:(function
       | `Vec (i,j) ->
@@ -3014,12 +3005,10 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
                 (`PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                  state))
     ]))
-    ~parseur_cst:(fun () -> parseur_empty) (* not meaningful to have the same object repeated *)
     ~parseur_patt:(function
       | `PosShape (pos, shape) ->
          parseur_template
            ~parseur_any:(fun () -> parseur_empty) (* TODO: like any PosShape *)
-           ~parseur_cst:(fun () -> parseur_empty) (* TODO *)
            ~parseur_patt:(function
              | `Point (color) ->
                 parseur_single_point pos color p
@@ -3027,21 +3016,6 @@ let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
                 parseur_single_rectangle pos size color mask p
              | _ -> assert false)
            shape (p ++ `Shape)
-(*      | `PosShape (pos, `Seq shapes) ->
-         parseur_rec2
-           (parseur_vec pos (p ++ `Pos))
-           (parseur_seq
-              (List.map
-                 (fun shape -> parseur_shape (`PosShape (u_vec_any, shape)) p)
-                 shapes))
-           (fun parse_pos parse_object () state ->
-             let* dobj, state, stop_object, next_object = parse_object () state in
-             match dobj with
-             | `PosShape (`Vec (`Int di, `Int dj), dshape) ->
-                let* dpos, state, stop_pos, next_pos = parse_pos (di,dj) state in
-                Myseq.return (`PosShape (dpos, dshape), state,
-                              stop_pos, stop_object, next_pos, next_object)
-             | _ -> assert false) *)
       | _ -> assert false)
     t p
 
@@ -3098,7 +3072,6 @@ let parseur_layers layers p : (unit, data ilist) parseur =
 let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
     ~parseur_any:(fun () -> parseur_empty)
-    ~parseur_cst:(fun () -> parseur_empty)
     ~parseur_patt:
     (function
      | `Background (size,color,layers) ->
@@ -3107,7 +3080,7 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
         let seq_background_colors =
           match color with
           | `Color bc -> (fun g -> Myseq.return bc)
-          | `U _ -> (fun g -> Myseq.from_list (Grid.background_colors g))
+          | `Any -> (fun g -> Myseq.from_list (Grid.background_colors g))
           | `Seq _ -> (fun g -> Myseq.empty) (* TODO: avoid sequence insertion where not expected *)
           | _ -> assert false in
         let parse_bg_color g state =
@@ -3338,98 +3311,80 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
   
 (* template transformations *)
 
-let insert_ilist  (f : 'a option -> 'a) (lp : ilist_revpath) (l : 'a ilist) : 'a ilist =
-  Common.prof "Model2.insert_ilist" (fun () ->
-  let rec aux lp insert =
-    match lp with
-    | `Root -> insert l
-    | `Left lp1 ->
-       aux lp1
-         (function
-          | `Nil -> assert false
-          | `Insert (left,elt,right) -> `Insert (insert left, elt, right))
-    | `Right lp1 ->
-       aux lp1
-       (function
-        | `Nil -> assert false
-        | `Insert (left,elt,right) -> `Insert (left, elt, insert right))
-  in
-  aux lp
-    (function
-     | `Nil -> `Insert (`Nil, f None, `Nil)
-     | `Insert (left,elt,right) -> `Insert (left, f (Some elt), right)))
-
-let rec insert_seq (f : 'a option -> 'a) (i : int) (l : 'a list) : 'a list =
+let rec insert_seq (f : 'a -> 'a) (i : int) (l : 'a list) : 'a list =
   match l with
   | [] -> failwith "Model2.insert_seq: wrong position"
   | x::r ->
      if i = 0
-     then f (Some x) :: r
+     then f x :: r
      else x :: insert_seq f (i-1) r
-  
-let rec insert_patt (f : 'a option -> 'a) (field : field) (patt_parent : 'a patt) : 'a patt = (* QUICK, one-step down insertion only *)
-  match field, patt_parent with
-  | `I, `Vec (i,j) -> `Vec (f (Some i), j)
-  | `J, `Vec (i,j) -> `Vec (i, f (Some j))
 
-  | `Color, `Point (color) -> `Point (f (Some color))
+let insert_template (f : template option -> template) (p : revpath) (t : template) : template =
+  let rec aux revp t =
+    match revp, t with
+    | _, #expr -> t (* not replacing expressions *)
+    | `Root, _ -> f (Some t)
+    | `Field (f,revp1), (#patt as patt) -> aux_patt f revp1 patt
+    | `Field _, `Cst main -> `Cst (aux revp main)
+    | `Field _, `Prefix (main,items) ->
+       `Prefix (aux revp main,
+                List.map (fun item -> aux revp item) items)
+    | `Item (i,revp1), `Seq items ->
+       let new_items = insert_seq (aux revp1) i items in
+       `Seq new_items
+    | `Item (0,`Root), `Any ->
+       `Prefix (t, [f (Some t)])
+    | `Item (0,`Root), #patt ->
+       `Prefix (t, [f (Some t)])
+    | `Item (i,revp1), `Prefix (main,items) ->
+       let n = List.length items in
+       if i = n
+       then (
+         assert (revp1 = `Root);
+         `Prefix (main, items @ [f (Some t)])
+       )
+       else (
+         assert (i >= 0 && i < n);
+         let new_items = insert_seq (aux revp1) i items in
+         `Prefix (main,new_items)
+       )
+    | _ -> assert false
+  and aux_patt field revp1 patt =
+    match field, patt with
+    | `I, `Vec (i,j) -> `Vec (aux revp1 i, j)
+    | `J, `Vec (i,j) -> `Vec (i, aux revp1 j)
 
-  | `Size, `Rectangle (size,color,mask) -> `Rectangle (f (Some size), color, mask)
-  | `Color, `Rectangle (size,color,layers) -> `Rectangle (size, f (Some color), layers)
-  | `Mask, `Rectangle (size,color,mask) -> `Rectangle (size, color, f (Some mask))
+    | `Color, `Point (color) -> `Point (aux revp1 color)
 
-  | `Pos, `PosShape (pos,shape) -> `PosShape (f (Some pos), shape)
-  | `Shape, `PosShape (pos,shape) -> `PosShape (pos, f (Some shape))
+    | `Size, `Rectangle (size,color,mask) -> `Rectangle (aux revp1 size, color, mask)
+    | `Color, `Rectangle (size,color,layers) -> `Rectangle (size, aux revp1 color, layers)
+    | `Mask, `Rectangle (size,color,mask) -> `Rectangle (size, color, aux revp1 mask)
 
-  | `Color, `Background (size,color,layers) -> `Background (size, f (Some color), layers)
-  | `Size, `Background (size,color,layers) -> `Background (f (Some size), color, layers)
-  | `Layer lp, `Background (size,color,layers) ->
-     let new_layers = insert_ilist f lp layers in
-     `Background (size, color, new_layers)
+    | `Pos, `PosShape (pos,shape) -> `PosShape (aux revp1 pos, shape)
+    | `Shape, `PosShape (pos,shape) -> `PosShape (pos, aux revp1 shape)
 
-  | _ ->
-     pp_field field; print_string ": ";
-     pp_patt_dummy patt_parent;
-     print_newline ();
-     assert false
-
-let rec insert_prefix (i : int) (f : template option -> template) (lt : template list) : template list =
-  match lt with
-  | [] ->
-     assert (i = 0);
-     [f None]
-  | t0::lt1 ->
-     if i = 0
-     then f (Some t0) :: lt1
-     else t0 :: insert_prefix (i-1) f lt1
-     
-let rec insert_template (f : template option -> template) (p : revpath) (t : template) : template = (* QUICK *)
-  match path_parent p with
-  | None -> f (Some t)
-  | Some parent ->
-     insert_template
-       (function
-        | None -> assert false
-        | Some (t_parent : template) ->
-           match p, t_parent with (* TODO: match on p too *)
-           | `Field (field,_), (#patt as patt_parent) ->
-              (insert_patt f field patt_parent :> template)
-           | `Item (i,_), `Seq items ->
-              let new_items = insert_seq f i items in 
-              `Seq new_items
-           | `Item (0,_), `U `Any ->
-              `U (`Prefix [f None])
-           | `Item (0,_), `U `Cst ->
-              f None
-           | `Item (0,_), #patt ->
-              `U (`Prefix [f (Some t_parent)]) (* TODO: extend Prefix to keep pattern for next items *)
-           | `Item (n,_), `U (`Prefix lt) ->
-              let lt = insert_prefix n f lt in
-              `U (`Prefix lt)
-           (* `U and other #expr are not explorable *)
-           | _ -> assert false)
-       parent t
-                                                                                    
+    | `Color, `Background (size,color,layers) -> `Background (size, aux revp1 color, layers)
+    | `Size, `Background (size,color,layers) -> `Background (aux revp1 size, color, layers)
+    | `Layer revlp, `Background (size,color,layers) ->
+       let new_layers = aux_ilist revlp revp1 layers in
+       `Background (size, color, new_layers)
+       
+    | _ ->
+       pp_field field; print_string ": ";
+       pp_patt_dummy patt;
+       print_newline ();
+       assert false
+  and aux_ilist revlp revp1 ilist =
+    match revlp, ilist with
+    | `Root, `Nil -> assert (revp1 = `Root); `Insert (`Nil, f None, `Nil)
+    | `Root, `Insert (left, elt, right) -> `Insert (left, aux revp1 elt, right)
+    | `Left revlp1, `Insert (left, elt, right) -> `Insert (aux_ilist revlp1 revp1 left, elt, right)
+    | `Right revlp1, `Insert (left, elt, right) -> `Insert (left, elt, aux_ilist revlp1 revp1 right)
+    | _ -> assert false
+  in
+  Common.prof "Model2.insert_template" (fun () ->
+  aux (path_reverse p `Root) t)
+             
 (* model refinements and learning *)
 
 type grid_refinement =
@@ -3496,7 +3451,14 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          (fun res p t0 anc0 ->
            match t0 with
            | #expr -> res
-           | _ ->
+           | `Seq _ -> res
+           | `Cst _ -> res
+           | `Prefix (main,items) ->
+              let n = List.length items in
+              let role = path_role p in
+              let dl_main = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p main in
+              (`Item (n,p), role, main, dl_main)::res                    
+           | (`Any | #patt) ->
               let role = path_role p in
               let definable_var =
                 match role with
@@ -3505,6 +3467,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               if definable_var
               then
                 let dl0 = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t0 in
+                let res = (* for initiating prefixes *)
+                  if role_can_be_sequence role
+                  then
+                    match anc0 with
+                    | (`Cst _ | `Prefix _)::_ -> res
+                    | _ -> (`Item (0,p), role,t0,dl0)::res
+                  else res in
                 (p,role,t0,dl0)::res
               else res)
          [] path0 t []) in
@@ -3566,7 +3535,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
     let tmap_score_patt =
       match t0 with
-      | `U _ | `Vec (`U _, `U _) -> (* including Vec because present initially *)
+      | `Any | `Vec (`Any, `Any) -> (* including Vec because present initially *)
          let$ res, (env,gd,u_val,dl,rank) = TMap.empty, reads_fst in
          (match PMap.find_opt p u_val with
           | Some d ->
