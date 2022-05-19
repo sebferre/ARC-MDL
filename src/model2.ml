@@ -54,7 +54,15 @@ let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 
      let| ly1 = list_map_result f lx1 in
      Result.Ok (y::ly1)
 let ( let+| ) lx f = list_map_result f lx [@@inline]
-                   
+
+let rec list_mapi_result (f : int -> 'a -> ('b,'c) Result.t) (i : int) (lx : 'a list) : ('b list, 'c) Result.t =
+  match lx with
+  | [] -> Result.Ok []
+  | x::lx1 ->
+     let| y = f i x in
+     let| ly1 = list_mapi_result f (i+1) lx1 in
+     Result.Ok (y::ly1)
+
 let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'c) Result.t) : ('b list, 'c) Result.t =
   let rec aux = function
   | [] -> invalid_arg "Model2.bind_map_ok: empty list"
@@ -307,6 +315,7 @@ type revpath =
   [ `Root
   | `Field of field * revpath
   | `Item of int * revpath
+  | `AnyItem of revpath (* for paths at item-level but not about a specific item *)
   | `Arg of int * role option * revpath ] (* if no role, parent role *)
 let path0 = `Root
 
@@ -316,6 +325,7 @@ let rec path_parent : revpath -> revpath option = function
   | `Root -> None
   | `Field (f,p) -> Some p
   | `Item (i,p) -> Some p
+  | `AnyItem p -> Some p
   | `Arg (i,role_opt,p) -> Some p
 
 (* reversing a revpath, to get paths starting from the root: used in path_factorize *)
@@ -326,6 +336,7 @@ let rec path_reverse (p : revpath) (acc : revpath) : revpath =
   | `Field (`Layer lp, p1) -> path_reverse p1 (`Field (`Layer (ilist_reverse lp `Root), acc))
   | `Field (f,p1) -> path_reverse p1 (`Field (f,acc))
   | `Item (i,p1) -> path_reverse p1 (`Item (i,acc))
+  | `AnyItem p1 -> path_reverse p1 (`AnyItem acc)
   | `Arg (i,role_opt,p1) -> path_reverse p1 (`Arg (i,role_opt,acc))
 and ilist_reverse (lp : ilist_revpath) acc =
   match lp with
@@ -356,6 +367,8 @@ let path_factorize (p1 : revpath) (p2 : revpath) : revpath * revpath * revpath =
        if i1 = i2
        then aux_path (`Item (i1,p0)) rq1 rq2
        else p0, path_reverse rp1 `Root, path_reverse rp2 `Root
+    | `AnyItem rq1, `AnyItem rq2 ->
+       aux_path (`AnyItem p0) rq1 rq2
     | `Arg (i1,role1_opt,rq1), `Arg (i2,role2_opt,rq2) ->
        if i1 = i2 && role1_opt = role2_opt
        then aux_path (`Arg (i1,role1_opt,p0)) rq1 rq2
@@ -641,6 +654,7 @@ let rec xp_path (print : Xprint.t) : revpath -> unit = function
   | `Root -> print#string "^"
   | `Field (f,p) -> xp_path print p; print#string "."; xp_field print f
   | `Item (i,p) -> xp_path print p; print#string "["; print#int i; print#string "]"
+  | `AnyItem p -> xp_path print p; print#string "[*]"
   | `Arg (i,role_opt,p) -> xp_path print p; print#string "."; print#int i
 let pp_path = Xprint.to_stdout xp_path
 let string_of_path = Xprint.to_string xp_path
@@ -821,14 +835,14 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
        (Xprint.sep_list ",\n\t" xp_template)
        print
        items
-  | `Cst t ->
+  | `Cst item0 ->
      Xprint.bracket
        ("[CST ", "]")
        xp_template
-       print t
-  | `Prefix (t,items) ->
+       print item0
+  | `Prefix (main,items) ->
      print#string "[";
-     xp_template print t;
+     xp_template print main;
      Xprint.bracket
        (" PREFIX <"," ...>]")
        (Xprint.sep_list ", " xp_template)
@@ -881,6 +895,7 @@ let rec path_kind (p : revpath) : kind =
       | `Shape -> Shape
       | `Layer _ -> Layer)
   | `Item (_,p1) -> path_kind p1
+  | `AnyItem p1 -> path_kind p1
   | `Arg (i,None,p1) -> path_kind p1
   | `Arg (i, Some role, p1) -> kind_of_role role
 
@@ -895,6 +910,7 @@ let rec path_role (p : revpath) : role =
   | `Field (`Shape, _) -> `Shape
   | `Field (`Layer _, _) -> `Layer
   | `Item (_, p1) -> path_role p1
+  | `AnyItem p1 -> path_role p1
   | `Arg (i, None, p1) -> path_role p1
   | `Arg (i, Some role, p1) -> role
 and path_role_vec : revpath -> role_vec = function
@@ -902,6 +918,7 @@ and path_role_vec : revpath -> role_vec = function
   | `Field (`Pos, _) -> `Pos
   | `Field (`Size, p1) -> `Size (path_role_frame p1)
   | `Item (i, p1) -> path_role_vec p1
+  | `AnyItem p1 -> path_role_vec p1
   | `Arg (i, None, p1) -> path_role_vec p1
   | p ->
      pp_path p; print_newline ();
@@ -910,6 +927,7 @@ and path_role_frame : revpath -> role_frame = function
   | `Root -> `Grid
   | `Field (`Shape, _) -> `Shape
   | `Item (i, p1) -> path_role_frame p1
+  | `AnyItem p1 -> path_role_frame p1
   | `Arg (i, None, p1) -> path_role_frame p1
   | p -> pp_path p; print_newline (); assert false
 
@@ -971,6 +989,7 @@ let rec find_data (p : revpath) (d : data) : data option = (* QUICK *)
       | None -> None
       | Some (#patt as patt1) -> Some (patt1 :> data) (* data seen as singleton sequence *)
       | Some (`Seq items) -> List.nth_opt items i)
+  | `AnyItem p1 -> find_data p1 d (* should be a sequence *)
   | `Arg _ -> assert false
   
 (* let rec find_template (p : revpath) (t : template) : template option =
@@ -1053,10 +1072,10 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
               i+1, fold_template f acc (`Item (i,p)) item t_ancestry)
             (0,acc) in
      acc
-  | `Cst main ->
-     fold_template f acc p main t_ancestry (* p points both at sequence and item levels *)
+  | `Cst item0 ->
+     fold_template f acc (`Item (0,p)) item0 t_ancestry (* p points both at sequence and item levels *)
   | `Prefix (main,items) ->
-     let acc = fold_template f acc p main t_ancestry in
+     let acc = fold_template f acc (`AnyItem p) main t_ancestry in
      let n, acc =
        let$ (i, acc), item = (0,acc), items in
        i+1, fold_template f acc (`Item (i,p)) item t_ancestry in
@@ -1273,12 +1292,12 @@ let rec matcher_template_aux (t : template) : matcher =
               let ok1, _ = matcher_item d in
               ok1, matcher_seq next_matchers) in
      matcher_seq (List.map matcher_template_aux items)
-  | `Cst main ->
-     let Matcher matcher_main = matcher_template_aux main in
+  | `Cst item0 ->
+     let Matcher matcher_item0 = matcher_template_aux item0 in
      let rec matcher_cst = function
        | None ->
           Matcher (fun d ->
-              let ok1, _next = matcher_main d in
+              let ok1, _next = matcher_item0 d in
               ok1, matcher_cst (Some d))
        | Some d0 as hist ->
           Matcher (fun d ->
@@ -1473,6 +1492,7 @@ let rec dl_path_length : revpath -> int = function
   | `Field (`Layer lp, p1) -> 1 + dl_ilist_path_length lp + dl_path_length p1
   | `Field (_, p1) -> 1 + dl_path_length p1
   | `Item (_, p1) -> 1 + dl_path_length p1
+  | `AnyItem p1 -> 1 + dl_path_length p1
   | `Arg (_,_,p1) -> dl_path_length p1 (* expr args ignored *)
 and dl_ilist_path_length = function
   | `Root -> 0
@@ -1482,7 +1502,7 @@ and dl_ilist_path_length = function
 let rec dl_path_role (role : role) (p : revpath) : dl =
   (* assuming [p] does not contain [`Arg] *)
   (* assuming the length of [p] is known => no need to code for `Root *)
-  (* TODO: handle `Item field for each role *)
+  (* TODO: how to cleanly encode choice between Field/Item/AnyItem *)
   match role with
   | `Int (rij,rvec) -> dl_path_int rij rvec  p
   | `Color _ -> dl_path_color p
@@ -1495,30 +1515,32 @@ let rec dl_path_role (role : role) (p : revpath) : dl =
 and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
   | `Root -> 0.
   | `Field ((`I | `J as ij), p1) ->
-     dl_zero
-     +. Mdl.Code.usage (if ij = rij then 0.75 else 0.25)
+     Mdl.Code.usage (if ij = rij then 0.75 else 0.25)
      +. dl_path_vec rvec p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_int rij rvec p1
+  | `AnyItem p1 ->
+     dl_path_int rij rvec p1
   | _ -> assert false
 and dl_path_color = function
   | `Root -> 0.
   | `Field (`Color, p1) ->
-     dl_zero
-     +. dl_path_shape p1
+     dl_path_shape p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_color p1
+  | `AnyItem p1 -> dl_path_color p1
   | _ -> assert false
 and dl_path_mask = function
   | `Root -> 0.
   | `Field (`Mask, p1) ->
-     dl_zero
-     +. dl_path_shape p1
+     dl_path_shape p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_mask p1
+  | `AnyItem p1 ->
+     dl_path_mask p1
   | _ -> assert false
 and dl_path_vec (rvec : role_vec) = function
   | `Root -> 0.
@@ -1528,34 +1550,37 @@ and dl_path_vec (rvec : role_vec) = function
        | `Pos, `Pos 
          | `Size _, `Size -> Mdl.Code.usage 0.9
        | _ -> Mdl.Code.usage 0.1 in
-     dl_zero
-     +. dl_choice
+     dl_choice
      +. ( match f with
           | `Pos -> dl_path_layer p1
           | `Size -> dl_path_shape p1 )
   | `Item (i, p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_vec rvec p1
+  | `AnyItem p1 ->
+     dl_path_vec rvec p1
   | _ -> assert false
 and dl_path_shape = function
   | `Root -> 0.
   | `Field (`Shape, p1) ->
-     dl_zero
-     +. dl_path_layer p1
+     dl_path_layer p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_shape p1
+  | `AnyItem p1 ->
+     dl_path_shape p1
   | _ -> assert false
 and dl_path_layer = function
   | `Root -> 0.
   | `Field (`Layer lp, p1) ->
-     dl_zero
-     +. Mdl.Code.universal_int_star (dl_ilist_path_length lp)
+     Mdl.Code.universal_int_star (dl_ilist_path_length lp)
      +. dl_ilist_path lp
      +. dl_path_grid p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_layer p1
+  | `AnyItem p1 ->
+     dl_path_layer p1
   | _ -> assert false
 and dl_path_grid = function
   | `Root -> 0.
@@ -1809,11 +1834,11 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
     | `Seq items ->
        code.c_seq
        +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
-    | `Cst main ->
+    | `Cst item0 ->
        code.c_cst
-       +. aux ~ctx ~path main
+       +. aux ~ctx ~path:(`Item (0,path)) item0
     | `Prefix (main,items) ->
-       let dl_main = aux ~ctx ~path main in
+       let dl_main = aux ~ctx ~path:(`AnyItem path) main in
        let n, dl_items =
          let$ (i,sum_dl), item = (0,0.), items in
          i+1, aux ~ctx ~path:(`Item (i,path)) item in
@@ -1840,7 +1865,7 @@ let encoder_pop (Encoder encoder) (d : data) : dl =
   let dl, _ = encoder d in
   dl
 
-let encoder_seq (make_encoder : 'a -> encoder) (items : 'a list) : encoder =
+let encoder_seq (make_encoder : int -> 'a -> encoder) (items : 'a list) : encoder =
   assert (items <> []);
   let rec aux = function
     | [] -> encoder_fail
@@ -1849,7 +1874,7 @@ let encoder_seq (make_encoder : 'a -> encoder) (items : 'a list) : encoder =
            let dl, _ = encoder_item d in
            dl, aux next_encoders)
   in
-  let encoder_items = List.map make_encoder items in
+  let encoder_items = List.mapi make_encoder items in
   aux encoder_items
 
 let encoder_collect (Encoder encoder_item : encoder) : encoder =
@@ -1964,8 +1989,8 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
   | `Any -> encoder_any ~ctx ~path
   | #patt as patt -> encoder_patt encoder_template_aux ~ctx ~path patt
   | #expr -> encoder_zero (* nothing to code *)
-  | `Seq lt -> encoder_seq (encoder_template_aux ~ctx ~path) lt
-  | `Cst main -> encoder_cst (encoder_template_aux ~ctx ~path main)
+  | `Seq items -> encoder_seq (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items
+  | `Cst item0 -> encoder_cst (encoder_template_aux ~ctx ~path:(`Item (0,path)) item0)
   | `Prefix (main,items) ->
      encoder_prefix
        (encoder_template_aux ~ctx ~path main)
@@ -2656,19 +2681,19 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
   | `Seq items ->
      let| applied_items =
-       list_map_result
-         (fun item -> apply_template_gen ~lookup p item)
-         items in
+       list_mapi_result
+         (fun i item -> apply_template_gen ~lookup (`Item (i,p)) item)
+         0 items in
      Result.Ok (`Seq applied_items)
-  | `Cst main ->
-     let| applied_main = apply_template_gen ~lookup p main in
-     Result.Ok (`Cst main)
+  | `Cst item0 ->
+     let| applied_item0 = apply_template_gen ~lookup (`Item (0,p)) item0 in
+     Result.Ok (`Cst item0)
   | `Prefix (main,items) ->
-     let| applied_main = apply_template_gen ~lookup p main in
+     let| applied_main = apply_template_gen ~lookup (`AnyItem p) main in
      let| applied_items =
-       list_map_result
-         (fun item -> apply_template_gen ~lookup p item) (* TODO: should use `Item (i,p) ? *)
-         items in
+       list_mapi_result
+         (fun i item -> apply_template_gen ~lookup (`Item (i,p)) item)
+         0 items in
      Result.Ok (`Prefix (applied_main,applied_items))
 
 let apply_template ~(env : data) (t : template) : template result =
@@ -2762,19 +2787,19 @@ let rec generator_template (p : revpath) (t : template) : generator =
               let d, _ = gen_item () in
               d, gen_seq next_gens) in
      gen_seq (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
-  | `Cst main ->
-     let Generator gen_main = generator_template p main in
+  | `Cst item0 ->
+     let Generator gen_item0 = generator_template (`Item (0,p)) item0 in
      let rec gen_cst = function
        | None ->
           Generator (fun () ->
-              let d, _ = gen_main () in
+              let d, _ = gen_item0 () in
               d, gen_cst (Some d))
        | Some d0 as hist ->
           Generator (fun () ->
               d0, gen_cst hist) in
      gen_cst None
   | `Prefix (main,items) ->
-     let gen_main = generator_template p main in
+     let gen_main = generator_template (`AnyItem p) main in
      let rec gen_prefix = function
        | [] -> gen_main
        | (Generator gen_item)::next_gens ->
@@ -2982,11 +3007,11 @@ let rec parseur_template
        (List.mapi
           (fun i item -> parseur_template ~parseur_any ~parseur_patt item (`Item (i,p)))
           items)
-  | `Cst main ->
-     parseur_cst (parseur_template ~parseur_any ~parseur_patt main p)
+  | `Cst item0 ->
+     parseur_cst (parseur_template ~parseur_any ~parseur_patt item0 (`Item (0,p)))
   | `Prefix (main,items) ->
      parseur_prefix
-       (parseur_template ~parseur_any ~parseur_patt main p)
+       (parseur_template ~parseur_any ~parseur_patt main (`AnyItem p))
        (List.mapi
           (fun i item -> parseur_template ~parseur_any ~parseur_patt item (`Item (i,p)))
           items)
@@ -3219,7 +3244,7 @@ let parseur_layers layers p : (unit, data ilist) parseur =
         let Parseur parse = parseur_layer layer (p ++ `Layer lp) in
         let simple_parse =
           fun state ->
-          let* d, state, _stop, _next = parse () state in (* TODO: handle _next to get sequences *)
+          let* d, state, _stop, _next = parse () state in 
           Myseq.return (d,state) in
         simple_parse::revl)
       [] `Root layers in
@@ -3489,17 +3514,13 @@ let insert_template (f : template option -> template) (p : revpath) (t : templat
     | _, #expr -> t (* not replacing expressions *)
     | `Root, _ -> f (Some t)
     | `Field (f,revp1), (#patt as patt) -> aux_patt f revp1 patt
-    | `Field _, `Cst main -> `Cst (aux revp main)
-    | `Field _, `Prefix (main,items) ->
-       `Prefix (aux revp main,
-                List.map (fun item -> aux revp item) items)
     | `Item (i,revp1), `Seq items ->
        let new_items = insert_seq (aux revp1) i items in
        `Seq new_items
-    | `Item (0,`Root), `Any ->
-       `Prefix (t, [f (Some t)])
-    | `Item (0,`Root), #patt ->
-       `Prefix (t, [f (Some t)])
+    | `Item (0,revp1), `Cst item0 ->
+       `Cst (aux revp1 item0)
+    | `AnyItem revp1, `Prefix (main,items) ->
+       `Prefix (aux revp1 main, items)
     | `Item (i,revp1), `Prefix (main,items) ->
        let n = List.length items in
        if i = n
@@ -3512,6 +3533,10 @@ let insert_template (f : template option -> template) (p : revpath) (t : templat
          let new_items = insert_seq (aux revp1) i items in
          `Prefix (main,new_items)
        )
+       
+    | `Item (0,`Root), (`Any | #patt) -> (* tentative *)
+       `Prefix (t, [f (Some t)])
+
     | _ -> assert false
   and aux_patt field revp1 patt =
     match field, patt with
