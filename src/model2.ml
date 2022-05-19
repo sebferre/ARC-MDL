@@ -187,6 +187,8 @@ object
   method virtual apply : template list -> template
 end
  *)
+
+type dim = Item | Sequence (* Item has dim=0, Sequence has dim=1 *)
         
 type kind =
   Int | Bool | Color | Mask | Vec | Shape | Object | Layer | Grid
@@ -610,6 +612,10 @@ let rec xp_ilist_path (print : Xprint.t) : ilist_revpath -> unit =
   | `Left p -> xp_ilist_path print p; print#string "0"
   | `Right p -> xp_ilist_path print p; print#string "1"
 
+let string_of_dim : dim -> string = function
+  | Item -> "I"
+  | Sequence -> "S"
+                
 let string_of_kind : kind -> string = function
   | Bool -> "bool"
   | Int -> "int"
@@ -883,6 +889,37 @@ let pp_grid_data gd =
 
 (* data utilities *)
 
+let rec path_dim (p : revpath) : dim =
+  match p with
+  | `Root -> Item
+  | `Field (`Layer _, p1) -> Sequence
+  | `Field (f,p1) -> path_dim p1
+  | `Item (_,p1) -> Item
+  | `AnyItem p1 -> Item
+  | `Arg (_, _, p1) -> path_dim p1 (* TODO: will depend on the function in the future *)
+
+let patt_dim (dim : 'a -> dim) (patt : 'a patt) : dim =
+  (* using the fact that (max Item Sequence = Sequence), idea of broadcasting *)
+  match patt with
+  | `Bool _ | `Int _ | `Color _ | `Mask _ -> Item
+  | `Vec (i,j) -> max (dim i) (dim j)
+  | `Point color -> dim color
+  | `Rectangle (size,color,mask) -> max (dim size) (max (dim color) (dim mask))
+  | `PosShape (pos,shape) -> max (dim pos) (dim shape)
+  | `Background (size,color,layers) ->
+     fold_ilist
+       (fun res lp layer -> max res (dim layer))
+       (max (dim size) (dim color))
+       `Root layers
+                     
+let rec template_dim : template -> dim = function
+  | `Any -> Item
+  | #patt as patt -> patt_dim template_dim patt
+  | #expr -> Item (* TODO: will change with sequence-based functions in the future *)
+  | `Seq items -> Sequence
+  | `Cst item0 -> Sequence
+  | `Prefix (main,items) -> Sequence
+                     
 let rec path_kind (p : revpath) : kind =
   match p with
   | `Root -> Grid
@@ -3234,7 +3271,7 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
       let* ld, state, _, _ = parse_shapes () state in
       match ld with
       | [] -> Myseq.empty
-      | [d] -> Myseq.return (d, state, true, parseur_empty)
+      | [d] -> Myseq.return (d, state, true, parseur_empty) (* TODO: to keep or not ? *)
       | _ -> Myseq.return (`Seq ld, state, true, parseur_empty))
   
 let parseur_layers layers p : (unit, data ilist) parseur =
