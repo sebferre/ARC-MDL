@@ -44,7 +44,7 @@ let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
 let ( let$ ) (init,l) f =
   l |> List.fold_left (fun res x -> f (res, x)) init [@@inline]
 let ( let& ) l f =
-  l |> List.iter (fun x -> f x) [@@inline]
+  l |> List.iter f [@@inline]
 
 let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 'c) Result.t =
   match lx with
@@ -53,7 +53,6 @@ let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 
      let| y = f x in
      let| ly1 = list_map_result f lx1 in
      Result.Ok (y::ly1)
-let ( let+| ) lx f = list_map_result f lx [@@inline]
 
 let rec list_mapi_result (f : int -> 'a -> ('b,'c) Result.t) (i : int) (lx : 'a list) : ('b list, 'c) Result.t =
   match lx with
@@ -3439,8 +3438,9 @@ let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list
       ~ctx:{box_height=Grid.max_size; box_width=Grid.max_size}
       t in
   let| reads =
-    let+| env, g = egrids in
-    read_grid ~quota_diff ~env t g in
+    list_map_result
+      (fun (env,g) -> read_grid ~quota_diff ~env t g)
+      egrids in
   Result.Ok {dl_m; reads}
 
   
@@ -3518,20 +3518,22 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
       ~ctx:{box_height=Grid.max_size; box_width=Grid.max_size}
       m.output_template in
   let| input_reads_reads =
-    let+| {input; output} = pairs in
-    let| reads_input =
-      read_grid ~quota_diff:0 ~env m.input_pattern input in (* no diff allowed during training *)
-    let| reads_pair = 
-      let+|+ (envi,gdi,dli as gri) = Result.Ok reads_input in      
-      let+|+ (envo,gdo,dlo as gro) =
-        read_grid ~quota_diff:0 ~env:gdi.data m.output_template output in
-      let dl = dli +. dlo in
-      Result.Ok [(gri,gro,dl)] in
-    let reads_pair =
-      reads_pair
-      |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
-      |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
-    Result.Ok (reads_input, reads_pair) in
+    pairs
+    |> list_map_result
+         (fun {input; output} ->
+           let| reads_input =
+             read_grid ~quota_diff:0 ~env m.input_pattern input in (* no diff allowed during training *)
+           let| reads_pair = 
+             let+|+ (envi,gdi,dli as gri) = Result.Ok reads_input in      
+             let+|+ (envo,gdo,dlo as gro) =
+               read_grid ~quota_diff:0 ~env:gdi.data m.output_template output in
+             let dl = dli +. dlo in
+             Result.Ok [(gri,gro,dl)] in
+           let reads_pair =
+             reads_pair
+             |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
+             |> limit_dl (fun (_,_,dl) -> dl) in (* bounding by dl_factor *) 
+           Result.Ok (reads_input, reads_pair)) in
   let input_reads, reads = List.split input_reads_reads in
   Result.Ok {dl_mi; dl_mo; input_reads; reads})
   
