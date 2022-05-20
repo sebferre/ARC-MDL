@@ -188,7 +188,8 @@ end
  *)
 
 type dim = Item | Sequence (* Item has dim=0, Sequence has dim=1 *)
-        
+(* internal repr must be consistent with (max Item Sequence = Sequence) *)
+                
 type kind =
   Int | Bool | Color | Mask | Vec | Shape | Object | Layer | Grid
 let all_kinds : kind list =
@@ -1128,13 +1129,19 @@ let signature_of_template (t : template) : signature =
   let () =
     fold_template
       (fun () p t1 anc1 ->
-        let k = path_kind p in
-        let ps0 =
-          match Hashtbl.find_opt ht k with
-          | None -> []
-          | Some ps -> ps in
-        let ps = p::ps0 in
-        Hashtbl.replace ht k ps)
+        match t1 with
+        | `Background _ (* no computation on grids so far *)
+          | `Cst _ (* only item0 matters for constant sequences *)
+          | `Prefix _ (* this path is redundant with main *)
+          -> ()
+        | _ ->
+           let k = path_kind p in
+           let ps0 =
+             match Hashtbl.find_opt ht k with
+             | None -> []
+             | Some ps -> ps in
+           let ps = p::ps0 in
+           Hashtbl.replace ht k ps)
       () path0 t [] in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
@@ -3679,14 +3686,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          (fun res p t0 anc0 ->
            match t0 with
            | #expr -> res
-           | `Seq _ -> res
-           | `Cst _ -> res
-           | `Prefix (main,items) ->
+(* tentative           | `Prefix (main,items) ->
               let n = List.length items in
               let role = path_role p in
               let dl_main = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p main in
-              (`Item (n,p), role, main, dl_main)::res                    
-           | (`Any | #patt) ->
+              (`Item (n,p), role, main, dl_main)::res                    *)
+           | _ ->
               let role = path_role p in
               let definable_var =
                 match role with
