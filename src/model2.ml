@@ -1148,8 +1148,7 @@ let signature_of_template (t : template) : signature =
     fold_template
       (fun () p t1 anc1 ->
         match t1 with
-        | `Background _ (* no computation on grids so far *)
-          | `Cst _ (* only item0 matters for constant sequences *)
+        | `Cst _ (* only item0 matters for constant sequences *)
           | `Prefix _ (* this path is redundant with main *)
           -> ()
         | _ ->
