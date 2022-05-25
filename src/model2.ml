@@ -573,9 +573,9 @@ type template =
   [ `Any (* an item of sequence items with no constraint (anything) *)
   | template patt (* an item or sequence of items matching the pattern *)
   | template expr (* an expression that evaluates into a template *)
-  | `Seq of template list (* a sequence where items match the given template list *)
+  | `Seq of template list (* a sequence where items match the given template list, items should be ground *)
   | `Cst of template (* all sequence items are the same, and match the item template *)  
-  | `Prefix of template * template list (* a sequence whose items match the main template, and whose K first items match the template list *)
+  | `Prefix of template * template list (* a sequence whose items match the main template, and whose K first items match the template list, items should be ground *)
   ]
 let template0 : template = `Any
 let _ = (template0 :> template seq) (* template is an instance of template seq *)
@@ -1123,6 +1123,24 @@ let size_of_data (d : data) : int =
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ _ -> res+1) 0 path0 t []
 
+let rec template_is_ground : template -> bool = function
+  (* returns true if the template evaluates into ground data, hence can be casted as [data]  *)
+  | `Any -> false
+  | #patt as patt -> patt_is_ground template_is_ground patt
+  | #expr -> true (* assuming expressions are only made of functions and refs *)
+  | `Seq items -> List.for_all template_is_ground items
+  | `Cst main -> template_is_ground main (* if true, Cst superfluous *)
+  | `Prefix (main,items) -> template_is_ground main (* if true, Prefix superfluous *)
+and patt_is_ground (is_ground : 'a -> bool) : 'a patt -> bool = function
+  | `Bool _ | `Int _ | `Color _ | `Mask _ -> true
+  | `Vec (i,j) -> is_ground i && is_ground j
+  | `Point c -> is_ground c
+  | `Rectangle (s,c,m) -> is_ground s && is_ground c && is_ground m
+  | `PosShape (p,sh) -> is_ground p && is_ground sh
+  | `Background (s,c,layers) ->
+     is_ground s && is_ground c
+     && fold_ilist (fun res lp layer -> res && is_ground layer) true `Root layers
+
 let signature_of_template (t : template) : signature =
   Common.prof "Model2.signature_of_template" (fun () ->
   let ht = Hashtbl.create 13 in
@@ -1198,8 +1216,6 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
   | `Background _ -> assert false (* should not happen *)
   | `Seq [] -> []
   | `Seq (item::items) ->
-     let all_the_same =
-       List.for_all ((=) item) items in
      let common_patterns =
        List.fold_left
          (fun res item ->
@@ -1208,13 +1224,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
              (fun t -> List.mem t item_patterns)
              res)
          (root_template_of_data ~in_output item) items in
-     (*`Seq (List.map
-             (function
-              | `Vec _ -> u_vec_cst
-              | _ -> u_cst)
-             l) :: *)
-     (if all_the_same then [`Cst `Any] else []) @ (* TODO: should be handled elsewhere *)
-       common_patterns
+     common_patterns
 
 (* returning matchers from templates, i.e. functions (data -> bool) *)
 
@@ -2728,9 +2738,9 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          (fun i item -> apply_template_gen ~lookup (`Item (i,p)) item)
          0 items in
      Result.Ok (`Seq applied_items)
-  | `Cst item0 ->
-     let| applied_item0 = apply_template_gen ~lookup (`Item (0,p)) item0 in
-     Result.Ok (`Cst item0)
+  | `Cst main ->
+     let| applied_main = apply_template_gen ~lookup (`AnyItem p) main in
+     Result.Ok (`Cst applied_main)
   | `Prefix (main,items) ->
      let| applied_main = apply_template_gen ~lookup (`AnyItem p) main in
      let| applied_items =
@@ -3685,30 +3695,12 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       (fold_template
          (fun res p t0 anc0 ->
            match t0 with
-           | #expr -> res
-(* tentative           | `Prefix (main,items) ->
-              let n = List.length items in
-              let role = path_role p in
-              let dl_main = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p main in
-              (`Item (n,p), role, main, dl_main)::res                    *)
+           | `Background _ -> res (* no grid-level def so far *)
+           | #expr -> res (* not considering expr re-definition *)
            | _ ->
               let role = path_role p in
-              let definable_var =
-                match role with
-                | `Grid -> false (* not grids *)
-                | _ -> true in
-              if definable_var
-              then
-                let dl0 = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t0 in
-                (* TEST TODO let res = (* for initiating prefixes *)
-                  if role_can_be_sequence role
-                  then
-                    match anc0 with
-                    | (`Cst _ | `Prefix _)::_ -> res
-                    | _ -> (`Item (0,p), role,t0,dl0)::res
-                  else res in*)
-                (p,role,t0,dl0)::res
-              else res)
+              let dl0 = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t0 in
+              (p,role,t0,dl0)::res)
          [] path0 t []) in
   let module PMap = (* mappings from defining templates *)
     Map.Make
@@ -3822,6 +3814,36 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
       else defs) in
+  let defs = Common.prof "Model2.defs_refinements/first/Cst" (fun () ->
+    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
+    let t_item_opt = (* candidate item template for `Cst argument *)
+      match t0 with
+      | `Seq (item0::_) | `Prefix (_, item0::_) -> Some item0
+      | `Cst _ | `Seq _ | `Prefix _ -> None
+      | _ ->
+         if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
+         then Some t0
+         else None in
+    match t_item_opt with
+    | Some t_item ->
+       let t = `Cst t_item in
+       let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+       let gd_dl_d_opt = (* searching for constant data at path p *)
+         List.find_map
+           (fun (env,gd,u_val,dl,rank) ->
+             match PMap.find_opt p u_val with
+             | Some (`Seq (d0::ds1) as d) when List.for_all (fun d1 -> d1 = d0) ds1 ->
+                Some (gd,dl,d)
+             | _ -> None)
+           reads_fst in
+       (match gd_dl_d_opt with
+        | Some (gd,dl,d) ->
+           let dl_ctx = dl_ctx_of_data gd.data in
+           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, `Cst t_item)::defs
+        | None -> defs)
+    | None -> defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
