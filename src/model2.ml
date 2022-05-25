@@ -2755,79 +2755,79 @@ let apply_template ~(env : data) (t : template) : template result =
 
 (* grid generation from data and template *)
 
-type generator = Generator of (unit -> data * generator) [@@unboxed] (* analogous to parseur *)
+type generator = Generator of (unit -> data * bool (* valid stop *) * generator) [@@unboxed] (* analogous to parseur *)
 
 let rec generator_fail : generator =
   Generator (fun () -> failwith "nothing to generate")
 
-let generator_collect (gen_item : generator) (n : int) : generator =
-  let rec aux (Generator gen_item) n =
-    if n = 0 then []
-    else
-      try
-        let d, next_item = gen_item () in
-        d :: aux next_item (n-1)
-      with _ -> [] in
+let generator_collect (gen_item : generator) : generator =
+  let rec aux (Generator gen_item) =
+    let d, stop, next_item = gen_item () in
+    if stop
+    then [d]
+    else d :: aux next_item in
   Generator (fun () ->
-      let ld = aux gen_item n in
-      `Seq ld, generator_fail)
+      let ld = aux gen_item in
+      `Seq ld, true, generator_fail)
 
 let generator_patt (gen : revpath -> 'a -> generator) (p : revpath) : 'a patt -> generator = function
   | (`Bool _ | `Int _ | `Color _ | `Mask _ as d) ->
-     let rec gen_d = Generator (fun () -> d, gen_d) in
+     let rec gen_d = Generator (fun () -> d, true, gen_d) in
      gen_d
   | `Vec (i,j) ->
      let rec gen_vec (Generator gen_i) (Generator gen_j) =
        Generator (fun () ->
-           let di, next_i = gen_i () in
-           let dj, next_j = gen_j () in
-           `Vec (di,dj), gen_vec next_i next_j) in
+           let di, stop_i, next_i = gen_i () in
+           let dj, stop_j, next_j = gen_j () in
+           `Vec (di,dj), stop_i && stop_j, gen_vec next_i next_j) in
      gen_vec (gen (p ++ `I) i) (gen (p ++ `J) j)
   | `Point color ->
      let rec gen_point (Generator gen_color) =
        Generator (fun () ->
-           let dcolor, next_color = gen_color () in
-           `Point dcolor, gen_point next_color) in
+           let dcolor, stop_color, next_color = gen_color () in
+           `Point dcolor, stop_color, gen_point next_color) in
      gen_point (gen (p ++ `Color) color)
   | `Rectangle (size,color,mask) ->
      let rec gen_rectangle (Generator gen_size) (Generator gen_color) (Generator gen_mask) =
        Generator (fun () ->
-           let dsize, next_size = gen_size () in
-           let dcolor, next_color = gen_color () in
-           let dmask, next_mask = gen_mask () in
-           `Rectangle (dsize,dcolor,dmask), gen_rectangle next_size next_color next_mask) in
+           let dsize, stop_size, next_size = gen_size () in
+           let dcolor, stop_color, next_color = gen_color () in
+           let dmask, stop_mask, next_mask = gen_mask () in
+           `Rectangle (dsize,dcolor,dmask),
+           stop_size && stop_color && stop_mask,
+           gen_rectangle next_size next_color next_mask) in
      gen_rectangle (gen (p ++ `Size) size) (gen (p ++ `Color) color) (gen (p ++ `Mask) mask)
   | `PosShape (pos,shape) ->
      let rec gen_ps (Generator gen_pos) (Generator gen_shape) =
        Generator (fun () ->
-           let dpos, next_pos = gen_pos () in
-           let dshape, next_shape = gen_shape () in
-           `PosShape (dpos,dshape), gen_ps next_pos next_shape) in
+           let dpos, stop_pos, next_pos = gen_pos () in
+           let dshape, stop_shape, next_shape = gen_shape () in
+           `PosShape (dpos,dshape), stop_pos && stop_shape, gen_ps next_pos next_shape) in
      gen_ps (gen (p ++ `Pos) pos) (gen (p ++ `Shape) shape)
   | `Background (size,color,layers) ->
      let Generator gen_size = gen (p ++ `Size) size in
      let Generator gen_color = gen (p ++ `Color) color in
      let ilist_gen_layers =
        map_ilist
-         (fun lp layer -> generator_collect (gen (p ++ `Layer lp) layer) 1) (* TODO: how to do better than fixed nb of collected items? *)
+         (fun lp layer -> generator_collect (gen (p ++ `Layer lp) layer))
          `Root layers in
      Generator (fun () ->
-         let dsize, _ = gen_size () in
-         let dcolor, _ = gen_color () in
+         let dsize, _, _ = gen_size () in
+         let dcolor, _, _ = gen_color () in
          let dlayers =
            map_ilist
              (fun lp (Generator gen_layer) ->
-               let dlayer, _ = gen_layer () in
+               let dlayer, _, _ = gen_layer () in
                dlayer)
              `Root ilist_gen_layers in
-         `Background (dsize,dcolor,dlayers), generator_fail)
+         `Background (dsize,dcolor,dlayers), true, generator_fail)
 
 let rec generator_template (p : revpath) (t : template) : generator =
   match t with
   | `Any ->
      let rec gen_any =
        Generator (fun () ->
-           default_data_of_path p, gen_any) in
+           default_data_of_path p, true, gen_any) in
      gen_any
   | #patt as patt -> generator_patt generator_template p patt
   | #expr -> assert false (* should be eliminated by call to apply_template *)
@@ -2836,19 +2836,19 @@ let rec generator_template (p : revpath) (t : template) : generator =
        | [] -> generator_fail
        | (Generator gen_item)::next_gens ->
           Generator (fun () ->
-              let d, _ = gen_item () in
-              d, gen_seq next_gens) in
+              let d, _, _ = gen_item () in
+              d, next_gens=[], gen_seq next_gens) in
      gen_seq (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
   | `Cst item0 ->
      let Generator gen_item0 = generator_template (`Item (0,p)) item0 in
      let rec gen_cst = function
        | None ->
           Generator (fun () ->
-              let d, _ = gen_item0 () in
-              d, gen_cst (Some d))
+              let d, _, _ = gen_item0 () in
+              d, true, gen_cst (Some d))
        | Some d0 as hist ->
           Generator (fun () ->
-              d0, gen_cst hist) in
+              d0, true, gen_cst hist) in
      gen_cst None
   | `Prefix (main,items) ->
      let gen_main = generator_template (`AnyItem p) main in
@@ -2856,14 +2856,14 @@ let rec generator_template (p : revpath) (t : template) : generator =
        | [] -> gen_main
        | (Generator gen_item)::next_gens ->
           Generator (fun () ->
-              let d1, _ = gen_item () in
-              d1, gen_prefix next_gens) in
+              let d1, _, _ = gen_item () in
+              d1, next_gens=[], gen_prefix next_gens) in
      gen_prefix (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
      
 let generate_template ?(p = `Root) (t : template) : data =
   (* should be named 'ground_template' *)
   let Generator gen = generator_template p t in
-  let data, _ = gen () in
+  let data, _, _ = gen () in
   data
 
 (* from data to grid *)
