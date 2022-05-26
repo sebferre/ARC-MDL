@@ -837,22 +837,20 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | #expr as e -> xp_expr xp_template print e
   | `Seq items ->
      Xprint.bracket
-       ("<\n\t", " >")
-       (Xprint.sep_list ",\n\t" xp_template)
+       ("<", " >")
+       (Xprint.sep_list ", " xp_template)
        print
        items
   | `Cst item0 ->
-     Xprint.bracket
-       ("[CST ", "]")
-       xp_template
-       print item0
+     print#string "<";
+     xp_template print item0;
+     print#string " == >"
   | `Prefix (main,items) ->
-     print#string "[";
+     print#string "<";
+     Xprint.sep_list ", " xp_template print items;
+     print#string " | ";
      xp_template print main;
-     Xprint.bracket
-       (" PREFIX <"," ...>]")
-       (Xprint.sep_list ", " xp_template)
-       print items
+     print#string ">"
 let pp_template = Xprint.to_stdout xp_template
 let string_of_template = Xprint.to_string xp_template
 
@@ -1129,7 +1127,7 @@ let rec template_is_ground : template -> bool = function
   | #patt as patt -> patt_is_ground template_is_ground patt
   | #expr -> true (* assuming expressions are only made of functions and refs *)
   | `Seq items -> List.for_all template_is_ground items
-  | `Cst main -> template_is_ground main (* if true, Cst superfluous *)
+  | `Cst item0 -> template_is_ground item0 (* if true, Cst superfluous *)
   | `Prefix (main,items) -> template_is_ground main (* if true, Prefix superfluous *)
 and patt_is_ground (is_ground : 'a -> bool) : 'a patt -> bool = function
   | `Bool _ | `Int _ | `Color _ | `Mask _ -> true
@@ -1851,8 +1849,8 @@ let code_template0 =
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
     c_ref = Mdl.Code.usage 0.4;
     c_expr = Mdl.Code.usage 0.2;
-    c_seq = Mdl.Code.usage 0.02;
-    c_cst = Mdl.Code.usage 0.05;
+    c_seq = Mdl.Code.usage 0.03;
+    c_cst = Mdl.Code.usage 0.04;
     c_prefix = Mdl.Code.usage 0.03 }
 
 let code_template_by_kind : code_template KindMap.t =
@@ -1884,8 +1882,13 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        code.c_expr
        +. dl_expr aux ~env_sig ~ctx ~path e
     | `Seq items ->
+       let n, dl_items =
+         let$ (i,sum_dl), item = (0,0.), items in
+         i+1, aux ~ctx ~path:(`Item (i,path)) item in
+       (* TODO: should encode item templates according to main template ! *)
        code.c_seq
-       +. Mdl.Code.list_plus (fun item -> aux ~ctx ~path item) items
+       +. Mdl.Code.universal_int_star n (* how many items in sequence *)
+       +. dl_items (* coding items as templates *)
     | `Cst item0 ->
        code.c_cst
        +. aux ~ctx ~path:(`Item (0,path)) item0
@@ -2737,9 +2740,9 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          (fun i item -> apply_template_gen ~lookup (`Item (i,p)) item)
          0 items in
      Result.Ok (`Seq applied_items)
-  | `Cst main ->
-     let| applied_main = apply_template_gen ~lookup (`AnyItem p) main in
-     Result.Ok (`Cst applied_main)
+  | `Cst item0 ->
+     let| applied_item0 = apply_template_gen ~lookup (`AnyItem p) item0 in
+     Result.Ok (`Cst applied_item0)
   | `Prefix (main,items) ->
      let| applied_main = apply_template_gen ~lookup (`AnyItem p) main in
      let| applied_items =
@@ -3795,6 +3798,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
       if role_poly_matches role_e role
        (* whether the expression role matches the defined path, and relaxation value *)
+       (* TODO: check that dimensions of [t] is less or equal to dimension of [p] *)
       then
         let data_opt =
           data_fst
@@ -3843,6 +3847,51 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, `Cst t_item)::defs
         | None -> defs)
     | None -> defs) in
+  let defs = Common.prof "Model2.defs_refinements/first/Prefix-Init-Extend" (fun () ->
+    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
+    let n_make_opt = (* position of next Prefix item to define *)
+      match t0 with
+      | `Prefix (main, items) ->
+         Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
+      | _ ->
+         if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
+         then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
+         else None in
+    match n_make_opt with
+    | Some (n,make_t) ->
+(*       let p_item = `Item (n,p) in
+       let role_item = role in (* items have same role as their sequence *) *)
+       let$ defs, (env,gd,u_val,dl,rank) = defs, reads_fst in
+       (match PMap.find_opt p u_val with
+        | Some (`Seq items as d) ->
+           (match List.nth_opt items n with
+            | Some d_item -> (* the nth_item *)
+               let t_item = (d_item :> template) in
+               let t = make_t t_item in
+               let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+               let dl_ctx = dl_ctx_of_data gd.data in
+               let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+               (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
+            | None -> defs)
+        | _ -> defs)
+    | None -> defs) in
+  let defs = Common.prof "Model2.defs_refinements/first/Prefix-Close" (fun () ->
+    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
+    match t0 with
+    | `Prefix (main, items) ->
+       let n = List.length items in
+       let t = `Seq items in
+       let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+       let$ defs, (env,gd,u_val,dl,rank) = defs, reads_fst in
+       (match PMap.find_opt p u_val with
+        | Some (`Seq d_items as d) when n = List.length d_items ->
+           let dl_ctx = dl_ctx_of_data gd.data in
+           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
+        | _ -> defs)
+    | _ ->  defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
