@@ -3756,34 +3756,102 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         type t = template
         let compare = Stdlib.compare
       end) in
+  let add_template t v tmap =
+    if not (TMap.mem t tmap)
+    then TMap.add t v tmap
+    else tmap in
   (* defs from first example *)
   let defs = [] in
-  let defs = Common.prof "Model2.defs_refinements/first/patterns" (fun () ->
-    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
-    let tmap_score_patt =
+  let defs = Common.prof "Model2.defs_refinements/first/by_path" (fun () ->
+    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in (* for each definable path *)
+    (* validity conditions, and associated information, for each kind of definition *)
+    let valid_Constr =
       match t0 with
-      | `Any | `Vec (`Any, `Any) -> (* including Vec because present initially *)
-         let$ res, (env,gd,u_val,dl,rank) = TMap.empty, reads_fst in
-         (match PMap.find_opt p u_val with
-          | Some d ->
-             let dl_ctx = dl_ctx_of_data gd.data in
-             let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-             let$ res, t = res, root_template_of_data ~in_output d in
+      | `Any | `Vec (`Any, `Any) -> true (* including Vec because present initially *)
+      | _ -> false in
+    let valid_Cst_t =
+      match t0 with
+      | `Seq (item0::_) | `Prefix (_, item0::_) -> Some (`Cst item0)
+      | `Cst _ | `Seq _ | `Prefix _ -> None
+      | _ ->
+         if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
+         then Some (`Cst t0)
+         else None in
+    let valid_PrefixInitExtend_n_maket =
+      let valid_role =
+        match role with
+        | `Int _ -> in_output
+        | `Color _ -> true
+        | `Mask -> true
+        | `Vec _ -> in_output
+        | _ -> false in
+      if valid_role then
+        match t0 with
+        | `Prefix (main, items) ->
+           Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
+        | _ ->
+           if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
+           then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
+           else None
+      else None in
+    let valid_PrefixClose_n_t =
+      match t0 with
+      | `Prefix (main, items) -> Some (List.length items, `Seq items)
+      | _ -> None in
+    (* computing a map: defining template -> dl_ctx, dl, d *)
+    let tmap =
+      let$ tmap, (env,gd,u_val,dl0,rank) = TMap.empty, reads_fst in (* for each read of fst example *)
+      let dl_ctx = dl_ctx_of_data gd.data in
+      match PMap.find_opt p u_val with (* look up of read data at p *)
+      | None -> tmap
+      | Some d ->
+         let tmap = (* Constr *)
+           if valid_Constr then
+             let$ tmap, t = tmap, root_template_of_data ~in_output d in
              if t <> t0 (* a different pattern *)
-                && not (TMap.mem t res) (* that was not already seen *)
-                   (* && defs_check ~env t d (* and that checks. true by construction *) *)
-             then
-               let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-               TMap.add t (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, rank) res
-             else res
-          | None -> res)
-      | _ -> TMap.empty in
+             then add_template t (dl_ctx,dl0,d) tmap
+             else tmap
+           else tmap in
+         let tmap = (* Cst *)
+           match valid_Cst_t with
+           | Some t ->
+              (match d with
+               | `Seq (d0::ds1) when List.for_all (fun d1 -> d1 = d0) ds1 ->
+                  add_template t (dl_ctx,dl0,d) tmap
+               | _ -> tmap)
+           | None -> tmap in
+         let tmap = (* Prefix-Init/Extend *)
+           match valid_PrefixInitExtend_n_maket with
+           | Some (n,make_t) ->
+              (match d with
+               | `Seq items ->
+                  (match List.nth_opt items n with
+                   | Some d_item -> (* the nth_item *)
+                      let t_item = (d_item :> template) in
+                      let t = make_t t_item in
+                      add_template t (dl_ctx,dl0,d) tmap
+                   | None -> tmap)
+               | _ -> tmap)
+           | None -> tmap in
+         let tmap = (* Prefix-Close *)
+           match valid_PrefixClose_n_t with
+           | Some (n,t) ->
+              (match d with
+               | `Seq d_items as d when n = List.length d_items ->
+                  add_template t (dl_ctx,dl0,d) tmap
+               | _ -> tmap)
+           | None -> tmap in
+         tmap in
+    (* returning a list of definitions *)
     TMap.fold
-      (fun t (dl,rank) defs ->
+      (fun t (dl_ctx,dl0,d) defs ->
+        let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+        let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+        let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+        let dl = dl0 +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0 in
         (dl,p,role,t0,t)::defs)
-      tmap_score_patt defs) in
-  let defs = Common.prof "Model2.defs_refinements/first/exprs" (fun () ->
+      tmap defs) in
+  let defs = Common.prof "Model2.defs_refinements/first/by_expr" (fun () ->
     let$ defs, (role_e,t) = defs, defs_expressions ~env_sig in
     let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
@@ -3817,81 +3885,6 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
            (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
       else defs) in
-  let defs = Common.prof "Model2.defs_refinements/first/Cst" (fun () ->
-    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
-    let t_item_opt = (* candidate item template for `Cst argument *)
-      match t0 with
-      | `Seq (item0::_) | `Prefix (_, item0::_) -> Some item0
-      | `Cst _ | `Seq _ | `Prefix _ -> None
-      | _ ->
-         if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
-         then Some t0
-         else None in
-    match t_item_opt with
-    | Some t_item ->
-       let t = `Cst t_item in
-       let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-       let gd_dl_d_opt = (* searching for constant data at path p *)
-         List.find_map
-           (fun (env,gd,u_val,dl,rank) ->
-             match PMap.find_opt p u_val with
-             | Some (`Seq (d0::ds1) as d) when List.for_all (fun d1 -> d1 = d0) ds1 ->
-                Some (gd,dl,d)
-             | _ -> None)
-           reads_fst in
-       (match gd_dl_d_opt with
-        | Some (gd,dl,d) ->
-           let dl_ctx = dl_ctx_of_data gd.data in
-           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, `Cst t_item)::defs
-        | None -> defs)
-    | None -> defs) in
-  let defs = Common.prof "Model2.defs_refinements/first/Prefix-Init-Extend" (fun () ->
-    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
-    let n_make_opt = (* position of next Prefix item to define *)
-      match t0 with
-      | `Prefix (main, items) ->
-         Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
-      | _ ->
-         if not (template_is_ground t0) && path_dim p = Sequence && template_dim t0 = Item
-         then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
-         else None in
-    match n_make_opt with
-    | Some (n,make_t) ->
-(*       let p_item = `Item (n,p) in
-       let role_item = role in (* items have same role as their sequence *) *)
-       let$ defs, (env,gd,u_val,dl,rank) = defs, reads_fst in
-       (match PMap.find_opt p u_val with
-        | Some (`Seq items as d) ->
-           (match List.nth_opt items n with
-            | Some d_item -> (* the nth_item *)
-               let t_item = (d_item :> template) in
-               let t = make_t t_item in
-               let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-               let dl_ctx = dl_ctx_of_data gd.data in
-               let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-               (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
-            | None -> defs)
-        | _ -> defs)
-    | None -> defs) in
-  let defs = Common.prof "Model2.defs_refinements/first/Prefix-Close" (fun () ->
-    let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
-    match t0 with
-    | `Prefix (main, items) ->
-       let n = List.length items in
-       let t = `Seq items in
-       let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-       let$ defs, (env,gd,u_val,dl,rank) = defs, reads_fst in
-       (match PMap.find_opt p u_val with
-        | Some (`Seq d_items as d) when n = List.length d_items ->
-           let dl_ctx = dl_ctx_of_data gd.data in
-           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
-        | _ -> defs)
-    | _ ->  defs) in
   (* checking defs w.r.t. other examples *)
   let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
     let$ defs, reads = defs, reads_others in
