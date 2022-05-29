@@ -3217,101 +3217,90 @@ let state_minus_point state (i,j,c) =
   let occ_new_cover = Grid.Mask.singleton state.grid.height state.grid.width i j in
   state_minus_shape_gen state occ_delta occ_new_cover
 let state_minus_rectangle state (rect : Grid.rectangle) =
-  state_minus_shape_gen state rect.delta rect.new_cover
-  
-let rec parseur_shape (t : template) (p : revpath) : (unit,data) parseur =
-  let parseur_point pos color p : (Grid.pixel, data) parseur =
-    parseur_rec2
-      (parseur_vec pos (p ++ `Pos))
-      (parseur_color color (p ++ `Shape ++ `Color))
-      (fun parse_pos parse_color (i,j,c) state ->
-        let* dpos, state, stop_pos, next_pos = parse_pos (i,j) state in
-        let* dcolor, state, stop_color, next_color = parse_color c state in
-        Myseq.return (`PosShape (dpos, `Point (dcolor)), state,
-                      stop_pos, stop_color, next_pos, next_color)) in
-  let parseur_rectangle pos size color mask p : (Grid.rectangle, data) parseur = (* QUICK *)
-    parseur_rec4
-      (parseur_vec pos (p ++ `Pos))
-      (parseur_vec size (p ++ `Shape ++ `Size))
-      (parseur_color color (p ++ `Shape ++ `Color))
-      (parseur_mask mask (p ++ `Shape ++ `Mask))
-      (fun parse_pos parse_size parse_color parse_mask rect state ->
-        let open Grid in
-        let* dpos, state, stop_pos, next_pos = parse_pos (rect.offset_i,rect.offset_j) state in
-        let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
-        let* dcolor, state, stop_color, next_color = parse_color rect.color state in
-        let* dmask, state, stop_mask, next_mask = parse_mask rect.mask_models state in
-        Myseq.return (`PosShape (dpos, `Rectangle (dsize,dcolor,dmask)), state,
-                      stop_pos, stop_size, stop_color, stop_mask,
-                      next_pos, next_size, next_color, next_mask))
-  in
-  let parse_all_points state =
-    let points = Grid.points state.grid state.mask state.parts in
-    Myseq.prof "Model2.parse_all_points/seq" (
-    let* point = Myseq.from_list points in
-    let* state = Myseq.from_option (state_minus_point state point) in
-    Myseq.return (point, state)) in
-  let parse_all_rectangles state =
-    let rectangles = Grid.rectangles state.grid state.mask state.parts in
-    Myseq.prof "Model2.parse_all_rectangles/seq" (
-    let* rect = Myseq.from_list rectangles in
-    let* state = Myseq.from_option (state_minus_rectangle state rect) in
-    Myseq.return (rect, state))
-  in
-  let parseur_single_point pos color p : (unit,data) parseur =
-    parseur_rec1
-      (parseur_point pos color p)
-      (fun parse_point () state ->
-        let points = Grid.points state.grid state.mask state.parts in
-        let* point = Myseq.from_list points in (* QUICK *)
-        let* dpoint, state, stop_point, next_point = parse_point point state in
-        let* state = Myseq.from_option (state_minus_point state point) in
-        Myseq.return (dpoint, state, stop_point, next_point)) in
-  let parseur_single_rectangle pos size color mask p : (unit,data) parseur =    
-    parseur_rec1
-      (parseur_rectangle pos size color mask p)
-      (fun parse_rectangle () state ->
-        let rectangles = Grid.rectangles state.grid state.mask state.parts in
-        let* rect = Myseq.from_list rectangles in (* QUICK *)
-        let* drect, state, stop_rectangle, next_rectangle = parse_rectangle rect state in
-        let* state = Myseq.from_option (state_minus_rectangle state rect) in
-        Myseq.return (drect, state, stop_rectangle, next_rectangle))
-  in
+  state_minus_shape_gen state rect.delta rect.new_cover  
+
+let parseur_shape t p : (Grid.point list Lazy.t * Grid.rectangle list Lazy.t, data (* object *)) parseur =
   parseur_template
-    ~parseur_any:
-    (fun () ->
-      parseur_rec (fun () state ->
+    ~parseur_any:(fun () ->
+      parseur_rec (fun (points,rects) state ->
           Myseq.concat
-            [(let* r, state = parse_all_rectangles state in
+            [(let* rect = Myseq.from_list (Lazy.force rects) in
+              let* state = Myseq.from_option (state_minus_rectangle state rect) in
               let open Grid in
-              let* m = Myseq.from_list r.mask_models in
-              if r.height = 1 && r.width = 1 (* point *)
+              let* m = Myseq.from_list rect.mask_models in
+              if rect.height = 1 && rect.width = 1 (* point *)
               then Myseq.empty
               else Myseq.return
-                     (`PosShape (`Vec (`Int r.offset_i, `Int r.offset_j),
-                                 `Rectangle (`Vec (`Int r.height, `Int r.width),
-                                             `Color r.color,
+                     (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j),
+                                 `Rectangle (`Vec (`Int rect.height, `Int rect.width),
+                                             `Color rect.color,
                                              `Mask m)),
                       state));
-             (let* (i,j,c), state = parse_all_points state in
+             (let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
+              let* state = Myseq.from_option (state_minus_point state point) in
               Myseq.return
                 (`PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                  state))
     ]))
     ~parseur_patt:(function
-      | `PosShape (pos, shape) ->
-         parseur_template
-           ~parseur_any:(fun () -> parseur_empty) (* TODO: like any PosShape *)
-           ~parseur_patt:(function
-             | `Point (color) ->
-                parseur_single_point pos color p
-             | `Rectangle (size,color,mask) ->
-                parseur_single_rectangle pos size color mask p
-             | _ -> assert false)
-           shape (p ++ `Shape)
-      | _ -> assert false)
+      | `Point color ->
+         parseur_rec1
+           (parseur_color color (p ++ `Color))
+           (fun parse_color (points,rects) state ->
+             let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
+             let* dcolor, state, stop_color, next_color = parse_color c state in
+             let* state = Myseq.from_option (state_minus_point state point) in
+             Myseq.return (`PosShape (`Vec (`Int i, `Int j), `Point dcolor), state, stop_color, next_color))
+      | `Rectangle (size,color,mask) ->
+         parseur_rec3
+           (parseur_vec size (p ++ `Size))
+           (parseur_color color (p ++ `Color))
+           (parseur_mask mask (p ++ `Mask))
+           (fun parse_size parse_color parse_mask (points,rects) state ->
+             let* rect = Myseq.from_list (Lazy.force rects) in
+             let open Grid in
+             let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
+             let* dcolor, state, stop_color, next_color = parse_color rect.color state in
+             let* dmask, state, stop_mask, next_mask = parse_mask rect.mask_models state in
+             let* state = Myseq.from_option (state_minus_rectangle state rect) in
+             Myseq.return (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j), `Rectangle (dsize,dcolor,dmask)),
+                           state,
+                           stop_size, stop_color, stop_mask,
+                           next_size, next_color, next_mask))
+      | _ -> parseur_empty)
     t p
 
+let parseur_object t p : (unit, data) parseur =
+  parseur_template
+    ~parseur_any:(fun () ->
+      parseur_rec1
+        (parseur_shape `Any (p ++ `Shape))
+        (fun parse_shape () state ->
+          let points = lazy (Grid.points state.grid state.mask state.parts) in
+          let rects = lazy (Grid.rectangles state.grid state.mask state.parts) in
+          let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
+          (* no constraint on position *)
+          Myseq.return (dobject, state, stop_shape, next_shape)))
+    ~parseur_patt:(function
+      | `PosShape (pos,shape) ->
+         parseur_rec2
+           (parseur_vec pos (p ++ `Pos))
+           (parseur_shape shape (p ++ `Shape))
+           (fun parse_pos parse_shape () state ->
+             let points = lazy (Grid.points state.grid state.mask state.parts) in
+             let rects = lazy (Grid.rectangles state.grid state.mask state.parts) in
+             let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
+             match dobject with
+             | `PosShape (`Vec (`Int i, `Int j), dshape) ->
+                let* dpos, state, stop_pos, next_pos = parse_pos (i,j) state in
+                Myseq.return (`PosShape (dpos,dshape),
+                              state,
+                              stop_pos, stop_shape,
+                              next_pos, next_shape)
+             | _ -> assert false)
+      | _ -> parseur_empty)
+    t p
+  
 (* TEST *)
   (*
 let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
@@ -3332,10 +3321,10 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
     List.rev rev_items, state in
   Myseq.return (`Seq items, state))
    *)
-let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
-  let Parseur parse_shapes = parseur_collect ~max_depth:!max_seq_length (parseur_shape shape p) in
+let parseur_layer (t : template) (p : revpath) : (unit,data) parseur =
+  let Parseur parse_objects = parseur_collect ~max_depth:!max_seq_length (parseur_object t p) in
   Parseur (fun () state ->
-      let* ld, state, _, _ = parse_shapes () state in
+      let* ld, state, _, _ = parse_objects () state in
       match ld with
       | [] -> Myseq.empty
       | [d] -> Myseq.return (d, state, true, parseur_empty) (* TODO: to keep or not ? *)
