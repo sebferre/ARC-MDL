@@ -189,6 +189,10 @@ end
 
 type dim = Item | Sequence (* Item has dim=0, Sequence has dim=1 *)
 (* internal repr must be consistent with (max Item Sequence = Sequence) *)
+
+let max_dim_list : dim list -> dim = function
+  | [] -> failwith "Model2.max_dim_list: empty list"
+  | x::r -> List.fold_left max x r
                 
 type kind =
   Int | Bool | Color | Mask | Vec | Shape | Object | Layer | Grid
@@ -909,11 +913,56 @@ let patt_dim (dim : 'a -> dim) (patt : 'a patt) : dim =
        (fun res lp layer -> max res (dim layer))
        (max (dim size) (dim color))
        `Root layers
-                     
+
+let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
+  match e with
+  | `Ref p -> path_dim p
+  | `ConstInt _ -> Item
+  | `ConstVec _ -> Item
+  | `Plus (a,b) -> max (dim a) (dim b) (* broadcasting *)
+  | `Minus (a,b) -> max (dim a) (dim b)
+  | `IncrInt (a,k) -> dim a
+  | `DecrInt (a,k) -> dim a
+  | `IncrVec (a,k,l) -> dim a
+  | `DecrVec (a,k,l) -> dim a
+  | `Modulo (a,b) -> max (dim a) (dim b)
+  | `ScaleUp (a,k) -> dim a
+  | `ScaleDown (a,k) -> dim a
+  | `ScaleTo (a,b) -> max (dim a) (dim b)
+  | `Corner (a,b) -> max (dim a) (dim b)
+  | `Min l -> max_dim_list (List.map dim l)
+  | `Max l -> max_dim_list (List.map dim l)
+  | `Average l -> max_dim_list (List.map dim l)
+  | `Span (a,b) -> max (dim a) (dim b)
+  | `Norm a -> dim a
+  | `Diag1 (a,k) -> dim a
+  | `Diag2 (a,k) -> dim a
+  | `LogAnd (a,b) -> max (dim a) (dim b)
+  | `LogOr (a,b) -> max (dim a) (dim b)
+  | `LogXOr (a,b) -> max (dim a) (dim b)
+  | `LogAndNot (a,b) -> max (dim a) (dim b)
+  | `LogNot a -> dim a
+  | `Area a -> dim a
+  | `Left a -> dim a
+  | `Right a -> dim a
+  | `Center a -> dim a
+  | `Top a -> dim a
+  | `Bottom a -> dim a
+  | `Middle a -> dim a
+  | `ProjI a -> dim a
+  | `ProjJ a -> dim a
+  | `TranslationOnto (a,b) -> max (dim a) (dim b)
+  | `Tiling (a,k,l) -> dim a
+  | `ResizeAlikeTo (a,b) -> max (dim a) (dim b)
+  | `ApplySym (sym,a,r) -> dim a
+  | `UnfoldSym (sym_arr,a) -> dim a
+  | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
+  | `Coloring (a,b) -> max (dim a) (dim b)
+    
 let rec template_dim : template -> dim = function
   | `Any -> Item
   | #patt as patt -> patt_dim template_dim patt
-  | #expr -> Item (* TODO: will change with sequence-based functions in the future *)
+  | #expr as e -> expr_dim template_dim e
   | `Seq items -> Sequence
   | `Cst item0 -> Sequence
   | `Prefix (main,items) -> Sequence
@@ -3856,56 +3905,81 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
       reads_fst
       |> List.filter_map
-           (fun (env,gd,u_val,dl,rank) ->
+           (fun (env,gd,u_val,dl0,rank) ->
              match defs_check_apply ~env t with
              | None -> None
-             | Some te -> Some (te,gd,u_val,dl,rank))) in
+             | Some t_applied -> Some (t_applied,gd,u_val,dl0,rank))) in
     if data_fst = []
     then defs
     else
+      let dim_t = template_dim t in
       let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
-      if role_poly_matches role_e role
-       (* whether the expression role matches the defined path, and relaxation value *)
-       (* TODO: check that dimensions of [t] is less or equal to dimension of [p] *)
+      let dim_p = path_dim p in
+      let dim_t0 = template_dim t0 in
+      let valid_PrefixInitExtend_n_maket =
+        match dim_t with
+        | Item ->
+           (match t0 with
+            | `Prefix (main, items) ->
+               Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
+            | _ ->
+               if not (template_is_ground t0) && dim_p = Sequence && dim_t0 = Item
+               then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
+               else None)
+        | Sequence -> None in
+      if (dim_t <= dim_p || !max_seq_length = 1) && role_poly_matches role_e role
+        (* whether the expression role matches the defined path, and relaxation value *)
       then
-        let data_opt =
-          data_fst
-          |> List.find_map
-               (fun (te,gd,u_val,dl,rank) ->
-                 match PMap.find_opt p u_val with
-                 | Some d when matches_template te d ->
-                    Some (gd,dl,rank,d)
-                 | _ -> None) in
-        match data_opt with
-        | None -> defs
-        | Some (gd,dl,rank,d) ->
-           let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
-           let dl_ctx = dl_ctx_of_data gd.data in
-           let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
-           let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
-           (dl +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0, p, role, t0, t)::defs
+        let tmap =
+          let$ tmap, (t_applied,gd,u_val,dl0,rank) = TMap.empty, data_fst in
+          let dl_ctx = dl_ctx_of_data gd.data in
+          match PMap.find_opt p u_val with
+          | None -> tmap
+          | Some d ->
+             let tmap = (* does the expression match the whole data [d] *)
+               if matches_template t_applied d
+               then add_template t (dl_ctx,dl0,d) tmap
+               else tmap in
+             let tmap = (* does the expression match the next item *)
+               match valid_PrefixInitExtend_n_maket, d with
+               | Some (n,make_t), `Seq items ->
+                  (match List.nth_opt items n with
+                   | Some d_item when matches_template t_applied d_item ->
+                      add_template (make_t t) (dl_ctx,dl0,d) tmap
+                   | _ -> tmap)
+               | _ -> tmap in
+             tmap in
+        TMap.fold
+          (fun t (dl_ctx,dl0,d) defs ->
+            let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
+            let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
+            let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
+            let dl = dl0 +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0 in
+            (dl,p,role,t0,t)::defs)
+        tmap defs
       else defs) in
   (* checking defs w.r.t. other examples *)
-  let defs = Common.prof "Model2.defs_refinements/others" (fun () ->
-    let$ defs, reads = defs, reads_others in
+  let _, defs = Common.prof "Model2.defs_refinements/others" (fun () ->
+    let$ (i,defs), reads = (2,defs), reads_others in
+    i+1,                
     defs
     |> List.filter_map
-         (fun (dl0,p,role,t0,t) ->
+         (fun (dl,p,role,t0,t) ->
            match find_dl_rank t p reads with
            | None -> None
            | Some (gd1,dl1,rank1,d1) ->
               let dl_ctx = dl_ctx_of_data gd1.data in
               let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d1 in
               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d1 in
-              Some (dl0 +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in (* TODO: penalize higher ranks to favor default parse *)
+              Some (dl +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in (* TODO: penalize higher ranks to favor default parse *)
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
   |> List.stable_sort (* increasing delta DL *)
-       (fun (delta_dl1,_,_,_,_) (delta_dl2,_,_,_,_) ->
-         dl_compare delta_dl1 delta_dl2)
+       (fun (dl1,_,_,_,_) (dl2,_,_,_,_) ->
+         dl_compare dl1 dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (_,p,_,_,t) -> RDef (p,t,false)))
+  |> Myseq.map (fun (dl,p,role,t0,t) -> RDef (p,t,false)))
 and defs_check ~env (t : template) (d : data) : bool =
   match defs_check_apply ~env t with
   | None -> false
@@ -4332,6 +4406,7 @@ let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
   (nlmi, nlmo, nlmi +. nlmo),
   (nldi, nldo, nldi +. nldo),
   (nlmdi, nlmdo, nlmdi +. nlmdo)
+
   
 let learn_model
       ?(verbose = false)
