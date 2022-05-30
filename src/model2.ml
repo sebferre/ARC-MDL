@@ -1071,7 +1071,10 @@ let rec find_data (p : revpath) (d : data) : data option = (* QUICK *)
   | `Item (i, p1) ->
      (match find_data p1 d with
       | None -> None
-      | Some (#patt as patt1) -> Some (patt1 :> data) (* data seen as singleton sequence *)
+      | Some (#patt as patt1) ->
+         if i = 0
+         then Some (patt1 :> data) (* data seen as singleton sequence *)
+         else None
       | Some (`Seq items) -> List.nth_opt items i)
   | `AnyItem p1 -> find_data p1 d (* should be a sequence *)
   | `Arg _ -> assert false
@@ -3985,7 +3988,13 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   let paths =
     let$ res, (_k,lp) = [], env_sig in (* TODO: make env_sig a flat list *)
     let$ res, p = res, lp in
-    ((path_role p :> role_poly), p) :: res in
+    let role = (path_role p :> role_poly) in
+    let res = (role,p) :: res in
+    if !max_seq_length <> 1 && path_dim p = Sequence
+    then (* adding paths to access first sequence elements *)
+      let$ res, i = res, [0;1;2] in
+      (role, `Item (i,p))::res
+    else res in
   let exprs = ref ([] : (role_poly * template) list) in (* stack of expressions *)
   let quota = ref (!max_expressions) in (* bounding nb expressions because of combinatorial number in some tasks *)
   let push e = (* stacking an expression until quota exhausted *)
