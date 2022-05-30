@@ -898,7 +898,7 @@ let rec path_dim (p : revpath) : dim =
   | `Field (f,p1) -> path_dim p1
   | `Item (_,p1) -> Item
   | `AnyItem p1 -> Item
-  | `Arg (_, _, p1) -> path_dim p1 (* TODO: will depend on the function in the future *)
+  | `Arg (_, _, p1) -> assert false (* depends on the function/argument, not used *)
 
 let patt_dim (dim : 'a -> dim) (patt : 'a patt) : dim =
   (* using the fact that (max Item Sequence = Sequence), idea of broadcasting *)
@@ -3366,7 +3366,6 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
           match color with
           | `Color bc -> (fun g -> Myseq.return bc)
           | `Any -> (fun g -> Myseq.from_list (Grid.background_colors g))
-          | `Seq _ -> (fun g -> Myseq.empty) (* TODO: avoid sequence insertion where not expected *)
           | _ -> assert false in
         let parse_bg_color g state =
           let* bc = seq_background_colors g in
@@ -3715,7 +3714,6 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
                | Some x when x = obj -> raise Refinement_no_change
                | _ -> obj)
               path
-              (*         |> insert_template (fun _ -> u_any) (`Field (`Color,`Root)) (* because background color is defined as remaining color after covering shapes. TODO: remove, should be deprecated *) *)
     in
 (*    print_string "New grid template: ";
     pp_template t;
