@@ -3499,7 +3499,10 @@ let read_grid
       l_parses (* QUICK *)
       |> List.stable_sort (fun (_,_,dl1) (_,_,dl2) -> dl_compare dl1 dl2)
       |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
-      |> limit_dl (fun (_,_,dl) -> dl) in
+      |> limit_dl (fun (_,_,dl) -> dl)
+      |> List.mapi (fun rank (env,gd,dl) ->
+             let dl = dl +. Mdl.Code.universal_int_star rank in (* to penalize later parses, in case of equivalent parses *)
+             (env, gd, dl)) in
     Result.Ok best_parses)
 
 (* result of reading a list of grids with a grid model *)
@@ -3942,7 +3945,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            (fun (env,gd,u_val,dl0,rank) ->
              match defs_check_apply ~env t with
              | None -> None
-             | Some t_applied -> Some (t_applied,gd,u_val,dl0,rank))) in
+             | Some t_applied -> Some (t_applied,gd,u_val,dl0))) in
     if data_fst = []
     then defs
     else
@@ -3965,7 +3968,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         (* whether the expression role matches the defined path, and relaxation value *)
       then
         let tmap =
-          let$ tmap, (t_applied,gd,u_val,dl0,rank) = TMap.empty, data_fst in
+          let$ tmap, (t_applied,gd,u_val,dl0) = TMap.empty, data_fst in
           let dl_ctx = dl_ctx_of_data gd.data in
           match PMap.find_opt p u_val with
           | None -> tmap
