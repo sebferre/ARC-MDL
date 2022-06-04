@@ -4,12 +4,14 @@ open Task
 let def_param name v to_str =
   Printf.printf "## %s = %s\n" name (to_str v);
   ref v
-   
+
+let seq = false
+  
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" 64 (* TEST 256 *) string_of_int (* max nb of considered grid parses *)
+let max_nb_parse = def_param "max_nb_parse" (if seq then 256 else 64) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
-let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" 16 string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" 1 (* TEST *) string_of_int (* max size of collected sequences *)
+let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" (if seq then 256 else 16) string_of_int (* see parse_layers *)
+let max_seq_length = def_param "max_seq_length" (if seq then 10 else 1) string_of_int (* max size of collected sequences *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -3080,7 +3082,7 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
       let* ly, state = aux ~depth:0 x state (parse x state) in
       Myseq.return (ly, state, true, parseur_empty))
 
-(* let _ = (* unit test for parseur_collect *)
+(* let _ = (* UNIT test for parseur_collect *)
   let rec parseur_count n =
     Parseur (fun x state ->
         if n >= 9
@@ -3093,12 +3095,17 @@ let parseur_collect ?(max_depth : int option) (Parseur parse) : ('a, 'b list) pa
         let* y = Myseq.from_list l in
         let l1 = List.filter ((<>) y) l in
         Myseq.return (y, state, l1=[], parseur_perm l1)) in
-  let Parseur parse_all = parseur_collect (* ~max_depth:1 *) (parseur_perm [1;2;3;4]) in
+  let rec parseur_primes l =
+    Parseur (fun () state ->
+        let* y = Myseq.from_list l in
+        let l1 = List.filter (fun y1 -> y1 mod y <> 0 && y mod y1 <> 0) l in
+        Myseq.return (y, state, true, parseur_primes l1)) in        
+  let Parseur parse_all = parseur_collect (* ~max_depth:1 *) (parseur_primes [1;2;3;4;5]) in
   parse_all () (Obj.magic [|1;2;3|] : parse_state)
   |> Myseq.slice ~limit:10000
   |> Myseq.iter (fun (l,_,_,_) ->
          print_endline (String.concat " " (List.map string_of_int l))) *)
-  
+
 
 let rec parseur_template
           ~(parseur_any : unit -> ('a,data) parseur)
@@ -3201,7 +3208,7 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
 
-let state_minus_shape_gen state occ_delta occ_new_cover = (* QUICK *)
+let state_minus_shape_gen state occ_color occ_delta occ_new_cover = (* QUICK *)
   let new_mask = Grid.Mask.diff state.mask occ_new_cover in
   if Grid.Mask.equal new_mask state.mask
   then None (* the shape is fully hidden, explains nothing new *)
@@ -3211,16 +3218,16 @@ let state_minus_shape_gen state occ_delta occ_new_cover = (* QUICK *)
 	mask = new_mask;
         delta = add_delta_with_mask ~mask:state.mask state.delta occ_delta;
 	parts = filter_parts_with_mask ~new_mask state.parts
-                |> List.filter (fun p -> not (Grid.Mask.is_subset occ_new_cover p.Grid.pixels))
+                |> List.filter (fun (p : Grid.part) -> not (occ_color = p.color && Grid.Mask.is_subset occ_new_cover p.Grid.pixels))
                                (* that would make occ useless if selecting p later *)
       } in
     Some new_state
 let state_minus_point state (i,j,c) =
   let occ_delta = [] in
   let occ_new_cover = Grid.Mask.singleton state.grid.height state.grid.width i j in
-  state_minus_shape_gen state occ_delta occ_new_cover
+  state_minus_shape_gen state c occ_delta occ_new_cover
 let state_minus_rectangle state (rect : Grid.rectangle) =
-  state_minus_shape_gen state rect.delta rect.new_cover  
+  state_minus_shape_gen state rect.color rect.delta rect.new_cover  
 
 let parseur_shape t p : (Grid.point list Lazy.t * Grid.rectangle list Lazy.t, data (* object *)) parseur =
   parseur_template
@@ -3231,14 +3238,12 @@ let parseur_shape t p : (Grid.point list Lazy.t * Grid.rectangle list Lazy.t, da
               let* state = Myseq.from_option (state_minus_rectangle state rect) in
               let open Grid in
               let* m = Myseq.from_list rect.mask_models in
-              if rect.height = 1 && rect.width = 1 (* point *)
-              then Myseq.empty
-              else Myseq.return
-                     (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j),
-                                 `Rectangle (`Vec (`Int rect.height, `Int rect.width),
-                                             `Color rect.color,
-                                             `Mask m)),
-                      state));
+              Myseq.return
+                (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j),
+                            `Rectangle (`Vec (`Int rect.height, `Int rect.width),
+                                        `Color rect.color,
+                                        `Mask m)),
+                 state));
              (let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
               let* state = Myseq.from_option (state_minus_point state point) in
               Myseq.return
@@ -3303,7 +3308,8 @@ let parseur_object t p : (unit, data) parseur =
              | _ -> assert false)
       | _ -> parseur_empty)
     t p
-  
+
+
 (* TEST *)
   (*
 let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
@@ -3345,7 +3351,7 @@ let parseur_layers layers p : (unit, data ilist) parseur =
         simple_parse::revl)
       [] `Root layers in
   let gen = Myseq.product_dependent_fair
-              ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations *)
+              ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations, incompatible with use of parseur_collect *)
               (List.rev rev_layer_parses) in
   Parseur (fun () state ->
   Myseq.prof "Model2.parse_layers/seq" (
@@ -3398,6 +3404,43 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
      | _ -> parseur_empty)
     t p
 
+(* let _ = (* UNIT test for parseur_grid *)
+  let task_name = "b94a9452" in
+  let task = Task.from_file ("/local/ferre/data/tasks/ARC/data/training/" ^ task_name ^ ".json") in
+  let g = (List.nth task.train 2).input in
+  let dl_ctx = { box_height = g.height; box_width = g.width } in
+  let state =
+    { quota_diff = 0;
+      diff = diff0;
+      delta = delta0;
+      mask = Grid.Mask.full g.height g.width;
+      parts = Grid.segment_by_color g;
+      grid = g } in
+  let t = `Background (u_vec_any, u_any, `Insert (`Nil, u_any, `Nil)) in
+  let p = `Root in
+  let Parseur parse_grid = parseur_grid t p in
+  let encode_grid = encoder_template ~ctx:dl_ctx t in
+  parse_grid g state
+  (*  |> Myseq.slice ~limit:1000 *)
+  |> Myseq.fold_left (fun (best_dl,res) (d, state, stop, next) ->
+         assert stop;
+         let dl = encode_grid d
+                  +. dl_delta ~ctx:dl_ctx state.delta in
+         (*Printf.printf "### %.3f\n" dl;
+         pp_data d;
+         print_newline (); *)
+         if dl < 1.5 *. best_dl
+         then (min dl best_dl, (d,dl)::res)
+         else (best_dl, res))
+       (Stdlib.infinity, [])
+  |> (fun (best_dl,res) ->
+    List.iter (fun (d,dl) ->
+        Printf.printf "### %.3f\n" dl;
+        pp_data d;
+        print_newline ())
+      (List.rev res)) *)
+
+  
 exception Parse_failure
 let _ = Printexc.register_printer
           (function
@@ -3515,6 +3558,7 @@ type model = (* input->output models *)
 let init_template =
 (*  let u_rect = `PosShape (u_vec_cst, `Rectangle (u_vec_cst, `U, `U)) in
   let u_point = `PosShape (u_vec_cst, `Point (`U)) in *)
+  (*let u_layer = `PosShape (u_vec_any, `Any) in*)
   let u_layers = `Nil in
   (*let u_layers = `Insert (`Nil, u_layer, `Nil) in*)
   `Background (u_vec_any, u_any, u_layers )
@@ -4239,7 +4283,8 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
   match t with
   | `Background (_,_,layers) ->
      (* TEST let su =
-       aux ~objs:[`U] `Root layers in *)
+       let objs = [`PosShape (u_vec_cst, `Any)] in
+       aux ~objs `Root layers in *)
      let sp =
        let objs = [`PosShape (u_vec_cst, `Point (u_cst))] in (* TEST *)
        aux ~objs `Root layers in
@@ -4262,7 +4307,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               let objs = [`Ref p_layer] in
               aux ~objs `Root layers)
             ps_layer) in
-     Myseq.concat [so; ss; sr; sp (* TEST; su*)]
+     Myseq.concat [so; ss; sr; sp (* TEST ; su *)]
   | _ -> assert false)
 
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
