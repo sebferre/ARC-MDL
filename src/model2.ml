@@ -688,8 +688,7 @@ let rec xp_ilist (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (l : 'a ilist)
   aux `Root l
 
 let xp_mask_model (print : Xprint.t) : Grid.Mask_model.t -> unit = function
-  | `Full false -> print#string "Full"
-  | `Full true -> print#string "Full (and Border)" 
+  | `Full -> print#string "Full"
   | `Border -> print#string "Border"
   | `EvenCheckboard -> print#string "Even Checkboard"
   | `OddCheckboard -> print#string "Odd Checkboard"
@@ -1227,7 +1226,7 @@ let default_grid_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
 let default_move = `Vec (`Int 0, `Int 0)
-let default_mask = `Mask (`Full false)
+let default_mask = `Mask `Full
 let default_shape = `Rectangle (default_shape_size, default_shape_color, default_mask)
 let default_object = `PosShape (default_pos, default_shape)
 let default_layer = default_object
@@ -1258,7 +1257,6 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (
      then [(d :> template)]
      else [] (* position- and size-invariance of inputs *)
   | `Color _ as d -> [(d :> template)] (* colors can be seen as patterns *)
-  | `Mask (`Full true) -> [`Mask `Border; `Mask (`Full false)]
   | `Mask _ as d -> [(d :> template)] (* masks can be seen as patterns *)
   | `Vec _ -> [`Vec (u_cst, u_cst)]
   | `Point _ -> [`Point u_cst]
@@ -1457,7 +1455,7 @@ let dl_background_color : Grid.color -> dl =
      else invalid_arg "Unexpected color"
 let dl_mask : Grid.Mask_model.t -> dl =
   function
-  | `Full _ -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
+  | `Full -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
   | `Border -> Mdl.Code.usage 0.1
   | `EvenCheckboard
     | `OddCheckboard
@@ -2130,7 +2128,7 @@ let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
 
 let dl_delta_path = `Item (0, `Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
 (* let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *) *)
-let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask (`Full false))) (* dummy point shape as rectangle *)
+let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask `Full)) (* dummy point shape as rectangle *)
 let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
   if delta = []
   then 0.
@@ -2309,7 +2307,7 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
     | _ -> assert false in
   let unfold_mask = function
     | `Mask m -> Result.Ok (`Mask (mask_matrix m sym_matrix))
-    | `Full _ -> Result.Ok (`Full false)
+    | `Full -> Result.Ok `Full
     | _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: not a custom mask")  
   in
   fun e d ->
@@ -2393,7 +2391,7 @@ let apply_expr_gen
            let| mm' = Grid.Mask_model.scale_up k k mm in
            Result.Ok (`Mask mm')
         | `Point col ->
-           Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask (`Full false)))
+           Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask `Full))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
            let| mm' = Grid.Mask_model.scale_up k k mm in
            Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
@@ -2422,7 +2420,7 @@ let apply_expr_gen
            let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
            Result.Ok (`Mask mm')
         | `Point col, `Vec (`Int new_h, `Int new_w) ->
-           Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask (`Full false)))
+           Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask `Full))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int new_h, `Int new_w) ->
            let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
            Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask mm'))
@@ -2536,8 +2534,8 @@ let apply_expr_gen
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, _ -> Result.Ok (`Mask m2)
-            | _, `Full _ -> Result.Ok (`Mask m1)
+            | `Full, _ -> Result.Ok (`Mask m2)
+            | _, `Full -> Result.Ok (`Mask m1)
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
                Result.Ok (`Mask (`Mask (Grid.Mask.inter bm1 bm2)))
             | _ -> Result.Error (Undefined_result "LogAnd: undefined"))
@@ -2549,8 +2547,8 @@ let apply_expr_gen
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, _ -> Result.Ok (`Mask m1)
-            | _, `Full _ -> Result.Ok (`Mask m2)
+            | `Full, _ -> Result.Ok (`Mask m1)
+            | _, `Full -> Result.Ok (`Mask m2)
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
                Result.Ok (`Mask (`Mask (Grid.Mask.union bm1 bm2)))
             | _ -> Result.Error (Undefined_result "LogOr: undefined"))
@@ -2562,8 +2560,8 @@ let apply_expr_gen
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
-            | `Mask bm1, `Full _ -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
+            | `Full, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
+            | `Mask bm1, `Full -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
                Result.Ok (`Mask (`Mask (Grid.Mask.diff_sym bm1 bm2)))
             | _ -> Result.Error (Undefined_result "LogXOr: undefined"))
@@ -2575,7 +2573,7 @@ let apply_expr_gen
        (function
         | `Mask m1, `Mask m2 ->
            (match m1, m2 with
-            | `Full _, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
+            | `Full, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
             | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
                Result.Ok (`Mask (`Mask (Grid.Mask.diff bm1 bm2)))
             | _ -> Result.Error (Undefined_result "LogAndNot: undefined"))
@@ -2697,7 +2695,7 @@ let apply_expr_gen
         | d1, `Vec (`Int h, `Int w) when h > 0 && w > 0 ->
            let aux = function
              | `Point col ->
-                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask (`Full false)))
+                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask `Full))
              | `Rectangle (_size, col, `Mask mm) ->
                 let| mm' = Grid.Mask_model.resize_alike h w mm in
                 Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask mm'))
@@ -3479,12 +3477,12 @@ let read_grid
     assert stop;
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
-    let dl = Common.prof "Model2.read_grid/first_parses/dl" (fun () ->
+    let dl = (* QUICK *)
       let dl_data = encoder_template ~ctx t0 data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
       (* rounding before sorting to absorb float error accumulation *)
-      dl_round (dl_data +. dl_diff +. dl_delta)) in
+      dl_round (dl_data +. dl_diff +. dl_delta) in
     let gd = {data; diff=state.diff; delta=state.delta} in
     Myseq.return (env, gd, dl) in
   let l_parses =
@@ -3653,7 +3651,7 @@ let rec insert_seq (f : 'a -> 'a) (i : int) (l : 'a list) : 'a list =
      then f x :: r
      else x :: insert_seq f (i-1) r
 
-let insert_template (f : template option -> template) (p : revpath) (t : template) : template =
+let insert_template (f : template option -> template) (p : revpath) (t : template) : template = (* QUICK *)
   let rec aux revp t =
     match revp, t with
     | _, #expr -> t (* not replacing expressions *)
@@ -3716,8 +3714,7 @@ let insert_template (f : template option -> template) (p : revpath) (t : templat
     | `Right revlp1, `Insert (left, elt, right) -> `Insert (left, elt, aux_ilist revlp1 revp1 right)
     | _ -> assert false
   in
-  Common.prof "Model2.insert_template" (fun () ->
-  aux (path_reverse p `Root) t)
+  aux (path_reverse p `Root) t
              
 (* model refinements and learning *)
 
@@ -3741,8 +3738,7 @@ let pp_grid_refinement = Xprint.to_stdout xp_grid_refinement
 let string_of_grid_refinement = Xprint.to_string xp_grid_refinement
 
 exception Refinement_no_change
-let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) =
-  Common.prof "Model2.apply_grid_refinement" (fun () ->
+let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) = (* QUICK *)
   try
     let t =
       match r with
@@ -3772,7 +3768,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinemen
      print_endline "ERROR in apply_grid_refinement";
      pp_grid_refinement r; print_newline ();
      pp_template t; print_newline ();
-     raise exn) (* does not seem to occur any more *)
+     raise exn (* does not seem to occur any more *)
 
 let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : grid_refinement Myseq.t =
   Common.prof "Model2.defs_refinements" (fun () ->
@@ -3939,13 +3935,13 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       tmap defs) in
   let defs = Common.prof "Model2.defs_refinements/first/by_expr" (fun () ->
     let$ defs, (role_e,t) = defs, defs_expressions ~env_sig in
-    let data_fst = Common.prof "Model2.defs_refinements/first/exprs/apply" (fun () ->
+    let data_fst = (* QUICK *)
       reads_fst
       |> List.filter_map
            (fun (env,gd,u_val,dl0,rank) ->
              match defs_check_apply ~env t with
              | None -> None
-             | Some t_applied -> Some (t_applied,gd,u_val,dl0))) in
+             | Some t_applied -> Some (t_applied,gd,u_val,dl0)) in
     if data_fst = []
     then defs
     else
@@ -4367,8 +4363,7 @@ let xp_refinement (print : Xprint.t) = function
 let pp_refinement = Xprint.to_stdout xp_refinement
 let string_of_refinement = Xprint.to_string xp_refinement
 
-let apply_refinement (r : refinement) (m : model) : (refinement * model) option =
-  Common.prof "Model2.apply_refinement" (fun () ->
+let apply_refinement (r : refinement) (m : model) : (refinement * model) option = (* QUICK *)
   match r with
   | RInit -> None
   | Rinput gr ->
@@ -4376,7 +4371,7 @@ let apply_refinement (r : refinement) (m : model) : (refinement * model) option 
      |> Option.map (fun (_,t) -> r, {m with input_pattern = t})
   | Routput gr ->
      apply_grid_refinement gr m.output_template
-     |> Option.map (fun (_,t) -> r, {m with output_template = t}))
+     |> Option.map (fun (_,t) -> r, {m with output_template = t})
                  
 let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   =

@@ -647,7 +647,7 @@ module Mask_model =
   struct
     type t =
       [ `Mask of Mask.t
-      | `Full of bool (* all pixels on, bool=true if also a collapsed border *)
+      | `Full (* all pixels on *)
       | `Border (* width-1 border *)
       | `EvenCheckboard
       | `OddCheckboard
@@ -658,13 +658,11 @@ module Mask_model =
     let subsumes (m0 : t) (m1 : t) : bool =
       match m0, m1 with
       | `Mask m1, `Mask m2 -> Mask.equal m1 m2
-      | `Full b0, `Full b1 -> not b0 || b1 (* TODO: check orientation *)
-      | `Border, `Full true -> true
       | _ -> m0 = m1
   
     let area ~height ~width = function
       | `Mask bm -> Mask.area bm
-      | `Full _ -> height * width
+      | `Full -> height * width
       | `Border -> 2 * (height + width) - 4
       | `EvenCheckboard -> (height * width + 1) / 2
       | `OddCheckboard -> height * width / 2
@@ -674,7 +672,7 @@ module Mask_model =
     let mem ~height ~width i j = (* mask height and width, relative position (i,j) *)
       function
       | `Mask m -> Mask.mem i j m
-      | `Full _ -> true
+      | `Full -> true
       | `Border -> i=0 || j=0 || i=height-1 || j=width-1
       | `EvenCheckboard -> (i+j) mod 2 = 0
       | `OddCheckboard -> (i+j) mod 2 = 1
@@ -699,8 +697,7 @@ module Mask_model =
         | Some m -> (fun absi absj -> Mask.mem absi absj m)
       in
       let m = ref (Mask.empty height width) in (* mask over the part box *)
-      let models = ref [`Full (height=2 && width>=2 || width=2 && height>=2);
-                        `Border; `EvenCheckboard; `OddCheckboard; `PlusCross; `TimesCross] in
+      let models = ref [`Full; `Border; `EvenCheckboard; `OddCheckboard; `PlusCross; `TimesCross] in
       for absi = mini to maxi do
         let i = absi - mini in
         for absj = minj to maxj do
@@ -724,7 +721,7 @@ module Mask_model =
 
     let scale_up k l : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (Mask.scale_up k l m))
-      | (`Full false as mm) -> Result.Ok mm
+      | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
 
     let scale_to new_h new_w : t -> t result = function
@@ -732,22 +729,22 @@ module Mask_model =
          ( match Mask.scale_to new_h new_w m with
            | Some m -> Result.Ok (`Mask m)
            | None -> Result.Error (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
-      | (`Full false as mm) -> Result.Ok mm
+      | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
 
     let tile k l : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (Mask.tile k l m))
-      | `Full false -> Result.Ok (`Full false)
+      | `Full -> Result.Ok `Full
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
 
     let resize_alike new_h new_w : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (Mask.resize_alike m new_h new_w))
-      | (`Full false | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
+      | (`Full | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
 
     let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (f m))
-      | (`Full _ | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
+      | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.symmetry: undefined")
     let flipHeight = symmetry Mask.flipHeight
     let flipWidth = symmetry Mask.flipWidth
@@ -1179,7 +1176,11 @@ let rectangles_of_part ~(multipart : bool) (g : t) (mask : Mask.t) (p : part) : 
         offset_i = p.mini; offset_j = p.minj;
         color = p.color;
         new_cover;
-        mask_models = [`Full (height = 2 && width >= 2 || width = 2 && height >= 2)];
+        mask_models =
+          (`Full ::
+             if (height = 2 && width >= 2 || width = 2 && height >= 2)
+             then [`Border]
+             else []);
 	delta = (!delta);
         nb_explained_pixels
       } :: res
