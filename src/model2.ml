@@ -5,13 +5,14 @@ let def_param name v to_str =
   Printf.printf "## %s = %s\n" name (to_str v);
   ref v
 
-let seq = false
+let seq = def_param "seq" false string_of_bool
   
 let alpha = def_param "alpha" 10. string_of_float
-let max_nb_parse = def_param "max_nb_parse" (if seq then 256 else 64) string_of_int (* max nb of considered grid parses *)
+let max_nb_parse = def_param "max_nb_parse" (if !seq then 256 else 64) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
-let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" (if seq then 256 else 16) string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" (if seq then 10 else 1) string_of_int (* max size of collected sequences *)
+let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" (if !seq then 256 else 16) string_of_int (* see parse_layers *)
+let max_seq_length = def_param "max_seq_length" (if !seq then 10 else 1) string_of_int (* max size of collected sequences *)
+let def_match_threshold = def_param "def_match_threshold" (if !seq then 0.6 else 1.) string_of_float (* ratio threshold for considering that a definition is a match *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
@@ -1249,35 +1250,48 @@ let default_data_of_path (p : revpath) : data =
   | `Layer -> default_layer
   | `Grid -> default_grid
 
-let rec root_template_of_data ~(in_output : bool) (d : data) : template list = (* QUICK *)
+let rec root_template_of_data ~(in_output : bool) (d : data) : (template * bool (* partial *)) list = (* QUICK *)
   match d with
   | `Bool _ -> []
   | `Int i as d ->
      if in_output && i >= 1 && i <= 3
-     then [(d :> template)]
+     then [(d :> template), false]
      else [] (* position- and size-invariance of inputs *)
-  | `Color _ as d -> [(d :> template)] (* colors can be seen as patterns *)
-  | `Mask _ as d -> [(d :> template)] (* masks can be seen as patterns *)
-  | `Vec _ -> [`Vec (u_cst, u_cst)]
-  | `Point _ -> [`Point u_cst]
-  | `Rectangle _ -> [`Rectangle (u_vec_cst, u_cst, u_cst)]
-  | `PosShape _ -> [`PosShape (u_vec_cst, u_cst)]
+  | `Color _ as d -> [(d :> template), false] (* colors can be seen as patterns *)
+  | `Mask _ as d -> [(d :> template), false] (* masks can be seen as patterns *)
+  | `Vec _ -> [`Vec (u_cst, u_cst), false]
+  | `Point _ -> [`Point u_cst, false]
+  | `Rectangle _ -> [`Rectangle (u_vec_cst, u_cst, u_cst), false]
+  | `PosShape _ -> [`PosShape (u_vec_cst, u_cst), false]
   | `Background _ -> assert false (* should not happen *)
   | `Seq [] -> []
   | `Seq (item::items) ->
-     let common_patterns =
+     let n, common_patterns =
        List.fold_left
-         (fun res item ->
+         (fun (n,ltk) item ->
            let item_patterns = root_template_of_data ~in_output item in
-           List.filter
-             (fun t -> List.mem t item_patterns)
-             res)
-         (root_template_of_data ~in_output item) items in
+           n+1,
+           List.filter_map
+             (fun (t,k) ->
+               if List.mem_assoc t item_patterns
+               then Some (t, k+1)
+               else None)
+             ltk)
+         (1,
+          root_template_of_data ~in_output item
+          |> List.map (fun (t,_) -> t, 1))
+         items in
      common_patterns
+     |> List.filter_map (fun (t,k) ->
+            if float k /. float n >= !def_match_threshold
+            then Some (t, (k<n))
+            else None)
+
 
 (* returning matchers from templates, i.e. functions (data -> bool) *)
 
-type matcher = Matcher of (data -> bool * matcher) [@@unboxed] (* the returned matcher is for the next sequence items, if any *)
+type matcher = Matcher of (data -> bool * matcher) [@@unboxed]
+(* the returned matcher is for the next sequence items, if any *)
 
 let rec matcher_success : matcher =
   Matcher (fun _ -> true, matcher_success)
@@ -1289,7 +1303,8 @@ let matcher_collect (Matcher matcher_item : matcher) : matcher =
     | [] -> true
     | item::items ->
        let ok1, Matcher next_matcher = matcher_item item in
-       ok1 && aux next_matcher items
+       let ok2 = aux next_matcher items in
+       ok1 && ok2
   in
   Matcher (function
       | `Seq items ->
@@ -1375,7 +1390,8 @@ let matcher_patt (matcher : 'a -> matcher) (patt : 'a patt) : matcher =
             let ok3 =
               fold2_ilist
                 (fun ok_all lp (Matcher matcher_layer) dlayer ->
-                  ok_all && fst (matcher_layer dlayer))
+                  let ok, _ = matcher_layer dlayer in
+                  ok_all && ok)
                 true `Root ilist_matcher_layers dlayers in
             ok1 && ok2 && ok3, matcher_fail
          | _ -> false, matcher_fail)
@@ -1415,11 +1431,27 @@ let rec matcher_template_aux (t : template) : matcher =
               ok1, matcher_prefix next_matchers) in
      matcher_prefix (List.map matcher_template_aux items)
 
-let matches_template (t : template) : data -> bool =
-  let Matcher matcher = matcher_collect (matcher_template_aux t) in
-  fun d -> fst (matcher d)
+type match_result = Yes of bool (* partial: not all items match *) | No
      
-    
+let matches_template (t : template) : data -> match_result =
+  let t_dim = template_dim t in
+  let Matcher matcher = matcher_collect (matcher_template_aux t) in
+  fun d ->
+  match t_dim, d with
+  | Item, `Seq items ->
+     let k, n =
+       List.fold_left
+         (fun (k,n) item ->
+           let ok, _ = matcher item in
+           if ok then (k+1,n+1) else (k,n+1))
+         (0,0) items in
+     if n > 0 && float k /. float n >= !def_match_threshold
+     then Yes (k < n)
+     else No
+  | _ ->
+     let ok, _ = matcher d in
+     if ok then Yes false else No
+
 (* description lengths *)
 
 type dl = Mdl.bits
@@ -3819,7 +3851,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     match reads_matrix with
     | x::l -> x, l
     | [] -> assert false in
-  let rec find_dl_rank ?dl_best t p reads : (grid_data * Mdl.bits * int * data) option = (* proper QUICK *)
+  let rec find_dl_rank ?dl_best t p reads : (grid_data * Mdl.bits * int * data * bool (* partial *)) option = (* proper QUICK *)
     match reads with
     | [] -> None
     | (env,gd,u_val,dl,rank)::rem ->
@@ -3828,8 +3860,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          | None -> dl
          | Some dl -> dl in
        (match PMap.find_opt p u_val with
-        | Some d when defs_check ~env t d ->
-           Some (gd, dl -. dl_best, rank, d) (* recording current_dl - best_dl *)
+        | Some d ->
+           (match defs_check ~env t d with
+            | Yes partial -> Some (gd, dl -. dl_best, rank, d, partial) (* recording current_dl - best_dl *)
+            | No -> find_dl_rank ~dl_best t p rem)
         | _ -> find_dl_rank ~dl_best t p rem)
   in
   let module TMap = (* mappings from defining templates *)
@@ -3889,17 +3923,26 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       | Some d ->
          let tmap = (* Constr *)
            if valid_Constr then
-             let$ tmap, t = tmap, root_template_of_data ~in_output d in
+             let$ tmap, (t, partial) = tmap, root_template_of_data ~in_output d in
              if t <> t0 (* a different pattern *)
-             then add_template t (dl_ctx,dl0,d) tmap
+             then add_template t (dl_ctx,dl0,d,partial) tmap
              else tmap
            else tmap in
          let tmap = (* Cst *)
            match valid_Cst_t with
            | Some t ->
               (match d with
-               | `Seq (d0::ds1) when List.for_all (fun d1 -> d1 = d0) ds1 ->
-                  add_template t (dl_ctx,dl0,d) tmap
+               | `Seq (d0::ds1) ->
+                  let k, n =
+                    List.fold_left
+                      (fun (k,n) d1 ->
+                        if d1 = d0 then (k+1,n+1) else (k,n+1))
+                      (1,1) ds1 in
+                  if float k /. float n >= !def_match_threshold
+                  then
+                    let partial = k < n in
+                    add_template t (dl_ctx,dl0,d,partial) tmap
+                  else tmap
                | _ -> tmap)
            | None -> tmap in
          let tmap = (* Prefix-Init/Extend *)
@@ -3911,7 +3954,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                    | Some d_item -> (* the nth_item *)
                       let t_item = (d_item :> template) in
                       let t = make_t t_item in
-                      add_template t (dl_ctx,dl0,d) tmap
+                      add_template t (dl_ctx,dl0,d,false) tmap
                    | None -> tmap)
                | _ -> tmap)
            | None -> tmap in
@@ -3920,18 +3963,18 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
            | Some (n,t) ->
               (match d with
                | `Seq d_items as d when n = List.length d_items ->
-                  add_template t (dl_ctx,dl0,d) tmap
+                  add_template t (dl_ctx,dl0,d,false) tmap
                | _ -> tmap)
            | None -> tmap in
          tmap in
     (* returning a list of definitions *)
     TMap.fold
-      (fun t (dl_ctx,dl0,d) defs ->
+      (fun t (dl_ctx,dl0,d,partial) defs ->
         let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
         let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
         let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
         let dl = dl0 +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0 in
-        (dl,p,role,t0,t)::defs)
+        (dl,p,role,t0,t,partial)::defs)
       tmap defs) in
   let defs = Common.prof "Model2.defs_refinements/first/by_expr" (fun () ->
     let$ defs, (role_e,t) = defs, defs_expressions ~env_sig in
@@ -3970,25 +4013,27 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
           | None -> tmap
           | Some d ->
              let tmap = (* does the expression match the whole data [d] *)
-               if matches_template t_applied d
-               then add_template t (dl_ctx,dl0,d) tmap
-               else tmap in
+               match matches_template t_applied d with
+               | Yes partial -> add_template t (dl_ctx,dl0,d,partial) tmap
+               | No -> tmap in
              let tmap = (* does the expression match the next item *)
                match valid_PrefixInitExtend_n_maket, d with
                | Some (n,make_t), `Seq items ->
                   (match List.nth_opt items n with
-                   | Some d_item when matches_template t_applied d_item ->
-                      add_template (make_t t) (dl_ctx,dl0,d) tmap
-                   | _ -> tmap)
+                   | Some d_item ->
+                      (match matches_template t_applied d_item with
+                       | Yes partial -> add_template (make_t t) (dl_ctx,dl0,d,partial) tmap
+                       | No -> tmap)
+                   | None -> tmap)
                | _ -> tmap in
              tmap in
         TMap.fold
-          (fun t (dl_ctx,dl0,d) defs ->
+          (fun t (dl_ctx,dl0,d,partial) defs ->
             let dl_t = dl_template ~env_sig ~ctx:dl_ctx0 ~path:p t in
             let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d in
             let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d in
             let dl = dl0 +. dl_t -. dl_t0 +. dl_d_t -. dl_d_t0 in
-            (dl,p,role,t0,t)::defs)
+            (dl,p,role,t0,t,partial)::defs)
         tmap defs
       else defs) in
   (* checking defs w.r.t. other examples *)
@@ -3997,25 +4042,25 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
     i+1,                
     defs
     |> List.filter_map
-         (fun (dl,p,role,t0,t) ->
+         (fun (dl,p,role,t0,t,partial) ->
            match find_dl_rank t p reads with
            | None -> None
-           | Some (gd1,dl1,rank1,d1) ->
+           | Some (gd1,dl1,rank1,d1,partial1) ->
               let dl_ctx = dl_ctx_of_data gd1.data in
               let dl_d_t0 = encoder_template ~ctx:dl_ctx ~path:p t0 d1 in
               let dl_d_t = encoder_template ~ctx:dl_ctx ~path:p t d1 in
-              Some (dl +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t))) in (* TODO: penalize higher ranks to favor default parse *)
+              Some (dl +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t, partial || partial1))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
   |> List.stable_sort (* increasing delta DL *)
-       (fun (dl1,_,_,_,_) (dl2,_,_,_,_) ->
+       (fun (dl1,_,_,_,_,_) (dl2,_,_,_,_,_) ->
          dl_compare dl1 dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (dl,p,role,t0,t) -> RDef (p,t,false)))
-and defs_check ~env (t : template) (d : data) : bool =
+  |> Myseq.map (fun (dl,p,role,t0,t,partial) -> RDef (p,t,partial)))
+and defs_check ~env (t : template) (d : data) : match_result =
   match defs_check_apply ~env t with
-  | None -> false
+  | None -> No
   | Some te -> matches_template te d
 and defs_check_apply ~env (t : template) : template option =
   match apply_template ~env t with
