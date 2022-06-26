@@ -5,7 +5,7 @@ let def_param name v to_str =
   Printf.printf "## %s = %s\n" name (to_str v);
   ref v
 
-let seq = def_param "seq" false string_of_bool
+let seq = def_param "seq" false (* TEST *) string_of_bool
   
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" (if !seq then 256 else 64) string_of_int (* max nb of considered grid parses *)
@@ -2844,8 +2844,10 @@ let apply_template ~(env : data) (t : template) : template result =
 
 type generator = Generator of (unit -> data * bool (* valid stop *) * generator) [@@unboxed] (* analogous to parseur *)
 
+exception NothingToGenerate
+                            
 let rec generator_fail : generator =
-  Generator (fun () -> failwith "nothing to generate")
+  Generator (fun () -> raise NothingToGenerate)
 
 let generator_collect (gen_item : generator) : generator =
   let rec aux (Generator gen_item) =
@@ -2854,7 +2856,9 @@ let generator_collect (gen_item : generator) : generator =
     then [d]
     else d :: aux next_item in
   Generator (fun () ->
-      let ld = aux gen_item in
+      let ld =
+        try aux gen_item
+        with NothingToGenerate -> [] in
       `Seq ld, true, generator_fail)
 
 let generator_patt (gen : revpath -> 'a -> generator) (p : revpath) : 'a patt -> generator = function
@@ -3365,8 +3369,8 @@ let parseur_layer (t : template) (p : revpath) : (unit,data) parseur =
   Parseur (fun () state ->
       let* ld, state, _, _ = parse_objects () state in
       match ld with
-      | [] -> Myseq.empty
-      | [d] -> Myseq.return (d, state, true, parseur_empty) (* TODO: to keep or not ? *)
+      | [] -> Myseq.empty (* not allowing empty sequences *)
+      | [d] when not !seq -> Myseq.return (d, state, true, parseur_empty)
       | _ -> Myseq.return (`Seq ld, state, true, parseur_empty))
   
 let parseur_layers layers p : (unit, data ilist) parseur =
@@ -4003,7 +4007,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
                else None)
         | Sequence -> None in
-      if (dim_t <= dim_p || !max_seq_length = 1) && role_poly_matches role_e role
+      if (dim_t <= dim_p || not !seq) && role_poly_matches role_e role
         (* whether the expression role matches the defined path, and relaxation value *)
       then
         let tmap =
@@ -4076,7 +4080,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let$ res, p = res, lp in
     let role = (path_role p :> role_poly) in
     let res = (role,p) :: res in
-    if !max_seq_length <> 1 && path_dim p = Sequence
+    if !seq && path_dim p = Sequence
     then (* adding paths to access first sequence elements *)
       let$ res, i = res, [0;1;2] in
       (role, `Item (i,p))::res
