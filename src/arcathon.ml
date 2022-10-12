@@ -1,6 +1,6 @@
 
-(*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/"*)
-let root_path = "/data/"
+let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/"
+(* let root_path = "/data/" *)
 let tasks_path = root_path ^ "evaluation/"
 let solution_path = root_path ^ "solution/solution_sferre.json"
 
@@ -57,6 +57,7 @@ let process_task name task =
   let runtime, res =
     Common.chrono (fun () ->
         Model2.learn_model
+          ~verbose:0
           ~timeout
           ~init_model:Model2.init_model
           ~beam_width:1
@@ -84,7 +85,7 @@ let process_task name task =
            "test", `List tests ]
 
 let print_progress i count =
-  if i mod 10 = 0 then
+  if i mod 1 = 0 then
     Printf.printf "%d/%d tasks processed\n" i count
   
 let process_tasks count name_tasks =

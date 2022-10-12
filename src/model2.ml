@@ -4497,7 +4497,7 @@ let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
 
   
 let learn_model
-      ?(verbose = false)
+      ?(verbose = 1) (* verbose level *)
       ?(grid_viz = false)
       ?(pause = 0.)
       ~timeout
@@ -4532,7 +4532,7 @@ let learn_model
     ~code:(fun (r,m) (gpsr,gsri,gsro) ->
 	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
 	     norm_dl_model_data gpsr in
-           if verbose then (
+           if verbose >= 2 then (
              Printf.printf "\t?? %.3f\t" lmd;
              pp_refinement r; print_newline ();
 (*
@@ -4564,9 +4564,9 @@ let learn_model
            lmd)
     ~refinements:
     (fun (r,m) (gpsr,gsri,gsro) dl ->
-      if verbose then print_newline ();
-      Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ();
-      if verbose then (
+      if verbose >= 2 then print_newline ();
+      if verbose >= 1 then (Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ());
+      if verbose >= 2 then (
         print_endline " ===> first read for first example";
         List.hd (List.hd gpsr.reads)
         |> (fun ((_,{data=d_i},dl_i), (_, {data=d_o}, dl_o), dl) ->
@@ -4604,5 +4604,4 @@ let learn_model
       flush stdout;
       let refs = model_refinements r m gsri gsro in
       refs))
-
-
+      

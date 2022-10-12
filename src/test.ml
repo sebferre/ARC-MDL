@@ -186,7 +186,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
   let runtime, res =
     Common.chrono (fun () ->
         Model.learn_model
-          ~verbose:(!training && !verbose)
+          ~verbose:(if !training && !verbose then 2 else 1)
           ~grid_viz:(!grid_viz)
           ~pause:(!pause)
           ~timeout:(!task_timeout)

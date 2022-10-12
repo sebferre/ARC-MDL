@@ -19,6 +19,10 @@ lis: $(SRC) arc_lis.ml
 	ocamlfind ocamlc $(FLAGS) $(FLAGS_FABLIS) -package js_of_ocaml,js_of_ocaml-lwt,js_of_ocaml-ppx -linkpkg -o html/script.byte $(OBJ) $(SRC) $(SRC_FABLIS) arc_lis.ml
 	js_of_ocaml $(JSOO_FLAGS) html/script.byte
 
+arcathon: $(SRC:.cmo=.cmx) arcathon.ml
+	ocamlfind ocamlopt $(FLAGS) -linkpkg -o arcathon $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) arcathon.ml
+
+
 clean:
 	rm -f *.cm[ioax]
 
