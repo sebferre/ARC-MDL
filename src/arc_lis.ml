@@ -168,7 +168,7 @@ let html_of_word (w : arc_word) : Html.t = assert false
 let html_info_of_input (input : arc_input) : Html.input_info =
   match input with
   | `Task input ->
-     Html.fileElt_info
+     Html.fileElt_info (Some "application/json")
        (fun (fname,contents) k ->
          let task_name = Filename.chop_extension (Filename.basename fname) in
          let json = Yojson.Safe.from_string contents in
@@ -256,11 +256,11 @@ let w_suggestions : arc_suggestion Widget_suggestions.widget =
     ~id:"lis-suggestions"
     ~html_of_suggestion
 
-let cols = [ColExample; ColDescr; ColPred]
-let w_results : (col, cell) Widget_table.widget =
+let cols = [ColExample, (); ColDescr, (); ColPred, ()]
+let w_results : (col, unit, cell) Widget_table.widget =
   new Widget_table.widget
     ~id:"lis-results"
-    ~html_of_column:(fun col ->
+    ~html_of_column:(fun (col, ()) ->
       let html =
         match col with
         | ColExample -> "Example"
