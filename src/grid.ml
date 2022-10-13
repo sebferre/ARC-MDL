@@ -1,6 +1,8 @@
 
 open Bigarray
 
+module Xprint = Arc_xprint
+   
 exception Undefined_result of string (* for undefined computations *)
 
 type 'a result = ('a,exn) Result.t
@@ -57,7 +59,9 @@ let make height width col =
   Array2.fill matrix col;
   color_count.(col) <- height * width;
   { height; width; matrix; color_count }
-			   
+
+let dummy = make 0 0 0
+  
 let set_pixel grid i j c =
   try
     let c0 = grid.matrix.{i,j} in
@@ -82,27 +86,14 @@ let color_partition ~(colors : color list) (grid : t) : int list =
     (fun c -> grid.color_count.(c))
     colors
 
-let crop ~(pos : int * int) ~(size : int * int) (grid : t) : t =
-  let mini, minj = pos in
-  let height, width = size in
-  let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+1) 0 in 
-  for i = 0 to height - 1 do
-    for j = 0 to width - 1 do
-      let c = grid.matrix.{mini + i, minj + j} in
-      matrix.{i,j} <- c;
-      color_count.(c) <- color_count.(c) + 1
-    done
-  done;
-  { height; width; matrix; color_count }
-
 (* pretty-printing in terminal *)
 
-let rec pp_grids grids =
+let rec xp_grids (print : Xprint.t) grids =
   let grids_per_line = 5 in
   let nb_lines = (List.length grids - 1) / 5 + 1 in
   let max_height =
     List.fold_left (fun res g -> max res g.height) 0 grids in
+  print#string "\n";
   for k = 0 to nb_lines - 1 do
     for i = 0 to max_height - 1 do
       List.iteri
@@ -110,26 +101,27 @@ let rec pp_grids grids =
 	 if l / grids_per_line = k then (
 	   for j = 0 to g.width - 1 do
 	     if i < g.height
-	     then pp_color g.matrix.{i,j}
-	     else pp_blank ()
+	     then xp_color print g.matrix.{i,j}
+	     else xp_blank print ()
 	   done;
-	   print_string "   "
+	   print#string "   "
 	 ))
 	grids;
-      print_newline ()
+      print#string "\n"
     done;
-    print_newline ()
+    print#string "\n"
   done
-and pp_grid grid =
+and xp_grid print grid =
+  print#string "\n";
   for i = 0 to grid.height - 1 do
     for j = 0 to grid.width - 1 do
-      pp_color grid.matrix.{i,j}
+      xp_color print grid.matrix.{i,j}
     done;
-    print_newline ()
+    print#string "\n"
   done
-and pp_blank () =
-  print_string "  "
-and pp_color c =
+and xp_blank print () =
+  print#string "  "
+and xp_color print c =
   let open ANSITerminal in
   let style, str =
     match c with
@@ -145,11 +137,55 @@ and pp_color c =
     | 9 -> [green; on_red], "9#"
     | 10 -> [on_white], "  "
     | _ -> invalid_arg "Invalid color code" in
-  print_string style str
+  print#style_string style str
 
+let pp_grids grids = Xprint.to_stdout xp_grids grids
+let pp_grid grid = Xprint.to_stdout xp_grid grid
+let pp_color c = Xprint.to_stdout xp_color c
+
+(* operations on grids *)
+               
+let crop ~(pos : int * int) ~(size : int * int) (grid : t) : t =
+  let mini, minj = pos in
+  let height, width = size in
+  let matrix = Array2.create Int8_unsigned C_layout height width in
+  let color_count = Array.make (nb_color+1) 0 in 
+  for i = 0 to height - 1 do
+    for j = 0 to width - 1 do
+      let c = grid.matrix.{mini + i, minj + j} in
+      matrix.{i,j} <- c;
+      color_count.(c) <- color_count.(c) + 1
+    done
+  done;
+  { height; width; matrix; color_count }
+
+let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
+  let res = make (g.height * k) (g.width * l) black in
+  iter_pixels
+    (fun i j c ->
+      for i' = k*i to k*(i+1)-1 do
+        for j' = l*j to l*(j+1)-1 do
+          set_pixel res i' j' c
+        done
+      done)
+    g;
+  res
+          
 
 (* comparing grids *)
-    
+
+let same (g1 : t) (g2 : t) : bool =
+  if g1.height = g2.height && g1.width = g2.width
+  then
+    let res = ref true in
+    for i = 0 to g1.height - 1 do
+      for j = 0 to g1.width - 1 do
+        res := !res && g1.matrix.{i,j} = g2.matrix.{i,j}
+      done
+    done;
+    !res
+  else false
+  
 type diff =
   | Grid_size_mismatch of { src_height: int; src_width: int;
 			    tgt_height: int; tgt_width: int }
@@ -755,7 +791,8 @@ module Mask_model =
     let rotate270 = symmetry Mask.rotate270
                    
   end
-             
+
+  
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;

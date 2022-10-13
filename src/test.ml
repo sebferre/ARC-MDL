@@ -8,7 +8,7 @@ module Model = Model2
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
 let task_timeout = ref 30
-let verbose = ref false
+let verbose = ref 1
 let grid_viz = ref false
 let pause = ref 0.
 
@@ -104,7 +104,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                                      Model.grid_of_data_failsafe gdo.data])
           | `TEST -> ()
         );
-        if !verbose then (
+        if !verbose >= 2 then (
           print_endline "\n> Best input readings:";
           let input_reads =
             match train_test with
@@ -186,7 +186,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
   let runtime, res =
     Common.chrono (fun () ->
         Model.learn_model
-          ~verbose:(if !training && !verbose then 2 else 1)
+          ~verbose:(if !training then !verbose else 1)
           ~grid_viz:(!grid_viz)
           ~pause:(!pause)
           ~timeout:(!task_timeout)
@@ -380,14 +380,14 @@ let task_model =
   let open Model2 in
   [ "ba97ae07.json",
     {input_pattern =
-       `Background (u_any, `Color Grid.black,
+       `Background (u_any, u_any, `Color Grid.black,
                     `Insert (`Nil,
                              `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Insert (`Nil,
                                       `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                                       `Nil)));
      output_template =
-       `Background (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
+       `Background (u_any, `Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
                     `Insert (`Nil,
                              `Ref (`Field (`Layer (`Right `Root), `Root)),
                              `Insert (`Nil,
@@ -395,12 +395,13 @@ let task_model =
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
-       `Background (u_any, `Color Grid.black,
+       `Background (u_any, u_any, `Color Grid.black,
                     `Insert (`Nil,
                              `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Nil));
      output_template =
-       `Background (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
+       `Background (u_any,
+                    `Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
                     `Ref (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
                     `Insert (`Nil,
                              `PosShape (`Vec (`Int 0, `Int 0),
@@ -544,7 +545,7 @@ chosen set (default)";
      "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
      "-viz", Set grid_viz, "Show train grids, as understood by the model";
      "-pause", Set_float pause, "Time delay (in seconds, default=0.0) at each step during learning, useful in combination with -viz";
-     "-v", Set verbose, "Verbose mode";
+     "-v", Set_int verbose, "Verbose mode";
     ]
     (fun str -> ())
     "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz [-pause T]] [-v]";
