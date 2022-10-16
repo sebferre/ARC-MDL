@@ -6,7 +6,9 @@ module Xprint = Arc_xprint
 exception Undefined_result of string (* for undefined computations *)
 
 type 'a result = ('a,exn) Result.t
-                            
+
+let ( let| ) res f = Result.bind res f [@@inline]
+
 type color = int
 
 (* conventional colors like in web app *)
@@ -46,11 +48,14 @@ type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 	       
 type t = { height : int; (* equals Array2.dim1 matrix *)
 	   width : int;  (* equals Array2.dim2 matrix *)
-	   matrix : matrix; (* [i,j] -> col *)
            color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
+	   matrix : matrix; (* [i,j] -> col *)
          }
 type pixel = int * int * color (* x, y, col *)
 
+exception Invalid_dim (* height/width are invalid for the operation *)
+exception Invalid_coord of string (* .{i,j} invalid, string describes source *)
+                         
 let max_size = 30
            
 let make height width col =
@@ -61,6 +66,13 @@ let make height width col =
   { height; width; matrix; color_count }
 
 let dummy = make 0 0 0
+
+let dims (grid : t) : int * int =
+  grid.height, grid.width [@@inline]
+
+(* let get_pixel ?(source = "unknown") grid i j =
+  try grid.matrix.{i,j}
+  with _ -> raise (Invalid_coord source) [@@inline]
   
 let set_pixel grid i j c =
   try
@@ -71,15 +83,34 @@ let set_pixel grid i j c =
       grid.color_count.(c0) <- grid.color_count.(c0) - 1;
       grid.color_count.(c) <- grid.color_count.(c) + 1
     )
-  with _ -> () (* pixels out of bound are ignored *)
+  with _ -> () [@@inline] (* pixels out of bound are ignored *) *)
 
-let iter_pixels f grid = Common.prof "Grid.iter_pixels" (fun () ->
+let get_pixel ?(source = "unknown") grid i j =
+  let h, w = dims grid in
+  if i < h && j < w && i >=0 && j >= 0
+  then grid.matrix.{i,j}
+  else raise (Invalid_coord source) [@@inline]
+  
+let set_pixel grid i j c =
+  let h, w = dims grid in
+  if i < h && j < w && i >=0 && j >= 0
+  then 
+    let c0 = grid.matrix.{i,j} in
+    if c <> c0 then (
+      grid.matrix.{i,j} <- c;
+      (* maintaining color count *)
+      grid.color_count.(c0) <- grid.color_count.(c0) - 1;
+      grid.color_count.(c) <- grid.color_count.(c) + 1
+    )
+  else () [@@inline] (* pixels out of bound are ignored *)
+
+let iter_pixels f grid =
   let mat = grid.matrix in
   for i = 0 to grid.height - 1 do
     for j = 0 to grid.width - 1 do
       f i j mat.{i,j}
     done
-  done)
+  done [@@inline]
 
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
@@ -143,48 +174,9 @@ let pp_grids grids = Xprint.to_stdout xp_grids grids
 let pp_grid grid = Xprint.to_stdout xp_grid grid
 let pp_color c = Xprint.to_stdout xp_color c
 
-(* operations on grids *)
-               
-let crop ~(pos : int * int) ~(size : int * int) (grid : t) : t =
-  let mini, minj = pos in
-  let height, width = size in
-  let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+1) 0 in 
-  for i = 0 to height - 1 do
-    for j = 0 to width - 1 do
-      let c = grid.matrix.{mini + i, minj + j} in
-      matrix.{i,j} <- c;
-      color_count.(c) <- color_count.(c) + 1
-    done
-  done;
-  { height; width; matrix; color_count }
-
-let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
-  let res = make (g.height * k) (g.width * l) black in
-  iter_pixels
-    (fun i j c ->
-      for i' = k*i to k*(i+1)-1 do
-        for j' = l*j to l*(j+1)-1 do
-          set_pixel res i' j' c
-        done
-      done)
-    g;
-  res
-          
-
 (* comparing grids *)
 
-let same (g1 : t) (g2 : t) : bool =
-  if g1.height = g2.height && g1.width = g2.width
-  then
-    let res = ref true in
-    for i = 0 to g1.height - 1 do
-      for j = 0 to g1.width - 1 do
-        res := !res && g1.matrix.{i,j} = g2.matrix.{i,j}
-      done
-    done;
-    !res
-  else false
+let same (g1 : t) (g2 : t) : bool = (g1 = g2)
   
 type diff =
   | Grid_size_mismatch of { src_height: int; src_width: int;
@@ -204,7 +196,8 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
     let res = ref [] in
     for i = 0 to height - 1 do
       for j = 0 to width - 1 do
-	let src_c, tgt_c = source.matrix.{i,j}, target.matrix.{i,j} in
+        let src_c = get_pixel ~source:"diff/1" source i j in
+        let tgt_c = get_pixel ~source:"diff/2" target i j in
 	if src_c <> tgt_c then
 	  res := (i,j,tgt_c) :: !res
       done
@@ -213,10 +206,315 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
     then None
     else Some (Grid_diff_pixels {height; width; pixels=(!res)})
 
+(* operations on grids *)
+
+module Transf = (* black considered as neutral color by default *)
+  struct
+    
+    (* isometric transformations *)
+
+   let flipHeight g =
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res (h - 1 - i) j c)
+        g;
+      res
+                     
+    let flipWidth g =
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res i (w - 1 - j) c)
+        g;
+      res
+
+    let flipDiag1 g =
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res j i c)
+        g;
+      res
+
+    let flipDiag2 g =
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res (w - 1 - j) (h - 1 - i) c)
+        g;
+      res
+
+    let rotate90 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res j (h - 1 - i) c)
+        g;
+      res
+      
+    let rotate180 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res (h - 1 - i) (w - 1 - j) c)
+        g;
+      res
+      
+    let rotate270 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res (w - 1 - j) i c)
+        g;
+      res
+      
+    (* scaling *)
+      
+    let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
+      let res = make (g.height * k) (g.width * l) black in
+      iter_pixels
+        (fun i j c ->
+          for i' = k*i to k*(i+1)-1 do
+            for j' = l*j to l*(j+1)-1 do
+              set_pixel res i' j' c
+            done
+          done)
+        g;
+      res
+
+    let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
+      let h, w = dims g in
+      if h mod k = 0 && w mod l = 0
+      then (
+        let ok = ref true in
+        iter_pixels
+          (fun i j c ->
+            ok := !ok && get_pixel ~source:"scale_down/1" g (i/k*k) (j/l*l) = c)
+          g;
+        if !ok (* all pixels scaling down to a single pixel have same color *)
+        then (
+          let res = make (h / k) (w / l) black in
+          iter_pixels
+            (fun i j c -> set_pixel res i j (get_pixel ~source:"scale_down/2" g (i*k) (j*l)))
+            res;
+          Result.Ok res )
+        else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
+      else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
+
+    let scale_to (new_h : int) (new_w : int) (g : t) : t result =
+      let h, w = dims g in
+      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
+        Result.Ok (scale_up (new_h / h) (new_w / w) g)
+      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
+        scale_down (h / new_h) (w / new_w) g
+      else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
+        
+    (* resize and factor *)
+
+    let tile (k : int) (l : int) g = (* k x l tiling of g *)
+      let h, w = dims g in
+      let h', w' = h * k, w * l in
+      let res = make h' w' black in
+      iter_pixels
+        (fun i j c ->
+          for u = 0 to k-1 do
+            for v = 0 to l-1 do
+              set_pixel res (u*h + i) (v*w + j) c
+            done
+          done)
+        g;
+      res
+
+    let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
+      let rec range a b =
+        if a > b then []
+        else a :: range (a+1) b
+      in
+      let h, w = dims g in
+      let h_factors = ref (range 1 (h-1)) in
+      let w_factors = ref (range 1 (w-1)) in
+      for i = 0 to h-1 do
+        for j = 0 to w-1 do
+          h_factors :=
+            !h_factors
+            |> List.filter (fun h' ->
+                   get_pixel ~source:"factor/1" g i j
+                   = get_pixel ~source:"factor/2" g (i mod h') j);
+          w_factors :=
+            !w_factors
+            |> List.filter (fun w' ->
+                   get_pixel ~source:"factor/3" g i j
+                   = get_pixel g i (j mod w'))
+        done
+      done;
+      let h' = match !h_factors with [] -> h | h'::_ -> h' in
+      let w' = match !w_factors with [] -> w | w'::_ -> w' in
+      (h', w')
+
+    let resize_alike (new_h : int) (new_w : int) (g : t) : t = (* change size while preserving the repeating pattern *)
+      assert (new_h > 0 && new_w > 0);
+      let h', w' = factor g in
+      let res = make new_h new_w black in
+      for i' = 0 to h' - 1 do (* for each position in the factor *)
+        for j' = 0 to w' - 1 do
+          let c = get_pixel ~source:"resize_alike" g i' j' in
+          if c <> black then (* when pixel not black *)
+            for u = 0 to (new_h - 1) / h' + 1 do
+              for v = 0 to (new_w - 1) / w' + 1 do
+                let i, j = u*h' + i', v*w' + j' in
+                if i < new_h && j < new_w then
+                  set_pixel res i j c
+              done
+            done
+        done
+      done;
+      res
+
+    (* cropping and concatenating *)
+
+    let crop g offset_i offset_j new_h new_w =
+      let res = make new_h new_w black in
+      for i = 0 to new_h - 1 do
+        for j = 0 to new_w - 1 do
+          let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
+          if c <> black then
+            set_pixel res i j c
+        done
+      done;
+      res      
+
+    let concatHeight g1 g2 : t result =
+      if g1.width <> g2.width
+      then Result.Error Invalid_dim
+      else (
+        let h1, h2 = g1.height, g2.height in
+        let res = make (h1+h2) g1.width black in
+        iter_pixels
+          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> set_pixel res (h1+i2) j2 c2)
+          g2;
+        Result.Ok res)
+      
+    let concatWidth g1 g2 : t result =
+      if g1.height <> g2.height
+      then Result.Error Invalid_dim
+      else (
+        let w1, w2 = g1.width, g2.width in
+        let res = make g1.height (w1+w2) black in
+        iter_pixels
+          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> set_pixel res i2 (w1+j2) c2)
+          g2;
+        Result.Ok res)
+
+    let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
+      let| g12 = concatWidth g1 g2 in
+      let| g34 = concatWidth g3 g4 in
+      concatHeight g12 g34
+
+    (* TODO: selecting halves and quarters *)
+
+    let compose g1 g2 = (* repeating g2 for each non-black pixel of g1 *)
+      let h1, w1 = dims g1 in
+      let h2, w2 = dims g2 in
+      let res = make (h1*h2) (w1*w2) black in
+      iter_pixels
+        (fun i1 j1 c1 ->
+          if c1 <> black then
+            iter_pixels
+              (fun i2 j2 c2 ->
+                if c2 <> black then
+                  set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
+              g2)
+        g1;
+      res
+
+    (* symmetrization *)
+
+    let layers gs : t result =
+      match gs with
+      | [] -> Result.Error (Invalid_argument "Grid.Transf.layers: empty list")
+      | g1::gs1 ->
+         let h1, w1 = dims g1 in
+         if List.for_all (fun gi -> dims gi = (h1,w1)) gs1
+         then (
+           let res = make h1 w1 black in
+           List.iter
+             (fun gi ->
+               iter_pixels
+                 (fun i j c ->
+                   if c <> black then set_pixel res i j c)
+                 gi)
+             gs1;
+           Result.Ok res)
+         else Result.Error Invalid_dim
+      
+    let sym_flipHeight_inplace g = layers [g; flipHeight g]
+    let sym_flipWidth_inplace g = layers [g; flipWidth g]
+    let sym_rotate180_inplace g = layers [g; rotate180 g]
+    let sym_flipHeightWidth_inplace g = layers [g; flipHeight g; flipWidth g; rotate180 g]
+    let sym_flipDiag1_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag1 g]
+    let sym_flipDiag2_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag2 g]
+    let sym_flipDiag1Diag2_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag1 g; flipDiag2 g; rotate180 g]
+    let sym_rotate90_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; rotate90 g; rotate180 g; rotate270 g]
+    let sym_full_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else (* includes all symmetries *)
+        let| g' = layers [g; rotate90 g] in
+        Result.Ok (flipHeight g')
+
+(* not ready for use
+    let sym_flipHeight_unfold g =
+      let g'= flipHeight g in
+      [ concatHeight g g'; concatHeight g' g ]
+    let sym_flipWidth_unfold g =
+      let g'= flipWidth g in
+      [ concatWidth g g'; concatWidth g' g ]
+    let sym_rotate180_unfold g =
+      let g' = rotate180 g in
+      [ concatHeight g g'; concatHeight g' g;
+        concatWidth g g'; concatWidth g' g ]
+    let sym_flipHeightWidth_unfold g =
+      let g'= flipWidth g in
+      let g1 = concatWidth g g' in
+      let g2 = concatWidth g' g in
+      let g1' = flipHeight g1 in
+      let g2' = flipHeight g2 in
+      [ concatHeight g1 g1'; concatHeight g1' g1;
+        concatHeight g2 g2'; concatHeight g2' g2 ]
+    let sym_rotate90_unfold g =
+      if g.height <> g.width then raise Invalid_dim;
+      let g90 = rotate90 g in
+      let g180 = rotate180 g in
+      let g270 = rotate270 g in
+      [ concatHeightWidth g g90 g270 g180;
+        concatHeightWidth g270 g g180 g90;
+        concatHeightWidth g180 g270 g90 g;
+        concatHeightWidth g90 g180 g g270 ]
+ *)
+  end
+  
+    
 (* grid masks *)
 
-exception Invalid_dim (* height/width are invalid for the operation *)
-           
 module type MaskCore =
   sig
     type t
@@ -504,19 +802,22 @@ module Mask =
       !res
 
     let scale_down (k : int) (l : int) m = (* scaling down *)
-      (* each resulting pixel is a OR of the corresponding source pixels *)
-      let res = ref (empty (height m / k) (width m / l)) in
-      iter
-        (fun i j -> res := add (i/k) (j/l) !res)
-        m;
-      !res
+      let h, w = dims m in
+      if h mod k = 0 && w mod l = 0
+      then ( (* each resulting pixel is a OR of the corresponding source pixels *)
+        let res = ref (empty (height m / k) (width m / l)) in
+        iter
+          (fun i j -> res := add (i/k) (j/l) !res)
+          m;
+        Some !res)
+      else None
 
     let scale_to (new_h : int) (new_w : int) (m : t) : t option =
       let h, w = dims m in
       if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
         Some (scale_up (new_h / h) (new_w / w) m)
       else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
-        Some (scale_down (h / new_h) (w / new_w) m)
+        scale_down (h / new_h) (w / new_w) m
       else None
         
     (* resize and factor *)
@@ -583,34 +884,38 @@ module Mask =
       done;
       !res      
 
-    let concatHeight m1 m2 =
-      if width m1 <> width m2 then raise Invalid_dim;
-      let h1, h2 = height m1, height m2 in
-      let res = ref (empty (h1+h2) (width m1)) in
-      iter
-        (fun i1 j1 -> res := add i1 j1 !res)
-        m1;
-      iter
-        (fun i2 j2 -> res := add (h1+i2) j2 !res)
-        m2;
-      !res
+    let concatHeight m1 m2 : t result =
+      if width m1 <> width m2
+      then Result.Error Invalid_dim
+      else (
+        let h1, h2 = height m1, height m2 in
+        let res = ref (empty (h1+h2) (width m1)) in
+        iter
+          (fun i1 j1 -> res := add i1 j1 !res)
+          m1;
+        iter
+          (fun i2 j2 -> res := add (h1+i2) j2 !res)
+          m2;
+        Result.Ok !res)
       
-    let concatWidth m1 m2 =
-      if height m1 <> height m2 then raise Invalid_dim;
-      let w1, w2 = width m1, width m2 in
-      let res = ref (empty (height m1) (w1+w2)) in
-      iter
-        (fun i1 j1 -> res := add i1 j1 !res)
-        m1;
-      iter
-        (fun i2 j2 -> res := add i2 (w1+j2) !res)
-        m2;
-      !res
+    let concatWidth m1 m2 : t result =
+      if height m1 <> height m2
+      then Result.Error Invalid_dim
+      else (
+        let w1, w2 = width m1, width m2 in
+        let res = ref (empty (height m1) (w1+w2)) in
+        iter
+          (fun i1 j1 -> res := add i1 j1 !res)
+          m1;
+        iter
+          (fun i2 j2 -> res := add i2 (w1+j2) !res)
+          m2;
+        Result.Ok !res)
 
-    let concatHeightWidth m1 m2 m3 m4 (* top left, top right, bottom left, bottom right *) =
-      concatHeight
-        (concatWidth m1 m2)
-        (concatWidth m3 m4)
+    let concatHeightWidth m1 m2 m3 m4 : t result (* top left, top right, bottom left, bottom right *) =
+      let| m12 = concatWidth m1 m2 in
+      let| m34 = concatWidth m3 m4 in
+      concatHeight m12 m34
 
     (* TODO: selecting halves and quarters *)
 
@@ -629,26 +934,45 @@ module Mask =
 
     (* symmetrization *)
       
-    let sym_flipHeight_inplace m = union m (flipHeight m)
-    let sym_flipWidth_inplace m = union m (flipWidth m)
-    let sym_rotate180_inplace m = union m (rotate180 m)
-    let sym_flipHeightWidth_inplace m = union (union m (flipHeight m)) (flipWidth m) (* also includes rotate180(m) *)
+    let layers ms : t result =
+      match ms with
+      | [] -> Result.Error (Invalid_argument "Grid.Mask.layers: empty list")
+      | m1::ms1 ->
+         let h1, w1 = dims m1 in
+         if List.for_all (fun mi -> dims mi = (h1,w1)) ms1
+         then
+           let m = List.fold_left union m1 ms1 in
+           Result.Ok m
+         else Result.Error Invalid_dim
+         
+    let sym_flipHeight_inplace m = layers [m; flipHeight m]
+    let sym_flipWidth_inplace m = layers [m; flipWidth m]
+    let sym_rotate180_inplace m = layers [m; rotate180 m]
+    let sym_flipHeightWidth_inplace m = layers [m; flipHeight m; flipWidth m; rotate180 m]
     let sym_flipDiag1_inplace m =
-      if height m <> width m then raise Invalid_dim;
-      union m (flipDiag1 m)
+      if height m <> width m
+      then Result.Error Invalid_dim
+      else layers [m; flipDiag1 m]
     let sym_flipDiag2_inplace m =
-      if height m <> width m then raise Invalid_dim;
-      union m (flipDiag2 m)
+      if height m <> width m
+      then Result.Error Invalid_dim
+      else layers [m; flipDiag2 m]
     let sym_flipDiag1Diag2_inplace m =
-      if height m <> width m then raise Invalid_dim;
-      union (union m (flipDiag1 m)) (flipDiag2 m)
+      if height m <> width m
+      then Result.Error Invalid_dim
+      else layers [m; flipDiag1 m; flipDiag2 m; rotate180 m]
     let sym_rotate90_inplace m =
-      if height m <> width m then raise Invalid_dim;
-      union m (rotate90 m)
+      if height m <> width m
+      then Result.Error Invalid_dim
+      else layers [m; rotate90 m; rotate180 m; rotate270 m]
     let sym_full_inplace m =
-      if height m <> width m then raise Invalid_dim;
-      union (union m (rotate90 m)) (flipHeight m) (* includes all symmetries *)
+      if height m <> width m
+      then Result.Error Invalid_dim
+      else (* includes all symmetries *)
+        let| m' = layers [m; rotate90 m] in
+        Result.Ok (flipHeight m')
 
+(* not ready for use 
     let sym_flipHeight_unfold m =
       let m'= flipHeight m in
       [ concatHeight m m'; concatHeight m' m ]
@@ -676,7 +1000,7 @@ module Mask =
         concatHeightWidth m270 m m180 m90;
         concatHeightWidth m180 m270 m90 m;
         concatHeightWidth m90 m180 m m270 ]
-
+ *)
   end
 
 module Mask_model =
@@ -760,6 +1084,14 @@ module Mask_model =
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
 
+    let scale_down k l : t -> t result = function
+      | `Mask m ->
+         ( match Mask.scale_down k l m with
+           | Some m' -> Result.Ok (`Mask m')
+           | None -> Result.Error (Undefined_result "Grid.Mask_mode.scale_down: wrong new dimension") )
+      | (`Full as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_down: undefined")
+            
     let scale_to new_h new_w : t -> t result = function
       | `Mask m ->
          ( match Mask.scale_to new_h new_w m with

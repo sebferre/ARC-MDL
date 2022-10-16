@@ -560,9 +560,9 @@ type 'a expr =
   | `IncrVec of 'a * int * int (* on Vec *)
   | `DecrVec of 'a * int * int (* in Vec *)
   | `Modulo of 'a * 'a (* on Int *)
-  | `ScaleUp of 'a * int (* on Int, Vec, Mask, Shape, Grid NEW *)
-  | `ScaleDown of 'a * int (* on Int, Vec, Mask *)
-  | `ScaleTo of 'a * 'a (* Mask, Vec -> Mask *)
+  | `ScaleUp of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
+  | `ScaleDown of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
+  | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
   | `Corner of 'a * 'a (* on Vec *)
   | `Min of 'a list (* on Int, Vec *)
   | `Max of 'a list (* on Int, Vec *)
@@ -600,6 +600,7 @@ and symmetry = [
   | `Rotate180 | `Rotate90 | `Rotate270 ]
 
 let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
+let sym_matrix_rotate = [[`Id; `Rotate90]; [`Rotate270; `Rotate180]]
              
 type template =
   [ `Any (* an item of sequence items with no constraint (anything) *)
@@ -1225,6 +1226,7 @@ let signature_of_template (t : template) : signature =
     fold_template
       (fun () p t1 anc1 ->
         match t1 with
+        | `Background _ -> () (* not using full grid descriptions *)
         | `Cst _ (* only item0 matters for constant sequences *)
           | `Prefix _ (* this path is redundant with main *)
           -> ()
@@ -1810,7 +1812,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~bool:(uniform_among [])
     ~color:(uniform_among [])
     ~mask:(uniform_among [
-               `ScaleUp (`X,2); `ScaleTo (`X,`X);
+               `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
@@ -1827,7 +1829,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationOnto (`X,`X);
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
-                `ScaleUp (`X,2); `ScaleTo (`X,`X);
+                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                 `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym (sym_matrix_flipHeightWidth, `X);
@@ -1839,7 +1841,10 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `UnfoldSym (sym_matrix_flipHeightWidth, `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
-               `ScaleUp (`X,2) ])
+               `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
+               `ApplySym (`FlipHeight, `X, `Mask);
+               `UnfoldSym (sym_matrix_flipHeightWidth, `X) ])
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
@@ -2292,6 +2297,36 @@ let apply_patt
          `Root layers in
      Result.Ok (`Background (rgrid,rsize,rcolor,rlayers))
 
+let mask_sym : symmetry -> (Grid.Mask.t -> Grid.Mask.t) = function
+  | `Id -> Fun.id
+  | `FlipHeight -> Grid.Mask.flipHeight
+  | `FlipWidth -> Grid.Mask.flipWidth
+  | `FlipDiag1 -> Grid.Mask.flipDiag1
+  | `FlipDiag2 -> Grid.Mask.flipDiag2
+  | `Rotate180 -> Grid.Mask.rotate180
+  | `Rotate90 -> Grid.Mask.rotate90
+  | `Rotate270 -> Grid.Mask.rotate270
+                
+let mask_model_sym : symmetry -> (Grid.Mask_model.t -> Grid.Mask_model.t result) = function
+  | `Id -> (fun g -> Result.Ok g)
+  | `FlipHeight -> Grid.Mask_model.flipHeight
+  | `FlipWidth -> Grid.Mask_model.flipWidth
+  | `FlipDiag1 -> Grid.Mask_model.flipDiag1
+  | `FlipDiag2 -> Grid.Mask_model.flipDiag2
+  | `Rotate180 -> Grid.Mask_model.rotate180
+  | `Rotate90 -> Grid.Mask_model.rotate90
+  | `Rotate270 -> Grid.Mask_model.rotate270
+                
+let grid_sym : symmetry -> (Grid.t -> Grid.t) = function
+    | `Id -> Fun.id
+    | `FlipHeight -> Grid.Transf.flipHeight
+    | `FlipWidth -> Grid.Transf.flipWidth
+    | `FlipDiag1 -> Grid.Transf.flipDiag1
+    | `FlipDiag2 -> Grid.Transf.flipDiag2
+    | `Rotate180 -> Grid.Transf.rotate180
+    | `Rotate90 -> Grid.Transf.rotate90
+    | `Rotate270 -> Grid.Transf.rotate270
+     
 let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : template expr -> template -> template = *)
   (* let flip_size, sym_mask_model = flip_size__f_sym sym in *)
   let sym_pos d = (* symmetry of a point relative to the grid *)
@@ -2335,16 +2370,7 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
     | _ -> assert false in
   let sym_mask = function
     | `Mask mm ->
-       let| mm' =
-         match sym with
-         | `Id -> Result.Ok mm
-         | `FlipHeight -> Grid.Mask_model.flipHeight mm
-         | `FlipWidth -> Grid.Mask_model.flipWidth mm
-         | `FlipDiag1 -> Grid.Mask_model.flipDiag1 mm
-         | `FlipDiag2 -> Grid.Mask_model.flipDiag2 mm
-         | `Rotate180 -> Grid.Mask_model.rotate180 mm
-         | `Rotate90 -> Grid.Mask_model.rotate90 mm
-         | `Rotate270 -> Grid.Mask_model.rotate270 mm in
+       let| mm' = mask_model_sym sym mm in
        Result.Ok (`Mask mm')
     | _ -> assert false in
   let sym_shape = function
@@ -2352,6 +2378,13 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
     | `Rectangle (size, col, mask) ->
        let| mask' = sym_mask mask in
        Result.Ok (`Rectangle (sym_size size, col, mask'))
+    | _ -> assert false in
+  let sym_grid = function
+    | `Grid g ->
+       let g' = grid_sym sym g in
+       Result.Ok (`Grid g')
+    | `Background _ ->
+       Result.Error (Undefined_result "ApplySym not defined on Background")
     | _ -> assert false
   in
   match role_e1, d1 with
@@ -2363,27 +2396,31 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
   | `Layer, `PosShape (pos, shape) ->
      let| shape' = sym_shape shape in
      Result.Ok (`PosShape (pos, shape')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
+  | `Grid, _ -> sym_grid d1
   | _ -> Result.Error (Invalid_expr e)
 
 let unfold_symmetry (sym_matrix : symmetry list list) =
-  let rec mask_matrix m = function
-    | [] -> assert false
-    | [row] -> mask_row m row
-    | row::rows -> Grid.Mask.concatHeight (mask_row m row) (mask_matrix m rows)
-  and mask_row m = function
-    | [] -> assert false
-    | [sym] -> mask_sym m sym
-    | sym::syms -> Grid.Mask.concatWidth (mask_sym m sym) (mask_row m syms)
-  and mask_sym m = function
-    | `Id -> m
-    | `FlipHeight -> Grid.Mask.flipHeight m
-    | `FlipWidth -> Grid.Mask.flipWidth m
-    | `FlipDiag1 -> Grid.Mask.flipDiag1 m
-    | `FlipDiag2 -> Grid.Mask.flipDiag2 m
-    | `Rotate180 -> Grid.Mask.rotate180 m
-    | `Rotate90 -> Grid.Mask.rotate90 m
-    | `Rotate270 -> Grid.Mask.rotate270 m
-  in
+  let unfold_symmetry_aux (type a)
+        (concatHeight : a -> a -> a result)
+        (concatWidth : a -> a -> a result)
+        (apply_sym : symmetry -> a -> a)
+        (x : a) : a result =
+    let rec gen_matrix : symmetry list list -> a result = function
+      | [] -> assert false
+      | [row] -> gen_row row
+      | row::rows ->
+         let| xrow = gen_row row in
+         let| xrows = gen_matrix rows in
+         concatHeight xrow xrows
+    and gen_row : symmetry list -> a result = function
+      | [] -> assert false
+      | [sym] -> Result.Ok (apply_sym sym x)
+      | sym::syms ->
+         let xsym = apply_sym sym x in
+         let| xsyms = gen_row syms in
+         concatWidth xsym xsyms
+    in
+    gen_matrix sym_matrix in
   let unfold_size = function
     | `Vec (`Int h, `Int w) ->
        let k, l =
@@ -2393,9 +2430,13 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
        `Vec (`Int (k*h), `Int (l*w))
     | _ -> assert false in
   let unfold_mask = function
-    | `Mask m -> Result.Ok (`Mask (mask_matrix m sym_matrix))
+    | `Mask m ->
+       let| m' = unfold_symmetry_aux Grid.Mask.concatHeight Grid.Mask.concatWidth mask_sym m in
+       Result.Ok (`Mask m')
     | `Full -> Result.Ok `Full
-    | _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: not a custom mask")  
+    | _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: not a custom mask") in
+  let unfold_grid g =
+    unfold_symmetry_aux Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym g
   in
   fun e d ->
   match d with
@@ -2410,6 +2451,9 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
      let| mm = unfold_mask mm in
      Result.Ok (`PosShape (pos, `Rectangle (unfold_size size, col, `Mask mm)))
   | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
+  | `Grid g ->
+     let| g = unfold_grid g in
+     Result.Ok (`Grid g)
   | _ -> Result.Error (Invalid_expr e)
 
 let apply_expr_gen
@@ -2483,7 +2527,7 @@ let apply_expr_gen
            let| mm' = Grid.Mask_model.scale_up k k mm in
            Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
         | `Grid g ->
-           let g' = Grid.scale_up k k g in
+           let g' = Grid.Transf.scale_up k k g in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `ScaleDown (e1,k) ->
@@ -2500,6 +2544,19 @@ let apply_expr_gen
            if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
            then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
            else Result.Error (Undefined_result "ScaleDown: not an integer")
+        | `Mask mm ->
+           let| mm' = Grid.Mask_model.scale_down k k mm in
+           Result.Ok (`Mask mm')
+        | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
+           let remh, remw = h mod k, w mod k in
+           if remh = remw && (remh = 0 || remh = k-1) (* account for separators *)
+           then
+             let| mm' = Grid.Mask_model.scale_down k k mm in
+             Result.Ok (`Rectangle (`Vec (`Int (h / k), `Int (w / k)), col, `Mask mm'))
+           else Result.Error (Undefined_result "ScaleDown: not an integer size")
+        | `Grid g ->
+           let| g' = Grid.Transf.scale_down k k g in
+           Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `ScaleTo (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -2514,6 +2571,9 @@ let apply_expr_gen
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int new_h, `Int new_w) ->
            let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
            Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask mm'))
+        | `Grid g, `Vec (`Int new_h, `Int new_w) ->
+           let| g' = Grid.Transf.scale_to new_h new_w g in
+           Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -2684,6 +2744,7 @@ let apply_expr_gen
         | `Point _ -> Result.Ok (`Int 1)
         | `Rectangle (`Vec (`Int height, `Int width), _, `Mask m) ->
            Result.Ok (`Int (Grid.Mask_model.area ~height ~width m))
+        | `Grid g -> Result.Ok (`Int (g.height * g.width))
         | _ -> Result.Error (Invalid_expr e))
   | `Left e1 ->
      let| res1 = apply ~lookup p e1 in
@@ -2776,6 +2837,9 @@ let apply_expr_gen
            let| mm' = Grid.Mask_model.tile k l mm in
            Result.Ok (`Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask mm'))
         | `Point _ -> Result.Error (Undefined_result "Tiling: undefined on points")
+        | `Grid g ->
+           let g' = Grid.Transf.tile k l g in
+           Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `ResizeAlikeTo (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -2798,6 +2862,9 @@ let apply_expr_gen
             | `PosShape (pos,shape) ->
                let| shape' = aux shape in
                Result.Ok (`PosShape (pos, shape'))
+            | `Grid g ->
+               let g' = Grid.Transf.resize_alike h w g in
+               Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
@@ -3493,7 +3560,7 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
             let new_delta = ref state.delta in
 	    Grid.Mask.iter
 	      (fun i j ->
-                let c = g.matrix.{i,j} in
+                let c = Grid.get_pixel ~source:"parseur_grid" g i j in
 	        if c <> bc then
 	          new_delta := (i,j,c)::!new_delta)
 	      state.mask;
@@ -4201,7 +4268,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
-      | (`Mask | `Shape | `Layer as role1) ->
+      | (`Mask | `Shape | `Layer | `Grid as role1) ->
          let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                      `Rotate180; `Rotate90; `Rotate270] in
          push (role1, `ApplySym (sym, e1, role1))
@@ -4306,7 +4373,8 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `ScaleUp (e1,n));
            push (role1, `ScaleDown (e1,n))
         | `Mask | `Shape | `Grid ->
-           push (role1, `ScaleUp (e1,n))
+           push (role1, `ScaleUp (e1,n));
+           push (role1, `ScaleDown (e1,n))
         | _ -> () in
       () in
     let _ = (* not _ *)
@@ -4341,7 +4409,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let& (role1,e1) = exprs_2 in
     let _ = (* Tiling *)
       match role1 with
-      | (`Vec (`X | `Size _) | `Mask | `Shape) ->
+      | (`Vec (`X | `Size _) | `Mask | `Shape | `Grid) ->
          let& k = [1;2;3] in
          let& l = [1;2;3] in
          if k>1 || l>1 then
@@ -4349,19 +4417,19 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
-      | `Mask | `Shape | `Layer ->
-         let& sym_matrix = [sym_matrix_flipHeightWidth] in
+      | `Mask | `Shape | `Layer | `Grid ->
+         let& sym_matrix = [sym_matrix_flipHeightWidth; sym_matrix_rotate] in
          push (role1, `UnfoldSym (sym_matrix, e1))
       | _ -> () in
     let& (role2,e2) = exprs_2 in
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
-        | (`Mask | `Shape), `Vec (`X | `Size _) ->
+        | (`Mask | `Shape | `Grid), `Vec (`X | `Size _) ->
            push (role1, `ScaleTo (e1,e2))
         | _ -> () in
       let _ = (* ResizeAlikeTo *)
         match role1, role2 with
-        | (`Mask | `Shape | `Layer), `Vec (`X | `Size _) ->
+        | (`Mask | `Shape | `Layer | `Grid), `Vec (`X | `Size _) ->
            push (role1, `ResizeAlikeTo (e1,e2))
         | _ -> () in
       let _ = (* _ and _ *)
@@ -4426,6 +4494,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               aux ~objs `Root layers)
             ps_layer) in
      Myseq.concat [so; ss; sr; sp (* TEST ; su *)]
+  | #expr -> Myseq.empty
   | _ -> assert false)
 
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =

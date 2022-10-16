@@ -3,6 +3,7 @@ OBJ=bintree.cmo common.cmo xprint.cmo iterator.cmo myseq.cmo mdl.cmo find_merge.
 SRC=arc_xprint.cmo grid.cmo task.cmo model2.cmo
 SRC_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
 
+# add -g to have backtractes in case of uncaught exceptions
 FLAGS= -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
 FLAGS_FABLIS = -I ../../fablis/core -I ../../fablis/core/webapp
 #JSOO_FLAGS = -pretty -no-inline -debug-info # for dev
