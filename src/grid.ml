@@ -70,21 +70,6 @@ let dummy = make 0 0 0
 let dims (grid : t) : int * int =
   grid.height, grid.width [@@inline]
 
-(* let get_pixel ?(source = "unknown") grid i j =
-  try grid.matrix.{i,j}
-  with _ -> raise (Invalid_coord source) [@@inline]
-  
-let set_pixel grid i j c =
-  try
-    let c0 = grid.matrix.{i,j} in
-    if c <> c0 then (
-      grid.matrix.{i,j} <- c;
-      (* maintaining color count *)
-      grid.color_count.(c0) <- grid.color_count.(c0) - 1;
-      grid.color_count.(c) <- grid.color_count.(c) + 1
-    )
-  with _ -> () [@@inline] (* pixels out of bound are ignored *) *)
-
 let get_pixel ?(source = "unknown") grid i j =
   let h, w = dims grid in
   if i < h && j < w && i >=0 && j >= 0
@@ -112,6 +97,17 @@ let iter_pixels f grid =
     done
   done [@@inline]
 
+let majority_color (g : t) : color =
+  let res = ref black in
+  let nb_max = ref (g.color_count.(black)) in
+  for c = 1 to nb_color do
+    let nb = g.color_count.(c) in
+    if nb > !nb_max then (
+      res := c;
+      nb_max := nb)
+  done;
+  !res
+  
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
     (fun c -> grid.color_count.(c))
@@ -210,10 +206,28 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
 
 module Transf = (* black considered as neutral color by default *)
   struct
+
+    (* coloring *)
+
+    let swap_colors g c1 c2 : t result =
+      if g.color_count.(c1) = 0
+      then Result.Error (Undefined_result "swap_colors: none of the color present")
+      else (
+        let h, w = dims g in
+        let res = make h w black in
+        iter_pixels
+          (fun i j c ->
+            let c' =
+              if c = c1 then c2
+              else if c = c2 then c1
+              else c in
+            set_pixel res i j c')
+          g;
+        Result.Ok res)
     
     (* isometric transformations *)
 
-   let flipHeight g =
+    let flipHeight g =
       let h, w = dims g in
       let res = make h w black in
       iter_pixels
@@ -371,7 +385,7 @@ module Transf = (* black considered as neutral color by default *)
       done;
       res
 
-    (* cropping and concatenating *)
+    (* cropping *)
 
     let crop g offset_i offset_j new_h new_w =
       let h, w = dims g in
@@ -392,6 +406,27 @@ module Transf = (* black considered as neutral color by default *)
         Result.Ok res
       else Result.Error (Undefined_result "Grid.Transf.crop")
 
+    let strip (g : t) : t result = (* croping on anything else than the majority color *)
+      let c_strip = majority_color g in
+      let h, w = dims g in
+      let min_i, max_i = ref h, ref (-1) in
+      let min_j, max_j = ref w, ref (-1) in
+      iter_pixels
+        (fun i j c ->
+          if c <> c_strip then (
+            min_i := min i !min_i;
+            max_i := max i !max_i;
+            min_j := min j !min_j;
+            max_j := max j !max_j))
+        g;
+      if !min_i < 0 (* grid is c_strip only *)
+      then Result.Error (Undefined_result "monocolor grid")
+      else
+        let| g' = crop g !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
+        Result.Ok g'
+      
+    (* concatenating *)
+      
     let concatHeight g1 g2 : t result =
       if g1.width <> g2.width
       then Result.Error Invalid_dim

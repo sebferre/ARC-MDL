@@ -565,6 +565,7 @@ type 'a expr =
   | `ScaleDown of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
   | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
   | `Crop of 'a * 'a (* Grid, Rectangle -> Grid *)
+  | `Strip of 'a (* on Grid *)
   | `Corner of 'a * 'a (* on Vec *)
   | `Min of 'a list (* on Int, Vec *)
   | `Max of 'a list (* on Int, Vec *)
@@ -596,6 +597,7 @@ type 'a expr =
      (* sym list list = matrix to be filled with symmetries of some mask *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
   | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
+  | `SwapColors of 'a * 'a * 'a (* Grid, Color, Color -> Grid *)
   ]
 and symmetry = [
   | `Id
@@ -815,6 +817,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
   | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
   | `Crop (a,b) -> xp_apply "crop" xp print [a;b]
+  | `Strip a -> xp_apply "strip" xp print [a]
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
   | `Min la -> xp_apply "min" xp print la
   | `Max la -> xp_apply "max" xp print la
@@ -867,7 +870,8 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                                    [(fun print -> xp_symmetry print sym);
                                     (fun print -> xp print a);
                                     (fun print -> xp print b)]
-  | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b] 
+  | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b]
+  | `SwapColors (a,b,c) -> xp_apply "swapColor" xp print [a;b;c]
 and xp_symmetry print : symmetry -> unit = function
   | `Id -> print#string "id"
   | `FlipHeight -> print#string "flipHeight"
@@ -977,6 +981,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `ScaleDown (a,k) -> dim a
   | `ScaleTo (a,b) -> max (dim a) (dim b)
   | `Crop (a,b) -> max (dim a) (dim b)
+  | `Strip a -> dim a
   | `Corner (a,b) -> max (dim a) (dim b)
   | `Min l -> max_dim_list (List.map dim l)
   | `Max l -> max_dim_list (List.map dim l)
@@ -1007,6 +1012,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `UnfoldSym (sym_arr,a) -> dim a
   | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
   | `Coloring (a,b) -> max (dim a) (dim b)
+  | `SwapColors (a,b,c) -> max (dim a) (max (dim b) (dim c))
     
 let rec template_dim : template -> dim = function
   | `Any -> Item
@@ -1874,8 +1880,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `UnfoldSym ([], `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
+               `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
-               `Crop (`X,`X);
+               `Crop (`X,`X); `Strip `X;
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `Stack [`X; `X] ])
@@ -1932,6 +1939,9 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg(1,None,path)) e1
      +. dl ~ctx ~path:(`Arg(2,Some `Layer,path)) e2
+  | `Strip e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
   | `Corner (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -2017,6 +2027,11 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some (`Color `Shape), path)) e2
+  | `SwapColors (e1,e2,e3) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some (`Color `Grid), path)) e2
+     +. dl ~ctx ~path:(`Arg (3, Some (`Color `Grid), path)) e3
 
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_any : dl;
@@ -2629,6 +2644,14 @@ let apply_expr_gen
            let| g' = Grid.Transf.crop g i j h w in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
+  | `Strip e1 ->
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
+       (function
+        | `Grid g ->
+           let| g'= Grid.Transf.strip g in
+           Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -2994,6 +3017,17 @@ let apply_expr_gen
                Result.Ok (`PosShape (pos, shape))
             | _ -> aux d1)
         | _ -> Result.Error (Invalid_expr e))
+  | `SwapColors (e1,e2,e3) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     let| res3 = apply ~lookup p e3 in
+     broadcast_list_result [res1; res2; res3]
+       (function
+        | [`Grid g; `Color c1; `Color c2] ->
+           let| g' = Grid.Transf.swap_colors g c1 c2 in
+           Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))
+
 
 let apply_expr apply ~(env : data) e =
   apply_expr_gen apply ~lookup:(lookup_of_env env) `Root e
@@ -4339,6 +4373,15 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          let& c = Grid.all_colors in
          push (role1, `Coloring (e1, `Color c))
       | _ -> () in
+    let _ = (* SwapColors(_, c1, c2) *)
+      match role1 with
+      | `Grid ->
+         let& c1 = Grid.all_colors in
+         let& c2 = Grid.all_colors in
+         if c1 > c2 (* symmetric operation *)
+         then push (role1, `SwapColors (e1, `Color c1, `Color c2))
+         else ()
+      | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
       let _ = (* corner(_,_) *)
@@ -4397,6 +4440,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         match role1, role2 with
         | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2))
         | _ -> () in
+      let _ = (* Crop on grids *)
+        match role1, role2 with
+        | `Grid, `Layer -> push (`Grid, `Crop (e1,e2))
+        | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
   (* LEVEL 2, not generating Move at this level *)
@@ -4424,6 +4471,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `IncrVec (e1,k,l));
            push (role1, `DecrVec (e1,k,l))
          )
+      | _ -> () in
+    let _ = (* Strip on grids *)
+      match role1 with
+      | `Grid -> push (`Grid, `Strip e1)
       | _ -> () in
     let _ =
       let& n = [2;3] in
@@ -4511,10 +4562,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       let _ = (* Stack *)
         match role1, role2 with
         | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
-        | _ -> () in
-      let _ = (* Crop on grids *)
-        match role1, role2 with
-        | `Grid, `Layer -> push (`Grid, `Crop (e1,e2))
         | _ -> () in
       () in
   ()
