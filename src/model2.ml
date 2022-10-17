@@ -576,6 +576,7 @@ type 'a expr =
   | `LogXOr of 'a * 'a (* on Mask *)
   | `LogAndNot of 'a * 'a (* on Mask *)
   | `LogNot of 'a (* on Mask *)
+  | `Stack of 'a list (* on Grids *)
   | `Area of 'a (* on Shape *)
   | `Left of 'a (* on Object *)
   | `Right of 'a (* on Object *)
@@ -599,9 +600,35 @@ and symmetry = [
   | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
   | `Rotate180 | `Rotate90 | `Rotate270 ]
 
-let sym_matrix_flipHeightWidth = [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]]
-let sym_matrix_rotate = [[`Id; `Rotate90]; [`Rotate270; `Rotate180]]
-             
+let all_symmetry = [
+    `Id;
+    `FlipHeight; `FlipWidth;
+    `FlipDiag1; `FlipDiag2;
+    `Rotate180; `Rotate90; `Rotate270
+  ]
+let nb_symmetry = List.length all_symmetry
+
+let all_symmetry_matrix = [
+    [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]];
+    [[`Id]; [`FlipHeight]];
+    [[`Id; `FlipWidth]];
+    [[`Id; `Rotate90]; [`Rotate270; `Rotate180]]
+  ] (* TODO: in principle, should add more unfolds following the 10 symmetry groups. See sym_X_unfold in Grid.Transf/Mask_model *)
+let nb_symmetry_matrix = List.length all_symmetry_matrix
+
+let all_symmetry_compose = [
+    [`FlipHeight];
+    [`FlipWidth];
+    [`Rotate180];
+    [`FlipDiag1];
+    [`FlipDiag2];
+    [`FlipHeight; `FlipWidth]; (* entails Rotate180 *)
+    [`FlipDiag1; `FlipDiag2]; (* entails Rotate180 *)
+    [`Rotate90; `Rotate180]; (* entails Rotate270 *)
+    [`FlipHeight; `Rotate90; `Rotate180] (* entails FlipWidth, FlipDiag1, FlipDiag2, Rotate270: fullest symmetry *)
+  ]
+let nb_symmetry_compose = List.length all_symmetry_compose
+                       
 type template =
   [ `Any (* an item of sequence items with no constraint (anything) *)
   | template patt (* an item or sequence of items matching the pattern *)
@@ -802,6 +829,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `LogXOr (a,b) -> Xprint.infix " xor " xp print (a, b)
   | `LogAndNot (a,b) -> Xprint.infix " and not " xp print (a, b)
   | `LogNot (a) -> print#string "not "; xp print a
+  | `Stack la -> xp_apply "stack" xp print la
   | `Area a -> xp_apply "area" xp print [a]
   | `Left a -> xp_apply "left" xp print [a]
   | `Right a -> xp_apply "right" xp print [a]
@@ -958,6 +986,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `LogXOr (a,b) -> max (dim a) (dim b)
   | `LogAndNot (a,b) -> max (dim a) (dim b)
   | `LogNot a -> dim a
+  | `Stack l -> max_dim_list (List.map dim l)
   | `Area a -> dim a
   | `Left a -> dim a
   | `Right a -> dim a
@@ -1815,7 +1844,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym (sym_matrix_flipHeightWidth, `X);
+               `UnfoldSym ([], `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X ])
     ~vec:(uniform_among [
@@ -1832,19 +1861,19 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                 `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
-                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
+                `UnfoldSym ([], `X);
                 `Coloring (`X,`X) ])
     ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
                 `ResizeAlikeTo (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
-                `UnfoldSym (sym_matrix_flipHeightWidth, `X);
+                `UnfoldSym ([], `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym (sym_matrix_flipHeightWidth, `X) ])
+               `UnfoldSym ([], `X); `Stack [`X; `X] ])
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
@@ -1935,6 +1964,11 @@ let rec dl_expr
   | `LogNot e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+  | `Stack le1 ->
+     code_expr
+     +. Mdl.Code.universal_int_plus (List.length le1)
+     +. Mdl.sum le1
+          (fun e1 -> dl ~ctx ~path:(`Arg (1,None,path)) e1)
   | `Area e1 ->
      code_expr +. dl ~ctx ~path:(`Arg (1, Some `Shape, path)) e1
   | `Left e1 | `Right e1 | `Center e1
@@ -1959,14 +1993,15 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
   | `ApplySym (sym,e1,role_e1) ->
      code_expr (* no need to encode role_e1, deducible from model *)
-     +. Mdl.Code.uniform 8 (* encoding sym *)
+     +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
      +. dl ~ctx ~path:(`Arg (2, Some role_e1, path)) e1
   | `UnfoldSym (sym_array,e1) ->
      code_expr (* includes encoding of sym list list *)
+     +. Mdl.Code.uniform nb_symmetry_matrix (* encoding the choice of the symmetry matrix *)
      +. dl ~ctx ~path:(`Arg (2, None, path)) e1
   | `TranslationSym (sym,e1,e2) ->
-     code_expr (* includes encoding of sym *)
-     +. Mdl.Code.uniform 8 (* encoding sym *)
+     code_expr
+     +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
      +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
   | `Coloring (e1,e2) ->
@@ -2737,6 +2772,13 @@ let apply_expr_gen
             | `Mask bm1 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
           | _ -> Result.Error (Undefined_result "LogNot: undefined"))
         | _ -> Result.Error (Invalid_expr e))
+  | `Stack le1 ->
+     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     broadcast_list_result lres1
+       (fun lt1 ->
+         let lg1 = List.map (function `Grid g1 -> g1 | _ -> assert false) lt1 in
+         let| g = Grid.Transf.layers lg1 in
+         Result.Ok (`Grid g))
   | `Area e1 ->
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
@@ -4269,8 +4311,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let _ = (* ApplySym *)
       match role1 with
       | (`Mask | `Shape | `Layer | `Grid as role1) ->
-         let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
-                     `Rotate180; `Rotate90; `Rotate270] in
+         let& sym = all_symmetry in
          push (role1, `ApplySym (sym, e1, role1))
       | _ -> () in
     let _ = (* Coloring(_, const) *)
@@ -4418,7 +4459,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let _ = (* UnfoldSym *)
       match role1 with
       | `Mask | `Shape | `Layer | `Grid ->
-         let& sym_matrix = [sym_matrix_flipHeightWidth; sym_matrix_rotate] in
+         let& sym_matrix = all_symmetry_matrix in
          push (role1, `UnfoldSym (sym_matrix, e1))
       | _ -> () in
     let& (role2,e2) = exprs_2 in
@@ -4447,6 +4488,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       let _ = (* _ and not _ *)
         match role1, role2 with
         | `Mask, `Mask when e1 <> e2 -> push (`Mask, `LogAndNot (e1,e2))
+        | _ -> () in
+      let _ = (* Stack *)
+        match role1, role2 with
+        | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
         | _ -> () in
       () in
   ()

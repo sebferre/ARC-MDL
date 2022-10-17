@@ -450,7 +450,7 @@ module Transf = (* black considered as neutral color by default *)
                  (fun i j c ->
                    if c <> black then set_pixel res i j c)
                  gi)
-             gs1;
+             (g1::gs1);
            Result.Ok res)
          else Result.Error Invalid_dim
       
