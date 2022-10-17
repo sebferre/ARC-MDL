@@ -8,12 +8,13 @@ let def_param name v to_str =
   ref v
 
 let seq = def_param "seq" false (* TEST *) string_of_bool
-  
+let max_seq_length = def_param "max_seq_length" (if !seq then 10 else 1) string_of_int (* max size of collected sequences *)
+let max_nb_layers = def_param "max_nb_layers" 8 string_of_int (* max nb of layers in grid models *)
+                  
 let alpha = def_param "alpha" 10. string_of_float
 let max_nb_parse = def_param "max_nb_parse" (if !seq then 256 else 64) string_of_int (* max nb of considered grid parses *)
 let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
 let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_layers" (if !seq then 256 else 16) string_of_int (* see parse_layers *)
-let max_seq_length = def_param "max_seq_length" (if !seq then 10 else 1) string_of_int (* max size of collected sequences *)
 let def_match_threshold = def_param "def_match_threshold" (if !seq then 0.6 else 1.) string_of_float (* ratio threshold for considering that a definition is a match *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
@@ -4535,6 +4536,9 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
   in
   match t with
   | `Background (_,_,_,layers) ->
+     if ilist_length layers >= !max_nb_layers
+     then Myseq.empty
+     else (
      (* TEST let su =
        let objs = [`PosShape (u_vec_cst, `Any)] in
        aux ~objs `Root layers in *)
@@ -4560,7 +4564,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
               let objs = [`Ref p_layer] in
               aux ~objs `Root layers)
             ps_layer) in
-     Myseq.concat [so; ss; sr; sp (* TEST ; su *)]
+     Myseq.concat [so; ss; sr; sp (* TEST ; su *)])
   | #expr -> Myseq.empty
   | _ -> assert false)
 
