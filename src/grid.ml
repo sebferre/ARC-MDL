@@ -374,15 +374,23 @@ module Transf = (* black considered as neutral color by default *)
     (* cropping and concatenating *)
 
     let crop g offset_i offset_j new_h new_w =
-      let res = make new_h new_w black in
-      for i = 0 to new_h - 1 do
-        for j = 0 to new_w - 1 do
-          let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
-          if c <> black then
-            set_pixel res i j c
-        done
-      done;
-      res      
+      let h, w = dims g in
+      if offset_i >= 0 && offset_i < h
+         && offset_j >= 0 && offset_j < w
+         && new_h > 0 && new_w > 0
+         && offset_i + new_h < h
+         && offset_j + new_w < w
+      then
+        let res = make new_h new_w black in
+        for i = 0 to new_h - 1 do
+          for j = 0 to new_w - 1 do
+            let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
+            if c <> black then
+              set_pixel res i j c
+          done
+        done;
+        Result.Ok res
+      else Result.Error (Undefined_result "Grid.Transf.crop")
 
     let concatHeight g1 g2 : t result =
       if g1.width <> g2.width

@@ -563,6 +563,7 @@ type 'a expr =
   | `ScaleUp of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
   | `ScaleDown of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
   | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
+  | `Crop of 'a * 'a (* Grid, Rectangle -> Grid *)
   | `Corner of 'a * 'a (* on Vec *)
   | `Min of 'a list (* on Int, Vec *)
   | `Max of 'a list (* on Int, Vec *)
@@ -812,6 +813,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
   | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
   | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
+  | `Crop (a,b) -> xp_apply "crop" xp print [a;b]
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
   | `Min la -> xp_apply "min" xp print la
   | `Max la -> xp_apply "max" xp print la
@@ -973,6 +975,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `ScaleUp (a,k) -> dim a
   | `ScaleDown (a,k) -> dim a
   | `ScaleTo (a,b) -> max (dim a) (dim b)
+  | `Crop (a,b) -> max (dim a) (dim b)
   | `Corner (a,b) -> max (dim a) (dim b)
   | `Min l -> max_dim_list (List.map dim l)
   | `Max l -> max_dim_list (List.map dim l)
@@ -1871,6 +1874,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
+               `Crop (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `Stack [`X; `X] ])
@@ -1923,6 +1927,10 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
+  | `Crop (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg(1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg(2,Some `Layer,path)) e2
   | `Corner (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -2608,6 +2616,16 @@ let apply_expr_gen
            Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask mm'))
         | `Grid g, `Vec (`Int new_h, `Int new_w) ->
            let| g' = Grid.Transf.scale_to new_h new_w g in
+           Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))
+  | `Crop (e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (function
+        | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `Rectangle (`Vec (`Int rh, `Int rw), _, `Mask `Border)) -> (* TODO: allow crop on Full rectangles as well ? *)
+           let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
+           let| g' = Grid.Transf.crop g i j h w in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
@@ -4492,6 +4510,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       let _ = (* Stack *)
         match role1, role2 with
         | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
+        | _ -> () in
+      let _ = (* Crop on grids *)
+        match role1, role2 with
+        | `Grid, `Layer -> push (`Grid, `Crop (e1,e2))
         | _ -> () in
       () in
   ()
