@@ -6,7 +6,7 @@ SRC_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_f
 # add -g to have backtractes in case of uncaught exceptions
 FLAGS= -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
 FLAGS_FABLIS = -I ../../fablis/core -I ../../fablis/core/webapp
-#JSOO_FLAGS = -pretty -no-inline -debug-info # for dev
+#JSOO_FLAGS = --pretty --no-inline --debug-info # for dev
 JSOO_FLAGS = --opt 3 # for prod
 # +zarith_stubs_js/biginteger.js +zarith_stubs_js/runtime.js # JSOO options for using module Z
 

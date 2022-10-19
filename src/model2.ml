@@ -2759,60 +2759,44 @@ let apply_expr_gen
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 ->
-           (match m1, m2 with
-            | `Full, _ -> Result.Ok (`Mask m2)
-            | _, `Full -> Result.Ok (`Mask m1)
-            | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               Result.Ok (`Mask (`Mask (Grid.Mask.inter bm1 bm2)))
-            | _ -> Result.Error (Undefined_result "LogAnd: undefined"))
+        | `Mask mm1, `Mask mm2 ->
+           let| mm = Grid.Mask_model.inter mm1 mm2 in
+           Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogOr (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 ->
-           (match m1, m2 with
-            | `Full, _ -> Result.Ok (`Mask m1)
-            | _, `Full -> Result.Ok (`Mask m2)
-            | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               Result.Ok (`Mask (`Mask (Grid.Mask.union bm1 bm2)))
-            | _ -> Result.Error (Undefined_result "LogOr: undefined"))
+        | `Mask mm1, `Mask mm2 ->
+           let| mm = Grid.Mask_model.union mm1 mm2 in
+           Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogXOr (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 ->
-           (match m1, m2 with
-            | `Full, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
-            | `Mask bm1, `Full -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
-            | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               Result.Ok (`Mask (`Mask (Grid.Mask.diff_sym bm1 bm2)))
-            | _ -> Result.Error (Undefined_result "LogXOr: undefined"))
+        | `Mask mm1, `Mask mm2 ->
+           let| mm = Grid.Mask_model.diff_sym mm1 mm2 in
+           Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogAndNot (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 ->
-           (match m1, m2 with
-            | `Full, `Mask bm2 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm2)))
-            | `Mask bm1, `Mask bm2 when Grid.Mask.same_size bm1 bm2 ->
-               Result.Ok (`Mask (`Mask (Grid.Mask.diff bm1 bm2)))
-            | _ -> Result.Error (Undefined_result "LogAndNot: undefined"))
+        | `Mask mm1, `Mask mm2 ->
+           let| mm = Grid.Mask_model.diff mm1 mm2 in
+           Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogNot e1 ->
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
        (function
-        | `Mask m1 ->
-           (match m1 with
-            | `Mask bm1 -> Result.Ok (`Mask (`Mask (Grid.Mask.compl bm1)))
-          | _ -> Result.Error (Undefined_result "LogNot: undefined"))
+        | `Mask mm1 ->
+           let| mm = Grid.Mask_model.compl mm1 in
+           Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `Stack le1 ->
      let| lres1 = list_map_result (apply ~lookup p) le1 in

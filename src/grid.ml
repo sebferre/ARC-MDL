@@ -224,6 +224,8 @@ module Transf = (* black considered as neutral color by default *)
             set_pixel res i j c')
           g;
         Result.Ok res)
+    let swap_colors, reset_swap_colors =
+      Common.memoize3 ~size:101 swap_colors
     
     (* isometric transformations *)
 
@@ -234,6 +236,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res (h - 1 - i) j c)
         g;
       res
+    let flipHeight, reset_flipHeight =
+      Common.memoize ~size:101 flipHeight
                      
     let flipWidth g =
       let h, w = dims g in
@@ -242,6 +246,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res i (w - 1 - j) c)
         g;
       res
+    let flipWidth, reset_flipWidth =
+      Common.memoize ~size:101 flipWidth
 
     let flipDiag1 g =
       let h, w = dims g in
@@ -250,6 +256,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res j i c)
         g;
       res
+    let flipDiag1, reset_flipDiag1 =
+      Common.memoize ~size:101 flipDiag1
 
     let flipDiag2 g =
       let h, w = dims g in
@@ -258,6 +266,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res (w - 1 - j) (h - 1 - i) c)
         g;
       res
+    let flipDiag2, reset_flipDiag2 =
+      Common.memoize ~size:101 flipDiag2
 
     let rotate90 g = (* clockwise *)
       let h, w = dims g in
@@ -266,6 +276,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res j (h - 1 - i) c)
         g;
       res
+    let rotate90, reset_rotate90 =
+      Common.memoize ~size:101 flipHeight
       
     let rotate180 g = (* clockwise *)
       let h, w = dims g in
@@ -274,6 +286,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res (h - 1 - i) (w - 1 - j) c)
         g;
       res
+    let rotate180, reset_rotate180 =
+      Common.memoize ~size:101 rotate180
       
     let rotate270 g = (* clockwise *)
       let h, w = dims g in
@@ -282,6 +296,8 @@ module Transf = (* black considered as neutral color by default *)
         (fun i j c -> set_pixel res (w - 1 - j) i c)
         g;
       res
+    let rotate270, reset_rotate270 =
+      Common.memoize ~size:101 rotate270
       
     (* scaling *)
       
@@ -296,6 +312,8 @@ module Transf = (* black considered as neutral color by default *)
           done)
         g;
       res
+    let scale_up, reset_scale_up =
+      Common.memoize3 ~size:101 scale_up
 
     let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
       let h, w = dims g in
@@ -315,6 +333,8 @@ module Transf = (* black considered as neutral color by default *)
           Result.Ok res )
         else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
       else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
+    let scale_down, reset_scale_down =
+      Common.memoize3 ~size:101 scale_down
 
     let scale_to (new_h : int) (new_w : int) (g : t) : t result =
       let h, w = dims g in
@@ -323,7 +343,9 @@ module Transf = (* black considered as neutral color by default *)
       else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
         scale_down (h / new_h) (w / new_w) g
       else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
-        
+    let scale_to, reset_scale_to =
+      Common.memoize3 ~size:101 scale_to
+      
     (* resize and factor *)
 
     let tile (k : int) (l : int) g = (* k x l tiling of g *)
@@ -339,6 +361,8 @@ module Transf = (* black considered as neutral color by default *)
           done)
         g;
       res
+    let tile, reset_tile =
+      Common.memoize3 ~size:101 tile
 
     let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
       let rec range a b =
@@ -365,6 +389,8 @@ module Transf = (* black considered as neutral color by default *)
       let h' = match !h_factors with [] -> h | h'::_ -> h' in
       let w' = match !w_factors with [] -> w | w'::_ -> w' in
       (h', w')
+    let factor, reset_factor =
+      Common.memoize ~size:101 factor
 
     let resize_alike (new_h : int) (new_w : int) (g : t) : t = (* change size while preserving the repeating pattern *)
       assert (new_h > 0 && new_w > 0);
@@ -384,6 +410,8 @@ module Transf = (* black considered as neutral color by default *)
         done
       done;
       res
+    let resize_alike, reset_resize_alike =
+      Common.memoize3 ~size:101 resize_alike
 
     (* cropping *)
 
@@ -405,6 +433,9 @@ module Transf = (* black considered as neutral color by default *)
         done;
         Result.Ok res
       else Result.Error (Undefined_result "Grid.Transf.crop")
+    let crop, reset_crop =
+      let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
+      (fun g i j h w -> f (g,i,j,h,w)), reset
 
     let strip (g : t) : t result = (* croping on anything else than the majority color *)
       let c_strip = majority_color g in
@@ -424,6 +455,8 @@ module Transf = (* black considered as neutral color by default *)
       else
         let| g' = crop g !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
         Result.Ok g'
+    let strip, reset_strip =
+      Common.memoize ~size:101 strip
       
     (* concatenating *)
       
@@ -440,6 +473,8 @@ module Transf = (* black considered as neutral color by default *)
           (fun i2 j2 c2 -> set_pixel res (h1+i2) j2 c2)
           g2;
         Result.Ok res)
+    let concatHeight, reset_concatHeight =
+      Common.memoize2 ~size:101 concatHeight
       
     let concatWidth g1 g2 : t result =
       if g1.height <> g2.height
@@ -454,6 +489,8 @@ module Transf = (* black considered as neutral color by default *)
           (fun i2 j2 c2 -> set_pixel res i2 (w1+j2) c2)
           g2;
         Result.Ok res)
+    let concatWidth, reset_concatWidth =
+      Common.memoize2 ~size:101 concatWidth
 
     let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
       let| g12 = concatWidth g1 g2 in
@@ -476,6 +513,8 @@ module Transf = (* black considered as neutral color by default *)
               g2)
         g1;
       res
+    let compose, reset_compose =
+      Common.memoize2 ~size:101 compose
 
     (* symmetrization *)
 
@@ -496,6 +535,8 @@ module Transf = (* black considered as neutral color by default *)
              (g1::gs1);
            Result.Ok res)
          else Result.Error Invalid_dim
+    let layers, reset_layers =
+      Common.memoize ~size:101 layers
       
     let sym_flipHeight_inplace g = layers [g; flipHeight g]
     let sym_flipWidth_inplace g = layers [g; flipWidth g]
@@ -553,6 +594,29 @@ module Transf = (* black considered as neutral color by default *)
         concatHeightWidth g180 g270 g90 g;
         concatHeightWidth g90 g180 g g270 ]
  *)
+
+    let reset_memoized_functions () =
+      reset_swap_colors ();
+      reset_flipHeight ();
+      reset_flipWidth ();
+      reset_flipDiag1 ();
+      reset_flipDiag2 ();
+      reset_rotate90 ();
+      reset_rotate180 ();
+      reset_rotate270 ();
+      reset_scale_up ();
+      reset_scale_down ();
+      reset_scale_to ();
+      reset_tile ();
+      reset_factor ();
+      reset_resize_alike ();
+      reset_crop ();
+      reset_strip ();
+      reset_concatHeight ();
+      reset_concatWidth ();
+      reset_compose ();
+      reset_layers ()
+      
   end
   
     
@@ -1164,7 +1228,42 @@ module Mask_model =
     let rotate180 = symmetry Mask.rotate180
     let rotate90 = symmetry Mask.rotate90
     let rotate270 = symmetry Mask.rotate270
-                   
+
+    let inter m1 m2 : t result =
+      match m1, m2 with
+      | `Full, _ -> Result.Ok m2
+      | _, `Full -> Result.Ok m1
+      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
+         Result.Ok (`Mask (Mask.inter bm1 bm2))
+      | _ -> Result.Error (Undefined_result "Mask_model.inter: undefined")
+
+    let union m1 m2 : t result =
+      match m1, m2 with
+      | `Full, _ -> Result.Ok m1
+      | _, `Full -> Result.Ok m2
+      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
+         Result.Ok (`Mask (Mask.union bm1 bm2))
+      | _ -> Result.Error (Undefined_result "Mask_model.union: undefined")
+
+    let diff_sym m1 m2 : t result =
+      match m1, m2 with
+      | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
+      | `Mask bm1, `Full -> Result.Ok (`Mask (Mask.compl bm1))
+      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
+         Result.Ok (`Mask (Mask.diff_sym bm1 bm2))
+      | _ -> Result.Error (Undefined_result "Mask_model.diff_sym: undefined")
+
+    let diff m1 m2 : t result =
+      match m1, m2 with
+      | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
+      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
+         Result.Ok (`Mask (Mask.diff bm1 bm2))
+      | _ -> Result.Error (Undefined_result "Mask_model.diff: undefined")
+
+    let compl m1 : t result =
+      match m1 with
+      | `Mask bm1 -> Result.Ok (`Mask (Mask.compl bm1))
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compl: undefined")
   end
 
   
@@ -1732,6 +1831,7 @@ let rectangles, reset_rectangles =
 
 
 let reset_memoized_functions () =
+  Transf.reset_memoized_functions ();
   reset_segment_by_color ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
