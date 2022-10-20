@@ -1190,6 +1190,8 @@ module Mask_model =
       | `Mask m -> Result.Ok (`Mask (Mask.scale_up k l m))
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
+    let scale_up, reset_scale_up =
+      Common.memoize3 ~size:101 scale_up
 
     let scale_down k l : t -> t result = function
       | `Mask m ->
@@ -1198,6 +1200,8 @@ module Mask_model =
            | None -> Result.Error (Undefined_result "Grid.Mask_mode.scale_down: wrong new dimension") )
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_down: undefined")
+    let scale_down, reset_scale_down =
+      Common.memoize3 ~size:101 scale_down
             
     let scale_to new_h new_w : t -> t result = function
       | `Mask m ->
@@ -1206,28 +1210,55 @@ module Mask_model =
            | None -> Result.Error (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
+    let scale_to, reset_scale_to =
+      Common.memoize3 ~size:101 scale_to
 
     let tile k l : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (Mask.tile k l m))
       | `Full -> Result.Ok `Full
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
+    let tile, reset_tile =
+      Common.memoize3 ~size:101 tile
 
     let resize_alike new_h new_w : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (Mask.resize_alike m new_h new_w))
       | (`Full | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
+    let resize_alike, reset_resize_alike =
+      Common.memoize3 ~size:101 resize_alike
 
     let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (f m))
       | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.symmetry: undefined")
+
     let flipHeight = symmetry Mask.flipHeight
+    let flipHeight, reset_flipHeight =
+      Common.memoize ~size:101 flipHeight
+
     let flipWidth = symmetry Mask.flipWidth
+    let flipWidth, reset_flipWidth =
+      Common.memoize ~size:101 flipWidth
+
     let flipDiag1 = symmetry Mask.flipDiag1
+    let flipDiag1, reset_flipDiag1 =
+      Common.memoize ~size:101 flipDiag1
+
     let flipDiag2 = symmetry Mask.flipDiag2
+    let flipDiag2, reset_flipDiag2 =
+      Common.memoize ~size:101 flipDiag2
+
     let rotate180 = symmetry Mask.rotate180
+    let rotate180, reset_rotate180 =
+      Common.memoize ~size:101 rotate180
+
     let rotate90 = symmetry Mask.rotate90
+    let rotate90, reset_rotate90 =
+      Common.memoize ~size:101 rotate90
+
     let rotate270 = symmetry Mask.rotate270
+    let rotate270, reset_rotate270 =
+      Common.memoize ~size:101 rotate270
 
     let inter m1 m2 : t result =
       match m1, m2 with
@@ -1236,6 +1267,8 @@ module Mask_model =
       | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
          Result.Ok (`Mask (Mask.inter bm1 bm2))
       | _ -> Result.Error (Undefined_result "Mask_model.inter: undefined")
+    let inter, reset_inter =
+      Common.memoize2 ~size:101 inter
 
     let union m1 m2 : t result =
       match m1, m2 with
@@ -1244,26 +1277,54 @@ module Mask_model =
       | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
          Result.Ok (`Mask (Mask.union bm1 bm2))
       | _ -> Result.Error (Undefined_result "Mask_model.union: undefined")
+    let union, reset_union =
+      Common.memoize2 ~size:101 union
 
-    let diff_sym m1 m2 : t result =
+    let diff_sym (m1 : t) (m2 : t) : t result =
       match m1, m2 with
       | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
       | `Mask bm1, `Full -> Result.Ok (`Mask (Mask.compl bm1))
       | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
          Result.Ok (`Mask (Mask.diff_sym bm1 bm2))
       | _ -> Result.Error (Undefined_result "Mask_model.diff_sym: undefined")
+    let diff_sym, reset_diff_sym =
+      Common.memoize2 ~size:101 diff_sym
 
-    let diff m1 m2 : t result =
+    let diff (m1 : t) (m2 : t) : t result =
       match m1, m2 with
       | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
       | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
          Result.Ok (`Mask (Mask.diff bm1 bm2))
       | _ -> Result.Error (Undefined_result "Mask_model.diff: undefined")
+    let diff, reset_diff =
+      Common.memoize2 ~size:101 diff
 
-    let compl m1 : t result =
+    let compl (m1 : t) : t result =
       match m1 with
       | `Mask bm1 -> Result.Ok (`Mask (Mask.compl bm1))
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.compl: undefined")
+    let compl, reset_compl =
+      Common.memoize ~size:101 compl
+
+    let reset_memoized_functions () =
+      reset_scale_up ();
+      reset_scale_down ();
+      reset_scale_to ();
+      reset_tile ();
+      reset_resize_alike ();
+      reset_flipHeight ();
+      reset_flipWidth ();
+      reset_flipDiag1 ();
+      reset_flipDiag2 ();
+      reset_rotate180 ();
+      reset_rotate90 ();
+      reset_rotate270 ();
+      reset_inter ();
+      reset_union ();
+      reset_diff_sym ();
+      reset_diff ();
+      reset_compl ()
+      
   end
 
   
@@ -1832,6 +1893,7 @@ let rectangles, reset_rectangles =
 
 let reset_memoized_functions () =
   Transf.reset_memoized_functions ();
+  Mask_model.reset_memoized_functions ();
   reset_segment_by_color ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
