@@ -1258,8 +1258,7 @@ and patt_is_ground (is_ground : 'a -> bool) : 'a patt -> bool = function
      is_ground s && is_ground c
      && fold_ilist (fun res lp layer -> res && is_ground layer) true `Root layers
 
-let signature_of_template (t : template) : signature =
-  Common.prof "Model2.signature_of_template" (fun () ->
+let signature_of_template (t : template) : signature = (* QUICK *)
   let ht = Hashtbl.create 13 in
   let () =
     fold_template
@@ -1280,7 +1279,7 @@ let signature_of_template (t : template) : signature =
       () path0 t [] in
   Hashtbl.fold
     (fun k ps res -> (k, List.rev ps)::res) (* reverse to put them in order *)
-    ht [])
+    ht []
 
 let signature_of_kind (sg : signature) (k : kind) : revpath list =
   match List.assoc_opt k sg with
@@ -4699,10 +4698,9 @@ let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsr
       |> Myseq.filter_map
 	   (fun r -> apply_refinement (Routput r) m)
     else Myseq.empty in
-  Myseq.prof "Model2.model_refinements/seq" (
-      Myseq.concat
-        [ref_shapis; ref_shapos; ref_defis; ref_defos]
-    ))
+  Myseq.concat
+    [ref_shapis; ref_shapos; ref_defis; ref_defos]
+    )
 
 let dl_model_data (gpsr : grid_pairs_read) : dl triple triple = (* QUICK *)
   let lmi = gpsr.dl_mi in
