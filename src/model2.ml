@@ -2511,8 +2511,8 @@ let unfold_symmetry (sym_matrix : symmetry list list) =
      Result.Ok (`PosShape (pos, `Rectangle (unfold_size size, col, `Mask mm)))
   | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `Grid g ->
-     let| g = unfold_grid g in
-     Result.Ok (`Grid g)
+     let| g' = unfold_grid g in
+     Result.Ok (`Grid g')
   | _ -> Result.Error (Invalid_expr e)
 
 let apply_expr_gen

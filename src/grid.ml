@@ -277,7 +277,7 @@ module Transf = (* black considered as neutral color by default *)
         g;
       res
     let rotate90, reset_rotate90 =
-      Common.memoize ~size:101 flipHeight
+      Common.memoize ~size:101 rotate90
       
     let rotate180 g = (* clockwise *)
       let h, w = dims g in
