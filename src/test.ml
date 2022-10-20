@@ -7,7 +7,8 @@ module Model = Model2
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let task_timeout = ref 30
+let timeout_learn = ref 30
+let timeout_predict = ref 3
 let verbose = ref 1
 let grid_viz = ref false
 let pause = ref 0.
@@ -82,6 +83,14 @@ let print_measures count ms =
     ms;
   print_newline ()
 
+let apply_model m g =
+  let res_opt =
+    Common.do_timeout !timeout_predict (fun () ->
+        Model.apply_model m g) in
+  match res_opt with
+  | Some res -> res
+  | None -> Result.Error (Failure "The model could not be applied in the allocated timeout.")
+  
 let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`TEST]) examples : float * float * float (* micro success, macro success, MRR *) =
   let _, nb_ex, nb_correct, sum_rrank =
     List.fold_left
@@ -127,7 +136,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
           ));
         print_endline "\n> Output prediction from input (up to 3 trials):";
         let score, rank, label, _failed_derived_grids =
-	  match Model.apply_model m input with
+	  match apply_model m input with
 	  | Result.Ok gdi_derived_s ->
              List.fold_left
                (fun (score,rank,label,failed_derived_grids) (gdi, derived) ->
@@ -189,7 +198,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
           ~verbose:(if !training then !verbose else 1)
           ~grid_viz:(!grid_viz)
           ~pause:(!pause)
-          ~timeout:(!task_timeout)
+          ~timeout:(!timeout_learn)
           ~init_model
           ~beam_width:1 ~refine_degree
           task.train)
@@ -423,7 +432,7 @@ let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   print_endline "## options";
   Printf.printf "alpha = %.1f\n" !Model.alpha;
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
-  Printf.printf "timeout = %d\n" !task_timeout;
+  Printf.printf "timeout = %d\n" !timeout_learn;
   print_newline ();
   let nb_tasks = List.length names in
   let _ =
@@ -542,7 +551,7 @@ chosen set (default)";
      "-apply", Unit (fun () -> checker := checker_apply), "Apply pre-defined models to the chosen tasks (Model.init_model by default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
-     "-timeout", Set_int task_timeout, "Timeout per task (default: 20s)";
+     "-timeout", Set_int timeout_learn, "Learning timeout per task (default: 30s)";
      "-viz", Set grid_viz, "Show train grids, as understood by the model";
      "-pause", Set_float pause, "Time delay (in seconds, default=0.0) at each step during learning, useful in combination with -viz";
      "-v", Set_int verbose, "Verbose mode";

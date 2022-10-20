@@ -3713,7 +3713,7 @@ let read_grid
     : (grid_read list, exn) Result.t =
   Common.prof "Model2.read_grid" (fun () ->
   let| t = apply_template ~env t0 in (* reducing expressions *)
-  let Parseur parse_grid = parseur_grid t path0 in    
+  let Parseur parse_grid = parseur_grid t path0 in
   let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
