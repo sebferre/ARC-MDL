@@ -42,6 +42,7 @@ let ( @* ) = fun seq1 seq2 -> Myseq.concat [seq1; seq2]
 type 'a result = ('a,exn) Result.t
 
 let ( let| ) res f = Result.bind res f [@@inline]
+let ( let|? ) res f = Option.bind res f [@@inline]
                    
 let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
 let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
@@ -104,7 +105,8 @@ type 'a triple = 'a * 'a * 'a
 
 type 'a ilist = (* insertable list *)
   [ `Nil
-  | `Insert of 'a ilist * 'a * 'a ilist ]
+  | `Insert of 'a ilist * 'a * 'a ilist
+  | `Append of 'a ilist * 'a ilist ]
 type ilist_revpath =
   [ `Root
   | `Left of ilist_revpath
@@ -123,6 +125,9 @@ let rec xp_ilist (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (l : 'a ilist)
        aux (`Left lp) left;
        print#string "\n  _"; xp_ilist_path print lp; print#string ": "; xp print elt;
        aux (`Right lp) right
+    | `Append (left,right) ->
+       aux (`Left lp) left;
+       aux (`Right lp) right
   in
   aux `Root l
 
@@ -130,6 +135,8 @@ let rec ilist_length : 'a ilist -> int = function
   | `Nil -> 0
   | `Insert (left,elt,right) ->
      ilist_length left + 1 + ilist_length right
+  | `Append (left,right) ->
+     ilist_length left + ilist_length right
 
 let rec map_ilist (f : ilist_revpath -> 'a -> 'b) (lp : ilist_revpath) (l : 'a ilist) : 'b ilist =
   match l with
@@ -140,6 +147,10 @@ let rec map_ilist (f : ilist_revpath -> 'a -> 'b) (lp : ilist_revpath) (l : 'a i
      let elt = f lp elt in
      let right = map_ilist f (`Right lp) right in
      `Insert (left,elt,right)
+  | `Append (left,right) ->
+     let left = map_ilist f (`Left lp) left in
+     let right = map_ilist f (`Right lp) right in
+     `Append (left,right)
 
 let rec map_ilist_result (f : ilist_revpath -> 'a -> ('b,'c) Result.t) (lp : ilist_revpath) (l : 'a ilist) : ('b ilist,'c) Result.t =
   match l with
@@ -149,6 +160,10 @@ let rec map_ilist_result (f : ilist_revpath -> 'a -> ('b,'c) Result.t) (lp : ili
      let| elt = f lp elt in
      let| right = map_ilist_result f (`Right lp) right in
      Result.Ok (`Insert (left,elt,right))
+  | `Append (left,right) ->
+     let| left = map_ilist_result f (`Left lp) left in
+     let| right = map_ilist_result f (`Right lp) right in
+     Result.Ok (`Append (left,right))
 
 let rec fold_ilist (f : 'b -> ilist_revpath -> 'a -> 'b) (acc : 'b) (lp : ilist_revpath) (l : 'a ilist) : 'b =
   match l with
@@ -158,6 +173,10 @@ let rec fold_ilist (f : 'b -> ilist_revpath -> 'a -> 'b) (acc : 'b) (lp : ilist_
      let acc = f acc lp elt in
      let acc = fold_ilist f acc (`Right lp) right in
      acc
+  | `Append (left,right) ->
+     let acc = fold_ilist f acc (`Left lp) left in
+     let acc = fold_ilist f acc (`Right lp) right in
+     acc
        
 let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c result) (acc : 'c) (lp : ilist_revpath) (l1 : 'a ilist) (l2 : 'b ilist) : 'c result =
   match l1, l2 with
@@ -165,6 +184,10 @@ let rec fold2_ilist (f : 'c -> ilist_revpath -> 'a -> 'b -> 'c result) (acc : 'c
   | `Insert (left1,elt1,right1), `Insert (left2,elt2,right2) ->
      let| acc = fold2_ilist f acc (`Left lp) left1 left2 in
      let| acc = f acc lp elt1 elt2 in
+     let| acc = fold2_ilist f acc (`Right lp) right1 right2 in
+     Result.Ok acc
+  | `Append (left1,right1), `Append (left2,right2) ->
+     let| acc = fold2_ilist f acc (`Left lp) left1 left2 in
      let| acc = fold2_ilist f acc (`Right lp) right1 right2 in
      Result.Ok acc
   | _ ->
@@ -177,24 +200,16 @@ let rec fill_ilist_with_list il l = (* QUICK *)
   | `Nil -> l, `Nil
   | `Insert (left,_,right) ->
      let l, left' = fill_ilist_with_list left l in
-     match l with
+     ( match l with
      | [] -> assert false
      | x::l ->
         let l, right' = fill_ilist_with_list right l in
-        l, `Insert (left', x, right')
+        l, `Insert (left', x, right') )
+  | `Append (left,right) ->
+     let l, left' = fill_ilist_with_list left l in
+     let l, right' = fill_ilist_with_list right l in
+     l, `Append (left', right')
 
-(* let rec fill_ilist_with_rev_list il l = (* QUICK *)
-  (* replacing elements in il with elements in l, taken in reverse order *)
-  (* first element goes rightmost, last element leftmost *)
-  match il with
-  | `Nil -> l, `Nil
-  | `Insert (left,_,right) ->
-     let l, right' = fill_ilist_with_rev_list right l in
-     match l with
-     | [] -> assert false
-     | x::l ->
-        let l, left' = fill_ilist_with_rev_list left l in
-        l, `Insert (left', x, right') *)
 
 (* type definitions for data, expressions, templates *)
 
@@ -1083,15 +1098,18 @@ let find_ilist (lp : ilist_revpath) (l : 'a ilist) : 'a option = (* QUICK *)
     | `Left lp1 ->
        ( match aux lp1 with
          | `Nil -> `Nil
-         | `Insert (left,_,_) -> left )
+         | `Insert (left,_,_) -> left
+         | `Append (left,_) -> left)
     | `Right lp1 ->
        ( match aux lp1 with
          | `Nil -> `Nil
-         | `Insert (_,_,right) -> right )
+         | `Insert (_,_,right) -> right
+         | `Append (_,right) -> right)
   in
   match aux lp with
   | `Nil -> None
   | `Insert (_,elt,_) -> Some elt
+  | `Append (_,_) -> None
   
 let find_field_patt (f : field) (patt_parent : 'a patt) : 'a option =
   match f, patt_parent with
@@ -3183,6 +3201,9 @@ and draw_layers g = function
      draw_layers g below;
      draw_layer g layer;
      draw_layers g above
+  | `Append (above, below) ->
+     draw_layers g below;
+     draw_layers g above
 and draw_layer g = function
   | `PosShape (`Vec (`Int i, `Int j), `Point (`Color c)) ->
      Grid.set_pixel g i j c
@@ -3891,64 +3912,95 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
   
 (* template transformations *)
 
-let rec insert_seq (f : 'a -> 'a) (i : int) (l : 'a list) : 'a list =
+let rec change_seq_at_pos (f : 'a -> 'a option) (i : int) (l : 'a list) : 'a list option =
   match l with
   | [] -> failwith "Model2.insert_seq: wrong position"
   | x::r ->
      if i = 0
-     then f x :: r
-     else x :: insert_seq f (i-1) r
+     then
+       match f x with
+       | Some y -> Some (y :: r)
+       | None -> Some r
+     else
+       let|? r' = change_seq_at_pos f (i-1) r in
+       Some (x :: r')
 
-let insert_template (f : template option -> template) (p : revpath) (t : template) : template = (* QUICK *)
+let change_template_at_path (f : template option -> template option) (p : revpath) (t : template) : template option = (* QUICK *)
   let rec aux revp t =
     match revp, t with
-    | _, #expr -> t (* not replacing expressions *)
+    | _, #expr -> assert false (* not replacing expressions *)
     | `Root, _ -> f (Some t)
     | `Field (f,revp1), (#patt as patt) -> aux_patt f revp1 patt
     | `Item (i,revp1), `Seq items ->
-       let new_items = insert_seq (aux revp1) i items in
-       `Seq new_items
+       let|? items' = change_seq_at_pos (aux revp1) i items in
+       Some (`Seq items')
     | `Item (0,revp1), `Cst item0 ->
-       `Cst (aux revp1 item0)
+       let|? item0' = aux revp1 item0 in
+       Some (`Cst item0')
     | `AnyItem revp1, `Prefix (main,items) ->
-       `Prefix (aux revp1 main, items)
+       let|? main' = aux revp1 main in
+       Some (`Prefix (main', items))
     | `Item (i,revp1), `Prefix (main,items) ->
        let n = List.length items in
        if i = n
-       then (
+       then ( (* new element *)
          assert (revp1 = `Root);
-         `Prefix (main, items @ [f (Some t)])
+         let|? new_item = f (Some t) in
+         Some (`Prefix (main, items @ [new_item]))
        )
        else (
          assert (i >= 0 && i < n);
-         let new_items = insert_seq (aux revp1) i items in
-         `Prefix (main,new_items)
+         let|? items' = change_seq_at_pos (aux revp1) i items in
+         Some (`Prefix (main,items'))
        )
        
     | `Item (0,`Root), (`Any | #patt) -> (* tentative *)
-       `Prefix (t, [f (Some t)])
+       let|? item0 = f (Some t) in
+       Some (`Prefix (t, [item0]))
 
     | _ -> assert false
   and aux_patt field revp1 patt =
     match field, patt with
-    | `I, `Vec (i,j) -> `Vec (aux revp1 i, j)
-    | `J, `Vec (i,j) -> `Vec (i, aux revp1 j)
+    | `I, `Vec (i,j) ->
+       let|? i' = aux revp1 i in
+       Some (`Vec (i',j))
+    | `J, `Vec (i,j) ->
+       let|? j' = aux revp1 j in
+       Some (`Vec (i, j'))
 
-    | `Color, `Point (color) -> `Point (aux revp1 color)
+    | `Color, `Point (color) ->
+       let|? color' = aux revp1 color in
+       Some (`Point color')
 
-    | `Size, `Rectangle (size,color,mask) -> `Rectangle (aux revp1 size, color, mask)
-    | `Color, `Rectangle (size,color,layers) -> `Rectangle (size, aux revp1 color, layers)
-    | `Mask, `Rectangle (size,color,mask) -> `Rectangle (size, color, aux revp1 mask)
+    | `Size, `Rectangle (size,color,mask) ->
+       let|? size' = aux revp1 size in
+       Some (`Rectangle (size', color, mask))
+    | `Color, `Rectangle (size,color,layers) ->
+       let|? color' = aux revp1 color in
+       Some (`Rectangle (size, color', layers))
+    | `Mask, `Rectangle (size,color,mask) ->
+       let|? mask' = aux revp1 mask in
+       Some (`Rectangle (size, color, mask'))
 
-    | `Pos, `PosShape (pos,shape) -> `PosShape (aux revp1 pos, shape)
-    | `Shape, `PosShape (pos,shape) -> `PosShape (pos, aux revp1 shape)
+    | `Pos, `PosShape (pos,shape) ->
+       let|? pos' = aux revp1 pos in
+       Some (`PosShape (pos', shape))
+    | `Shape, `PosShape (pos,shape) ->
+       let|? shape' = aux revp1 shape in
+       Some (`PosShape (pos, shape'))
 
-    | `Grid, `Background (grid,size,color,layers) -> `Background (aux revp1 grid, size, color, layers)
-    | `Size, `Background (grid,size,color,layers) -> `Background (grid, aux revp1 size, color, layers)
-    | `Color, `Background (grid,size,color,layers) -> `Background (grid, size, aux revp1 color, layers)
+    | `Grid, `Background (grid,size,color,layers) ->
+       let|? grid' = aux revp1 grid in
+       Some (`Background (grid', size, color, layers))
+    | `Size, `Background (grid,size,color,layers) ->
+       let|? size' = aux revp1 size in
+       Some (`Background (grid, size', color, layers))
+    | `Color, `Background (grid,size,color,layers) ->
+       let|? color' = aux revp1 color in
+       Some (`Background (grid, size, color', layers))
     | `Layer revlp, `Background (grid,size,color,layers) ->
-       let new_layers = aux_ilist revlp revp1 layers in
-       `Background (grid, size, color, new_layers)
+       let layers' = aux_ilist revlp revp1 layers in
+       Some (`Background (grid, size, color, layers'))
        
     | _ ->
        pp_field field; print_string ": ";
@@ -3957,10 +4009,32 @@ let insert_template (f : template option -> template) (p : revpath) (t : templat
        assert false
   and aux_ilist revlp revp1 ilist =
     match revlp, ilist with
-    | `Root, `Nil -> assert (revp1 = `Root); `Insert (`Nil, f None, `Nil)
-    | `Root, `Insert (left, elt, right) -> `Insert (left, aux revp1 elt, right)
-    | `Left revlp1, `Insert (left, elt, right) -> `Insert (aux_ilist revlp1 revp1 left, elt, right)
-    | `Right revlp1, `Insert (left, elt, right) -> `Insert (left, elt, aux_ilist revlp1 revp1 right)
+    | `Root, `Nil ->
+       assert (revp1 = `Root);
+       (match f None with
+        | None -> ilist
+        | Some elt -> `Insert (`Nil, elt, `Nil))
+    | `Root, `Insert (left, elt, right) ->
+       (match aux revp1 elt with
+        | None -> `Append (left, right)
+        | Some elt' -> `Insert (left, elt', right))
+    | `Root, `Append (left, right) ->
+       assert (revp1 = `Root);
+       (match f None with
+        | None -> ilist
+        | Some elt -> `Insert (left, elt, right))
+    | `Left revlp1, `Insert (left, elt, right) ->
+       let left' = aux_ilist revlp1 revp1 left in
+       `Insert (left', elt, right)
+    | `Left revlp1, `Append (left, right) ->
+       let left' = aux_ilist revlp1 revp1 left in
+       `Append (left', right)
+    | `Right revlp1, `Insert (left, elt, right) ->
+       let right' = aux_ilist revlp1 revp1 right in
+       `Insert (left, elt, right')
+    | `Right revlp1, `Append (left, right) ->
+       let right' = aux_ilist revlp1 revp1 right in
+       `Append (left, right')
     | _ -> assert false
   in
   aux (path_reverse p `Root) t
@@ -3987,30 +4061,30 @@ let pp_grid_refinement = Xprint.to_stdout xp_grid_refinement
 let string_of_grid_refinement = Xprint.to_string xp_grid_refinement
 
 exception Refinement_no_change
-let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change *) = (* QUICK *)
+let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change or ill-formed change *) = (* QUICK *)
   try
-    let t =
+    let|? t' =
       match r with
       | RGridInit -> raise Refinement_no_change
       | RDef (modified_p,new_t,partial) ->
          t
-         |> insert_template
+         |> change_template_at_path
               (function
                | Some x when x = new_t -> raise Refinement_no_change
-               | _ -> new_t)
+               | _ -> Some new_t)
               modified_p
       | RObject (path,obj) ->
          t
-         |> insert_template
+         |> change_template_at_path
               (function
                | Some x when x = obj -> raise Refinement_no_change
-               | _ -> obj)
+               | _ -> Some obj)
               path
     in
 (*    print_string "New grid template: ";
     pp_template t;
     print_newline (); *)
-    Some (r,t)
+    Some (r,t')
   with
   | Refinement_no_change -> None
   | exn ->
@@ -4558,7 +4632,8 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
     | `Nil ->
        let* obj = Myseq.from_list objs in
        Myseq.return (RObject (`Field (`Layer lp, `Root), obj))
-    | `Insert (above,_,below) ->
+    | `Insert (above,_,below)
+      | `Append (above,below) ->
        Myseq.concat
          [ aux ~objs (`Right lp) below; (* insert below first *)
            aux ~objs (`Left lp) above ]
