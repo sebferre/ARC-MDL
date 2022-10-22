@@ -222,7 +222,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
      if timed_out then print_endline "TIMEOUT";
      match lm with
      | [] -> assert false
-     | ((_,m), (gpsr, gsri, gsro), l)::_ ->
+     | ((_,m), (gpsr, gsri, gsro, dl_triples), l)::_ ->
         print_endline "\n# Learned model:";
         Model.pp_model m;
         print_newline ();

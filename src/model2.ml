@@ -71,7 +71,7 @@ let rec list_mapi_result (f : int -> 'a -> ('b,'c) Result.t) (i : int) (lx : 'a 
 
 let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'c) Result.t) : ('b list, 'c) Result.t =
   let rec aux = function
-  | [] -> invalid_arg "Model2.bind_map_ok: empty list"
+  | [] -> Result.Error (Failure "Model2.result_list_bind_some: empty list")
   | [x] -> f x
   | x::lx1 ->
      let open Result in
@@ -3747,7 +3747,7 @@ let read_grid
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = (* QUICK *)
-      let dl_data = encoder_template ~ctx t0 data in
+      let dl_data = encoder_template ~ctx t0 data (* TEST *) in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
       (* rounding before sorting to absorb float error accumulation *)
@@ -4043,48 +4043,57 @@ let change_template_at_path (f : template option -> template option) (p : revpat
 
 type grid_refinement =
   | RGridInit
-  | RDef of revpath * template * bool (* partial: only true for some items if many items *)
-  | RObject of revpath * template (* object *)
+  | RAdd of revpath * template
+  | RSet of revpath * template * bool (* partial: only true for some items if many items *)
+  | RDel of revpath
 
 let xp_grid_refinement (print : Xprint.t) = function
   | RGridInit -> ()
-  | RDef (p,t,partial) ->
-     print#string "DEF: "; xp_path print p;
-     print#string "="; xp_template print t;
+  | RAdd (p,t) ->
+     print#string "ADD ";
+     xp_path print p;
+     print#string " = ";
+     xp_template print t
+  | RSet (p,t,partial) ->
+     print#string "SET "; xp_path print p;
+     print#string " = "; xp_template print t;
      if partial then print#string " (partial)"
-  | RObject (path,obj) ->
-     print#string "OBJECT at ";
-     xp_path print path;
-     print#string ": ";
-     xp_template print obj
+  | RDel p ->
+     print#string "DEL "; xp_path print p
 let pp_grid_refinement = Xprint.to_stdout xp_grid_refinement
 let string_of_grid_refinement = Xprint.to_string xp_grid_refinement
 
 exception Refinement_no_change
-let apply_grid_refinement (r : grid_refinement) (t : template) : (grid_refinement * template) option (* None if no change or ill-formed change *) = (* QUICK *)
+let apply_grid_refinement (r : grid_refinement) (t : template) : template option (* None if no change or ill-formed change *) = (* QUICK *)
   try
     let|? t' =
       match r with
       | RGridInit -> raise Refinement_no_change
-      | RDef (modified_p,new_t,partial) ->
-         t
-         |> change_template_at_path
-              (function
-               | Some x when x = new_t -> raise Refinement_no_change
-               | _ -> Some new_t)
-              modified_p
-      | RObject (path,obj) ->
-         t
-         |> change_template_at_path
-              (function
-               | Some x when x = obj -> raise Refinement_no_change
-               | _ -> Some obj)
-              path
+      | RAdd (p,new_t) ->
+         change_template_at_path
+           (function
+            | None -> Some new_t
+            | Some _ -> assert false)
+           p t
+      | RSet (p,new_t,partial) ->
+         change_template_at_path
+           (function
+            | None -> assert false
+            | Some x ->
+               if x = new_t then raise Refinement_no_change
+               else Some new_t)
+           p t
+      | RDel p ->
+         change_template_at_path
+           (function
+            | None -> assert false
+            | Some _ -> None)
+           p t
     in
 (*    print_string "New grid template: ";
     pp_template t;
     print_newline (); *)
-    Some (r,t')
+    Some t'
   with
   | Refinement_no_change -> None
   | exn ->
@@ -4350,7 +4359,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (dl1,_,_,_,_,_) (dl2,_,_,_,_,_) ->
          dl_compare dl1 dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (dl,p,role,t0,t,partial) -> RDef (p,t,partial)))
+  |> Myseq.map (fun (dl,p,role,t0,t,partial) -> RSet (p,t,partial)))
 and defs_check ~env (t : template) (d : data) : match_result =
   match defs_check_apply ~env t with
   | None -> No
@@ -4631,7 +4640,7 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
   let rec aux ~(objs : template list) lp = function
     | `Nil ->
        let* obj = Myseq.from_list objs in
-       Myseq.return (RObject (`Field (`Layer lp, `Root), obj))
+       Myseq.return (RAdd (`Field (`Layer lp, `Root), obj))
     | `Insert (above,_,below)
       | `Append (above,below) ->
        Myseq.concat
@@ -4673,6 +4682,18 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
   | #expr -> Myseq.empty
   | _ -> assert false)
 
+let prune_refinements (t : template) : grid_refinement Myseq.t =
+  let l =
+    fold_template
+      (fun res p1 t1 anc1 ->
+        match p1, t1 with
+        | _, `Color _ -> RSet (p1, `Any, false) :: res
+        | _, `Mask _ -> RSet (p1, `Any, false) :: res
+        | `Field (`Layer _, _), _ -> RDel p1 :: res
+        | _ -> res)
+      [] `Root t [] in
+  Myseq.from_list l
+  
 let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read list list) : (grid_refinement * template) Myseq.t =
   Myseq.prof "Model2.grid_refinements" (
   Myseq.concat
@@ -4681,7 +4702,9 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
   |> Myseq.filter_map
        (fun r ->
          pp_grid_refinement r; print_newline (); (* TEST *)
-         apply_grid_refinement r t))
+         let|? t' = apply_grid_refinement r t in
+         Some (r,t')
+    ))
 
 let dl_grid_model_data (gsr : grids_read) : dl triple (* model, data, model+data *) =
   let dl_data =
@@ -4714,7 +4737,7 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (*Printf.printf "DL = %.1f + %.1f = %.1f\n" lm ld lmd;*)
       grid_refinements ~env_sig m gsr.reads)
 		     
-
+  
 type refinement =
   | RInit
   | Rinput of grid_refinement
@@ -4727,56 +4750,61 @@ let xp_refinement (print : Xprint.t) = function
 let pp_refinement = Xprint.to_stdout xp_refinement
 let string_of_refinement = Xprint.to_string xp_refinement
 
-let apply_refinement (r : refinement) (m : model) : (refinement * model) option = (* QUICK *)
+let apply_refinement (r : refinement) (m : model) : model option = (* QUICK *)
   match r with
   | RInit -> None
   | Rinput gr ->
      apply_grid_refinement gr m.input_pattern
-     |> Option.map (fun (_,t) -> r, {m with input_pattern = t})
+     |> Option.map (fun t -> {m with input_pattern = t})
   | Routput gr ->
      apply_grid_refinement gr m.output_template
-     |> Option.map (fun (_,t) -> r, {m with output_template = t})
+     |> Option.map (fun t -> {m with output_template = t})
                  
-let model_refinements (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
+let model_refinements_learn (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   =
-  Common.prof "Model2.model_refinements" (fun () ->
-  let on_input = true
-    (*match last_r with
-    | RInit -> true
-    | Rinput _ -> true
-    | Routput _ -> false*) in
-  let on_output = true in
+  Common.prof "Model2.model_refinements_learn" (fun () ->
   let envo_sig = signature_of_template m.input_pattern in
   let ref_defis =
-    if on_input
-    then
-      defs_refinements ~env_sig:signature0 m.input_pattern gsri.reads
-      |> Myseq.filter_map (fun r -> apply_refinement (Rinput r) m)
-    else Myseq.empty in
+    defs_refinements ~env_sig:signature0 m.input_pattern gsri.reads
+    |> Myseq.filter_map (fun gr ->
+           let r = Rinput gr in
+           let|? m' = apply_refinement r m in
+           Some (r,m')) in
   let ref_defos =
-    if on_output
-    then
-      defs_refinements ~env_sig:envo_sig m.output_template gsro.reads
-      |> Myseq.filter_map (fun r -> apply_refinement (Routput r) m)
-    else Myseq.empty in
+    defs_refinements ~env_sig:envo_sig m.output_template gsro.reads
+    |> Myseq.filter_map (fun gr ->
+           let r = Routput gr in
+           let|? m' = apply_refinement r m in
+           Some (r,m')) in
   let ref_shapis =
-    if on_input && grids_read_has_delta gsri
+    if grids_read_has_delta gsri
     then
       shape_refinements ~env_sig:signature0 m.input_pattern
-      |> Myseq.filter_map
-	   (fun r -> apply_refinement (Rinput r) m)
+      |> Myseq.filter_map (fun gr ->
+             let r = Rinput gr in
+             let|? m' = apply_refinement r m in
+             Some (r,m'))
     else Myseq.empty in
   let ref_shapos =
-    if on_output && grids_read_has_delta gsro
+    if grids_read_has_delta gsro
     then
       shape_refinements ~env_sig:envo_sig m.output_template
-      |> Myseq.filter_map
-	   (fun r -> apply_refinement (Routput r) m)
+      |> Myseq.filter_map (fun gr ->
+             let r = Routput gr in
+             let|? m' = apply_refinement r m in
+             Some (r,m'))
     else Myseq.empty in
   Myseq.concat
-    [ref_shapis; ref_shapos; ref_defis; ref_defos]
-    )
+    [ref_shapis; ref_shapos; ref_defis; ref_defos])
 
+let model_refinements_prune (m : model) : (refinement * model) Myseq.t =
+  Common.prof "Model2.model_refinements_prune" (fun () ->
+  prune_refinements m.input_pattern
+  |> Myseq.filter_map (fun gr ->
+         let r = Rinput gr in
+         let|? m' = apply_refinement r m in
+         Some (r,m')))
+  
 let dl_model_data (gpsr : grid_pairs_read) : dl triple triple = (* QUICK *)
   let lmi = gpsr.dl_mi in
   let lmo = gpsr.dl_mo in
@@ -4809,7 +4837,6 @@ let make_norm_dl_model_data () : grid_pairs_read -> dl triple triple =
   (nldi, nldo, nldi +. nldo),
   (nlmdi, nlmdo, nlmdi +. nlmdo)
 
-  
 let learn_model
       ?(verbose = 1) (* verbose level *)
       ?(grid_viz = false)
@@ -4818,7 +4845,7 @@ let learn_model
       ~init_model
       ~beam_width ~refine_degree
       (pairs : Task.pair list)
-    : ((refinement * model) * (grid_pairs_read * grids_read * grids_read) * dl) list * bool
+    : ((refinement * model) * (grid_pairs_read * grids_read * grids_read * dl triple triple) * dl) list * bool
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
   let norm_dl_model_data = make_norm_dl_model_data () in
@@ -4834,7 +4861,8 @@ let learn_model
         Result.to_option
           (let| gprs = read_grid_pairs m pairs in
            let grsi, grso = split_grid_pairs_read gprs in
-           Result.Ok (gprs,grsi,grso))
+           let dl_triples = norm_dl_model_data gprs in
+           Result.Ok (gprs,grsi,grso,dl_triples))
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
@@ -4843,9 +4871,8 @@ let learn_model
 	 pp_refinement r; print_newline ();
          pp_model m; print_newline ();
 	 raise exn)
-    ~code:(fun (r,m) (gpsr,gsri,gsro) ->
-	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) =
-	     norm_dl_model_data gpsr in
+    ~code:(fun (r,m) (gpsr,gsri,gsro,dl_triples) ->
+	   let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) = dl_triples in
            if verbose >= 2 then (
              Printf.printf "\t?? %.3f\t" lmd;
              pp_refinement r; print_newline ();
@@ -4877,7 +4904,7 @@ let learn_model
 	   flush stdout;
            lmd)
     ~refinements:
-    (fun (r,m) (gpsr,gsri,gsro) dl ->
+    (fun (r,m) (gpsr,gsri,gsro,dl_triples) dl ->
       if verbose >= 2 then print_newline ();
       if verbose >= 1 then (Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ());
       if verbose >= 2 then (
@@ -4916,6 +4943,6 @@ let learn_model
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
-      let refs = model_refinements r m gsri gsro in
+      let refs = model_refinements_learn r m gsri gsro in
       refs))
-      
+ 

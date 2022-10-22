@@ -82,7 +82,7 @@ object
     if focus.suggestions = [] then (
       Jsutils.firebug "Computing suggestions...";
       let _, suggestions = (* selecting up to [refine_degree] compressive refinements, keeping other for information *)
-        Model2.model_refinements focus.refinement focus.model focus.gsri focus.gsro
+        Model2.model_refinements_learn focus.refinement focus.model focus.gsri focus.gsro
         |> Myseq.fold_left
              (fun (quota_compressive,suggestions as res) (r,m) ->
                if quota_compressive <= 0
