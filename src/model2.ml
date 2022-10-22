@@ -2060,9 +2060,9 @@ type code_template = (* dls must correspond to a valid prob distrib *)
     c_cst : dl;
     c_prefix : dl }
 let code_template0 =
-  { c_any = Mdl.Code.usage 0.1;
+  { c_any = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
     c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
-    c_ref = Mdl.Code.usage 0.4;
+    c_ref = Mdl.Code.usage 0.3;
     c_expr = Mdl.Code.usage 0.2;
     c_seq = Mdl.Code.usage 0.03;
     c_cst = Mdl.Code.usage 0.04;
