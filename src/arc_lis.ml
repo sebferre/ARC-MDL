@@ -50,7 +50,7 @@ type arc_focus = arc_state
 type arc_extent = arc_state
 
 let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (stage : learning_stage) (refinement : Model2.refinement) (model : Model2.model) : (arc_state, exn) Result.t =
-  let| gprs = Model2.read_grid_pairs model task.Task.train in
+  let| gprs = Model2.read_grid_pairs ~pruning:(stage = Prune) model task.Task.train in
   let gsri, gsro = Model2.split_grid_pairs_read gprs in
   let dls = Model2.dl_model_data gprs in
   let ((lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) as norm_dls) = norm_dl_model_data gprs in
@@ -63,7 +63,7 @@ let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (st
       gprs; gsri; gsro;
       dls;
       norm_dls;
-      norm_dl = (match stage with Build -> lmd | Prune -> lm +. ldo);
+      norm_dl = lmd;
       suggestions = [] }  
                
 let grid0 = Grid.make 10 10 Grid.black

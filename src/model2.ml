@@ -2287,6 +2287,10 @@ let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : 
   let dl, _ = encoder d in
   dl
 
+let dl_parse_rank (rank : int) : dl =
+  (* penalty DL for parse rank, starting at 0 *)
+  Mdl.Code.universal_int_star rank -. 1.
+  
   
 let dl_diff ~(ctx : dl_ctx) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
@@ -3739,6 +3743,7 @@ let limit_dl (f_dl : 'a -> dl) (l : 'a list) : 'a list =
      List.filter (fun x -> f_dl x <= min_dl) l
 
 let read_grid
+      ?(dl_assuming_grid_known = false)
       ~(quota_diff : int)
       ~(env : data) (t0 : template) (g : Grid.t)
     : (grid_read list, exn) Result.t =
@@ -3779,7 +3784,11 @@ let read_grid
       |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
       |> limit_dl (fun (_,_,dl) -> dl)
       |> List.mapi (fun rank (env,gd,dl) ->
-             let dl = dl +. Mdl.Code.universal_int_star rank -. 1. in (* to penalize later parses, in case of equivalent parses, -1 to have zero penalty on first parse *)
+             let dl_rank = dl_parse_rank rank in
+             let dl =
+               if dl_assuming_grid_known
+               then dl_rank
+               else dl +. dl_rank in
              (env, gd, dl)) in
     Result.Ok best_parses)
 
@@ -3814,7 +3823,7 @@ let grids_read_has_delta (gsr : grids_read) : bool =
               (fun (_env, (gd : grid_data), _dl) ->
                 gd.delta <> []))
 
-let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
+let read_grids ?dl_assuming_grid_known ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m =
     dl_template
       ~env_sig
@@ -3822,7 +3831,7 @@ let read_grids ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list
       t in
   let| reads =
     list_map_result
-      (fun (env,g) -> read_grid ~quota_diff ~env t g)
+      (fun (env,g) -> read_grid ?dl_assuming_grid_known ~quota_diff ~env t g)
       egrids in
   Result.Ok {dl_m; reads}
 
@@ -3860,7 +3869,7 @@ let string_of_model = Xprint.to_string xp_model
 let apply_model ?(env = data0) (m : model) (g : Grid.t) : ((grid_data * Grid.t) list, exn) Result.t =
   Common.prof "Model2.apply_model" (fun () ->
   let+|+ _, gdi, _ =
-    read_grid ~quota_diff:(!max_nb_diff) ~env m.input_pattern g in
+    read_grid ~dl_assuming_grid_known:true ~quota_diff:(!max_nb_diff) ~env m.input_pattern g in
   let| grid =
     write_grid ~env:gdi.data m.output_template in
   Result.Ok [(gdi, grid)])
@@ -3886,7 +3895,7 @@ let split_grid_pairs_read (gprs: grid_pairs_read) : grids_read * grids_read =
   let gsro = { dl_m = gprs.dl_mo; reads = reads_o } in
   gsri, gsro
   
-let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_pairs_read, exn) Result.t =
+let read_grid_pairs ?(pruning = false) ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_pairs_read, exn) Result.t =
   Common.prof "Model2.read_grid_pairs" (fun () ->
   (* takes model, input env+grid, output grids *)
   let dl_mi =
@@ -3906,8 +3915,8 @@ let read_grid_pairs ?(env = data0) (m : model) (pairs : Task.pair list) : (grid_
     |> list_map_result
          (fun {input; output} ->
            let| reads_input =
-             read_grid ~quota_diff:0 ~env m.input_pattern input in (* no diff allowed during training *)
-           let| reads_pair = 
+             read_grid ~dl_assuming_grid_known:pruning ~quota_diff:0 ~env m.input_pattern input in (* no diff allowed during training *)
+           let| reads_pair =
              let+|+ (envi,gdi,dli as gri) = Result.Ok reads_input in      
              let+|+ (envo,gdo,dlo as gro) =
                read_grid ~quota_diff:0 ~env:gdi.data m.output_template output in
@@ -4864,9 +4873,9 @@ let learn_model
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
   let norm_dl_model_data = make_norm_dl_model_data () in
-  let data_of_model m =
+  let data_of_model ~pruning m =
     Result.to_option
-      (let| gprs = read_grid_pairs m pairs in
+      (let| gprs = read_grid_pairs ~pruning m pairs in
        let grsi, grso = split_grid_pairs_read gprs in
        let dl_triples = norm_dl_model_data gprs in
        Result.Ok (gprs,grsi,grso,dl_triples))
@@ -4881,7 +4890,7 @@ let learn_model
       try
         if verbose >= 3 then (
           print_string "\t=> "; pp_refinement r; print_newline ());
-        data_of_model m
+        data_of_model ~pruning:false m
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
@@ -4977,11 +4986,11 @@ let learn_model
            ~refine_degree
            ~m0:(RInit, m_build)
            ~data:(fun (r,m) ->
-             data_of_model m)
+             data_of_model ~pruning:true m)
            ~code:(fun (r,m) (gpsr,gsri,gsro,dl_triples) ->
 	     let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) = dl_triples in
              if verbose >= 3 then (Printf.printf ": lm=%.3f\n" lm);
-             lm+.ldo)
+             lmd) (* only parse ranks counted for input grids *)
            ~refinements:(fun (r,m) (gpsr,gsri,gsro,dl_triples) dl ->
              if verbose >= 1 then (Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ());
              model_refinements_prune m) in

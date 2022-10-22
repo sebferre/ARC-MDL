@@ -225,6 +225,7 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
      print_endline "\n# Learned model (decriptive, before pruning):";
      Model.pp_model m_build;
      print_newline ();
+     let _ = print_l_md gpsr_build in
      print_endline "\n# Learned model (predictive, after pruning):";
      Model.pp_model m_prune;
      print_newline ();
