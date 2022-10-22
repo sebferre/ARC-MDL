@@ -21,11 +21,14 @@ let ( let> ) x f =
 type 'a triple = 'a Model2.triple
         
 type task_input = (string * Task.task) Focus.input (* name, data *)
+
+type learning_stage = Build | Prune
                 
 type arc_state =
   { name : string; (* task name *)
     task : Task.task; (* task *)
     norm_dl_model_data : Model2.grid_pairs_read -> Model2.dl triple triple;
+    stage : learning_stage;
     refinement : Model2.refinement; (* previous refinement *)
     model : Model2.model; (* current model *)
     gprs : Model2.grid_pairs_read; (* pair reads *)
@@ -39,26 +42,28 @@ type arc_state =
 and arc_suggestion =
   | InputTask of task_input
   | ResetTask
+  | ChangeStage of arc_state
   | RefinedState of arc_state * bool (* compressive *)
 
 type arc_focus = arc_state
                
 type arc_extent = arc_state
 
-let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (refinement : Model2.refinement) (model : Model2.model) : (arc_state, exn) Result.t =
+let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (stage : learning_stage) (refinement : Model2.refinement) (model : Model2.model) : (arc_state, exn) Result.t =
   let| gprs = Model2.read_grid_pairs model task.Task.train in
   let gsri, gsro = Model2.split_grid_pairs_read gprs in
   let dls = Model2.dl_model_data gprs in
-  let (_, _, (_,_,norm_dl) as norm_dls) = norm_dl_model_data gprs in
+  let ((lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) as norm_dls) = norm_dl_model_data gprs in
   Result.Ok
     { name; task;
       norm_dl_model_data;
+      stage;
       refinement;
       model;
       gprs; gsri; gsro;
       dls;
       norm_dls;
-      norm_dl;
+      norm_dl = (match stage with Build -> lmd | Prune -> lm +. ldo);
       suggestions = [] }  
                
 let grid0 = Grid.make 10 10 Grid.black
@@ -68,7 +73,7 @@ let name0 = "00000000"
 
 let initial_focus (name : string) (task : Task.task) : arc_focus =
   let norm_dl_model_data = Model2.make_norm_dl_model_data () in
-  match state_of_model name task norm_dl_model_data Model2.RInit Model2.init_model with
+  match state_of_model name task norm_dl_model_data Build Model2.RInit Model2.init_model with
   | Result.Ok s -> s
   | Result.Error exn -> raise exn
 
@@ -82,13 +87,15 @@ object
     if focus.suggestions = [] then (
       Jsutils.firebug "Computing suggestions...";
       let _, suggestions = (* selecting up to [refine_degree] compressive refinements, keeping other for information *)
-        Model2.model_refinements_learn focus.refinement focus.model focus.gsri focus.gsro
+        (match focus.stage with
+         | Build -> Model2.model_refinements_build focus.refinement focus.model focus.gsri focus.gsro
+         | Prune -> Model2.model_refinements_prune focus.model)
         |> Myseq.fold_left
              (fun (quota_compressive,suggestions as res) (r,m) ->
                if quota_compressive <= 0
                then res (* TODO: stop generating sequence *)
                else
-                 match state_of_model focus.name focus.task focus.norm_dl_model_data r m with
+                 match state_of_model focus.name focus.task focus.norm_dl_model_data focus.stage r m with
                  | Result.Ok state ->
                     if state.norm_dl < focus.norm_dl
                     then (quota_compressive - 1, state::suggestions)
@@ -103,10 +110,18 @@ object
       let suggestions =
         InputTask (new Focus.input (name0,task0))
         :: ResetTask
-        :: List.map (fun s ->
-               let compressive = s.norm_dl < focus.norm_dl in
-               RefinedState ((s :> arc_state), compressive))
-             suggestions in
+        :: (let new_stage =
+              match focus.stage with
+              | Build -> Prune
+              | Prune -> Build in
+            match state_of_model focus.name focus.task focus.norm_dl_model_data
+                    new_stage Model2.RInit focus.model with
+            | Result.Ok s -> [ChangeStage s]
+            | Result.Error _ -> [])
+        @ List.map (fun s ->
+              let compressive = s.norm_dl < focus.norm_dl in
+              RefinedState ((s :> arc_state), compressive))
+            suggestions in
       Jsutils.firebug "Suggestions computed";
       focus.suggestions <- suggestions
     );
@@ -122,6 +137,8 @@ object
        Some (new arc_place lis state)
     | ResetTask ->
        Some (new arc_place lis (initial_focus focus.name focus.task))
+    | ChangeStage s ->
+       Some (new arc_place lis s)
     | RefinedState (s,_) ->
        Some (new arc_place lis s)
 
@@ -158,7 +175,11 @@ let html_dl dl =
 let xml_of_focus focus =
   let (mi,mo,m), (di,do_,d), (mdi,mdo,md) = focus.dls in
   [Syntax.Block
-     [[Syntax.Kwd (Printf.sprintf "Task %s" focus.name)];
+     [[Syntax.Kwd (Printf.sprintf "Task %s [%s]"
+                     focus.name
+                     (match focus.stage with
+                      | Build -> "building stage"
+                      | Prune -> "pruning stage"))];
       [Syntax.Kwd (Printf.sprintf "DL = %f" focus.norm_dl)];
       [Syntax.Kwd (Printf.sprintf "DL = %.3f = %.3fm + %.3fd = (%.3fmi + %.3fmo) + (%.3fdi + %.3fdo) = %.3fi + %.3fo" md m d mi mo di do_ mdi mdo)];
       [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))]]]
@@ -183,6 +204,10 @@ let html_of_suggestion ~input_dico = function
      Html.html_of_input_info key info ^ " a task"
   | ResetTask ->
      "reset current task"
+  | ChangeStage s ->
+     Jsutils.escapeHTML
+       (Printf.sprintf "(%f) switch to %s stage " s.norm_dl
+          (match s.stage with Build -> "building" | Prune -> "pruning"))
   | RefinedState (s,compressive) ->
      Html.span ~classe:(if compressive then "compressive" else "non-compressive")
        (Jsutils.escapeHTML

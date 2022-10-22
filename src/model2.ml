@@ -101,6 +101,7 @@ let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
 
 (* common data structures *)
 
+type 'a double = 'a * 'a
 type 'a triple = 'a * 'a * 'a
 
 type 'a ilist = (* insertable list *)
@@ -4044,7 +4045,8 @@ let change_template_at_path (f : template option -> template option) (p : revpat
 type grid_refinement =
   | RGridInit
   | RAdd of revpath * template
-  | RSet of revpath * template * bool (* partial: only true for some items if many items *)
+  | RSpe of revpath * template * bool (* partial: only true for some items if many items *)
+  | RGen of revpath * template
   | RDel of revpath
 
 let xp_grid_refinement (print : Xprint.t) = function
@@ -4054,10 +4056,13 @@ let xp_grid_refinement (print : Xprint.t) = function
      xp_path print p;
      print#string " = ";
      xp_template print t
-  | RSet (p,t,partial) ->
-     print#string "SET "; xp_path print p;
+  | RSpe (p,t,partial) ->
+     print#string "SPE "; xp_path print p;
      print#string " = "; xp_template print t;
      if partial then print#string " (partial)"
+  | RGen (p,t) ->
+     print#string "GEN "; xp_path print p;
+     print#string " = "; xp_template print t
   | RDel p ->
      print#string "DEL "; xp_path print p
 let pp_grid_refinement = Xprint.to_stdout xp_grid_refinement
@@ -4075,7 +4080,7 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template option
             | None -> Some new_t
             | Some _ -> assert false)
            p t
-      | RSet (p,new_t,partial) ->
+      | RSpe (p,new_t,_) | RGen (p,new_t) ->
          change_template_at_path
            (function
             | None -> assert false
@@ -4359,7 +4364,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
        (fun (dl1,_,_,_,_,_) (dl2,_,_,_,_,_) ->
          dl_compare dl1 dl2)
   |> Myseq.from_list
-  |> Myseq.map (fun (dl,p,role,t0,t,partial) -> RSet (p,t,partial)))
+  |> Myseq.map (fun (dl,p,role,t0,t,partial) -> RSpe (p,t,partial)))
 and defs_check ~env (t : template) (d : data) : match_result =
   match defs_check_apply ~env t with
   | None -> No
@@ -4687,8 +4692,8 @@ let prune_refinements (t : template) : grid_refinement Myseq.t =
     fold_template
       (fun res p1 t1 anc1 ->
         match p1, t1 with
-        | _, `Color _ -> RSet (p1, `Any, false) :: res
-        | _, `Mask _ -> RSet (p1, `Any, false) :: res
+        | _, `Color _ -> RGen (p1, `Any) :: res
+        | _, `Mask _ -> RGen (p1, `Any) :: res
         | `Field (`Layer _, _), _ -> RDel p1 :: res
         | _ -> res)
       [] `Root t [] in
@@ -4760,9 +4765,9 @@ let apply_refinement (r : refinement) (m : model) : model option = (* QUICK *)
      apply_grid_refinement gr m.output_template
      |> Option.map (fun t -> {m with output_template = t})
                  
-let model_refinements_learn (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
+let model_refinements_build (last_r : refinement) (m : model) (gsri : grids_read) (gsro : grids_read) : (refinement * model) Myseq.t
   =
-  Common.prof "Model2.model_refinements_learn" (fun () ->
+  Common.prof "Model2.model_refinements_build" (fun () ->
   let envo_sig = signature_of_template m.input_pattern in
   let ref_defis =
     defs_refinements ~env_sig:signature0 m.input_pattern gsri.reads
@@ -4841,16 +4846,24 @@ let learn_model
       ?(verbose = 1) (* verbose level *)
       ?(grid_viz = false)
       ?(pause = 0.)
-      ~timeout
+      ~timeout_build ~timeout_prune
       ~init_model
       ~beam_width ~refine_degree
       (pairs : Task.pair list)
-    : ((refinement * model) * (grid_pairs_read * grids_read * grids_read * dl triple triple) * dl) list * bool
+    : (model * grid_pairs_read * bool) double
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
   let norm_dl_model_data = make_norm_dl_model_data () in
+  let data_of_model m =
+    Result.to_option
+      (let| gprs = read_grid_pairs m pairs in
+       let grsi, grso = split_grid_pairs_read gprs in
+       let dl_triples = norm_dl_model_data gprs in
+       Result.Ok (gprs,grsi,grso,dl_triples))
+  in
+  let lm_build, timed_out_build =
   Mdl.Strategy.beam
-    ~timeout
+    ~timeout:timeout_build
     ~beam_width
     ~refine_degree
     ~m0:(RInit, init_model)
@@ -4858,11 +4871,7 @@ let learn_model
       try
         if verbose >= 3 then (
           print_string "\t=> "; pp_refinement r; print_newline ());
-        Result.to_option
-          (let| gprs = read_grid_pairs m pairs in
-           let grsi, grso = split_grid_pairs_read gprs in
-           let dl_triples = norm_dl_model_data gprs in
-           Result.Ok (gprs,grsi,grso,dl_triples))
+        data_of_model m
       with
       | Common.Timeout as exn -> raise exn
       | exn ->
@@ -4943,6 +4952,32 @@ let learn_model
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
-      let refs = model_refinements_learn r m gsri gsro in
-      refs))
- 
+      let refs = model_refinements_build r m gsri gsro in
+      refs) in
+  match lm_build with
+  | [] -> assert false
+  | ((_,m_build), (gpsr_build,_,_,_), _)::_ ->
+     let lm_prune, timed_out_prune =
+       if timeout_prune = 0 (* no pruning *)
+       then lm_build, timed_out_build
+       else
+         Mdl.Strategy.beam
+           ~timeout:timeout_prune
+           ~beam_width:1
+           ~refine_degree
+           ~m0:(RInit, m_build)
+           ~data:(fun (r,m) ->
+             data_of_model m)
+           ~code:(fun (r,m) (gpsr,gsri,gsro,dl_triples) ->
+	     let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) = dl_triples in
+             if verbose >= 3 then (Printf.printf ": lm=%.3f\n" lm);
+             lm+.ldo)
+           ~refinements:(fun (r,m) (gpsr,gsri,gsro,dl_triples) dl ->
+             if verbose >= 1 then (Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ());
+             model_refinements_prune m) in
+     match lm_prune with
+     | [] -> assert false
+     | ((_,m_prune), (gpsr_prune,_,_,_), _)::_ ->
+        (m_build, gpsr_build, timed_out_build),
+        (m_prune, gpsr_prune, timed_out_prune))
+

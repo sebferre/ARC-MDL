@@ -7,7 +7,8 @@ module Model = Model2
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let timeout_learn = ref 30
+let timeout_build = ref 30
+let timeout_prune = ref 10
 let timeout_predict = ref 3
 let verbose = ref 1
 let grid_viz = ref false
@@ -198,7 +199,8 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
           ~verbose:(if !training then !verbose else 1)
           ~grid_viz:(!grid_viz)
           ~pause:(!pause)
-          ~timeout:(!timeout_learn)
+          ~timeout_build:(!timeout_build)
+          ~timeout_prune:(!timeout_prune)
           ~init_model
           ~beam_width:1 ~refine_degree
           task.train)
@@ -218,34 +220,34 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
           "acc-test-mrr", `MRR, 0.;
         ] in
       ms    
-  | Common.Val (lm, timed_out) ->
-     if timed_out then print_endline "TIMEOUT";
-     match lm with
-     | [] -> assert false
-     | ((_,m), (gpsr, gsri, gsro, dl_triples), l)::_ ->
-        print_endline "\n# Learned model:";
-        Model.pp_model m;
-        print_newline ();
-        let ldo = print_l_md gpsr in
-        print_endline "\n# train input/output grids";
-        let micro_train, macro_train, mrr_train =
-          score_learned_model name m (`TRAIN gpsr) task.train in
-        print_endline "\n# Test input/output grids";
-        let micro_test, macro_test, mrr_test =
-          score_learned_model name m (`TEST) task.test in
-        print_endline "\n# Performance measures on task";
-        let ms =
-          [ "runtime-learning", `Seconds, runtime;
-            "bits-train-error", `Bits, ldo;
-	    "acc-train-micro", `Tasks, micro_train;
-	    "acc-train-macro", `Tasks, macro_train;
-            "acc-train-mrr", `MRR, mrr_train;
-	    "acc-test-micro", `Tasks, micro_test;
-	    "acc-test-macro", `Tasks, macro_test;
-            "acc-test-mrr", `MRR, mrr_test;
-          ] in
-        print_measures 1 ms;
-        ms)
+  | Common.Val ((m_build,gpsr_build,timed_out_build), (m_prune,gpsr_prune,timed_out_prune)) ->
+     if timed_out_build then print_endline "TIMEOUT";
+     print_endline "\n# Learned model (decriptive, before pruning):";
+     Model.pp_model m_build;
+     print_newline ();
+     print_endline "\n# Learned model (predictive, after pruning):";
+     Model.pp_model m_prune;
+     print_newline ();
+     let ldo = print_l_md gpsr_prune in
+     print_endline "\n# train input/output grids";
+     let micro_train, macro_train, mrr_train =
+       score_learned_model name m_prune (`TRAIN gpsr_prune) task.train in
+     print_endline "\n# Test input/output grids";
+     let micro_test, macro_test, mrr_test =
+       score_learned_model name m_prune (`TEST) task.test in
+     print_endline "\n# Performance measures on task";
+     let ms =
+       [ "runtime-learning", `Seconds, runtime;
+         "bits-train-error", `Bits, ldo;
+	 "acc-train-micro", `Tasks, micro_train;
+	 "acc-train-macro", `Tasks, macro_train;
+         "acc-train-mrr", `MRR, mrr_train;
+	 "acc-test-micro", `Tasks, micro_test;
+	 "acc-test-macro", `Tasks, macro_test;
+         "acc-test-mrr", `MRR, mrr_test;
+       ] in
+     print_measures 1 ms;
+     ms)
      
 (* === solved/candidate training tasks === *)
 		      
@@ -432,7 +434,8 @@ let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   print_endline "## options";
   Printf.printf "alpha = %.1f\n" !Model.alpha;
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
-  Printf.printf "timeout = %d\n" !timeout_learn;
+  Printf.printf "timeout_build = %d\n" !timeout_build;
+  Printf.printf "timeout_prune = %d\n" !timeout_prune;
   print_newline ();
   let nb_tasks = List.length names in
   let _ =
@@ -551,7 +554,8 @@ chosen set (default)";
      "-apply", Unit (fun () -> checker := checker_apply), "Apply pre-defined models to the chosen tasks (Model.init_model by default)";
      "-segment", Unit (fun () -> checker := checker_segmentation), "Show segmentation of grids";
      "-alpha", Set_float Model.alpha, "Multiplication factor over examples in DL computations (default: 10)";
-     "-timeout", Set_int timeout_learn, "Learning timeout per task (default: 30s)";
+     "-timeout_build", Set_int timeout_build, "Learning/building timeout per task (default: 30s)";
+     "-timeout_prune", Set_int timeout_prune, "Learning/pruning timeout per task (default: 10s)";
      "-viz", Set grid_viz, "Show train grids, as understood by the model";
      "-pause", Set_float pause, "Time delay (in seconds, default=0.0) at each step during learning, useful in combination with -viz";
      "-v", Set_int verbose, "Verbose mode";
