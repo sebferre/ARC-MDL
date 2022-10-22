@@ -1658,8 +1658,7 @@ let dl_patt
      +. dl ~ctx mask ~path:(path ++ `Mask)
 
   | `PosShape (pos,shape) ->
-     ( match path_role path with `Layer -> Mdl.Code.universal_int_plus 1 | _ -> 0.) (* singleton layer *)
-     +. dl ~ctx pos ~path:(path ++ `Pos)
+     dl ~ctx pos ~path:(path ++ `Pos)
      +. dl ~ctx shape ~path:(path ++ `Shape)
 
   | `Grid g -> assert false (* so far, not used in models *)
@@ -1693,7 +1692,8 @@ let dl_data, reset_dl_data =
   let rec aux ~ctx ~path (d : data) =
     match d with
     | #patt as d ->
-       dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
+       (if !seq && path_dim path = Sequence then Mdl.Code.universal_int_star 1 else 0.) (* encoding d as singleton sequence *)
+       +. dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
        +. dl_patt aux ~ctx ~path d
     | `Seq items ->
        Mdl.Code.list_star (fun item -> aux ~ctx ~path item) items
@@ -2148,22 +2148,28 @@ let encoder_seq (make_encoder : int -> 'a -> encoder) (items : 'a list) : encode
   aux encoder_items
 
 let encoder_collect (Encoder encoder_item : encoder) : encoder =
-  let rec aux encoder_item n dl = function
-    | [] -> n, dl
-    | item::items ->
-       let dl1, Encoder next_encoder = encoder_item item in
-       aux next_encoder (n+1) (dl +. dl1) items
-  in
-  Encoder (fun d ->
-      let n, dl =
-        match d with
-        | `Seq items ->
-           assert (items <> []);
-           aux encoder_item 0 0. items
-        | d ->
-           let dl, _ = encoder_item d in
-           1, dl in
-      Mdl.Code.universal_int_plus n +. dl, encoder_fail)
+  if !seq
+  then
+    let rec aux encoder_item n dl = function
+      | [] -> n, dl
+      | item::items ->
+         let dl1, Encoder next_encoder = encoder_item item in
+         aux next_encoder (n+1) (dl +. dl1) items
+    in
+    Encoder (fun d ->
+        let n, dl =
+          match d with
+          | `Seq items ->
+             assert (items <> []);
+             aux encoder_item 0 0. items
+          | d ->
+             let dl, _ = encoder_item d in
+             1, dl in
+        Mdl.Code.universal_int_plus n +. dl, encoder_fail)
+  else
+    Encoder (fun d ->
+        let dl, _ = encoder_item d in
+        dl, encoder_fail)
   
 let encoder_patt
           (encoder : ctx:dl_ctx -> path:revpath -> 'a -> encoder)
@@ -2272,7 +2278,11 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
        (List.mapi (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items)
      
 let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : data -> dl =
-  let Encoder encoder = encoder_collect (encoder_template_aux ~ctx ~path t) in
+  let encoder = encoder_template_aux ~ctx ~path t in
+  let Encoder encoder =
+    if !seq && path_dim path = Sequence
+    then encoder_collect encoder
+    else encoder in
   fun d ->
   let dl, _ = encoder d in
   dl
@@ -3748,7 +3758,7 @@ let read_grid
     let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = (* QUICK *)
-      let dl_data = encoder_template ~ctx t0 data (* TEST *) in
+      let dl_data = encoder_template ~ctx t0 data in
       let dl_diff = dl_diff ~ctx state.diff data in
       let dl_delta = dl_delta ~ctx state.delta in
       (* rounding before sorting to absorb float error accumulation *)
@@ -3769,7 +3779,7 @@ let read_grid
       |> (fun l -> Common.sub_list l 0 !max_nb_grid_reads)
       |> limit_dl (fun (_,_,dl) -> dl)
       |> List.mapi (fun rank (env,gd,dl) ->
-             let dl = dl +. Mdl.Code.universal_int_star rank in (* to penalize later parses, in case of equivalent parses *)
+             let dl = dl +. Mdl.Code.universal_int_star rank -. 1. in (* to penalize later parses, in case of equivalent parses, -1 to have zero penalty on first parse *)
              (env, gd, dl)) in
     Result.Ok best_parses)
 
