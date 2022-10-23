@@ -202,424 +202,6 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
     then None
     else Some (Grid_diff_pixels {height; width; pixels=(!res)})
 
-(* operations on grids *)
-
-module Transf = (* black considered as neutral color by default *)
-  struct
-
-    (* coloring *)
-
-    let swap_colors g c1 c2 : t result =
-      if g.color_count.(c1) = 0
-      then Result.Error (Undefined_result "swap_colors: none of the color present")
-      else (
-        let h, w = dims g in
-        let res = make h w black in
-        iter_pixels
-          (fun i j c ->
-            let c' =
-              if c = c1 then c2
-              else if c = c2 then c1
-              else c in
-            set_pixel res i j c')
-          g;
-        Result.Ok res)
-    let swap_colors, reset_swap_colors =
-      Common.memoize3 ~size:101 swap_colors
-    
-    (* isometric transformations *)
-
-    let flipHeight g =
-      let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res (h - 1 - i) j c)
-        g;
-      res
-    let flipHeight, reset_flipHeight =
-      Common.memoize ~size:101 flipHeight
-                     
-    let flipWidth g =
-      let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res i (w - 1 - j) c)
-        g;
-      res
-    let flipWidth, reset_flipWidth =
-      Common.memoize ~size:101 flipWidth
-
-    let flipDiag1 g =
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res j i c)
-        g;
-      res
-    let flipDiag1, reset_flipDiag1 =
-      Common.memoize ~size:101 flipDiag1
-
-    let flipDiag2 g =
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res (w - 1 - j) (h - 1 - i) c)
-        g;
-      res
-    let flipDiag2, reset_flipDiag2 =
-      Common.memoize ~size:101 flipDiag2
-
-    let rotate90 g = (* clockwise *)
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res j (h - 1 - i) c)
-        g;
-      res
-    let rotate90, reset_rotate90 =
-      Common.memoize ~size:101 rotate90
-      
-    let rotate180 g = (* clockwise *)
-      let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res (h - 1 - i) (w - 1 - j) c)
-        g;
-      res
-    let rotate180, reset_rotate180 =
-      Common.memoize ~size:101 rotate180
-      
-    let rotate270 g = (* clockwise *)
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res (w - 1 - j) i c)
-        g;
-      res
-    let rotate270, reset_rotate270 =
-      Common.memoize ~size:101 rotate270
-      
-    (* scaling *)
-      
-    let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
-      let res = make (g.height * k) (g.width * l) black in
-      iter_pixels
-        (fun i j c ->
-          for i' = k*i to k*(i+1)-1 do
-            for j' = l*j to l*(j+1)-1 do
-              set_pixel res i' j' c
-            done
-          done)
-        g;
-      res
-    let scale_up, reset_scale_up =
-      Common.memoize3 ~size:101 scale_up
-
-    let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
-      let h, w = dims g in
-      if h mod k = 0 && w mod l = 0
-      then (
-        let ok = ref true in
-        iter_pixels
-          (fun i j c ->
-            ok := !ok && get_pixel ~source:"scale_down/1" g (i/k*k) (j/l*l) = c)
-          g;
-        if !ok (* all pixels scaling down to a single pixel have same color *)
-        then (
-          let res = make (h / k) (w / l) black in
-          iter_pixels
-            (fun i j c -> set_pixel res i j (get_pixel ~source:"scale_down/2" g (i*k) (j*l)))
-            res;
-          Result.Ok res )
-        else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
-      else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
-    let scale_down, reset_scale_down =
-      Common.memoize3 ~size:101 scale_down
-
-    let scale_to (new_h : int) (new_w : int) (g : t) : t result =
-      let h, w = dims g in
-      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
-        Result.Ok (scale_up (new_h / h) (new_w / w) g)
-      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
-        scale_down (h / new_h) (w / new_w) g
-      else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
-    let scale_to, reset_scale_to =
-      Common.memoize3 ~size:101 scale_to
-      
-    (* resize and factor *)
-
-    let tile (k : int) (l : int) g = (* k x l tiling of g *)
-      let h, w = dims g in
-      let h', w' = h * k, w * l in
-      let res = make h' w' black in
-      iter_pixels
-        (fun i j c ->
-          for u = 0 to k-1 do
-            for v = 0 to l-1 do
-              set_pixel res (u*h + i) (v*w + j) c
-            done
-          done)
-        g;
-      res
-    let tile, reset_tile =
-      Common.memoize3 ~size:101 tile
-
-    let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
-      let rec range a b =
-        if a > b then []
-        else a :: range (a+1) b
-      in
-      let h, w = dims g in
-      let h_factors = ref (range 1 (h-1)) in
-      let w_factors = ref (range 1 (w-1)) in
-      for i = 0 to h-1 do
-        for j = 0 to w-1 do
-          h_factors :=
-            !h_factors
-            |> List.filter (fun h' ->
-                   get_pixel ~source:"factor/1" g i j
-                   = get_pixel ~source:"factor/2" g (i mod h') j);
-          w_factors :=
-            !w_factors
-            |> List.filter (fun w' ->
-                   get_pixel ~source:"factor/3" g i j
-                   = get_pixel g i (j mod w'))
-        done
-      done;
-      let h' = match !h_factors with [] -> h | h'::_ -> h' in
-      let w' = match !w_factors with [] -> w | w'::_ -> w' in
-      (h', w')
-    let factor, reset_factor =
-      Common.memoize ~size:101 factor
-
-    let resize_alike (new_h : int) (new_w : int) (g : t) : t = (* change size while preserving the repeating pattern *)
-      assert (new_h > 0 && new_w > 0);
-      let h', w' = factor g in
-      let res = make new_h new_w black in
-      for i' = 0 to h' - 1 do (* for each position in the factor *)
-        for j' = 0 to w' - 1 do
-          let c = get_pixel ~source:"resize_alike" g i' j' in
-          if c <> black then (* when pixel not black *)
-            for u = 0 to (new_h - 1) / h' + 1 do
-              for v = 0 to (new_w - 1) / w' + 1 do
-                let i, j = u*h' + i', v*w' + j' in
-                if i < new_h && j < new_w then
-                  set_pixel res i j c
-              done
-            done
-        done
-      done;
-      res
-    let resize_alike, reset_resize_alike =
-      Common.memoize3 ~size:101 resize_alike
-
-    (* cropping *)
-
-    let crop g offset_i offset_j new_h new_w =
-      let h, w = dims g in
-      if offset_i >= 0 && offset_i < h
-         && offset_j >= 0 && offset_j < w
-         && new_h > 0 && new_w > 0
-         && offset_i + new_h < h
-         && offset_j + new_w < w
-      then
-        let res = make new_h new_w black in
-        for i = 0 to new_h - 1 do
-          for j = 0 to new_w - 1 do
-            let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
-            if c <> black then
-              set_pixel res i j c
-          done
-        done;
-        Result.Ok res
-      else Result.Error (Undefined_result "Grid.Transf.crop")
-    let crop, reset_crop =
-      let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
-      (fun g i j h w -> f (g,i,j,h,w)), reset
-
-    let strip (g : t) : t result = (* croping on anything else than the majority color *)
-      let c_strip = majority_color g in
-      let h, w = dims g in
-      let min_i, max_i = ref h, ref (-1) in
-      let min_j, max_j = ref w, ref (-1) in
-      iter_pixels
-        (fun i j c ->
-          if c <> c_strip then (
-            min_i := min i !min_i;
-            max_i := max i !max_i;
-            min_j := min j !min_j;
-            max_j := max j !max_j))
-        g;
-      if !min_i < 0 (* grid is c_strip only *)
-      then Result.Error (Undefined_result "monocolor grid")
-      else
-        let| g' = crop g !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
-        Result.Ok g'
-    let strip, reset_strip =
-      Common.memoize ~size:101 strip
-      
-    (* concatenating *)
-      
-    let concatHeight g1 g2 : t result =
-      if g1.width <> g2.width
-      then Result.Error Invalid_dim
-      else (
-        let h1, h2 = g1.height, g2.height in
-        let res = make (h1+h2) g1.width black in
-        iter_pixels
-          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
-          g1;
-        iter_pixels
-          (fun i2 j2 c2 -> set_pixel res (h1+i2) j2 c2)
-          g2;
-        Result.Ok res)
-    let concatHeight, reset_concatHeight =
-      Common.memoize2 ~size:101 concatHeight
-      
-    let concatWidth g1 g2 : t result =
-      if g1.height <> g2.height
-      then Result.Error Invalid_dim
-      else (
-        let w1, w2 = g1.width, g2.width in
-        let res = make g1.height (w1+w2) black in
-        iter_pixels
-          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
-          g1;
-        iter_pixels
-          (fun i2 j2 c2 -> set_pixel res i2 (w1+j2) c2)
-          g2;
-        Result.Ok res)
-    let concatWidth, reset_concatWidth =
-      Common.memoize2 ~size:101 concatWidth
-
-    let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
-      let| g12 = concatWidth g1 g2 in
-      let| g34 = concatWidth g3 g4 in
-      concatHeight g12 g34
-
-    (* TODO: selecting halves and quarters *)
-
-    let compose g1 g2 = (* repeating g2 for each non-black pixel of g1 *)
-      let h1, w1 = dims g1 in
-      let h2, w2 = dims g2 in
-      let res = make (h1*h2) (w1*w2) black in
-      iter_pixels
-        (fun i1 j1 c1 ->
-          if c1 <> black then
-            iter_pixels
-              (fun i2 j2 c2 ->
-                if c2 <> black then
-                  set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
-              g2)
-        g1;
-      res
-    let compose, reset_compose =
-      Common.memoize2 ~size:101 compose
-
-    (* symmetrization *)
-
-    let layers gs : t result =
-      match gs with
-      | [] -> Result.Error (Invalid_argument "Grid.Transf.layers: empty list")
-      | g1::gs1 ->
-         let h1, w1 = dims g1 in
-         if List.for_all (fun gi -> dims gi = (h1,w1)) gs1
-         then (
-           let res = make h1 w1 black in
-           List.iter
-             (fun gi ->
-               iter_pixels
-                 (fun i j c ->
-                   if c <> black then set_pixel res i j c)
-                 gi)
-             (g1::gs1);
-           Result.Ok res)
-         else Result.Error Invalid_dim
-    let layers, reset_layers =
-      Common.memoize ~size:101 layers
-      
-    let sym_flipHeight_inplace g = layers [g; flipHeight g]
-    let sym_flipWidth_inplace g = layers [g; flipWidth g]
-    let sym_rotate180_inplace g = layers [g; rotate180 g]
-    let sym_flipHeightWidth_inplace g = layers [g; flipHeight g; flipWidth g; rotate180 g]
-    let sym_flipDiag1_inplace g =
-      if g.height <> g.width
-      then Result.Error Invalid_dim
-      else layers [g; flipDiag1 g]
-    let sym_flipDiag2_inplace g =
-      if g.height <> g.width
-      then Result.Error Invalid_dim
-      else layers [g; flipDiag2 g]
-    let sym_flipDiag1Diag2_inplace g =
-      if g.height <> g.width
-      then Result.Error Invalid_dim
-      else layers [g; flipDiag1 g; flipDiag2 g; rotate180 g]
-    let sym_rotate90_inplace g =
-      if g.height <> g.width
-      then Result.Error Invalid_dim
-      else layers [g; rotate90 g; rotate180 g; rotate270 g]
-    let sym_full_inplace g =
-      if g.height <> g.width
-      then Result.Error Invalid_dim
-      else (* includes all symmetries *)
-        let| g' = layers [g; rotate90 g] in
-        Result.Ok (flipHeight g')
-
-(* not ready for use
-    let sym_flipHeight_unfold g =
-      let g'= flipHeight g in
-      [ concatHeight g g'; concatHeight g' g ]
-    let sym_flipWidth_unfold g =
-      let g'= flipWidth g in
-      [ concatWidth g g'; concatWidth g' g ]
-    let sym_rotate180_unfold g =
-      let g' = rotate180 g in
-      [ concatHeight g g'; concatHeight g' g;
-        concatWidth g g'; concatWidth g' g ]
-    let sym_flipHeightWidth_unfold g =
-      let g'= flipWidth g in
-      let g1 = concatWidth g g' in
-      let g2 = concatWidth g' g in
-      let g1' = flipHeight g1 in
-      let g2' = flipHeight g2 in
-      [ concatHeight g1 g1'; concatHeight g1' g1;
-        concatHeight g2 g2'; concatHeight g2' g2 ]
-    let sym_rotate90_unfold g =
-      if g.height <> g.width then raise Invalid_dim;
-      let g90 = rotate90 g in
-      let g180 = rotate180 g in
-      let g270 = rotate270 g in
-      [ concatHeightWidth g g90 g270 g180;
-        concatHeightWidth g270 g g180 g90;
-        concatHeightWidth g180 g270 g90 g;
-        concatHeightWidth g90 g180 g g270 ]
- *)
-
-    let reset_memoized_functions () =
-      reset_swap_colors ();
-      reset_flipHeight ();
-      reset_flipWidth ();
-      reset_flipDiag1 ();
-      reset_flipDiag2 ();
-      reset_rotate90 ();
-      reset_rotate180 ();
-      reset_rotate270 ();
-      reset_scale_up ();
-      reset_scale_down ();
-      reset_scale_to ();
-      reset_tile ();
-      reset_factor ();
-      reset_resize_alike ();
-      reset_crop ();
-      reset_strip ();
-      reset_concatHeight ();
-      reset_concatWidth ();
-      reset_compose ();
-      reset_layers ()
-      
-  end
-  
-    
 (* grid masks *)
 
 module type MaskCore =
@@ -1227,6 +809,13 @@ module Mask_model =
     let resize_alike, reset_resize_alike =
       Common.memoize3 ~size:101 resize_alike
 
+    let compose (m1 : Mask.t) (mm2 : t) : t result =
+      match mm2 with
+      | `Mask m2 -> Result.Ok (`Mask (Mask.compose m1 m2))
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compose: undefined")
+    let compose, reset_compose =
+      Common.memoize2 ~size:101 compose
+      
     let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
       | `Mask m -> Result.Ok (`Mask (f m))
       | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
@@ -1312,6 +901,7 @@ module Mask_model =
       reset_scale_to ();
       reset_tile ();
       reset_resize_alike ();
+      reset_compose (); 
       reset_flipHeight ();
       reset_flipWidth ();
       reset_flipDiag1 ();
@@ -1328,6 +918,451 @@ module Mask_model =
   end
 
   
+(* operations on grids *)
+
+module Transf = (* black considered as neutral color by default *)
+  struct
+
+    let mask_of_grid ?(bgcolor = black) (g : t) : Mask.t =
+      (* returns a non-bgcolor mask version of the grid *)
+      let h, w = dims g in
+      let res = ref (Mask.empty h w) in
+      iter_pixels
+        (fun i j c ->
+          if c <> bgcolor then
+            res := Mask.add i j !res)
+        g;
+      !res
+    let mask_of_grid, reset_mask_of_grid =
+      Common.memoize ~size:101 mask_of_grid
+
+    let grid_of_mask (m : Mask.t) (c : color) : t =
+      (* return a colored grid version of a mask *)
+      let h, w = Mask.dims m in
+      let res = make h w black in
+      Mask.iter
+        (fun i j ->
+          set_pixel res i j c)
+        m;
+      res
+    let grid_of_mask, reset_grid_of_mask =
+      Common.memoize2 ~size:101 grid_of_mask
+      
+    (* coloring *)
+
+    let swap_colors g c1 c2 : t result =
+      if g.color_count.(c1) = 0
+      then Result.Error (Undefined_result "swap_colors: none of the color present")
+      else (
+        let h, w = dims g in
+        let res = make h w black in
+        iter_pixels
+          (fun i j c ->
+            let c' =
+              if c = c1 then c2
+              else if c = c2 then c1
+              else c in
+            set_pixel res i j c')
+          g;
+        Result.Ok res)
+    let swap_colors, reset_swap_colors =
+      Common.memoize3 ~size:101 swap_colors
+    
+    (* isometric transformations *)
+
+    let flipHeight g =
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res (h - 1 - i) j c)
+        g;
+      res
+    let flipHeight, reset_flipHeight =
+      Common.memoize ~size:101 flipHeight
+                     
+    let flipWidth g =
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res i (w - 1 - j) c)
+        g;
+      res
+    let flipWidth, reset_flipWidth =
+      Common.memoize ~size:101 flipWidth
+
+    let flipDiag1 g =
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res j i c)
+        g;
+      res
+    let flipDiag1, reset_flipDiag1 =
+      Common.memoize ~size:101 flipDiag1
+
+    let flipDiag2 g =
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res (w - 1 - j) (h - 1 - i) c)
+        g;
+      res
+    let flipDiag2, reset_flipDiag2 =
+      Common.memoize ~size:101 flipDiag2
+
+    let rotate90 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res j (h - 1 - i) c)
+        g;
+      res
+    let rotate90, reset_rotate90 =
+      Common.memoize ~size:101 rotate90
+      
+    let rotate180 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make h w black in
+      iter_pixels
+        (fun i j c -> set_pixel res (h - 1 - i) (w - 1 - j) c)
+        g;
+      res
+    let rotate180, reset_rotate180 =
+      Common.memoize ~size:101 rotate180
+      
+    let rotate270 g = (* clockwise *)
+      let h, w = dims g in
+      let res = make w h black in
+      iter_pixels
+        (fun i j c -> set_pixel res (w - 1 - j) i c)
+        g;
+      res
+    let rotate270, reset_rotate270 =
+      Common.memoize ~size:101 rotate270
+      
+    (* scaling *)
+      
+    let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
+      let res = make (g.height * k) (g.width * l) black in
+      iter_pixels
+        (fun i j c ->
+          for i' = k*i to k*(i+1)-1 do
+            for j' = l*j to l*(j+1)-1 do
+              set_pixel res i' j' c
+            done
+          done)
+        g;
+      res
+    let scale_up, reset_scale_up =
+      Common.memoize3 ~size:101 scale_up
+
+    let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
+      let h, w = dims g in
+      if h mod k = 0 && w mod l = 0
+      then (
+        let ok = ref true in
+        iter_pixels
+          (fun i j c ->
+            ok := !ok && get_pixel ~source:"scale_down/1" g ((i/k)*k) ((j/l)*l) = c)
+          g;
+        if !ok (* all pixels scaling down to a single pixel have same color *)
+        then (
+          let res = make (h / k) (w / l) black in
+          iter_pixels
+            (fun i j c -> set_pixel res i j (get_pixel ~source:"scale_down/2" g (i*k) (j*l)))
+            res;
+          Result.Ok res )
+        else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
+      else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
+    let scale_down, reset_scale_down =
+      Common.memoize3 ~size:101 scale_down
+
+    let scale_to (new_h : int) (new_w : int) (g : t) : t result =
+      let h, w = dims g in
+      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
+        Result.Ok (scale_up (new_h / h) (new_w / w) g)
+      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
+        scale_down (h / new_h) (w / new_w) g
+      else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
+    let scale_to, reset_scale_to =
+      Common.memoize3 ~size:101 scale_to
+      
+    (* resize and factor *)
+
+    let tile (k : int) (l : int) g = (* k x l tiling of g *)
+      let h, w = dims g in
+      let h', w' = h * k, w * l in
+      let res = make h' w' black in
+      iter_pixels
+        (fun i j c ->
+          for u = 0 to k-1 do
+            for v = 0 to l-1 do
+              set_pixel res (u*h + i) (v*w + j) c
+            done
+          done)
+        g;
+      res
+    let tile, reset_tile =
+      Common.memoize3 ~size:101 tile
+
+    let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
+      let rec range a b =
+        if a > b then []
+        else a :: range (a+1) b
+      in
+      let h, w = dims g in
+      let h_factors = ref (range 1 (h-1)) in
+      let w_factors = ref (range 1 (w-1)) in
+      for i = 0 to h-1 do
+        for j = 0 to w-1 do
+          h_factors :=
+            !h_factors
+            |> List.filter (fun h' ->
+                   get_pixel ~source:"factor/1" g i j
+                   = get_pixel ~source:"factor/2" g (i mod h') j);
+          w_factors :=
+            !w_factors
+            |> List.filter (fun w' ->
+                   get_pixel ~source:"factor/3" g i j
+                   = get_pixel g i (j mod w'))
+        done
+      done;
+      let h' = match !h_factors with [] -> h | h'::_ -> h' in
+      let w' = match !w_factors with [] -> w | w'::_ -> w' in
+      (h', w')
+    let factor, reset_factor =
+      Common.memoize ~size:101 factor
+
+    let resize_alike (new_h : int) (new_w : int) (g : t) : t = (* change size while preserving the repeating pattern *)
+      assert (new_h > 0 && new_w > 0);
+      let h', w' = factor g in
+      let res = make new_h new_w black in
+      for i' = 0 to h' - 1 do (* for each position in the factor *)
+        for j' = 0 to w' - 1 do
+          let c = get_pixel ~source:"resize_alike" g i' j' in
+          if c <> black then (* when pixel not black *)
+            for u = 0 to (new_h - 1) / h' + 1 do
+              for v = 0 to (new_w - 1) / w' + 1 do
+                let i, j = u*h' + i', v*w' + j' in
+                if i < new_h && j < new_w then
+                  set_pixel res i j c
+              done
+            done
+        done
+      done;
+      res
+    let resize_alike, reset_resize_alike =
+      Common.memoize3 ~size:101 resize_alike
+
+    (* cropping *)
+
+    let crop g offset_i offset_j new_h new_w =
+      let h, w = dims g in
+      if offset_i >= 0 && offset_i < h
+         && offset_j >= 0 && offset_j < w
+         && new_h > 0 && new_w > 0
+         && offset_i + new_h < h
+         && offset_j + new_w < w
+      then
+        let res = make new_h new_w black in
+        for i = 0 to new_h - 1 do
+          for j = 0 to new_w - 1 do
+            let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
+            if c <> black then
+              set_pixel res i j c
+          done
+        done;
+        Result.Ok res
+      else Result.Error (Undefined_result "Grid.Transf.crop")
+    let crop, reset_crop =
+      let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
+      (fun g i j h w -> f (g,i,j,h,w)), reset
+
+    let strip (g : t) : t result = (* croping on anything else than the majority color *)
+      let c_strip = majority_color g in (* TODO: is this the good choice? why not black? *) 
+      let h, w = dims g in
+      let min_i, max_i = ref h, ref (-1) in
+      let min_j, max_j = ref w, ref (-1) in
+      iter_pixels
+        (fun i j c ->
+          if c <> c_strip then (
+            min_i := min i !min_i;
+            max_i := max i !max_i;
+            min_j := min j !min_j;
+            max_j := max j !max_j))
+        g;
+      if !min_i < 0 (* grid is c_strip only *)
+      then Result.Error (Undefined_result "monocolor grid")
+      else
+        let| g' = crop g !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
+        Result.Ok g'
+    let strip, reset_strip =
+      Common.memoize ~size:101 strip
+      
+    (* concatenating *)
+      
+    let concatHeight g1 g2 : t result =
+      if g1.width <> g2.width
+      then Result.Error Invalid_dim
+      else (
+        let h1, h2 = g1.height, g2.height in
+        let res = make (h1+h2) g1.width black in
+        iter_pixels
+          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> set_pixel res (h1+i2) j2 c2)
+          g2;
+        Result.Ok res)
+    let concatHeight, reset_concatHeight =
+      Common.memoize2 ~size:101 concatHeight
+      
+    let concatWidth g1 g2 : t result =
+      if g1.height <> g2.height
+      then Result.Error Invalid_dim
+      else (
+        let w1, w2 = g1.width, g2.width in
+        let res = make g1.height (w1+w2) black in
+        iter_pixels
+          (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> set_pixel res i2 (w1+j2) c2)
+          g2;
+        Result.Ok res)
+    let concatWidth, reset_concatWidth =
+      Common.memoize2 ~size:101 concatWidth
+
+    let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
+      let| g12 = concatWidth g1 g2 in
+      let| g34 = concatWidth g3 g4 in
+      concatHeight g12 g34
+
+    (* TODO: selecting halves and quarters *)
+
+    let compose (m1 : Mask.t) (g2 : t) : t = (* repeating g2 for each non-black pixel of g1 *)
+      let h1, w1 = Mask.dims m1 in
+      let h2, w2 = dims g2 in
+      let res = make (h1*h2) (w1*w2) black in
+      Mask.iter
+        (fun i1 j1 ->
+          iter_pixels
+            (fun i2 j2 c2 ->
+              if c2 <> black then
+                set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
+            g2)
+        m1;
+      res
+    let compose, reset_compose =
+      Common.memoize2 ~size:101 compose
+
+    (* symmetrization *)
+
+    let layers gs : t result =
+      match gs with
+      | [] -> Result.Error (Invalid_argument "Grid.Transf.layers: empty list")
+      | g1::gs1 ->
+         let h1, w1 = dims g1 in
+         if List.for_all (fun gi -> dims gi = (h1,w1)) gs1
+         then (
+           let res = make h1 w1 black in
+           List.iter
+             (fun gi ->
+               iter_pixels
+                 (fun i j c ->
+                   if c <> black then set_pixel res i j c)
+                 gi)
+             (g1::gs1);
+           Result.Ok res)
+         else Result.Error Invalid_dim
+    let layers, reset_layers =
+      Common.memoize ~size:101 layers
+      
+    let sym_flipHeight_inplace g = layers [g; flipHeight g]
+    let sym_flipWidth_inplace g = layers [g; flipWidth g]
+    let sym_rotate180_inplace g = layers [g; rotate180 g]
+    let sym_flipHeightWidth_inplace g = layers [g; flipHeight g; flipWidth g; rotate180 g]
+    let sym_flipDiag1_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag1 g]
+    let sym_flipDiag2_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag2 g]
+    let sym_flipDiag1Diag2_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; flipDiag1 g; flipDiag2 g; rotate180 g]
+    let sym_rotate90_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else layers [g; rotate90 g; rotate180 g; rotate270 g]
+    let sym_full_inplace g =
+      if g.height <> g.width
+      then Result.Error Invalid_dim
+      else (* includes all symmetries *)
+        let| g' = layers [g; rotate90 g] in
+        Result.Ok (flipHeight g')
+
+(* not ready for use
+    let sym_flipHeight_unfold g =
+      let g'= flipHeight g in
+      [ concatHeight g g'; concatHeight g' g ]
+    let sym_flipWidth_unfold g =
+      let g'= flipWidth g in
+      [ concatWidth g g'; concatWidth g' g ]
+    let sym_rotate180_unfold g =
+      let g' = rotate180 g in
+      [ concatHeight g g'; concatHeight g' g;
+        concatWidth g g'; concatWidth g' g ]
+    let sym_flipHeightWidth_unfold g =
+      let g'= flipWidth g in
+      let g1 = concatWidth g g' in
+      let g2 = concatWidth g' g in
+      let g1' = flipHeight g1 in
+      let g2' = flipHeight g2 in
+      [ concatHeight g1 g1'; concatHeight g1' g1;
+        concatHeight g2 g2'; concatHeight g2' g2 ]
+    let sym_rotate90_unfold g =
+      if g.height <> g.width then raise Invalid_dim;
+      let g90 = rotate90 g in
+      let g180 = rotate180 g in
+      let g270 = rotate270 g in
+      [ concatHeightWidth g g90 g270 g180;
+        concatHeightWidth g270 g g180 g90;
+        concatHeightWidth g180 g270 g90 g;
+        concatHeightWidth g90 g180 g g270 ]
+ *)
+
+    let reset_memoized_functions () =
+      reset_mask_of_grid ();
+      reset_grid_of_mask ();
+      reset_swap_colors ();
+      reset_flipHeight ();
+      reset_flipWidth ();
+      reset_flipDiag1 ();
+      reset_flipDiag2 ();
+      reset_rotate90 ();
+      reset_rotate180 ();
+      reset_rotate270 ();
+      reset_scale_up ();
+      reset_scale_down ();
+      reset_scale_to ();
+      reset_tile ();
+      reset_factor ();
+      reset_resize_alike ();
+      reset_compose ();
+      reset_crop ();
+      reset_strip ();
+      reset_concatHeight ();
+      reset_concatWidth ();
+      reset_compose ();
+      reset_layers ()
+      
+  end
+  
+    
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;

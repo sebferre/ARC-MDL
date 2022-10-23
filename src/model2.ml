@@ -605,9 +605,12 @@ type 'a expr =
   | `Middle of 'a (* on Object *)
   | `ProjI of 'a (* on Vec *)
   | `ProjJ of 'a (* on Vec *)
+  | `MaskOfGrid of 'a (* Grid -> Mask *)
+  | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
+  | `Compose of 'a * 'a (* Mask, Mask/Shape/Grid as T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
      (* sym list list = matrix to be filled with symmetries of some mask *)
@@ -861,12 +864,15 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `Middle a -> xp_apply "middle" xp print [a]
   | `ProjI a -> xp_apply "projI" xp print [a]
   | `ProjJ a -> xp_apply "projJ" xp print [a]
+  | `MaskOfGrid a -> xp_apply "mask" xp print [a]
+  | `GridOfMask (a,b) -> xp_apply "grid" xp print [a;b]
   | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
   | `Tiling (a,k,l) -> xp_apply_poly "tiling" print
                          [(fun print -> xp print a);
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
   | `ResizeAlikeTo (a,b) -> xp_apply "resizeAlikeTo" xp print [a;b]
+  | `Compose (a,b) -> xp_apply "compose" xp print [a;b]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
                             (fun print -> xp print a)]
@@ -1021,9 +1027,12 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `Middle a -> dim a
   | `ProjI a -> dim a
   | `ProjJ a -> dim a
+  | `MaskOfGrid a -> dim a
+  | `GridOfMask (a,b) -> max (dim a) (dim b)
   | `TranslationOnto (a,b) -> max (dim a) (dim b)
   | `Tiling (a,k,l) -> dim a
   | `ResizeAlikeTo (a,b) -> max (dim a) (dim b)
+  | `Compose (a,b) -> max (dim a) (dim b)
   | `ApplySym (sym,a,r) -> dim a
   | `UnfoldSym (sym_arr,a) -> dim a
   | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
@@ -1869,8 +1878,9 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~bool:(uniform_among [])
     ~color:(uniform_among [])
     ~mask:(uniform_among [
+               `MaskOfGrid `X;
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
@@ -1887,7 +1897,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
+                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X);
                 `Coloring (`X,`X) ])
@@ -1898,10 +1908,11 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `UnfoldSym ([], `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
+               `GridOfMask (`X,`X);
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `Stack [`X; `X] ])
   
@@ -2015,6 +2026,13 @@ let rec dl_expr
   | `ProjI e1 | `ProjJ e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
+  | `MaskOfGrid e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Grid, path)) e1
+  | `GridOfMask (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Mask, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, Some (`Color `Shape), path)) e2
   | `TranslationOnto (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Layer, path)) e1
@@ -2028,6 +2046,10 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
+  | `Compose (e1,e2) ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e2
   | `ApplySym (sym,e1,role_e1) ->
      code_expr (* no need to encode role_e1, deducible from model *)
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
@@ -2905,7 +2927,21 @@ let apply_expr_gen
      broadcast1_result res1
        (function
         | `Vec (_, `Int j) -> Result.Ok (`Vec (`Int 0, `Int j))
-        | _ -> Result.Error (Invalid_expr e))         
+        | _ -> Result.Error (Invalid_expr e))
+  | `MaskOfGrid e1 ->
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
+       (function
+        | `Grid g -> Result.Ok (`Mask (`Mask (Grid.Transf.mask_of_grid g)))
+        | _ -> Result.Error (Invalid_expr e))
+  | `GridOfMask (e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (function
+        | `Mask (`Mask m), `Color c ->
+           Result.Ok (`Grid (Grid.Transf.grid_of_mask m c))
+        | _ -> Result.Error (Invalid_expr e))
   | `TranslationOnto (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -2967,6 +3003,29 @@ let apply_expr_gen
                Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
+  | `Compose (e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (fun (d1,d2) ->
+         let| m1 =
+           match d1 with
+           | `Mask (`Mask m1) -> Result.Ok m1
+           | `Rectangle (_, _, `Mask (`Mask m1)) -> Result.Ok m1 (* TODO: extend to other mask models, using shape size *)
+           | `Grid g1 -> Result.Ok (Grid.Transf.mask_of_grid g1)
+           | _ -> Result.Error (Invalid_expr e) in
+         match d2 with
+         | `Mask mm2 ->
+            let| mm = Grid.Mask_model.compose m1 mm2 in
+            Result.Ok (`Mask mm)
+         | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
+            let h1, w1 = Grid.Mask.dims m1 in
+            let| mm = Grid.Mask_model.compose m1 mm2 in
+            Result.Ok (`Rectangle (`Vec (`Int (h1*h2), `Int (w1*w2)), col2, `Mask mm))
+         | `Grid g2 ->
+            let g = Grid.Transf.compose m1 g2 in
+            Result.Ok (`Grid g)
+         | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
@@ -4317,21 +4376,21 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       let dim_t = template_dim t in
       let$ defs, (p,role,t0,dl_t0) = defs, u_vars in
       let dim_p = path_dim p in
-      let dim_t0 = template_dim t0 in
-      let valid_PrefixInitExtend_n_maket =
-        match dim_t with
-        | Item ->
-           (match t0 with
-            | `Prefix (main, items) ->
-               Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
-            | _ ->
-               if not (template_is_ground t0) && dim_p = Sequence && dim_t0 = Item
-               then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
-               else None)
-        | Sequence -> None in
       if (dim_t <= dim_p || not !seq) && role_poly_matches role_e role
         (* whether the expression role matches the defined path, and relaxation value *)
       then
+        let dim_t0 = template_dim t0 in
+        let valid_PrefixInitExtend_n_maket =
+          match dim_t with
+          | Item ->
+             (match t0 with
+              | `Prefix (main, items) ->
+                 Some (List.length items, (fun t_item -> `Prefix (main, items@[t_item])))
+              | _ ->
+                 if not (template_is_ground t0) && dim_p = Sequence && dim_t0 = Item
+                 then Some (0, (fun t_item -> `Prefix (t0, [t_item])))
+                 else None)
+          | Sequence -> None in
         let tmap =
           let$ tmap, (t_applied,gd,u_val,dl0) = TMap.empty, data_fst in
           let dl_ctx = dl_ctx_of_data gd.data in
@@ -4451,6 +4510,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          push (role1, `ProjI e1);
          push (role1, `ProjJ e1)
       | _ -> () in
+    let _ = (* Strip on grids *)
+      match role1 with
+      | `Grid -> push (`Grid, `Strip e1)
+      | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
       | (`Mask | `Shape | `Layer | `Grid as role1) ->
@@ -4562,10 +4625,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `DecrVec (e1,k,l))
          )
       | _ -> () in
-    let _ = (* Strip on grids *)
-      match role1 with
-      | `Grid -> push (`Grid, `Strip e1)
-      | _ -> () in
     let _ =
       let& n = [2;3] in
       let _ = (* ScaleUp, ScaleDown *)
@@ -4616,6 +4675,11 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          if k>1 || l>1 then
            push (role1, `Tiling (e1,k,l))
       | _ -> () in
+    let _ = (* Compose(e1,e1) *)
+      match role1 with
+      | `Mask | `Grid ->
+         push (role1, `Compose (e1,e1))
+      | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
       | `Mask | `Shape | `Layer | `Grid ->
@@ -4654,9 +4718,9 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
         | _ -> () in
       () in
+  (* Printf.printf "== %d / %d / %d / %d expressions ==\n" (List.length exprs_0) (List.length exprs_1) (List.length exprs_2) (List.length !exprs); flush stdout; *)
   ()
    with End_of_file -> ());
-  (*Printf.printf "== %d expressions ==\n" (List.length !exprs);*)
   List.rev !exprs)) (* approximate order in increasing size *)
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
