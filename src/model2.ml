@@ -4942,8 +4942,32 @@ let learn_model
       (let| gprs = read_grid_pairs ~pruning m pairs in
        let grsi, grso = split_grid_pairs_read gprs in
        let dl_triples = norm_dl_model_data gprs in
-       Result.Ok (gprs,grsi,grso,dl_triples))
-  in
+       Result.Ok (gprs,grsi,grso,dl_triples)) in
+  let viz_grid_pairs_reads m gpsr =
+    if grid_viz then (
+      List.iter2
+        (fun reads_input reads_pair ->
+          match reads_pair with
+          | ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
+             let gi1 = grid_of_data_failsafe gdi_knowing_o.data in
+             let go1 = grid_of_data_failsafe gdo.data in
+             let res2 = (* searching for a parse able to generate an output *)
+               let+|+ _, gdi2, _ = Result.Ok reads_input in
+               let| go2 = write_grid ~env:gdi2.data m.output_template in
+               Result.Ok [(gdi2,go2)] in
+             (match res2 with
+              | Result.Ok ((gdi2,go2)::_) ->
+                 let gi2 = grid_of_data_failsafe gdi2.data in
+                 Grid.pp_grids [gi1; go1; gi2; go2]
+              | Result.Ok [] -> assert false
+              | Result.Error exn ->
+                 Grid.pp_grids [gi1; go1];
+                 print_endline "No output grid could be produced from a parsing of the input grid";
+                 print_endline (" => " ^ Printexc.to_string exn));
+             print_newline ()
+          | _ -> assert false)
+        gpsr.input_reads gpsr.reads;
+      Unix.sleepf pause)  in
   let lm_build, timed_out_build =
   Mdl.Strategy.beam
     ~timeout:timeout_build
@@ -5008,30 +5032,7 @@ let learn_model
           pp_data d_o; print_newline ();
           Printf.printf "\tdl=%.1f\n" dl);
         print_newline ());
-      if grid_viz then (
-        List.iter2
-          (fun reads_input reads_pair ->
-            match reads_pair with
-            | ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
-               let gi1 = grid_of_data_failsafe gdi_knowing_o.data in
-               let go1 = grid_of_data_failsafe gdo.data in
-               let res2 = (* searching for a parse able to generate an output *)
-                 let+|+ _, gdi2, _ = Result.Ok reads_input in
-                 let| go2 = write_grid ~env:gdi2.data m.output_template in
-                 Result.Ok [(gdi2,go2)] in
-               (match res2 with
-                | Result.Ok ((gdi2,go2)::_) ->
-                   let gi2 = grid_of_data_failsafe gdi2.data in
-                   Grid.pp_grids [gi1; go1; gi2; go2]
-                | Result.Ok [] -> assert false
-                | Result.Error exn ->
-                   Grid.pp_grids [gi1; go1];
-                   print_endline "No output grid could be produced from a parsing of the input grid";
-                   print_endline (" => " ^ Printexc.to_string exn));
-               print_newline ()
-            | _ -> assert false)
-          gpsr.input_reads gpsr.reads;
-        Unix.sleepf pause);
+      viz_grid_pairs_reads m gpsr;
         (*pp_grids_read "### OUT grids_read ###" gsro;*)
       (*Printf.printf "    l = %.1f = %.1f + %.1f = (%.1f + %.1f) + (%.1f + %.1f)\n" lmd lm ld lmi lmo ldi ldo;*)
       flush stdout;
@@ -5053,10 +5054,13 @@ let learn_model
              data_of_model ~pruning:true m)
            ~code:(fun (r,m) (gpsr,gsri,gsro,dl_triples) ->
 	     let (lmi,lmo,lm), (ldi,ldo,ld), (_lmdi,_lmdo,lmd) = dl_triples in
-             if verbose >= 3 then (Printf.printf ": lm=%.3f\n" lm);
+             if verbose >= 2 then (
+               Printf.printf "\t?? %.3f\t" lmd;
+               pp_refinement r; print_newline ());
              lmd) (* only parse ranks counted for input grids *)
            ~refinements:(fun (r,m) (gpsr,gsri,gsro,dl_triples) dl ->
              if verbose >= 1 then (Printf.printf "%.3f\t" dl; pp_refinement r; print_newline ());
+             viz_grid_pairs_reads m gpsr;
              model_refinements_prune m) in
      match lm_prune with
      | [] -> assert false
