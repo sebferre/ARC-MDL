@@ -23,6 +23,8 @@ lis: $(SRC) arc_lis.ml
 arcathon: $(SRC:.cmo=.cmx) arcathon.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o arcathon $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) arcathon.ml
 
+docker: arcathon
+	docker build -t sferre/arcathon .
 
 clean:
 	rm -f *.cm[ioax]

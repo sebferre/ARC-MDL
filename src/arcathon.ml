@@ -1,10 +1,13 @@
 
-let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/"
-(* let root_path = "/data/" *)
-let tasks_path = root_path ^ "evaluation/"
-let solution_path = root_path ^ "solution/solution_sferre.json"
+(* PARAMS TO BE DEFINED *)
+(*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *) *)
+let root_path = "/data/" (* docker *)
+let timeout_build = 30
+let timeout_prune = 10
 
-let timeout = 30
+
+let tasks_path = root_path ^ "evaluation/"
+let solution_path = root_path ^ "solution/solution_madil.json"
 
 let load_tasks () (* including trailing / *) : int * (string * Task.task) list =
   let tasks_filenames = Array.to_list (Sys.readdir tasks_path) in
@@ -58,7 +61,8 @@ let process_task name task =
     Common.chrono (fun () ->
         Model2.learn_model
           ~verbose:0
-          ~timeout
+          ~timeout_build
+          ~timeout_prune
           ~init_model:Model2.init_model
           ~beam_width:1
           ~refine_degree:(!Model2.max_refinements)
@@ -66,20 +70,18 @@ let process_task name task =
   let tests =
     match res with
     | Common.Exn exn -> raise exn
-    | Common.Val (lm, timed_out) ->
-       match lm with
-       | [] -> [] (* no leaned model *)
-       | ((_,m), _, _)::_ ->
-          let _, tests =
-            List.fold_left
-              (fun (id,tests) pair ->
-                try
-                  let test = process_test_pair m id pair in
-                  id+1, test :: tests
-                with _ ->
-                  id+1, tests) (* recovery from unexpected error, failed some test pair *)
-              (0,[]) task.Task.test in
-          tests
+    | Common.Val res ->
+       let _, (m, _, _) = res in
+       let _, tests =
+         List.fold_left
+           (fun (id,tests) pair ->
+             try
+               let test = process_test_pair m id pair in
+               id+1, test :: tests
+             with _ ->
+               id+1, tests) (* recovery from unexpected error, failed some test pair *)
+           (0,[]) task.Task.test in
+       tests
   in
   `Assoc [ "task_name", `String name;
            "test", `List tests ]
