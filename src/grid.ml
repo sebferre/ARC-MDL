@@ -1178,8 +1178,8 @@ module Transf = (* black considered as neutral color by default *)
       let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
-    let strip (g : t) : t result = (* croping on anything else than the majority color *)
-      let c_strip = majority_color g in (* TODO: is this the good choice? why not black? *) 
+    let strip (g : t) : t result = (* croping on anything else than the majority color, the remaining majority color is made black *)
+      let c_strip = majority_color g in
       let h, w = dims g in
       let min_i, max_i = ref h, ref (-1) in
       let min_j, max_j = ref w, ref (-1) in
@@ -1194,7 +1194,11 @@ module Transf = (* black considered as neutral color by default *)
       if !min_i < 0 (* grid is c_strip only *)
       then Result.Error (Undefined_result "monocolor grid")
       else
-        let| g' = crop g !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
+        let| g' =
+          if c_strip <> black
+          then swap_colors g c_strip black
+          else Result.Ok g in
+        let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
         Result.Ok g'
     let strip, reset_strip =
       Common.memoize ~size:101 strip
