@@ -2640,7 +2640,7 @@ let apply_expr_gen
            let| mm' = Grid.Mask_model.scale_up k k mm in
            Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
         | `Grid g ->
-           let g' = Grid.Transf.scale_up k k g in
+           let| g' = Grid.Transf.scale_up k k g in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `ScaleDown (e1,k) ->
@@ -2974,7 +2974,7 @@ let apply_expr_gen
            Result.Ok (`Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask mm'))
         | `Point _ -> Result.Error (Undefined_result "Tiling: undefined on points")
         | `Grid g ->
-           let g' = Grid.Transf.tile k l g in
+           let| g' = Grid.Transf.tile k l g in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `ResizeAlikeTo (e1,e2) ->
@@ -2999,7 +2999,7 @@ let apply_expr_gen
                let| shape' = aux shape in
                Result.Ok (`PosShape (pos, shape'))
             | `Grid g ->
-               let g' = Grid.Transf.resize_alike h w g in
+               let| g' = Grid.Transf.resize_alike h w g in
                Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
@@ -3023,7 +3023,7 @@ let apply_expr_gen
             let| mm = Grid.Mask_model.compose m1 mm2 in
             Result.Ok (`Rectangle (`Vec (`Int (h1*h2), `Int (w1*w2)), col2, `Mask mm))
          | `Grid g2 ->
-            let g = Grid.Transf.compose m1 g2 in
+            let| g = Grid.Transf.compose m1 g2 in
             Result.Ok (`Grid g)
          | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
@@ -4514,27 +4514,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       match role1 with
       | `Grid -> push (`Grid, `Strip e1)
       | _ -> () in
-    let _ = (* ApplySym *)
-      match role1 with
-      | (`Mask | `Shape | `Layer | `Grid as role1) ->
-         let& sym = all_symmetry in
-         push (role1, `ApplySym (sym, e1, role1))
-      | _ -> () in
-    let _ = (* Coloring(_, const) *)
-      match role1 with
-      | (`Shape | `Layer) ->
-         let& c = Grid.all_colors in
-         push (role1, `Coloring (e1, `Color c))
-      | _ -> () in
-    let _ = (* SwapColors(_, c1, c2) *)
-      match role1 with
-      | `Grid ->
-         let& c1 = Grid.all_colors in
-         let& c2 = Grid.all_colors in
-         if c1 > c2 (* symmetric operation *)
-         then push (role1, `SwapColors (e1, `Color c1, `Color c2))
-         else ()
-      | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
       let _ = (* corner(_,_) *)
@@ -4589,10 +4568,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
                        `Rotate180; `Rotate90; `Rotate270] in
            push (`Vec `Move, `TranslationSym (sym,e1,e2))
         | _ -> () in
-      let _ = (* Coloring (_, ref) *)
-        match role1, role2 with
-        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2))
-        | _ -> () in
       let _ = (* Crop on grids *)
         match role1, role2 with
         | `Grid, `Layer -> push (`Grid, `Crop (e1,e2))
@@ -4637,14 +4612,22 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `ScaleDown (e1,n))
         | _ -> () in
       () in
-    let _ = (* not _ *)
-      match role1 with
-      | `Mask -> push (`Mask, `LogNot e1)
-      | _ -> () in
     let _ = (* 0 + move -> pos *)
       match role1 with
       | `Int (ij, `Move) -> push (`Int (ij, `Pos), `Plus (`ConstInt 0, e1))
       | `Vec `Move -> push (`Vec `Pos, `Plus (`ConstVec (0,0), e1))
+      | _ -> () in
+    let _ = (* ApplySym *)
+      match role1 with
+      | (`Mask | `Shape | `Layer | `Grid as role1) ->
+         let& sym = all_symmetry in
+         push (role1, `ApplySym (sym, e1, role1))
+      | _ -> () in
+    let _ = (* Coloring(_, const) *)
+      match role1 with
+      | (`Shape | `Layer) ->
+         let& c = Grid.all_colors in
+         push (role1, `Coloring (e1, `Color c))
       | _ -> () in
     let& (role2,e2) = exprs_1 in
       (* binary operators *)
@@ -4661,6 +4644,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `Minus (e1,e2))
         | `Vec rvec, `Vec (`X | `Size _ | `Move) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2))
+        | _ -> () in
+      let _ = (* Coloring (_, ref) *)
+        match role1, role2 with
+        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2))
         | _ -> () in
       () in
   let exprs_2 = List.rev !exprs in
@@ -4685,6 +4672,19 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | `Mask | `Shape | `Layer | `Grid ->
          let& sym_matrix = all_symmetry_matrix in
          push (role1, `UnfoldSym (sym_matrix, e1))
+      | _ -> () in
+    let _ = (* SwapColors(_, c1, c2) *)
+      match role1 with
+      | `Grid ->
+         let& c1 = Grid.all_colors in
+         let& c2 = Grid.all_colors in
+         if c1 > c2 (* symmetric operation *)
+         then push (role1, `SwapColors (e1, `Color c1, `Color c2))
+         else ()
+      | _ -> () in
+    let _ = (* not _ *)
+      match role1 with
+      | `Mask -> push (`Mask, `LogNot e1)
       | _ -> () in
     let& (role2,e2) = exprs_2 in
       let _ = (* ScaleTo on masks *)
@@ -4718,9 +4718,9 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
         | _ -> () in
       () in
-  (* Printf.printf "== %d / %d / %d / %d expressions ==\n" (List.length exprs_0) (List.length exprs_1) (List.length exprs_2) (List.length !exprs); flush stdout; *)
   ()
    with End_of_file -> ());
+  (*  Printf.printf "== %d expressions ==\n" (List.length !exprs); flush stdout; *)
   List.rev !exprs)) (* approximate order in increasing size *)
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
