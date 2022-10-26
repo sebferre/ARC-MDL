@@ -479,16 +479,21 @@ module Mask =
     (* scaling *)
       
     let scale_up (k : int) (l : int) m = (* scaling up mask [m] by a factor (k,l) *)
-      let res = ref (empty (height m * k) (width m * l)) in
-      iter
-        (fun i j ->
-          for i' = k*i to k*(i+1)-1 do
-            for j' = l*j to l*(j+1)-1 do
-              res := add i' j' !res
-            done
-          done)
-        m;
-      !res
+      let h, w = dims m in
+      let h', w' = h * k, w * l in
+      if h' > max_size || w' > max_size
+      then Result.Error (Undefined_result "Mask.scale_up: result grid too large")
+      else (
+        let res = ref (empty h' w') in
+        iter
+          (fun i j ->
+            for i' = k*i to k*(i+1)-1 do
+              for j' = l*j to l*(j+1)-1 do
+                res := add i' j' !res
+              done
+            done)
+          m;
+        Result.Ok !res)
 
     let scale_down (k : int) (l : int) m = (* scaling down *)
       let h, w = dims m in
@@ -498,32 +503,35 @@ module Mask =
         iter
           (fun i j -> res := add (i/k) (j/l) !res)
           m;
-        Some !res)
-      else None
+        Result.Ok !res)
+      else Result.Error (Undefined_result "Mask.scale_down: not congruent")
 
-    let scale_to (new_h : int) (new_w : int) (m : t) : t option =
+    let scale_to (new_h : int) (new_w : int) (m : t) : t result =
       let h, w = dims m in
       if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
-        Some (scale_up (new_h / h) (new_w / w) m)
+        scale_up (new_h / h) (new_w / w) m
       else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
         scale_down (h / new_h) (w / new_w) m
-      else None
+      else Result.Error (Undefined_result "Mask.scale_to: not congruent")
         
     (* resize and factor *)
 
     let tile (k : int) (l : int) m = (* k x l tiling of m *)
       let h, w = dims m in
       let h', w' = h * k, w * l in
-      let res = ref (empty h' w') in
-      iter
-        (fun i j ->
-          for u = 0 to k-1 do
-            for v = 0 to l-1 do
-              res := add (u*h + i) (v*w + j) !res
-            done
-          done)
-        m;
-      !res
+      if h' > max_size || w' > max_size
+      then Result.Error (Undefined_result "Mask.tile: result grid too large")
+      else (
+        let res = ref (empty h' w') in
+        iter
+          (fun i j ->
+            for u = 0 to k-1 do
+              for v = 0 to l-1 do
+                res := add (u*h + i) (v*w + j) !res
+              done
+            done)
+          m;
+        Result.Ok !res)
 
     let factor (m : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
       let rec range a b =
@@ -543,23 +551,26 @@ module Mask =
       let w' = match !w_factors with [] -> w | w'::_ -> w' in
       (h', w')
 
-    let resize_alike (m : t) (new_h : int) (new_w : int) : t = (* change size while preserving the repeating pattern *)
+    let resize_alike (m : t) (new_h : int) (new_w : int) : t result = (* change size while preserving the repeating pattern *)
       assert (new_h > 0 && new_w > 0);
-      let h', w' = factor m in
-      let res = ref (empty new_h new_w) in
-      for i' = 0 to h' - 1 do (* for each position in the factor *)
-        for j' = 0 to w' - 1 do
-          if mem i' j' m then (* when pixel on *)
-            for u = 0 to (new_h - 1) / h' + 1 do
-              for v = 0 to (new_w - 1) / w' + 1 do
-                let i, j = u*h' + i', v*w' + j' in
-                if i < new_h && j < new_w then
-                  res := add i j !res
+      if new_h > max_size || new_w > max_size
+      then Result.Error (Undefined_result "Mask.resize_alike: result grid too large")
+      else (
+        let h', w' = factor m in
+        let res = ref (empty new_h new_w) in
+        for i' = 0 to h' - 1 do (* for each position in the factor *)
+          for j' = 0 to w' - 1 do
+            if mem i' j' m then (* when pixel on *)
+              for u = 0 to (new_h - 1) / h' + 1 do
+                for v = 0 to (new_w - 1) / w' + 1 do
+                  let i, j = u*h' + i', v*w' + j' in
+                  if i < new_h && j < new_w then
+                    res := add i j !res
+                done
               done
-            done
-        done
-      done;
-      !res
+          done
+        done;
+        Result.Ok !res)
       
     (* cropping and concatenating *)
 
@@ -574,11 +585,12 @@ module Mask =
       !res      
 
     let concatHeight m1 m2 : t result =
-      if width m1 <> width m2
-      then Result.Error Invalid_dim
+      let h1, w1 = dims m1 in
+      let h2, w2 = dims m2 in
+      if w1 <> w2 then Result.Error Invalid_dim
+      else if h1+h1 > max_size then Result.Error (Undefined_result "Mask.concatHeight: result grid too large")
       else (
-        let h1, h2 = height m1, height m2 in
-        let res = ref (empty (h1+h2) (width m1)) in
+        let res = ref (empty (h1+h2) w1) in
         iter
           (fun i1 j1 -> res := add i1 j1 !res)
           m1;
@@ -588,11 +600,12 @@ module Mask =
         Result.Ok !res)
       
     let concatWidth m1 m2 : t result =
-      if height m1 <> height m2
-      then Result.Error Invalid_dim
+      let h1, w1 = dims m1 in
+      let h2, w2 = dims m2 in
+      if h1 <> h2 then Result.Error Invalid_dim
+      else if w1+w2 > max_size then Result.Error (Undefined_result "Mask.concatWidth: resut grid too large")
       else (
-        let w1, w2 = width m1, width m2 in
-        let res = ref (empty (height m1) (w1+w2)) in
+        let res = ref (empty h1 (w1+w2)) in
         iter
           (fun i1 j1 -> res := add i1 j1 !res)
           m1;
@@ -611,15 +624,19 @@ module Mask =
     let compose m1 m2 = (* repeating m2 for each 1-bit of m1 *)
       let h1, w1 = dims m1 in
       let h2, w2 = dims m2 in
-      let res = ref (empty (h1*h2) (w1*w2)) in
-      iter
-        (fun i1 j1 ->
-          iter
-            (fun i2 j2 ->
-              res := add (i1*h2+i2) (j1*w2+j2) !res)
-            m2)
-        m1;
-      !res
+      let h, w = h1*h1, w1*w2 in
+      if h > max_size || w > max_size
+      then Result.Error (Undefined_result "Mask.compose: result grid too large")
+      else (
+        let res = ref (empty (h1*h2) (w1*w2)) in
+        iter
+          (fun i1 j1 ->
+            iter
+              (fun i2 j2 ->
+                res := add (i1*h2+i2) (j1*w2+j2) !res)
+              m2)
+          m1;
+        Result.Ok !res)
 
     (* symmetrization *)
       
@@ -769,7 +786,9 @@ module Mask_model =
         mask
 
     let scale_up k l : t -> t result = function
-      | `Mask m -> Result.Ok (`Mask (Mask.scale_up k l m))
+      | `Mask m ->
+         let| m' = Mask.scale_up k l m in
+         Result.Ok (`Mask m')
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
     let scale_up, reset_scale_up =
@@ -777,9 +796,8 @@ module Mask_model =
 
     let scale_down k l : t -> t result = function
       | `Mask m ->
-         ( match Mask.scale_down k l m with
-           | Some m' -> Result.Ok (`Mask m')
-           | None -> Result.Error (Undefined_result "Grid.Mask_mode.scale_down: wrong new dimension") )
+         let| m' = Mask.scale_down k l m in
+         Result.Ok (`Mask m')
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_down: undefined")
     let scale_down, reset_scale_down =
@@ -787,23 +805,26 @@ module Mask_model =
             
     let scale_to new_h new_w : t -> t result = function
       | `Mask m ->
-         ( match Mask.scale_to new_h new_w m with
-           | Some m -> Result.Ok (`Mask m)
-           | None -> Result.Error (Undefined_result "Grid.Mask.scale_to: wrong new dimension") )
+         let| m' = Mask.scale_to new_h new_w m in
+         Result.Ok (`Mask m')
       | (`Full as mm) -> Result.Ok mm
       | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
     let scale_to, reset_scale_to =
       Common.memoize3 ~size:101 scale_to
 
     let tile k l : t -> t result = function
-      | `Mask m -> Result.Ok (`Mask (Mask.tile k l m))
+      | `Mask m ->
+         let| m' = Mask.tile k l m in
+         Result.Ok (`Mask m')
       | `Full -> Result.Ok `Full
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
     let tile, reset_tile =
       Common.memoize3 ~size:101 tile
 
     let resize_alike new_h new_w : t -> t result = function
-      | `Mask m -> Result.Ok (`Mask (Mask.resize_alike m new_h new_w))
+      | `Mask m ->
+         let| m' = Mask.resize_alike m new_h new_w in
+         Result.Ok (`Mask m')
       | (`Full | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
     let resize_alike, reset_resize_alike =
@@ -811,7 +832,9 @@ module Mask_model =
 
     let compose (m1 : Mask.t) (mm2 : t) : t result =
       match mm2 with
-      | `Mask m2 -> Result.Ok (`Mask (Mask.compose m1 m2))
+      | `Mask m2 ->
+         let| m = Mask.compose m1 m2 in
+         Result.Ok (`Mask m)
       | _ -> Result.Error (Undefined_result "Grid.Mask_model.compose: undefined")
     let compose, reset_compose =
       Common.memoize2 ~size:101 compose
@@ -1042,17 +1065,22 @@ module Transf = (* black considered as neutral color by default *)
       
     (* scaling *)
       
-    let scale_up (k : int) (l : int) (g : t) : t = (* scaling up grid [g] by a factor (k,l) *)
-      let res = make (g.height * k) (g.width * l) black in
-      iter_pixels
-        (fun i j c ->
-          for i' = k*i to k*(i+1)-1 do
-            for j' = l*j to l*(j+1)-1 do
-              set_pixel res i' j' c
-            done
-          done)
-        g;
-      res
+    let scale_up (k : int) (l : int) (g : t) : t result = (* scaling up grid [g] by a factor (k,l) *)
+      let h, w = dims g in
+      let h', w' = h * k, w * l in
+      if h' > max_size || w' > max_size
+      then Result.Error (Undefined_result "scale_up: result grid too large")
+      else (
+        let res = make h' w' black in
+        iter_pixels
+          (fun i j c ->
+            for i' = k*i to k*(i+1)-1 do
+              for j' = l*j to l*(j+1)-1 do
+                set_pixel res i' j' c
+              done
+            done)
+          g;
+        Result.Ok res)
     let scale_up, reset_scale_up =
       Common.memoize3 ~size:101 scale_up
 
@@ -1080,7 +1108,7 @@ module Transf = (* black considered as neutral color by default *)
     let scale_to (new_h : int) (new_w : int) (g : t) : t result =
       let h, w = dims g in
       if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
-        Result.Ok (scale_up (new_h / h) (new_w / w) g)
+        scale_up (new_h / h) (new_w / w) g
       else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
         scale_down (h / new_h) (w / new_w) g
       else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
@@ -1089,19 +1117,22 @@ module Transf = (* black considered as neutral color by default *)
       
     (* resize and factor *)
 
-    let tile (k : int) (l : int) g = (* k x l tiling of g *)
+    let tile (k : int) (l : int) g : t result = (* k x l tiling of g *)
       let h, w = dims g in
       let h', w' = h * k, w * l in
-      let res = make h' w' black in
-      iter_pixels
-        (fun i j c ->
-          for u = 0 to k-1 do
-            for v = 0 to l-1 do
-              set_pixel res (u*h + i) (v*w + j) c
-            done
-          done)
-        g;
-      res
+      if h' > max_size || w' > max_size
+      then Result.Error (Undefined_result "tile: result grid too large")
+      else (
+        let res = make h' w' black in
+        iter_pixels
+          (fun i j c ->
+            for u = 0 to k-1 do
+              for v = 0 to l-1 do
+                set_pixel res (u*h + i) (v*w + j) c
+              done
+            done)
+          g;
+        Result.Ok res)
     let tile, reset_tile =
       Common.memoize3 ~size:101 tile
 
@@ -1133,24 +1164,27 @@ module Transf = (* black considered as neutral color by default *)
     let factor, reset_factor =
       Common.memoize ~size:101 factor
 
-    let resize_alike (new_h : int) (new_w : int) (g : t) : t = (* change size while preserving the repeating pattern *)
+    let resize_alike (new_h : int) (new_w : int) (g : t) : t result = (* change size while preserving the repeating pattern *)
       assert (new_h > 0 && new_w > 0);
       let h', w' = factor g in
-      let res = make new_h new_w black in
-      for i' = 0 to h' - 1 do (* for each position in the factor *)
-        for j' = 0 to w' - 1 do
-          let c = get_pixel ~source:"resize_alike" g i' j' in
-          if c <> black then (* when pixel not black *)
-            for u = 0 to (new_h - 1) / h' + 1 do
-              for v = 0 to (new_w - 1) / w' + 1 do
-                let i, j = u*h' + i', v*w' + j' in
-                if i < new_h && j < new_w then
-                  set_pixel res i j c
+      if new_h > max_size || new_w > max_size
+      then Result.Error (Undefined_result "resize_alike: result grid too large")
+      else (
+        let res = make new_h new_w black in
+        for i' = 0 to h' - 1 do (* for each position in the factor *)
+          for j' = 0 to w' - 1 do
+            let c = get_pixel ~source:"resize_alike" g i' j' in
+            if c <> black then (* when pixel not black *)
+              for u = 0 to (new_h - 1) / h' + 1 do
+                for v = 0 to (new_w - 1) / w' + 1 do
+                  let i, j = u*h' + i', v*w' + j' in
+                  if i < new_h && j < new_w then
+                    set_pixel res i j c
+                done
               done
-            done
-        done
-      done;
-      res
+          done
+        done;
+        Result.Ok res)
     let resize_alike, reset_resize_alike =
       Common.memoize3 ~size:101 resize_alike
 
@@ -1206,11 +1240,12 @@ module Transf = (* black considered as neutral color by default *)
     (* concatenating *)
       
     let concatHeight g1 g2 : t result =
-      if g1.width <> g2.width
-      then Result.Error Invalid_dim
+      let h1, w1 = dims g1 in
+      let h2, w2 = dims g2 in
+      if w1 <> w2 then Result.Error Invalid_dim
+      else if h1+h2 > max_size then Result.Error (Undefined_result "concatHeight: result grid too large")
       else (
-        let h1, h2 = g1.height, g2.height in
-        let res = make (h1+h2) g1.width black in
+        let res = make (h1+h2) w1 black in
         iter_pixels
           (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
           g1;
@@ -1222,11 +1257,12 @@ module Transf = (* black considered as neutral color by default *)
       Common.memoize2 ~size:101 concatHeight
       
     let concatWidth g1 g2 : t result =
-      if g1.height <> g2.height
-      then Result.Error Invalid_dim
+      let h1, w1 = dims g1 in
+      let h2, w2 = dims g2 in
+      if h1 <> h2 then Result.Error Invalid_dim
+      else if w1+w2 > max_size then Result.Error (Undefined_result "concatWidth: result grid too large")
       else (
-        let w1, w2 = g1.width, g2.width in
-        let res = make g1.height (w1+w2) black in
+        let res = make h1 (w1+w2) black in
         iter_pixels
           (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
           g1;
@@ -1244,19 +1280,23 @@ module Transf = (* black considered as neutral color by default *)
 
     (* TODO: selecting halves and quarters *)
 
-    let compose (m1 : Mask.t) (g2 : t) : t = (* repeating g2 for each non-black pixel of g1 *)
+    let compose (m1 : Mask.t) (g2 : t) : t result = (* repeating g2 for each non-black pixel of g1 *)
       let h1, w1 = Mask.dims m1 in
       let h2, w2 = dims g2 in
-      let res = make (h1*h2) (w1*w2) black in
-      Mask.iter
-        (fun i1 j1 ->
-          iter_pixels
-            (fun i2 j2 c2 ->
-              if c2 <> black then
-                set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
-            g2)
-        m1;
-      res
+      let h, w = h1*h2, w1*w2 in
+      if h > max_size || w > max_size
+      then Result.Error (Undefined_result "compose: result grid too large")
+      else (
+        let res = make h w black in
+        Mask.iter
+          (fun i1 j1 ->
+            iter_pixels
+              (fun i2 j2 c2 ->
+                if c2 <> black then
+                  set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
+              g2)
+          m1;
+        Result.Ok res)
     let compose, reset_compose =
       Common.memoize2 ~size:101 compose
 
