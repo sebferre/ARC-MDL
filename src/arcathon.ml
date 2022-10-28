@@ -1,10 +1,10 @@
 
 (* PARAMS TO BE DEFINED *)
-(*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *) *)
+(*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
 let timeout_build = 30
 let timeout_prune = 10
-
+let timeout_predict = 10
 
 let tasks_path = root_path ^ "evaluation/"
 let solution_path = root_path ^ "solution/solution_madil.json"
@@ -39,8 +39,9 @@ let json_of_grid (grid : Grid.t) =
   
 let process_test_pair m id {Task.input; output=_} = (* output not relevant *)
   let nb_preds, preds =
-    match Model2.apply_model m input with
-    | Result.Ok predictions ->
+    match Common.do_timeout timeout_predict
+            (fun () -> Model2.apply_model m input) with
+    | Some (Result.Ok predictions) ->
        let nb_preds, preds =
          List.fold_left
            (fun (i,preds) (_gdi,predicted_output) ->
@@ -50,38 +51,31 @@ let process_test_pair m id {Task.input; output=_} = (* output not relevant *)
              i+1, pred :: preds)
            (0,[]) predictions in
        nb_preds, preds
-    | Result.Error exn -> 0, []
+    | _ -> 0, []
   in
   `Assoc [ "output_id", `Int id;
            "number_of_predictions", `Int nb_preds;
            "predictions", `List (List.rev preds) ]
   
 let process_task name task =
-  let runtime, res =
-    Common.chrono (fun () ->
-        Model2.learn_model
-          ~verbose:0
-          ~timeout_build
-          ~timeout_prune
-          ~init_model:Model2.init_model
-          ~beam_width:1
-          ~refine_degree:(!Model2.max_refinements)
-          task.Task.train) in
-  let tests =
-    match res with
-    | Common.Exn exn -> raise exn
-    | Common.Val res ->
-       let _, (m, _, _) = res in
-       let _, tests =
-         List.fold_left
-           (fun (id,tests) pair ->
-             try
-               let test = process_test_pair m id pair in
-               id+1, test :: tests
-             with _ ->
-               id+1, tests) (* recovery from unexpected error, failed some test pair *)
-           (0,[]) task.Task.test in
-       tests
+  let _, (m, _, _) =
+    Model2.learn_model
+      ~verbose:0
+      ~timeout_build
+      ~timeout_prune
+      ~init_model:Model2.init_model
+      ~beam_width:1
+      ~refine_degree:(!Model2.max_refinements)
+      task.Task.train in
+  let _, tests =
+    List.fold_left
+      (fun (id,tests) pair ->
+        try
+          let test = process_test_pair m id pair in
+          id+1, test :: tests
+        with _ ->
+          id+1, tests) (* recovery from unexpected error, failed some test pair *)
+      (0,[]) task.Task.test
   in
   `Assoc [ "task_name", `String name;
            "test", `List tests ]
