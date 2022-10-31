@@ -1302,25 +1302,26 @@ module Transf = (* black considered as neutral color by default *)
 
     (* symmetrization *)
 
-    let layers gs : t result =
+    let layers ?(bgcolor = black) gs : t result =
       match gs with
       | [] -> Result.Error (Invalid_argument "Grid.Transf.layers: empty list")
       | g1::gs1 ->
          let h1, w1 = dims g1 in
          if List.for_all (fun gi -> dims gi = (h1,w1)) gs1
          then (
-           let res = make h1 w1 black in
+           let res = make h1 w1 bgcolor in
            List.iter
              (fun gi ->
                iter_pixels
                  (fun i j c ->
-                   if c <> black then set_pixel res i j c)
+                   if c <> bgcolor then set_pixel res i j c)
                  gi)
-             (g1::gs1);
+             gs;
            Result.Ok res)
          else Result.Error Invalid_dim
     let layers, reset_layers =
-      Common.memoize ~size:101 layers
+      let f, reset = Common.memoize ~size:101 (fun (bgcolor,gs) -> layers ~bgcolor gs) in
+      (fun ?(bgcolor = black) gs -> f (bgcolor,gs)), reset
       
     let sym_flipHeight_inplace g = layers [g; flipHeight g]
     let sym_flipWidth_inplace g = layers [g; flipWidth g]

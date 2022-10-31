@@ -18,7 +18,7 @@ let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_la
 let def_match_threshold = def_param "def_match_threshold" (if !seq then 0.6 else 1.) string_of_float (* ratio threshold for considering that a definition is a match *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
-let max_expressions = def_param "max_expressions" 10000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
+let max_expressions = def_param "max_expressions" 50000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
 let max_refinements = def_param "max_refinements" 20 string_of_int (* max nb of considered refinements *)
 
 exception TODO
@@ -613,7 +613,9 @@ type 'a expr =
   | `Compose of 'a * 'a (* Mask, Mask/Shape/Grid as T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
-     (* sym list list = matrix to be filled with symmetries of some mask *)
+  (* sym list list = matrix to be filled with symmetries of some mask *)
+  | `CloseSym of symmetry list * 'a * 'a (* Color, Mask/Shape/Object/Grid as T -> T *)
+  (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
   | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
   | `SwapColors of 'a * 'a * 'a (* Grid, Color, Color -> Grid *)
@@ -631,15 +633,15 @@ let all_symmetry = [
   ]
 let nb_symmetry = List.length all_symmetry
 
-let all_symmetry_matrix = [
+let all_symmetry_unfold = [
     [[`Id; `FlipWidth]; [`FlipHeight; `Rotate180]];
     [[`Id]; [`FlipHeight]];
     [[`Id; `FlipWidth]];
     [[`Id; `Rotate90]; [`Rotate270; `Rotate180]]
   ] (* TODO: in principle, should add more unfolds following the 10 symmetry groups. See sym_X_unfold in Grid.Transf/Mask_model *)
-let nb_symmetry_matrix = List.length all_symmetry_matrix
+let nb_symmetry_unfold = List.length all_symmetry_unfold
 
-let all_symmetry_compose = [
+let all_symmetry_close = List.rev [ (* preferring stronger symmetries. TODO: do through DL *)
     [`FlipHeight];
     [`FlipWidth];
     [`Rotate180];
@@ -650,7 +652,7 @@ let all_symmetry_compose = [
     [`Rotate90; `Rotate180]; (* entails Rotate270 *)
     [`FlipHeight; `Rotate90; `Rotate180] (* entails FlipWidth, FlipDiag1, FlipDiag2, Rotate270: fullest symmetry *)
   ]
-let nb_symmetry_compose = List.length all_symmetry_compose
+let nb_symmetry_close = List.length all_symmetry_close
                        
 type template =
   [ `Any (* an item of sequence items with no constraint (anything) *)
@@ -888,6 +890,14 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                print#string "]")
              sym_array);
         (fun print -> xp print a)]
+  | `CloseSym (sym_seq,a,b) ->
+     xp_apply_poly "closeSym" print
+       [(fun print ->
+           List.iter
+             (fun sym -> xp_symmetry print sym; print#string "; ")
+             sym_seq);
+        (fun print -> xp print a);
+        (fun print -> xp print b)]
   | `TranslationSym (sym,a,b) -> xp_apply_poly "translationSym" print
                                    [(fun print -> xp_symmetry print sym);
                                     (fun print -> xp print a);
@@ -1035,6 +1045,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `Compose (a,b) -> max (dim a) (dim b)
   | `ApplySym (sym,a,r) -> dim a
   | `UnfoldSym (sym_arr,a) -> dim a
+  | `CloseSym (sym_seq,a,b) -> max (dim a) (dim b)
   | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
   | `Coloring (a,b) -> max (dim a) (dim b)
   | `SwapColors (a,b,c) -> max (dim a) (max (dim b) (dim c))
@@ -1882,7 +1893,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym ([], `X);
+               `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X ])
     ~vec:(uniform_among [
@@ -1899,13 +1910,13 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                 `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
-                `UnfoldSym ([], `X);
+                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
                 `ResizeAlikeTo (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
-                `UnfoldSym ([], `X);
+                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
                `GridOfMask (`X,`X);
@@ -1914,7 +1925,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `Crop (`X,`X); `Strip `X;
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym ([], `X); `Stack [`X; `X] ])
+               `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
 let rec dl_expr
           (dl : ctx:dl_ctx -> path:revpath -> 'a -> dl)
@@ -2056,8 +2067,13 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (2, Some role_e1, path)) e1
   | `UnfoldSym (sym_array,e1) ->
      code_expr (* includes encoding of sym list list *)
-     +. Mdl.Code.uniform nb_symmetry_matrix (* encoding the choice of the symmetry matrix *)
+     +. Mdl.Code.uniform nb_symmetry_unfold (* encoding the choice of the symmetry matrix *)
      +. dl ~ctx ~path:(`Arg (2, None, path)) e1
+  | `CloseSym (sym_seq,e1,e2) ->
+     code_expr
+     +. Mdl.Code.uniform nb_symmetry_close (* encoding sym_seq *)
+     +. dl ~ctx ~path:(`Arg (2, Some (`Color `Grid), path)) e1
+     +. dl ~ctx ~path:(`Arg (3, None, path)) e2
   | `TranslationSym (sym,e1,e2) ->
      code_expr
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
@@ -2512,63 +2528,139 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
   | `Grid, _ -> sym_grid d1
   | _ -> Result.Error (Invalid_expr e)
 
-let unfold_symmetry (sym_matrix : symmetry list list) =
-  let unfold_symmetry_aux (type a)
-        (concatHeight : a -> a -> a result)
-        (concatWidth : a -> a -> a result)
-        (apply_sym : symmetry -> a -> a)
-        (x : a) : a result =
-    let rec gen_matrix : symmetry list list -> a result = function
-      | [] -> assert false
-      | [row] -> gen_row row
-      | row::rows ->
-         let| xrow = gen_row row in
-         let| xrows = gen_matrix rows in
-         concatHeight xrow xrows
-    and gen_row : symmetry list -> a result = function
-      | [] -> assert false
-      | [sym] -> Result.Ok (apply_sym sym x)
-      | sym::syms ->
+let unfold_any
+      (concatHeight : 'a -> 'a -> 'a result)
+      (concatWidth : 'a -> 'a -> 'a result)
+      (apply_sym : symmetry -> 'a -> 'a)
+      (sym_matrix : symmetry list list)
+    : 'a -> 'a result =
+  let rec gen_matrix : symmetry list list -> ('a -> 'a result) = function
+    | [] -> assert false
+    | [row] -> gen_row row
+    | row::rows ->
+       let g_row = gen_row row in
+       let g_rows = gen_matrix rows in
+       (fun x ->
+         let| xrow = g_row x in
+         let| xrows = g_rows x in
+         concatHeight xrow xrows)
+  and gen_row : symmetry list -> ('a -> 'a result) = function
+    | [] -> assert false
+    | [sym] -> (fun x -> Result.Ok (apply_sym sym x))
+    | sym::syms ->
+       let g_syms = gen_row syms in
+       (fun x ->
          let xsym = apply_sym sym x in
-         let| xsyms = gen_row syms in
-         concatWidth xsym xsyms
-    in
-    gen_matrix sym_matrix in
-  let unfold_size = function
-    | `Vec (`Int h, `Int w) ->
-       let k, l =
-         match sym_matrix with
-         | (_::syms)::rows -> 1 + List.length rows, 1 + List.length syms
-         | _ -> assert false in
-       `Vec (`Int (k*h), `Int (l*w))
-    | _ -> assert false in
-  let unfold_mask = function
-    | `Mask m ->
-       let| m' = unfold_symmetry_aux Grid.Mask.concatHeight Grid.Mask.concatWidth mask_sym m in
-       Result.Ok (`Mask m')
-    | `Full -> Result.Ok `Full
-    | _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: not a custom mask") in
-  let unfold_grid g =
-    unfold_symmetry_aux Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym g
-  in
+         let| xsyms = g_syms x in
+         concatWidth xsym xsyms) in
+  gen_matrix sym_matrix
+
+let unfold_size sym_matrix = function
+  | `Vec (`Int h, `Int w) ->
+     let| h', w' =
+       unfold_any
+         (fun (h1,w1) (h2,w2) ->
+           if w1=w2 then Result.Ok (h1+h2, w1) else Result.Error (Undefined_result "unfold_size"))
+         (fun (h1,w1) (h2,w2) ->
+           if h1=h2 then Result.Ok (h1, w1+w2) else Result.Error (Undefined_result "unfold_size"))
+         (fun _ (h,w) -> (h,w)) (* for symmetries returning (w,h), h=w must hold *)
+         sym_matrix
+         (h,w) in
+     Result.Ok (`Vec (`Int h', `Int w'))
+  | _ -> Result.Error (Undefined_result "Model2.unfold_size: not a size")
+
+let unfold_mask sym_matrix = function
+  | `Mask m ->
+     let| m' = unfold_any Grid.Mask.concatHeight Grid.Mask.concatWidth mask_sym sym_matrix m in
+     Result.Ok (`Mask m')
+  | `Full -> Result.Ok `Full
+  | _ -> Result.Error (Undefined_result "Model2.unfold_mask: not a custom mask")
+let unfold_mask, reset_unfold_mask =
+  Common.memoize2 ~size:101 unfold_mask                   
+
+let unfold_grid sym_matrix g =
+  unfold_any Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym sym_matrix g
+let unfold_grid, reset_unfold_grid =
+  Common.memoize2 ~size:101 unfold_grid                     
+
+let unfold_symmetry (sym_matrix : symmetry list list) =
   fun e d ->
   match d with
   | `Mask mm ->
-     let| mm = unfold_mask mm in
+     let| mm = unfold_mask sym_matrix mm in
      Result.Ok (`Mask mm)
   | `Rectangle (size, col, `Mask mm) ->
-     let| mm = unfold_mask mm in
-     Result.Ok (`Rectangle (unfold_size size, col, `Mask mm))
+     let| size = unfold_size sym_matrix size in
+     let| mm = unfold_mask sym_matrix mm in
+     Result.Ok (`Rectangle (size, col, `Mask mm))
   | `Point _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
-     let| mm = unfold_mask mm in
-     Result.Ok (`PosShape (pos, `Rectangle (unfold_size size, col, `Mask mm)))
+     let| size = unfold_size sym_matrix size in
+     let| mm = unfold_mask sym_matrix mm in
+     Result.Ok (`PosShape (pos, `Rectangle (size, col, `Mask mm)))
   | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `Grid g ->
-     let| g' = unfold_grid g in
+     let| g' = unfold_grid sym_matrix g in
      Result.Ok (`Grid g')
   | _ -> Result.Error (Invalid_expr e)
 
+       
+let close_any
+      (stack : 'a list -> 'a result)
+      (apply_sym : symmetry -> 'a -> 'a)
+      (sym_seq : symmetry list)
+    : 'a -> 'a result =
+  let rec gen_seq : symmetry list -> ('a -> 'a result) = function
+    | [] -> (fun x1 -> Result.Ok x1)
+    | sym::syms ->
+       let g = gen_seq syms in
+       (fun x1 ->
+         let y1 = apply_sym sym x1 in
+         let| x2 = stack [x1; y1] in
+         g x2) in
+  gen_seq sym_seq
+
+let close_mask sym_seq = function
+  | `Mask m ->
+     let| m' = close_any Grid.Mask.layers mask_sym sym_seq m in
+     Result.Ok (`Mask m)
+  | `Full -> Result.Ok `Full
+  | _ -> Result.Error (Undefined_result "Model2.close_symmetry: not a custom mask")
+let close_mask, reset_close_mask =
+  Common.memoize2 ~size:101 close_mask                   
+       
+let close_grid sym_seq bgcolor g =
+  let| g' = close_any (Grid.Transf.layers ~bgcolor) grid_sym sym_seq g in
+  Result.Ok g'
+let close_grid, reset_close_grid =
+  Common.memoize3 ~size:101 close_grid
+
+let close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
+  fun e d ->
+  match d with
+  | `Mask mm ->
+     let| mm = close_mask sym_seq mm in
+     Result.Ok (`Mask mm)
+  | `Rectangle (size, col, `Mask mm) ->
+     let| mm = close_mask sym_seq mm in
+     Result.Ok (`Rectangle (size, col, `Mask mm))
+  | `Point _ -> Result.Error (Undefined_result "Model2.close_symmetry: point")
+  | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
+     let| mm = close_mask sym_seq mm in
+     Result.Ok (`PosShape (pos, `Rectangle (size, col, `Mask mm)))
+  | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.close_symmetry: point")
+  | `Grid g ->
+     let| g = close_grid sym_seq bgcolor g in
+     Result.Ok (`Grid g)
+  | _ -> Result.Error (Invalid_expr e)
+
+let reset_memoized_functions_apply () =
+  reset_unfold_mask ();
+  reset_unfold_grid ();
+  reset_close_mask ();
+  reset_close_grid ()
+
+  
 let apply_expr_gen
       (apply : lookup:apply_lookup -> revpath -> 'a -> template result)
       ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template result = (* QUICK *)
@@ -3034,6 +3126,14 @@ let apply_expr_gen
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
        (unfold_symmetry sym_matrix e)
+  | `CloseSym (sym_matrix,e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (fun (d1,d2) ->
+         match d1 with
+         | `Color bgcolor -> close_symmetry sym_matrix bgcolor e d2
+         | _ -> Result.Error (Invalid_expr e))
   | `TranslationSym (sym,e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4670,9 +4770,19 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let _ = (* UnfoldSym *)
       match role1 with
       | `Mask | `Shape | `Layer | `Grid ->
-         let& sym_matrix = all_symmetry_matrix in
+         let& sym_matrix = all_symmetry_unfold in
          push (role1, `UnfoldSym (sym_matrix, e1))
       | _ -> () in
+    let _ = (* CloseSym *)
+      match role1 with
+      | `Mask | `Shape | `Layer ->
+         let& sym_seq = all_symmetry_close in
+         push (role1, `CloseSym (sym_seq, `Color Grid.black, e1)) (* bgcolor does not matter for masks *)
+      | `Grid ->
+         let& sym_seq = all_symmetry_close in
+         let& bgcolor = Grid.all_colors in
+         push (role1, `CloseSym (sym_seq, `Color bgcolor, e1))
+      | _ -> () in   
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
       | `Grid ->
@@ -4696,6 +4806,12 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         match role1, role2 with
         | (`Mask | `Shape | `Layer | `Grid), `Vec (`X | `Size _) ->
            push (role1, `ResizeAlikeTo (e1,e2))
+        | _ -> () in
+      let _ = (* CloseSym on grid with color path *)
+        match role1, role2 with
+        | `Color _, `Grid ->
+           let& sym_seq = all_symmetry_close in
+           push (role1, `CloseSym (sym_seq, e1, e2))
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with

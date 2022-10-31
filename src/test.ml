@@ -261,7 +261,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names =
-  (* 78 tasks, 2.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
+  (* 79 tasks, 1.4s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   (* 48 tasks, 1.6s/task for timeout=30s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   [ "007bbfb7.json"; (* NEW compose grid on itself (each pixel becomes the full grid) *)
     "017c7c7b.json"; (* some blue shape in 6x3 grid, resize alike to grid size 9x3 and color in blue. runtime=0.3s *)
@@ -320,7 +320,8 @@ let solved_train_names =
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.2s *)
     "b1948b0a.json"; (* any bitmap, changing background color, or replacing pink by red, runtime=0.1s *)
     "b230c067.json"; (* three cyan shapes, set the two biggest blue (same shapes), and the smallest red, runtime=1.5s *)
-                     (* CAUTION: works because always three shapes, and the different shape always the smaller one *)
+    (* CAUTION: works because always three shapes, and the different shape always the smaller one *)
+    "b8825c91.json"; (* NEW close grid for Full symmetry, taking yellow as the background color *)
     "b94a9452.json"; (* square in square, crop on big square, swap colors, runtime=0.3s *)
     "ba97ae07.json"; (* two rectangles overlapping, below becomes above, runtime=0.2s *)
     "bb43febb.json"; (* two grey rectangles, add red rectangles inside, letting a grey border, runtime=8.3s *)
