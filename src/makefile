@@ -25,6 +25,7 @@ arcathon: $(SRC:.cmo=.cmx) arcathon.ml
 
 docker: arcathon
 	docker build -t sferre/arcathon .
+	docker save sferre/arcathon > docker_madil.tar
 
 clean:
 	rm -f *.cm[ioax]

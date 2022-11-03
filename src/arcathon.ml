@@ -2,8 +2,8 @@
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
-let timeout_build = 30
-let timeout_prune = 10
+let timeout_build = 120
+let timeout_prune = 20
 let timeout_predict = 10
 
 let tasks_path = root_path ^ "evaluation/"
