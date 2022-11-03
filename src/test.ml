@@ -479,6 +479,7 @@ let main_tasks (dir : string) (names : string list) (checker : checker) : unit =
   Printf.printf "mode = %s\n" (if !training then "training" else "evaluation");
   Printf.printf "timeout_build = %d\n" !timeout_build;
   Printf.printf "timeout_prune = %d\n" !timeout_prune;
+  Printf.printf "timeout_predict = %d\n" !timeout_predict;
   print_newline ();
   let nb_tasks = List.length names in
   let _ =
