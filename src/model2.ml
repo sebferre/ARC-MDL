@@ -610,6 +610,7 @@ type 'a expr =
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
+  | `FillAlike of bool (* total *) * 'a * 'a (* on Color, Grid -> Grid *)
   | `Compose of 'a * 'a (* Mask, Mask/Shape/Grid as T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
@@ -874,6 +875,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
   | `ResizeAlikeTo (a,b) -> xp_apply "resizeAlikeTo" xp print [a;b]
+  | `FillAlike (total,a,b) -> xp_apply ("fillAlike" ^ if total then "_total" else "") xp print [a;b]
   | `Compose (a,b) -> xp_apply "compose" xp print [a;b]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
@@ -1042,6 +1044,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `TranslationOnto (a,b) -> max (dim a) (dim b)
   | `Tiling (a,k,l) -> dim a
   | `ResizeAlikeTo (a,b) -> max (dim a) (dim b)
+  | `FillAlike (_,a,b) -> max (dim a) (dim b)
   | `Compose (a,b) -> max (dim a) (dim b)
   | `ApplySym (sym,a,r) -> dim a
   | `UnfoldSym (sym_arr,a) -> dim a
@@ -1923,7 +1926,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false, `X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
@@ -2057,6 +2060,11 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
+  | `FillAlike (total,e1,e2) ->
+     code_expr
+     +. 1. (* total *)
+     +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e2
   | `Compose (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
@@ -3095,6 +3103,15 @@ let apply_expr_gen
                Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
+  | `FillAlike (total,e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (function
+        | `Color bgcolor, `Grid g ->
+           let| g' = Grid.Transf.fill_alike total bgcolor g in
+           Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))     
   | `Compose (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4613,6 +4630,12 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let _ = (* Strip on grids *)
       match role1 with
       | `Grid -> push (`Grid, `Strip e1)
+      | _ -> () in
+    let _ = (* FillAlike *)
+      match role1 with
+      | `Grid ->
+         push (role1, `FillAlike (false, `Color Grid.black, e1));
+         push (role1, `FillAlike (true, `Color Grid.black, e1))
       | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)

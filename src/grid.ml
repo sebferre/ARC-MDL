@@ -65,6 +65,13 @@ let make height width col =
   color_count.(col) <- height * width;
   { height; width; matrix; color_count }
 
+let copy (g : t) =
+  let matrix' = Array2.create Int8_unsigned C_layout g.height g.width in
+  Array2.blit g.matrix matrix';
+  { g with
+    color_count = Array.copy g.color_count;
+    matrix = matrix' }
+  
 let dummy = make 0 0 0
 
 let dims (grid : t) : int * int =
@@ -1188,6 +1195,254 @@ module Transf = (* black considered as neutral color by default *)
     let resize_alike, reset_resize_alike =
       Common.memoize3 ~size:101 resize_alike
 
+    type axis = I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
+    type period = axis * int (* axis(i,j) mod p: defines p equivalence classes *)
+    type periodicity =
+      | Period1 of period * (int * int * color) array
+      | Period2 of period * period * (int * int * color) array array
+    (* array elements are triples k:(nc,n,c) where [c] is the color of
+       equivalence class [k], [n] is the number of pixels in that
+       equivalence class, and [nc] the number of such pixels
+       exhibiting color [c] (the (n-nc) others have background color)
+       *)
+
+    let xp_axis (print : Xprint.t) = function
+      | I -> print#string "i"
+      | J -> print#string "j"
+      | PlusIJ -> print#string "i+j"
+      | DiffIJ -> print#string "|i-j|"
+      | MaxIJ -> print#string "max(i,j)"
+      | MinIJ -> print#string "min(i,j)"
+      | DivIJ -> print#string "max(i,j)/min(i,j)"
+      
+    let eval_axis : axis -> (int -> int -> int) = function
+      | I -> (fun i j -> i)
+      | J -> (fun i j -> j)
+      | PlusIJ -> (fun i j -> i+j)
+      | DiffIJ -> (fun i j -> max i j - min i j)
+      | MaxIJ -> (fun i j -> max i j)
+      | MinIJ -> (fun i j -> min i j)
+      | DivIJ -> (fun i j -> (max i j + 1) / (min i j + 1))
+
+    let bound_axis : axis -> (int -> int -> int) = function (* max value for axis in hxw grid *)
+      | I -> (fun h w -> h)
+      | J -> (fun h w -> w)
+      | PlusIJ -> (fun h w -> h+w)
+      | DiffIJ -> (fun h w -> max h w - 0)
+      | MaxIJ -> (fun h w -> max h w)
+      | MinIJ -> (fun h w -> min h w)
+      | DivIJ -> (fun h w -> (max h w + 1) / 1)
+
+    let xp_period (print : Xprint.t) (axis,p) =
+      xp_axis print axis; print#string " mod "; print#int p
+    let pp_period = Xprint.to_stdout xp_period
+
+    let periodicity_is_total : periodicity -> bool = function
+      | Period1 (_,k_ar) ->
+         not (Array.exists (fun (_,_,c) ->
+                  c = no_color)
+                k_ar)
+      | Period2 (_,_,k2_ar) ->
+         not (Array.exists (fun k_ar ->
+                  Array.exists (fun (_,_,c) ->
+                      c = no_color)
+                    k_ar)
+                k2_ar)
+
+                  
+    let all_axis : axis list = [I; J; PlusIJ; DiffIJ; MaxIJ; MinIJ; DivIJ]
+    let all_axis_pairs : (axis * axis) list =
+      let rec aux = function
+        | [] -> []
+        | axis1::next ->
+           let res = aux next in
+           List.fold_left
+             (fun res axis2 -> (axis1,axis2)::res)
+             res next
+      in
+      aux all_axis
+                  
+    let periodicities (bgcolor : color) (g : t) : periodicity list =
+      let rec range a b =
+        if a > b then []
+        else a :: range (a+1) b in
+      let product la lb =
+        List.fold_left
+          (fun res a ->
+            List.fold_left
+              (fun res b ->
+                (a,b)::res)
+              res lb)
+          [] la
+      in
+      let h, w = dims g in
+      (* initialization *)
+      let periods1 = ref(
+        List.map
+          (fun axis ->
+            let f_axis = eval_axis axis in
+            let max_axis = bound_axis axis h w in
+            let p_map =
+              List.map
+                (fun p ->
+                  let k_ar = Array.make p (0,0,no_color) in
+                  (p, k_ar))
+                (range 2 max_axis) in
+            (axis, f_axis, ref p_map))
+          all_axis) in
+      let periods2 = ref(
+        List.map
+          (fun (axis1,axis2) ->
+            let f_axis1 = eval_axis axis1 in
+            let max_axis1 = bound_axis axis1 h w in
+            let f_axis2 = eval_axis axis2 in
+            let max_axis2 = bound_axis axis2 h w in
+            let p2_map =
+              List.map
+                (fun (p1,p2) ->
+                  let k2_ar = Array.make_matrix p1 p2 (0,0,no_color) in
+                  (p1, p2, k2_ar))
+                (product (range 2 max_axis1) (range 2 max_axis2)) in
+            (axis1, f_axis1, axis2, f_axis2, ref p2_map))
+          all_axis_pairs) in
+      (* filtering through one pass of the grid pixels *)
+      iter_pixels
+        (fun i j c ->
+          periods1 :=
+            List.filter
+              (fun (axis,f_axis,ref_p_map) ->
+                let pre_k = f_axis i j in
+                let p_map =
+                  List.filter
+                    (fun (p,k_ar) ->
+                      let k = pre_k mod p in
+                      let nc, n, c_k = k_ar.(k) in
+                      if c = bgcolor then (k_ar.(k) <- (nc,n+1,c_k); true)
+                      else if c_k = no_color then (k_ar.(k) <- (1,n+1,c); true)
+                      else if c_k = c then (k_ar.(k) <- (nc+1,n+1,c_k); true)
+                      else (* inconsistency *) false)
+                    !ref_p_map in
+                if p_map = [] (* no period for this axis *)
+                then false
+                else (ref_p_map := p_map; true))
+              !periods1;
+          periods2 :=
+            List.filter
+              (fun (axis1,f_axis1,axis2,f_axis2,ref_p2_map) ->
+                let pre_k1 = f_axis1 i j in
+                let pre_k2 = f_axis2 i j in
+                let p2_map =
+                  List.filter
+                    (fun (p1,p2,k2_ar) ->
+                      let k1 = pre_k1 mod p1 in
+                      let k2 = pre_k2 mod p2 in
+                      let nc, n, c_k = k2_ar.(k1).(k2) in
+                      if c = bgcolor then (k2_ar.(k1).(k2) <- (nc,n+1,c_k); true)
+                      else if c_k = no_color then (k2_ar.(k1).(k2) <- (1,n+1,c); true)
+                      else if c_k = c then (k2_ar.(k1).(k2) <- (nc+1,n+1,c_k); true)
+                      else (* inconsistency *) false)
+                    !ref_p2_map in
+                if p2_map = [] (* no period for those axis *)
+                then false
+                else (ref_p2_map := p2_map; true))
+              !periods2)
+        g;
+      (* collecting results *)
+      let res =
+        List.fold_left
+          (fun res (axis,f_axis,ref_p_map) ->
+            List.fold_left
+              (fun res (p,k_ar) ->
+                if Array.exists (fun (_,n,_) -> n=0) k_ar (* some equiv class is empty in g *)
+                then res
+                else
+                  let diffs =
+                    Array.fold_left
+                      (fun res (nc,n,c) ->
+                        if c = no_color then res else res + (n-nc))
+                      0 k_ar in
+                  let cost = p + diffs in
+                  (cost, Period1 ((axis,p),k_ar))::res)
+              res !ref_p_map)
+          [] !periods1 in
+      let res =
+        List.fold_left
+          (fun res (axis1,f_axis1,axis2,f_axis2,ref_p2_map) ->
+            List.fold_left
+              (fun res (p1,p2,k2_ar) ->
+                if Array.exists (fun k_ar ->
+                       Array.exists (fun (_,n,_) ->
+                           n=0)
+                         k_ar)
+                     k2_ar (* some equiv class is empty in g *)
+                   || Array.for_all (fun k_ar ->
+                          Array.for_all2 (fun (_,_,c1) (_,_,c2) -> c1=c2) k2_ar.(0) k_ar (* axis2 is redundant *)
+                          || let _, _, c0 = k_ar.(0) in
+                             Array.for_all (fun (_,_,c) -> c=c0) k_ar) (* axis1 is redundant *)
+                        k2_ar
+                then res
+                else
+                  let diffs =
+                    Array.fold_left
+                      (fun res k_ar ->
+                        Array.fold_left
+                          (fun res (nc,n,c) ->
+                            if c = no_color then res else res + (n-nc))
+                          res k_ar)
+                      0 k2_ar in
+                  let cost = p1*p2 + diffs in
+                  (cost, Period2 ((axis1,p1),(axis2,p2),k2_ar))::res)
+              res !ref_p2_map)
+          res !periods2 in
+      let res = (* sorting by increasing cost *)
+        List.sort
+          (fun period1 period2 -> Stdlib.compare period1 period2)
+          res in
+      List.map snd res
+    let periodicities, reset_periodicities =
+      Common.memoize ~size:101 periodicities
+
+    let fill_with_periodicity (bgcolor : color) (g : t) (period : periodicity) : t =
+      match period with
+      | Period1 ((axis,p),k_ar) ->
+         let f_axis = eval_axis axis in
+         let g' = copy g in
+         iter_pixels
+           (fun i j c ->
+             if c = bgcolor then ( (* only modifying bgcolor pixels *)
+               let _, _, c_k = k_ar.(f_axis i j mod p) in
+               if c_k <> no_color then set_pixel g' i j c_k))
+           g;
+         g'
+      | Period2 ((axis1,p1),(axis2,p2),k2_ar) ->
+         let f_axis1 = eval_axis axis1 in
+         let f_axis2 = eval_axis axis2 in
+         let g' = copy g in
+         iter_pixels
+           (fun i j c ->
+             if c = bgcolor then ( (* only modifying bgcolor pixels *)
+               let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
+               if c_k <> no_color then set_pixel g' i j c_k))
+           g;
+         g'
+      
+    let fill_alike (total : bool) (bgcolor : color) (g : t) : t result =
+      let periods = periodicities bgcolor g in
+      match periods with
+      | [] -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no periodicity")
+      | period0::next ->
+         if total
+         then
+           if periodicity_is_total period0
+           then Result.Error (Undefined_result "Grid.Transf.fill_alike: first period ok")
+           else
+             match List.find_opt periodicity_is_total next with
+             | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no total periodicity")
+             | Some period -> Result.Ok (fill_with_periodicity bgcolor g period)
+         else Result.Ok (fill_with_periodicity bgcolor g period0)
+    let fill_alike, reset_fill_alike =
+      Common.memoize3 ~size:101 fill_alike
+      
     (* cropping *)
 
     let crop g offset_i offset_j new_h new_w =
@@ -1397,6 +1652,8 @@ module Transf = (* black considered as neutral color by default *)
       reset_tile ();
       reset_factor ();
       reset_resize_alike ();
+      reset_periodicities ();
+      reset_fill_alike ();
       reset_compose ();
       reset_crop ();
       reset_strip ();
