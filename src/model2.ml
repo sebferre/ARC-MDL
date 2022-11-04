@@ -1814,7 +1814,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~mask:(uniform_among [
                `MaskOfGrid `X;
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
@@ -1831,13 +1831,13 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `Compose (`X,`X);
+                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
-                `ResizeAlikeTo (`X,`X);
+                `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
@@ -1846,7 +1846,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false, `X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
@@ -3017,11 +3017,24 @@ let apply_expr_gen
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
-       (function
-        | `Color bgcolor, `Grid g ->
-           let| g' = Grid.Transf.fill_alike total bgcolor g in
-           Result.Ok (`Grid g')
-        | _ -> Result.Error (Invalid_expr e))     
+       (fun (d1,d2) ->
+         match d1 with
+         | `Color bgcolor ->
+            (match d2 with
+             | `Mask m ->
+                let| m' = Mask_model.fill_alike total bgcolor m in
+                Result.Ok (`Mask m')
+             | `Rectangle (size, color, `Mask m) ->
+                let| m' = Mask_model.fill_alike total bgcolor m in
+                Result.Ok (`Rectangle (size, color, `Mask m'))
+             | `PosShape (pos, `Rectangle (size, color, `Mask m)) ->
+                let| m' = Mask_model.fill_alike total bgcolor m in
+                Result.Ok (`PosShape (pos, `Rectangle (size, color, `Mask m')))
+             | `Grid g ->
+                let| g' = Grid.Transf.fill_alike total bgcolor g in
+                Result.Ok (`Grid g')
+             | _ -> Result.Error (Invalid_expr e))
+         | _ -> Result.Error (Invalid_expr e))
   | `Compose (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4543,9 +4556,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | _ -> () in
     let _ = (* FillAlike *)
       match role1 with
-      | `Grid ->
-         push (role1, `FillAlike (false, `Color Grid.black, e1));
-         push (role1, `FillAlike (true, `Color Grid.black, e1))
+      | (`Mask | `Shape | `Layer | `Grid) ->
+         let bgcolor = Grid.black in
+         let& total = [false; true] in
+         push (role1, `FillAlike (total, `Color bgcolor, e1))
       | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
