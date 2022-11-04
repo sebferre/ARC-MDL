@@ -553,13 +553,13 @@ let checker_segmentation : checker =
 	 [pair.input; pair.output]
 	 |> List.iter
 	      (fun g ->
-	       let parts = Grid.segment_by_color g in
-	       let full_bmp = Grid.(Bitmap.full g.height g.width) in
-	       let points = Grid.points g full_bmp parts in
-	       let rects = Grid.rectangles g full_bmp parts in
-	       Grid.pp_parts g parts;
-	       Grid.pp_points g points;
-	       Grid.pp_rectangles g rects;
+	       let parts = Segment.segment_by_color g in
+	       let full_bmp = Bitmap.full g.height g.width in
+	       let points = Segment.points g full_bmp parts in
+	       let rects = Segment.rectangles g full_bmp parts in
+	       Segment.pp_parts g parts;
+	       Segment.pp_points g points;
+	       Segment.pp_rectangles g rects;
 	       print_newline ()))
 	(task.train @ task.test)
     method summarize_tasks = ()

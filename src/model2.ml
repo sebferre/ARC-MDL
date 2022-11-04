@@ -340,7 +340,7 @@ type 'a patt =
   [ `Bool of bool
   | `Int of int
   | `Color of Grid.color
-  | `Mask of Grid.Mask_model.t
+  | `Mask of Mask_model.t
   | `Vec of 'a * 'a (* i, j -> vec *)
   | `Point of 'a (* color -> shape *)
   | `Rectangle of 'a * 'a * 'a (* size, color, mask -> shape *)
@@ -752,7 +752,7 @@ let xp_path_list (print : Xprint.t) lp =
   print#string ")"
 let pp_path_list = Xprint.to_stdout xp_path_list
 
-let xp_mask_model (print : Xprint.t) : Grid.Mask_model.t -> unit = function
+let xp_mask_model (print : Xprint.t) : Mask_model.t -> unit = function
   | `Full -> print#string "Full"
   | `Border -> print#string "Border"
   | `EvenCheckboard -> print#string "Even Checkboard"
@@ -1447,7 +1447,7 @@ let matcher_patt (matcher : 'a -> matcher) (patt : 'a patt) : matcher =
   | `Mask m ->
      let rec matcher_mask =
        Matcher (function
-           | `Mask dm -> Grid.Mask_model.subsumes m dm, matcher_mask
+           | `Mask dm -> Mask_model.subsumes m dm, matcher_mask
            | _ -> false, matcher_fail) in
      matcher_mask
   | `Vec (i,j) ->
@@ -1605,7 +1605,7 @@ let dl_background_color : Grid.color -> dl =
      if c > 0 && c < 10 (* 9 colors *)
      then Mdl.Code.usage 0.01
      else invalid_arg "Unexpected color"
-let dl_mask : Grid.Mask_model.t -> dl =
+let dl_mask : Mask_model.t -> dl =
   function
   | `Full -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
   | `Border -> Mdl.Code.usage 0.1
@@ -2435,15 +2435,15 @@ let apply_patt
          `Root layers in
      Result.Ok (`Background (rgrid,rsize,rcolor,rlayers))
 
-let mask_model_sym : symmetry -> (Grid.Mask_model.t -> Grid.Mask_model.t result) = function
+let mask_model_sym : symmetry -> (Mask_model.t -> Mask_model.t result) = function
   | `Id -> (fun g -> Result.Ok g)
-  | `FlipHeight -> Grid.Mask_model.flipHeight
-  | `FlipWidth -> Grid.Mask_model.flipWidth
-  | `FlipDiag1 -> Grid.Mask_model.flipDiag1
-  | `FlipDiag2 -> Grid.Mask_model.flipDiag2
-  | `Rotate180 -> Grid.Mask_model.rotate180
-  | `Rotate90 -> Grid.Mask_model.rotate90
-  | `Rotate270 -> Grid.Mask_model.rotate270
+  | `FlipHeight -> Mask_model.flipHeight
+  | `FlipWidth -> Mask_model.flipWidth
+  | `FlipDiag1 -> Mask_model.flipDiag1
+  | `FlipDiag2 -> Mask_model.flipDiag2
+  | `Rotate180 -> Mask_model.rotate180
+  | `Rotate90 -> Mask_model.rotate90
+  | `Rotate270 -> Mask_model.rotate270
                 
 let grid_sym : symmetry -> (Grid.t -> Grid.t) = function
     | `Id -> Fun.id
@@ -2723,12 +2723,12 @@ let apply_expr_gen
         | `Int i1 -> Result.Ok (`Int (i1 * k))
         | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
         | `Mask mm ->
-           let| mm' = Grid.Mask_model.scale_up k k mm in
+           let| mm' = Mask_model.scale_up k k mm in
            Result.Ok (`Mask mm')
         | `Point col ->
            Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask `Full))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
-           let| mm' = Grid.Mask_model.scale_up k k mm in
+           let| mm' = Mask_model.scale_up k k mm in
            Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
         | `Grid g ->
            let| g' = Grid.Transf.scale_up k k g in
@@ -2749,13 +2749,13 @@ let apply_expr_gen
            then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
            else Result.Error (Undefined_result "ScaleDown: not an integer")
         | `Mask mm ->
-           let| mm' = Grid.Mask_model.scale_down k k mm in
+           let| mm' = Mask_model.scale_down k k mm in
            Result.Ok (`Mask mm')
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
            let remh, remw = h mod k, w mod k in
            if remh = remw && (remh = 0 || remh = k-1) (* account for separators *)
            then
-             let| mm' = Grid.Mask_model.scale_down k k mm in
+             let| mm' = Mask_model.scale_down k k mm in
              Result.Ok (`Rectangle (`Vec (`Int (h / k), `Int (w / k)), col, `Mask mm'))
            else Result.Error (Undefined_result "ScaleDown: not an integer size")
         | `Grid g ->
@@ -2768,12 +2768,12 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask mm, `Vec (`Int new_h, `Int new_w) ->
-           let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
+           let| mm' = Mask_model.scale_to new_h new_w mm in
            Result.Ok (`Mask mm')
         | `Point col, `Vec (`Int new_h, `Int new_w) ->
            Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask `Full))
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm), `Vec (`Int new_h, `Int new_w) ->
-           let| mm' = Grid.Mask_model.scale_to new_h new_w mm in
+           let| mm' = Mask_model.scale_to new_h new_w mm in
            Result.Ok (`Rectangle (`Vec (`Int new_h, `Int new_w), col, `Mask mm'))
         | `Grid g, `Vec (`Int new_h, `Int new_w) ->
            let| g' = Grid.Transf.scale_to new_h new_w g in
@@ -2905,7 +2905,7 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask mm1, `Mask mm2 ->
-           let| mm = Grid.Mask_model.inter mm1 mm2 in
+           let| mm = Mask_model.inter mm1 mm2 in
            Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogOr (e1,e2) ->
@@ -2914,7 +2914,7 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask mm1, `Mask mm2 ->
-           let| mm = Grid.Mask_model.union mm1 mm2 in
+           let| mm = Mask_model.union mm1 mm2 in
            Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogXOr (e1,e2) ->
@@ -2923,7 +2923,7 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask mm1, `Mask mm2 ->
-           let| mm = Grid.Mask_model.diff_sym mm1 mm2 in
+           let| mm = Mask_model.diff_sym mm1 mm2 in
            Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogAndNot (e1,e2) ->
@@ -2932,7 +2932,7 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask mm1, `Mask mm2 ->
-           let| mm = Grid.Mask_model.diff mm1 mm2 in
+           let| mm = Mask_model.diff mm1 mm2 in
            Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `LogNot e1 ->
@@ -2940,7 +2940,7 @@ let apply_expr_gen
      broadcast1_result res1
        (function
         | `Mask mm1 ->
-           let| mm = Grid.Mask_model.compl mm1 in
+           let| mm = Mask_model.compl mm1 in
            Result.Ok (`Mask mm)
         | _ -> Result.Error (Invalid_expr e))
   | `Stack le1 ->
@@ -2956,7 +2956,7 @@ let apply_expr_gen
        (function
         | `Point _ -> Result.Ok (`Int 1)
         | `Rectangle (`Vec (`Int height, `Int width), _, `Mask m) ->
-           Result.Ok (`Int (Grid.Mask_model.area ~height ~width m))
+           Result.Ok (`Int (Mask_model.area ~height ~width m))
         | `Grid g -> Result.Ok (`Int (g.height * g.width))
         | _ -> Result.Error (Invalid_expr e))
   | `Left e1 ->
@@ -3058,10 +3058,10 @@ let apply_expr_gen
        (function
         | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
         | `Mask mm ->
-           let| mm' = Grid.Mask_model.tile k l mm in
+           let| mm' = Mask_model.tile k l mm in
            Result.Ok (`Mask mm')
         | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
-           let| mm' = Grid.Mask_model.tile k l mm in
+           let| mm' = Mask_model.tile k l mm in
            Result.Ok (`Rectangle (`Vec (`Int (h*k), `Int (w*l)), col, `Mask mm'))
         | `Point _ -> Result.Error (Undefined_result "Tiling: undefined on points")
         | `Grid g ->
@@ -3078,12 +3078,12 @@ let apply_expr_gen
              | `Point col ->
                 Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask `Full))
              | `Rectangle (_size, col, `Mask mm) ->
-                let| mm' = Grid.Mask_model.resize_alike h w mm in
+                let| mm' = Mask_model.resize_alike h w mm in
                 Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask mm'))
              | _ -> assert false in             
            (match d1 with
             | `Mask mm ->
-               let| mm' = Grid.Mask_model.resize_alike h w mm in
+               let| mm' = Mask_model.resize_alike h w mm in
                Result.Ok (`Mask mm')
             | (`Point _ | `Rectangle _ as shape) -> aux shape
             | `PosShape (pos,shape) ->
@@ -3116,11 +3116,11 @@ let apply_expr_gen
            | _ -> Result.Error (Invalid_expr e) in
          match d2 with
          | `Mask mm2 ->
-            let| mm = Grid.Mask_model.compose m1 mm2 in
+            let| mm = Mask_model.compose m1 mm2 in
             Result.Ok (`Mask mm)
          | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
             let h1, w1 = Grid.dims m1 in
-            let| mm = Grid.Mask_model.compose m1 mm2 in
+            let| mm = Mask_model.compose m1 mm2 in
             Result.Ok (`Rectangle (`Vec (`Int (h1*h2), `Int (w1*w2)), col2, `Mask mm))
          | `Grid g2 ->
             let| g = Grid.Transf.compose m1 g2 in
@@ -3394,7 +3394,7 @@ and draw_layer g = function
      let maxj = minj + w - 1 in
      for i = mini to maxi do
        for j = minj to maxj do
-	 if Grid.Mask_model.mem ~height:h ~width:w (i-mini) (j-minj) m
+	 if Mask_model.mem ~height:h ~width:w (i-mini) (j-minj) m
 	 then Grid.set_pixel g i j c
        done;
      done
@@ -3423,8 +3423,8 @@ type parse_state =
   { quota_diff: int; (* nb of allowed additional diffs *)
     diff: diff; (* paths to data that differ from template patterns *)
     delta: delta; (* pixels that are not explained by the template *)
-    bmp: Grid.Bitmap.t; (* remaining part of the grid to be explained *)
-    parts: Grid.part list; (* remaining parts that can be used *)
+    bmp: Bitmap.t; (* remaining part of the grid to be explained *)
+    parts: Segment.part list; (* remaining parts that can be used *)
     grid: Grid.t; (* the grid to parse *)
   }
 
@@ -3435,7 +3435,7 @@ let add_diff path state =
 let add_delta_with_bmp ~bmp delta new_delta =
   List.fold_left
     (fun delta (i,j,c as pixel) ->
-      if Grid.Bitmap.mem i j bmp
+      if Bitmap.mem i j bmp
       then pixel::delta
       else delta)
     delta new_delta
@@ -3443,7 +3443,7 @@ let add_delta_with_bmp ~bmp delta new_delta =
 let filter_parts_with_bmp ~new_bmp parts = (* QUICK *)
   List.filter
     (fun p ->
-      not (Grid.Bitmap.inter_is_empty p.Grid.pixels new_bmp))
+      not (Bitmap.inter_is_empty p.Segment.pixels new_bmp))
     parts
 
 type ('a,'b) parseur = (* input -> state -> results *)
@@ -3615,7 +3615,7 @@ let parseur_color t p : (Grid.color,data) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
   
-let parseur_mask t p : (Grid.Mask_model.t list, data) parseur = (* QUICK *)
+let parseur_mask t p : (Mask_model.t list, data) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun ms state ->
@@ -3624,7 +3624,7 @@ let parseur_mask t p : (Grid.Mask_model.t list, data) parseur = (* QUICK *)
     ~parseur_patt:(function
       | `Mask m0 ->
          parseur_rec (fun ms state ->
-             if List.exists (Grid.Mask_model.subsumes m0) ms then
+             if List.exists (Mask_model.subsumes m0) ms then
                Myseq.return (`Mask m0, state)
              else if state.quota_diff > 0 then
                let* m = Myseq.from_list ms in
@@ -3651,8 +3651,8 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
     t p
 
 let state_minus_shape_gen state occ_color occ_delta occ_new_cover = (* QUICK *)
-  let new_bmp = Grid.Bitmap.diff state.bmp occ_new_cover in
-  if Grid.Bitmap.equal new_bmp state.bmp
+  let new_bmp = Bitmap.diff state.bmp occ_new_cover in
+  if Bitmap.equal new_bmp state.bmp
   then None (* the shape is fully hidden, explains nothing new *)
   else
     let new_state =
@@ -3660,18 +3660,18 @@ let state_minus_shape_gen state occ_color occ_delta occ_new_cover = (* QUICK *)
 	bmp = new_bmp;
         delta = add_delta_with_bmp ~bmp:state.bmp state.delta occ_delta;
 	parts = filter_parts_with_bmp ~new_bmp state.parts
-                |> List.filter (fun (p : Grid.part) -> not (occ_color = p.color && Grid.Bitmap.is_subset occ_new_cover p.Grid.pixels))
+                |> List.filter (fun (p : Segment.part) -> not (occ_color = p.color && Bitmap.is_subset occ_new_cover p.Segment.pixels))
                                (* that would make occ useless if selecting p later *)
       } in
     Some new_state
 let state_minus_point state (i,j,c) =
   let occ_delta = [] in
-  let occ_new_cover = Grid.Bitmap.singleton state.grid.height state.grid.width i j in
+  let occ_new_cover = Bitmap.singleton state.grid.height state.grid.width i j in
   state_minus_shape_gen state c occ_delta occ_new_cover
-let state_minus_rectangle state (rect : Grid.rectangle) =
+let state_minus_rectangle state (rect : Segment.rectangle) =
   state_minus_shape_gen state rect.color rect.delta rect.new_cover  
 
-let parseur_shape t p : (Grid.point list Lazy.t * Grid.rectangle list Lazy.t, data (* object *)) parseur =
+let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy.t, data (* object *)) parseur =
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun (points,rects) state ->
@@ -3708,7 +3708,7 @@ let parseur_shape t p : (Grid.point list Lazy.t * Grid.rectangle list Lazy.t, da
            (parseur_mask mask (p ++ `Mask))
            (fun parse_size parse_color parse_mask (points,rects) state ->
              let* rect = Myseq.from_list (Lazy.force rects) in
-             let open Grid in
+             let open Segment in
              let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
              let* dcolor, state, stop_color, next_color = parse_color rect.color state in
              let* dmask, state, stop_mask, next_mask = parse_mask rect.mask_models state in
@@ -3726,8 +3726,8 @@ let parseur_object t p : (unit, data) parseur =
       parseur_rec1
         (parseur_shape `Any (p ++ `Shape))
         (fun parse_shape () state ->
-          let points = lazy (Grid.points state.grid state.bmp state.parts) in
-          let rects = lazy (Grid.rectangles state.grid state.bmp state.parts) in
+          let points = lazy (Segment.points state.grid state.bmp state.parts) in
+          let rects = lazy (Segment.rectangles state.grid state.bmp state.parts) in
           let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
           (* no constraint on position *)
           Myseq.return (dobject, state, stop_shape, next_shape)))
@@ -3737,8 +3737,8 @@ let parseur_object t p : (unit, data) parseur =
            (parseur_vec pos (p ++ `Pos))
            (parseur_shape shape (p ++ `Shape))
            (fun parse_pos parse_shape () state ->
-             let points = lazy (Grid.points state.grid state.bmp state.parts) in
-             let rects = lazy (Grid.rectangles state.grid state.bmp state.parts) in
+             let points = lazy (Segment.points state.grid state.bmp state.parts) in
+             let rects = lazy (Segment.rectangles state.grid state.bmp state.parts) in
              let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
              match dobject with
              | `PosShape (`Vec (`Int i, `Int j), dshape) ->
@@ -3819,13 +3819,13 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
         let seq_background_colors =
           match color with
           | `Color bc -> (fun g -> Myseq.return bc)
-          | `Any -> (fun g -> Myseq.from_list (Grid.background_colors g))
+          | `Any -> (fun g -> Myseq.from_list (Segment.background_colors g))
           | _ -> assert false in
         let parse_bg_color g state =
           let* bc = seq_background_colors g in
           let* dcolor, state, _, _ = parse_color bc state in
           let state = { state with (* ignoring parts belonging to background *)
-                        parts = List.filter (fun (p : Grid.part) -> p.color <> bc) state.parts } in
+                        parts = List.filter (fun (p : Segment.part) -> p.color <> bc) state.parts } in
           Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
         Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid/seq" (
@@ -3839,7 +3839,7 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
 	  (* adding mask pixels with other color than background to delta *)
           let new_state =
             let new_delta = ref state.delta in
-	    Grid.Bitmap.iter
+	    Bitmap.iter
 	      (fun i j ->
                 let c = Grid.get_pixel ~source:"parseur_grid" g i j in
 	        if c <> bc then
@@ -3847,7 +3847,7 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
 	      state.bmp;
             { state with
               delta = (!new_delta);
-	      bmp = Grid.Bitmap.empty g.height g.width;
+	      bmp = Bitmap.empty g.height g.width;
 	      parts = [] } in
 	  Myseq.return (data, new_state, true, parseur_empty)))
      | _ -> parseur_empty)
@@ -3920,8 +3920,8 @@ let read_grid
   let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
-                bmp = Grid.Bitmap.full g.height g.width;
-                parts = Grid.segment_by_color g;
+                bmp = Bitmap.full g.height g.width;
+                parts = Segment.segment_by_color g;
                 grid = g } in
   let parses =
     let* qdiff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
@@ -4937,6 +4937,9 @@ let learn_grid_model ~timeout ~beam_width ~refine_degree ~env_sig
       (egrids : (data * Grid.t) list)
     : ((grid_refinement * template) * grids_read * dl) list * bool =
   Grid.reset_memoized_functions ();
+  Mask_model.reset_memoized_functions ();
+  Segment.reset_memoized_functions ();
+  reset_memoized_functions_apply ();
   reset_dl_data ();
   Mdl.Strategy.beam
     ~timeout
@@ -5066,6 +5069,9 @@ let learn_model
     : (model * grid_pairs_read * bool) double
   = Common.prof "Model2.learn_model" (fun () ->
   Grid.reset_memoized_functions ();
+  Mask_model.reset_memoized_functions ();
+  Segment.reset_memoized_functions ();
+  reset_memoized_functions_apply ();
   let norm_dl_model_data = make_norm_dl_model_data () in
   let data_of_model ~pruning m =
     Result.to_option
