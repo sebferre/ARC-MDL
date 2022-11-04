@@ -274,7 +274,7 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
     then None
     else Some (Grid_diff_pixels {height; width; pixels=(!res)})
 
-(* grid masks *)
+(* grid bitmaps *)
 
 module type BITMAP =
   sig
@@ -463,637 +463,6 @@ module Bitmap : BITMAP =
       done
       
   end
-  
-module MaskCoreGrid : BITMAP =
-  struct
-    type grid = t
-    type t = grid
-
-    let height m = m.height [@@inline]
-    let width m = m.width [@@inline]
-    let area m = try m.color_count.(1) with _ -> assert false [@@inline]
-
-    let empty height width = make height width 0
-    let full height width = make height width 1
-    let singleton height width i j =
-      let m = make height width 0 in
-      set_pixel m i j 1;
-      m
-      
-    let equal m1 m2 = (m1 = m2) [@@inline]
-    let is_empty m =
-      for_all_pixels (fun i j c -> c = 0) m
-    let is_subset m1 m2 =
-      for_all_pixels (fun i j c1 ->
-          let c2 = get_pixel ~source:"is_subset" m2 i j in
-          c1 = 0 ||  c2 = 1)
-        m1
-    let inter_is_empty m1 m2 =
-      for_all_pixels (fun i j c1 ->
-          let c2 = get_pixel ~source:"inter_is_empty" m2 i j in
-          c1 = 0 || c2 = 0)
-        m1
-
-    let mem i j m =
-      i >= 0 && i < m.height
-      && j >= 0 && j < m.width
-      && get_pixel m i j = 1 [@@inline]
-    let add i j m =
-      if i >= 0 && i < m.height
-         && j >= 0 && j < m.width
-         && get_pixel m i j = 0
-      then (
-        let m' = copy m in
-        set_pixel m' i j 1;
-        m')
-      else m
-    let remove i j m =
-      if i >= 0 && i < m.height
-         && j >= 0 && j < m.width
-         && get_pixel m i j = 1
-      then (
-        let m' = copy m in
-        set_pixel m' i j 0;
-        m')
-      else m
-
-    let union m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 lor c2) m1 m2
-    let inter m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 land c2) m1 m2
-    let diff m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 land (lnot c2)) m1 m2
-    let diff_sym m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 lxor c2) m1 m2
-    let compl m =
-      map_pixels (fun c -> 1 - c) m
-
-    let fold f acc m =
-      fold_pixels
-        (fun acc i j c -> if c = 1 then f acc i j else acc)
-        acc m
-
-    let iter f m =
-      iter_pixels
-        (fun i j c -> if c = 1 then f i j)
-        m
-
-  end
-
-module Mask =
-  struct
-    (*    include MaskCoreBitmap *)
-    include MaskCoreGrid
-
-    let from_bitmap (bmp : Bitmap.t) : t =
-      let m = empty (Bitmap.height bmp) (Bitmap.width bmp) in
-      Bitmap.fold
-        (fun res i j -> add i j res)
-        m bmp
-          
-    let dims m = height m, width m [@@inline]
-    let same_size m1 m2 = (dims m1 = dims m2)
-
-    let to_string m =
-      let h, w = dims m in
-      let bytes = Bytes.create (h * w + h - 1) in
-      let pos = ref 0 in
-      for i = 0 to h - 1 do
-        if i > 0 then (
-          Bytes.set bytes !pos '|';
-          incr pos
-        );
-        for j = 0 to w - 1 do
-          if mem i j m
-          then Bytes.set bytes !pos 'x'
-          else Bytes.set bytes !pos '.';
-          incr pos
-        done
-      done;
-      Bytes.to_string bytes
-    let pp m = print_string (to_string m)
-
-    (* isometric transformations *)
-      
-    let flipHeight m =
-      let h, w = dims m in
-      let res = ref (empty h w) in
-      iter
-        (fun i j -> res := add (h - 1 - i) j !res)
-        m;
-      !res
-      
-    let flipWidth m =
-      let h, w = dims m in
-      let res = ref (empty h w) in
-      iter
-        (fun i j -> res := add i (w - 1 - j) !res)
-        m;
-      !res
-
-    let flipDiag1 m =
-      let h, w = dims m in
-      let res = ref (empty w h) in
-      iter
-        (fun i j -> res := add j i !res)
-        m;
-      !res
-
-    let flipDiag2 m =
-      let h, w = dims m in
-      let res = ref (empty w h) in
-      iter
-        (fun i j -> res := add (w - 1 - j) (h - 1 - i) !res)
-        m;
-      !res
-
-    let rotate90 m = (* clockwise *)
-      let h, w = dims m in
-      let res = ref (empty w h) in
-      iter
-        (fun i j -> res := add j (h - 1 - i) !res)
-        m;
-      !res
-      
-    let rotate180 m = (* clockwise *)
-      let h, w = dims m in
-      let res = ref (empty h w) in
-      iter
-        (fun i j -> res := add (h - 1 - i) (w - 1 - j) !res)
-        m;
-      !res
-      
-    let rotate270 m = (* clockwise *)
-      let h, w = dims m in
-      let res = ref (empty w h) in
-      iter
-        (fun i j -> res := add (w - 1 - j) i !res)
-        m;
-      !res
-
-    (* scaling *)
-      
-    let scale_up (k : int) (l : int) m = (* scaling up mask [m] by a factor (k,l) *)
-      let h, w = dims m in
-      let h', w' = h * k, w * l in
-      if h' > max_size || w' > max_size
-      then Result.Error (Undefined_result "Mask.scale_up: result grid too large")
-      else (
-        let res = ref (empty h' w') in
-        iter
-          (fun i j ->
-            for i' = k*i to k*(i+1)-1 do
-              for j' = l*j to l*(j+1)-1 do
-                res := add i' j' !res
-              done
-            done)
-          m;
-        Result.Ok !res)
-
-    let scale_down (k : int) (l : int) m = (* scaling down *)
-      let h, w = dims m in
-      if h mod k = 0 && w mod l = 0
-      then ( (* each resulting pixel is a OR of the corresponding source pixels *)
-        let res = ref (empty (height m / k) (width m / l)) in
-        iter
-          (fun i j -> res := add (i/k) (j/l) !res)
-          m;
-        Result.Ok !res)
-      else Result.Error (Undefined_result "Mask.scale_down: not congruent")
-
-    let scale_to (new_h : int) (new_w : int) (m : t) : t result =
-      let h, w = dims m in
-      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
-        scale_up (new_h / h) (new_w / w) m
-      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
-        scale_down (h / new_h) (w / new_w) m
-      else Result.Error (Undefined_result "Mask.scale_to: not congruent")
-        
-    (* resize and factor *)
-
-    let tile (k : int) (l : int) m = (* k x l tiling of m *)
-      let h, w = dims m in
-      let h', w' = h * k, w * l in
-      if h' > max_size || w' > max_size
-      then Result.Error (Undefined_result "Mask.tile: result grid too large")
-      else (
-        let res = ref (empty h' w') in
-        iter
-          (fun i j ->
-            for u = 0 to k-1 do
-              for v = 0 to l-1 do
-                res := add (u*h + i) (v*w + j) !res
-              done
-            done)
-          m;
-        Result.Ok !res)
-
-    let factor (m : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
-      let rec range a b =
-        if a > b then []
-        else a :: range (a+1) b
-      in
-      let h, w = dims m in
-      let h_factors = ref (range 1 (h-1)) in
-      let w_factors = ref (range 1 (w-1)) in
-      for i = 0 to h-1 do
-        for j = 0 to w-1 do
-          h_factors := !h_factors |> List.filter (fun h' -> mem i j m = mem (i mod h') j m);
-          w_factors := !w_factors |> List.filter (fun w' -> mem i j m = mem i (j mod w') m)
-        done
-      done;
-      let h' = match !h_factors with [] -> h | h'::_ -> h' in
-      let w' = match !w_factors with [] -> w | w'::_ -> w' in
-      (h', w')
-
-    let resize_alike (m : t) (new_h : int) (new_w : int) : t result = (* change size while preserving the repeating pattern *)
-      assert (new_h > 0 && new_w > 0);
-      if new_h > max_size || new_w > max_size
-      then Result.Error (Undefined_result "Mask.resize_alike: result grid too large")
-      else (
-        let h', w' = factor m in
-        let res = ref (empty new_h new_w) in
-        for i' = 0 to h' - 1 do (* for each position in the factor *)
-          for j' = 0 to w' - 1 do
-            if mem i' j' m then (* when pixel on *)
-              for u = 0 to (new_h - 1) / h' + 1 do
-                for v = 0 to (new_w - 1) / w' + 1 do
-                  let i, j = u*h' + i', v*w' + j' in
-                  if i < new_h && j < new_w then
-                    res := add i j !res
-                done
-              done
-          done
-        done;
-        Result.Ok !res)
-      
-    (* cropping and concatenating *)
-
-    let crop m offset_i offset_j new_h new_w =
-      let res = ref (empty new_h new_w) in
-      for i = 0 to new_h - 1 do
-        for j = 0 to new_w - 1 do
-          if mem (offset_i + i) (offset_j + j) m then
-            res := add i j !res
-        done
-      done;
-      !res      
-
-    let concatHeight m1 m2 : t result =
-      let h1, w1 = dims m1 in
-      let h2, w2 = dims m2 in
-      if w1 <> w2 then Result.Error Invalid_dim
-      else if h1+h1 > max_size then Result.Error (Undefined_result "Mask.concatHeight: result grid too large")
-      else (
-        let res = ref (empty (h1+h2) w1) in
-        iter
-          (fun i1 j1 -> res := add i1 j1 !res)
-          m1;
-        iter
-          (fun i2 j2 -> res := add (h1+i2) j2 !res)
-          m2;
-        Result.Ok !res)
-      
-    let concatWidth m1 m2 : t result =
-      let h1, w1 = dims m1 in
-      let h2, w2 = dims m2 in
-      if h1 <> h2 then Result.Error Invalid_dim
-      else if w1+w2 > max_size then Result.Error (Undefined_result "Mask.concatWidth: resut grid too large")
-      else (
-        let res = ref (empty h1 (w1+w2)) in
-        iter
-          (fun i1 j1 -> res := add i1 j1 !res)
-          m1;
-        iter
-          (fun i2 j2 -> res := add i2 (w1+j2) !res)
-          m2;
-        Result.Ok !res)
-
-    let concatHeightWidth m1 m2 m3 m4 : t result (* top left, top right, bottom left, bottom right *) =
-      let| m12 = concatWidth m1 m2 in
-      let| m34 = concatWidth m3 m4 in
-      concatHeight m12 m34
-
-    (* TODO: selecting halves and quarters *)
-
-    let compose m1 m2 = (* repeating m2 for each 1-bit of m1 *)
-      let h1, w1 = dims m1 in
-      let h2, w2 = dims m2 in
-      let h, w = h1*h1, w1*w2 in
-      if h > max_size || w > max_size
-      then Result.Error (Undefined_result "Mask.compose: result grid too large")
-      else (
-        let res = ref (empty (h1*h2) (w1*w2)) in
-        iter
-          (fun i1 j1 ->
-            iter
-              (fun i2 j2 ->
-                res := add (i1*h2+i2) (j1*w2+j2) !res)
-              m2)
-          m1;
-        Result.Ok !res)
-
-    (* symmetrization *)
-      
-    let layers ms : t result =
-      match ms with
-      | [] -> Result.Error (Invalid_argument "Grid.Mask.layers: empty list")
-      | m1::ms1 ->
-         let h1, w1 = dims m1 in
-         if List.for_all (fun mi -> dims mi = (h1,w1)) ms1
-         then
-           let m = List.fold_left union m1 ms1 in
-           Result.Ok m
-         else Result.Error Invalid_dim
-         
-    let sym_flipHeight_inplace m = layers [m; flipHeight m]
-    let sym_flipWidth_inplace m = layers [m; flipWidth m]
-    let sym_rotate180_inplace m = layers [m; rotate180 m]
-    let sym_flipHeightWidth_inplace m = layers [m; flipHeight m; flipWidth m; rotate180 m]
-    let sym_flipDiag1_inplace m =
-      if height m <> width m
-      then Result.Error Invalid_dim
-      else layers [m; flipDiag1 m]
-    let sym_flipDiag2_inplace m =
-      if height m <> width m
-      then Result.Error Invalid_dim
-      else layers [m; flipDiag2 m]
-    let sym_flipDiag1Diag2_inplace m =
-      if height m <> width m
-      then Result.Error Invalid_dim
-      else layers [m; flipDiag1 m; flipDiag2 m; rotate180 m]
-    let sym_rotate90_inplace m =
-      if height m <> width m
-      then Result.Error Invalid_dim
-      else layers [m; rotate90 m; rotate180 m; rotate270 m]
-    let sym_full_inplace m =
-      if height m <> width m
-      then Result.Error Invalid_dim
-      else (* includes all symmetries *)
-        let| m' = layers [m; rotate90 m] in
-        Result.Ok (flipHeight m')
-
-(* not ready for use 
-    let sym_flipHeight_unfold m =
-      let m'= flipHeight m in
-      [ concatHeight m m'; concatHeight m' m ]
-    let sym_flipWidth_unfold m =
-      let m'= flipWidth m in
-      [ concatWidth m m'; concatWidth m' m ]
-    let sym_rotate180_unfold m =
-      let m' = rotate180 m in
-      [ concatHeight m m'; concatHeight m' m;
-        concatWidth m m'; concatWidth m' m ]
-    let sym_flipHeightWidth_unfold m =
-      let m'= flipWidth m in
-      let m1 = concatWidth m m' in
-      let m2 = concatWidth m' m in
-      let m1' = flipHeight m1 in
-      let m2' = flipHeight m2 in
-      [ concatHeight m1 m1'; concatHeight m1' m1;
-        concatHeight m2 m2'; concatHeight m2' m2 ]
-    let sym_rotate90_unfold m =
-      if height m <> width m then raise Invalid_dim;
-      let m90 = rotate90 m in
-      let m180 = rotate180 m in
-      let m270 = rotate270 m in
-      [ concatHeightWidth m m90 m270 m180;
-        concatHeightWidth m270 m m180 m90;
-        concatHeightWidth m180 m270 m90 m;
-        concatHeightWidth m90 m180 m m270 ]
- *)
-  end
-
-module Mask_model =
-  struct
-    type t =
-      [ `Mask of Mask.t
-      | `Full (* all pixels on *)
-      | `Border (* width-1 border *)
-      | `EvenCheckboard
-      | `OddCheckboard
-      | `PlusCross
-      | `TimesCross
-      ]
-      
-    let subsumes (m0 : t) (m1 : t) : bool =
-      match m0, m1 with
-      | `Mask m1, `Mask m2 -> Mask.equal m1 m2
-      | _ -> m0 = m1
-  
-    let area ~height ~width = function
-      | `Mask bm -> Mask.area bm
-      | `Full -> height * width
-      | `Border -> 2 * (height + width) - 4
-      | `EvenCheckboard -> (height * width + 1) / 2
-      | `OddCheckboard -> height * width / 2
-      | `PlusCross -> height + width - 1
-      | `TimesCross -> height + width - (height mod 2)
-  
-    let mem ~height ~width i j = (* mask height and width, relative position (i,j) *)
-      function
-      | `Mask m -> Mask.mem i j m
-      | `Full -> true
-      | `Border -> i=0 || j=0 || i=height-1 || j=width-1
-      | `EvenCheckboard -> (i+j) mod 2 = 0
-      | `OddCheckboard -> (i+j) mod 2 = 1
-      | `PlusCross -> (i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)
-      | `TimesCross -> height=width && (i=j || (height-1-i) = j)
-
-    let to_mask ~height ~width (mm : t) : Mask.t =
-      let res = ref (Mask.empty height width) in
-      for i = 0 to height - 1 do
-        for j = 0 to width - 1 do
-          if mem ~height ~width i j mm then
-            res := Mask.add i j !res
-        done
-      done;
-      !res
-                       
-    let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : t list =
-      let height, width = maxi-mini+1, maxj-minj+1 in
-      let is_visible =
-        match visible_bmp with
-        | None -> (fun absi absj -> true)
-        | Some m -> (fun absi absj -> Bitmap.mem absi absj m)
-      in
-      let m = ref (Bitmap.empty height width) in (* bmp over the part box *)
-      let models = ref [`Full; `Border; `EvenCheckboard; `OddCheckboard; `PlusCross; `TimesCross] in
-      for absi = mini to maxi do
-        let i = absi - mini in
-        for absj = minj to maxj do
-          let j = absj - minj in
-          let hidden = not (is_visible absi absj) in
-          let pixel_on = Bitmap.mem absi absj bmp in
-          if pixel_on then m := Bitmap.add i j !m;
-          models :=
-            List.filter
-              (fun model -> hidden || pixel_on = mem ~height ~width i j model)
-              !models;
-        done
-      done;
-      !models @ [`Mask (Mask.from_bitmap !m)] (* still considering as raw mask for allowing some computations such as scaling *)
-      
-    let from_bmp (bmp : Bitmap.t) : t list =
-      from_box_in_bmp
-        ~mini:0 ~maxi:(Bitmap.height bmp - 1)
-        ~minj:0 ~maxj:(Bitmap.width bmp - 1)
-        bmp
-
-    let scale_up k l : t -> t result = function
-      | `Mask m ->
-         let| m' = Mask.scale_up k l m in
-         Result.Ok (`Mask m')
-      | (`Full as mm) -> Result.Ok mm
-      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
-    let scale_up, reset_scale_up =
-      Common.memoize3 ~size:101 scale_up
-
-    let scale_down k l : t -> t result = function
-      | `Mask m ->
-         let| m' = Mask.scale_down k l m in
-         Result.Ok (`Mask m')
-      | (`Full as mm) -> Result.Ok mm
-      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_down: undefined")
-    let scale_down, reset_scale_down =
-      Common.memoize3 ~size:101 scale_down
-            
-    let scale_to new_h new_w : t -> t result = function
-      | `Mask m ->
-         let| m' = Mask.scale_to new_h new_w m in
-         Result.Ok (`Mask m')
-      | (`Full as mm) -> Result.Ok mm
-      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
-    let scale_to, reset_scale_to =
-      Common.memoize3 ~size:101 scale_to
-
-    let tile k l : t -> t result = function
-      | `Mask m ->
-         let| m' = Mask.tile k l m in
-         Result.Ok (`Mask m')
-      | `Full -> Result.Ok `Full
-      | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
-    let tile, reset_tile =
-      Common.memoize3 ~size:101 tile
-
-    let resize_alike new_h new_w : t -> t result = function
-      | `Mask m ->
-         let| m' = Mask.resize_alike m new_h new_w in
-         Result.Ok (`Mask m')
-      | (`Full | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
-      | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
-    let resize_alike, reset_resize_alike =
-      Common.memoize3 ~size:101 resize_alike
-
-    let compose (m1 : Mask.t) (mm2 : t) : t result =
-      match mm2 with
-      | `Mask m2 ->
-         let| m = Mask.compose m1 m2 in
-         Result.Ok (`Mask m)
-      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compose: undefined")
-    let compose, reset_compose =
-      Common.memoize2 ~size:101 compose
-      
-    let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
-      | `Mask m -> Result.Ok (`Mask (f m))
-      | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
-      | _ -> Result.Error (Undefined_result "Grid.Mask_model.symmetry: undefined")
-
-    let flipHeight = symmetry Mask.flipHeight
-    let flipHeight, reset_flipHeight =
-      Common.memoize ~size:101 flipHeight
-
-    let flipWidth = symmetry Mask.flipWidth
-    let flipWidth, reset_flipWidth =
-      Common.memoize ~size:101 flipWidth
-
-    let flipDiag1 = symmetry Mask.flipDiag1
-    let flipDiag1, reset_flipDiag1 =
-      Common.memoize ~size:101 flipDiag1
-
-    let flipDiag2 = symmetry Mask.flipDiag2
-    let flipDiag2, reset_flipDiag2 =
-      Common.memoize ~size:101 flipDiag2
-
-    let rotate180 = symmetry Mask.rotate180
-    let rotate180, reset_rotate180 =
-      Common.memoize ~size:101 rotate180
-
-    let rotate90 = symmetry Mask.rotate90
-    let rotate90, reset_rotate90 =
-      Common.memoize ~size:101 rotate90
-
-    let rotate270 = symmetry Mask.rotate270
-    let rotate270, reset_rotate270 =
-      Common.memoize ~size:101 rotate270
-
-    let inter m1 m2 : t result =
-      match m1, m2 with
-      | `Full, _ -> Result.Ok m2
-      | _, `Full -> Result.Ok m1
-      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
-         Result.Ok (`Mask (Mask.inter bm1 bm2))
-      | _ -> Result.Error (Undefined_result "Mask_model.inter: undefined")
-    let inter, reset_inter =
-      Common.memoize2 ~size:101 inter
-
-    let union m1 m2 : t result =
-      match m1, m2 with
-      | `Full, _ -> Result.Ok m1
-      | _, `Full -> Result.Ok m2
-      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
-         Result.Ok (`Mask (Mask.union bm1 bm2))
-      | _ -> Result.Error (Undefined_result "Mask_model.union: undefined")
-    let union, reset_union =
-      Common.memoize2 ~size:101 union
-
-    let diff_sym (m1 : t) (m2 : t) : t result =
-      match m1, m2 with
-      | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
-      | `Mask bm1, `Full -> Result.Ok (`Mask (Mask.compl bm1))
-      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
-         Result.Ok (`Mask (Mask.diff_sym bm1 bm2))
-      | _ -> Result.Error (Undefined_result "Mask_model.diff_sym: undefined")
-    let diff_sym, reset_diff_sym =
-      Common.memoize2 ~size:101 diff_sym
-
-    let diff (m1 : t) (m2 : t) : t result =
-      match m1, m2 with
-      | `Full, `Mask bm2 -> Result.Ok (`Mask (Mask.compl bm2))
-      | `Mask bm1, `Mask bm2 when Mask.same_size bm1 bm2 ->
-         Result.Ok (`Mask (Mask.diff bm1 bm2))
-      | _ -> Result.Error (Undefined_result "Mask_model.diff: undefined")
-    let diff, reset_diff =
-      Common.memoize2 ~size:101 diff
-
-    let compl (m1 : t) : t result =
-      match m1 with
-      | `Mask bm1 -> Result.Ok (`Mask (Mask.compl bm1))
-      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compl: undefined")
-    let compl, reset_compl =
-      Common.memoize ~size:101 compl
-
-    let reset_memoized_functions () =
-      reset_scale_up ();
-      reset_scale_down ();
-      reset_scale_to ();
-      reset_tile ();
-      reset_resize_alike ();
-      reset_compose (); 
-      reset_flipHeight ();
-      reset_flipWidth ();
-      reset_flipDiag1 ();
-      reset_flipDiag2 ();
-      reset_rotate180 ();
-      reset_rotate90 ();
-      reset_rotate270 ();
-      reset_inter ();
-      reset_union ();
-      reset_diff_sym ();
-      reset_diff ();
-      reset_compl ()
-      
-  end
 
   
 (* operations on grids *)
@@ -1101,31 +470,6 @@ module Mask_model =
 module Transf = (* black considered as neutral color by default *)
   struct
 
-    let mask_of_grid ?(bgcolor = black) (g : t) : Mask.t =
-      (* returns a non-bgcolor mask version of the grid *)
-      let h, w = dims g in
-      let res = ref (Mask.empty h w) in
-      iter_pixels
-        (fun i j c ->
-          if c <> bgcolor then
-            res := Mask.add i j !res)
-        g;
-      !res
-    let mask_of_grid, reset_mask_of_grid =
-      Common.memoize ~size:101 mask_of_grid
-
-    let grid_of_mask (m : Mask.t) (c : color) : t =
-      (* return a colored grid version of a mask *)
-      let h, w = Mask.dims m in
-      let res = make h w black in
-      Mask.iter
-        (fun i j ->
-          set_pixel res i j c)
-        m;
-      res
-    let grid_of_mask, reset_grid_of_mask =
-      Common.memoize2 ~size:101 grid_of_mask
-      
     (* coloring *)
 
     let swap_colors g c1 c2 : t result =
@@ -1683,22 +1027,23 @@ module Transf = (* black considered as neutral color by default *)
 
     (* TODO: selecting halves and quarters *)
 
-    let compose (m1 : Mask.t) (g2 : t) : t result = (* repeating g2 for each non-black pixel of g1 *)
-      let h1, w1 = Mask.dims m1 in
+    let compose (g1 : t) (g2 : t) : t result = (* repeating g2 for each non-black pixel of g1 *)
+      let h1, w1 = dims g1 in
       let h2, w2 = dims g2 in
       let h, w = h1*h2, w1*w2 in
       if h > max_size || w > max_size
       then Result.Error (Undefined_result "compose: result grid too large")
       else (
         let res = make h w black in
-        Mask.iter
-          (fun i1 j1 ->
-            iter_pixels
-              (fun i2 j2 c2 ->
-                if c2 <> black then
-                  set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
-              g2)
-          m1;
+        iter_pixels
+          (fun i1 j1 c1 ->
+            if c1 <> black then
+              iter_pixels
+                (fun i2 j2 c2 ->
+                  if c2 <> black then
+                    set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
+                g2)
+          g1;
         Result.Ok res)
     let compose, reset_compose =
       Common.memoize2 ~size:101 compose
@@ -1784,8 +1129,6 @@ module Transf = (* black considered as neutral color by default *)
  *)
 
     let reset_memoized_functions () =
-      reset_mask_of_grid ();
-      reset_grid_of_mask ();
       reset_swap_colors ();
       reset_flipHeight ();
       reset_flipWidth ();
@@ -1812,7 +1155,354 @@ module Transf = (* black considered as neutral color by default *)
       
   end
   
-    
+
+(* masks: monocolor grids *)
+  
+module Mask =
+  struct
+    type grid = t
+    type t = grid
+
+    let area m = m.color_count.(1) [@@inline]
+
+    let empty height width = make height width 0
+    let full height width = make height width 1
+    let singleton height width i j =
+      let m = make height width 0 in
+      set_pixel m i j 1;
+      m
+      
+    let equal m1 m2 = (m1 = m2) [@@inline]
+    let is_empty m =
+      for_all_pixels (fun i j c -> c = 0) m
+    let is_subset m1 m2 =
+      for_all_pixels (fun i j c1 ->
+          let c2 = get_pixel ~source:"is_subset" m2 i j in
+          c1 = 0 ||  c2 = 1)
+        m1
+    let inter_is_empty m1 m2 =
+      for_all_pixels (fun i j c1 ->
+          let c2 = get_pixel ~source:"inter_is_empty" m2 i j in
+          c1 = 0 || c2 = 0)
+        m1
+
+    let mem i j m =
+      i >= 0 && i < m.height
+      && j >= 0 && j < m.width
+      && get_pixel m i j = 1 [@@inline]
+    let set m i j =
+      set_pixel m i j 1
+    let reset m i j =
+      set_pixel m i j 0
+
+    let union m1 m2 =
+      map2_pixels (fun c1 c2 -> c1 lor c2) m1 m2
+    let inter m1 m2 =
+      map2_pixels (fun c1 c2 -> c1 land c2) m1 m2
+    let diff m1 m2 =
+      map2_pixels (fun c1 c2 -> c1 land (lnot c2)) m1 m2
+    let diff_sym m1 m2 =
+      map2_pixels (fun c1 c2 -> c1 lxor c2) m1 m2
+    let compl m =
+      map_pixels (fun c -> 1 - c) m
+
+    let fold f acc m =
+      fold_pixels
+        (fun acc i j c -> if c = 1 then f acc i j else acc)
+        acc m
+
+    let iter f m =
+      iter_pixels
+        (fun i j c -> if c = 1 then f i j)
+        m
+
+    let from_bitmap (bmp : Bitmap.t) : t =
+      let m = empty (Bitmap.height bmp) (Bitmap.width bmp) in
+      Bitmap.iter
+        (fun i j -> set m i j)
+        bmp;
+      m
+          
+    let from_grid ?(bgcolor = black) (g : grid) : t =
+      (* returns a non-bgcolor mask version of the grid *)
+      let h, w = dims g in
+      let res = empty h w in
+      iter_pixels
+        (fun i j c ->
+          if c <> bgcolor then
+            set res i j)
+        g;
+      res
+    let from_grid, reset_from_grid =
+      Common.memoize ~size:101 from_grid
+
+    let to_grid (m : t) (c : color) : grid =
+      (* return a colored grid version of a mask *)
+      let h, w = dims m in
+      let res = make h w black in
+      iter
+        (fun i j ->
+          set_pixel res i j c)
+        m;
+      res
+    let to_grid, reset_to_grid =
+      Common.memoize2 ~size:101 to_grid
+
+    let to_string m =
+      let h, w = dims m in
+      let bytes = Bytes.create (h * w + h - 1) in
+      let pos = ref 0 in
+      for i = 0 to h - 1 do
+        if i > 0 then (
+          Bytes.set bytes !pos '|';
+          incr pos
+        );
+        for j = 0 to w - 1 do
+          if mem i j m
+          then Bytes.set bytes !pos 'x'
+          else Bytes.set bytes !pos '.';
+          incr pos
+        done
+      done;
+      Bytes.to_string bytes
+    let pp m = print_string (to_string m)
+
+  end
+
+module Mask_model =
+  struct
+    type t =
+      [ `Mask of Mask.grid (* only monocolor grids *)
+      | `Full (* all pixels on *)
+      | `Border (* width-1 border *)
+      | `EvenCheckboard
+      | `OddCheckboard
+      | `PlusCross
+      | `TimesCross
+      ]
+      
+    let subsumes (mm1 : t) (mm2 : t) : bool =
+      match mm1, mm2 with
+      | `Mask m1, `Mask m2 -> Mask.equal m1 m2
+      | _ -> mm1 = mm2
+  
+    let area ~height ~width = function
+      | `Mask m -> Mask.area m
+      | `Full -> height * width
+      | `Border -> 2 * (height + width) - 4
+      | `EvenCheckboard -> (height * width + 1) / 2
+      | `OddCheckboard -> height * width / 2
+      | `PlusCross -> height + width - 1
+      | `TimesCross -> height + width - (height mod 2)
+  
+    let mem ~height ~width i j = (* mask height and width, relative position (i,j) *)
+      function
+      | `Mask m -> Mask.mem i j m
+      | `Full -> true
+      | `Border -> i=0 || j=0 || i=height-1 || j=width-1
+      | `EvenCheckboard -> (i+j) mod 2 = 0
+      | `OddCheckboard -> (i+j) mod 2 = 1
+      | `PlusCross -> (i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)
+      | `TimesCross -> height=width && (i=j || (height-1-i) = j)
+
+    let to_mask ~height ~width (mm : t) : Mask.t =
+      let res = Mask.empty height width in
+      for i = 0 to height - 1 do
+        for j = 0 to width - 1 do
+          if mem ~height ~width i j mm then
+            Mask.set res i j
+        done
+      done;
+      res
+                       
+    let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : t list =
+      let height, width = maxi-mini+1, maxj-minj+1 in
+      let is_visible =
+        match visible_bmp with
+        | None -> (fun absi absj -> true)
+        | Some m -> (fun absi absj -> Bitmap.mem absi absj m)
+      in
+      let m = ref (Bitmap.empty height width) in (* bmp over the part box *)
+      let models = ref [`Full; `Border; `EvenCheckboard; `OddCheckboard; `PlusCross; `TimesCross] in
+      for absi = mini to maxi do
+        let i = absi - mini in
+        for absj = minj to maxj do
+          let j = absj - minj in
+          let hidden = not (is_visible absi absj) in
+          let pixel_on = Bitmap.mem absi absj bmp in
+          if pixel_on then m := Bitmap.add i j !m;
+          models :=
+            List.filter
+              (fun model -> hidden || pixel_on = mem ~height ~width i j model)
+              !models;
+        done
+      done;
+      !models @ [`Mask (Mask.from_bitmap !m)] (* still considering as raw mask for allowing some computations such as scaling *)
+      
+    let from_bmp (bmp : Bitmap.t) : t list =
+      from_box_in_bmp
+        ~mini:0 ~maxi:(Bitmap.height bmp - 1)
+        ~minj:0 ~maxj:(Bitmap.width bmp - 1)
+        bmp
+
+    let scale_up k l : t -> t result = function
+      | `Mask m ->
+         let| m' = Transf.scale_up k l m in
+         Result.Ok (`Mask m')
+      | (`Full as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_up: undefined")
+    let scale_up, reset_scale_up =
+      Common.memoize3 ~size:101 scale_up
+
+    let scale_down k l : t -> t result = function
+      | `Mask m ->
+         let| m' = Transf.scale_down k l m in
+         Result.Ok (`Mask m')
+      | (`Full as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_down: undefined")
+    let scale_down, reset_scale_down =
+      Common.memoize3 ~size:101 scale_down
+            
+    let scale_to new_h new_w : t -> t result = function
+      | `Mask m ->
+         let| m' = Transf.scale_to new_h new_w m in
+         Result.Ok (`Mask m')
+      | (`Full as mm) -> Result.Ok mm
+      | mm -> Result.Error (Undefined_result "Grid.Mask_model.scale_to: undefined")
+    let scale_to, reset_scale_to =
+      Common.memoize3 ~size:101 scale_to
+
+    let tile k l : t -> t result = function
+      | `Mask m ->
+         let| m' = Transf.tile k l m in
+         Result.Ok (`Mask m')
+      | `Full -> Result.Ok `Full
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.tile: undefined")
+    let tile, reset_tile =
+      Common.memoize3 ~size:101 tile
+
+    let resize_alike new_h new_w : t -> t result = function
+      | `Mask m ->
+         let| m' = Transf.resize_alike new_h new_w m in
+         Result.Ok (`Mask m')
+      | (`Full | `OddCheckboard | `EvenCheckboard as mm) -> Result.Ok mm
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.resize_alike: undefined")
+    let resize_alike, reset_resize_alike =
+      Common.memoize3 ~size:101 resize_alike
+
+    let compose (m1 : Mask.t) (mm2 : t) : t result =
+      match mm2 with
+      | `Mask m2 ->
+         let| m = Transf.compose m1 m2 in
+         Result.Ok (`Mask m)
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compose: undefined")
+    let compose, reset_compose =
+      Common.memoize2 ~size:101 compose
+      
+    let symmetry (f : Mask.t -> Mask.t) : t -> t result = function
+      | `Mask m -> Result.Ok (`Mask (f m))
+      | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.symmetry: undefined")
+
+    let flipHeight = symmetry Transf.flipHeight
+    let flipHeight, reset_flipHeight =
+      Common.memoize ~size:101 flipHeight
+
+    let flipWidth = symmetry Transf.flipWidth
+    let flipWidth, reset_flipWidth =
+      Common.memoize ~size:101 flipWidth
+
+    let flipDiag1 = symmetry Transf.flipDiag1
+    let flipDiag1, reset_flipDiag1 =
+      Common.memoize ~size:101 flipDiag1
+
+    let flipDiag2 = symmetry Transf.flipDiag2
+    let flipDiag2, reset_flipDiag2 =
+      Common.memoize ~size:101 flipDiag2
+
+    let rotate180 = symmetry Transf.rotate180
+    let rotate180, reset_rotate180 =
+      Common.memoize ~size:101 rotate180
+
+    let rotate90 = symmetry Transf.rotate90
+    let rotate90, reset_rotate90 =
+      Common.memoize ~size:101 rotate90
+
+    let rotate270 = symmetry Transf.rotate270
+    let rotate270, reset_rotate270 =
+      Common.memoize ~size:101 rotate270
+
+    let inter mm1 mm2 : t result =
+      match mm1, mm2 with
+      | `Full, _ -> Result.Ok mm2
+      | _, `Full -> Result.Ok mm1
+      | `Mask m1, `Mask m2 when dims m1 = dims m2 ->
+         Result.Ok (`Mask (Mask.inter m1 m2))
+      | _ -> Result.Error (Undefined_result "Mask_model.inter: undefined")
+    let inter, reset_inter =
+      Common.memoize2 ~size:101 inter
+
+    let union mm1 mm2 : t result =
+      match mm1, mm2 with
+      | `Full, _ -> Result.Ok mm1
+      | _, `Full -> Result.Ok mm2
+      | `Mask m1, `Mask m2 when dims m1 = dims m2 ->
+         Result.Ok (`Mask (Mask.union m1 m2))
+      | _ -> Result.Error (Undefined_result "Mask_model.union: undefined")
+    let union, reset_union =
+      Common.memoize2 ~size:101 union
+
+    let diff_sym (mm1 : t) (mm2 : t) : t result =
+      match mm1, mm2 with
+      | `Full, `Mask m2 -> Result.Ok (`Mask (Mask.compl m2))
+      | `Mask m1, `Full -> Result.Ok (`Mask (Mask.compl m1))
+      | `Mask m1, `Mask m2 when dims m1 = dims m2 ->
+         Result.Ok (`Mask (Mask.diff_sym m1 m2))
+      | _ -> Result.Error (Undefined_result "Mask_model.diff_sym: undefined")
+    let diff_sym, reset_diff_sym =
+      Common.memoize2 ~size:101 diff_sym
+
+    let diff (mm1 : t) (mm2 : t) : t result =
+      match mm1, mm2 with
+      | `Full, `Mask m2 -> Result.Ok (`Mask (Mask.compl m2))
+      | `Mask m1, `Mask m2 when dims m1 = dims m2 ->
+         Result.Ok (`Mask (Mask.diff m1 m2))
+      | _ -> Result.Error (Undefined_result "Mask_model.diff: undefined")
+    let diff, reset_diff =
+      Common.memoize2 ~size:101 diff
+
+    let compl (mm1 : t) : t result =
+      match mm1 with
+      | `Mask m1 -> Result.Ok (`Mask (Mask.compl m1))
+      | _ -> Result.Error (Undefined_result "Grid.Mask_model.compl: undefined")
+    let compl, reset_compl =
+      Common.memoize ~size:101 compl
+
+    let reset_memoized_functions () =
+      Mask.reset_from_grid ();
+      Mask.reset_to_grid ();
+      reset_scale_up ();
+      reset_scale_down ();
+      reset_scale_to ();
+      reset_tile ();
+      reset_resize_alike ();
+      reset_compose (); 
+      reset_flipHeight ();
+      reset_flipWidth ();
+      reset_flipDiag1 ();
+      reset_flipDiag2 ();
+      reset_rotate180 ();
+      reset_rotate90 ();
+      reset_rotate270 ();
+      reset_inter ();
+      reset_union ();
+      reset_diff_sym ();
+      reset_diff ();
+      reset_compl ()
+      
+  end
+
+
 (* segmenting grids *)
 
 type part = { mini : int; maxi : int;

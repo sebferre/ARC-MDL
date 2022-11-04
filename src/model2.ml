@@ -1614,7 +1614,8 @@ let dl_mask : Grid.Mask_model.t -> dl =
     | `PlusCross
     | `TimesCross -> Mdl.Code.usage 0.025
   | `Mask m ->
-     let n = Grid.Mask.height m * Grid.Mask.width m in
+     let h, w = Grid.dims m in
+     let n = h * w in
      let k = Grid.Mask.area m in
      Mdl.Code.usage 0.3 +. Mdl.Code.partition [k; n-k] (* prequential coding *)
      (* Mdl.Code.usage 0.3 +. float n (* basic bitmap *) *)
@@ -2434,16 +2435,6 @@ let apply_patt
          `Root layers in
      Result.Ok (`Background (rgrid,rsize,rcolor,rlayers))
 
-let mask_sym : symmetry -> (Grid.Mask.t -> Grid.Mask.t) = function
-  | `Id -> Fun.id
-  | `FlipHeight -> Grid.Mask.flipHeight
-  | `FlipWidth -> Grid.Mask.flipWidth
-  | `FlipDiag1 -> Grid.Mask.flipDiag1
-  | `FlipDiag2 -> Grid.Mask.flipDiag2
-  | `Rotate180 -> Grid.Mask.rotate180
-  | `Rotate90 -> Grid.Mask.rotate90
-  | `Rotate270 -> Grid.Mask.rotate270
-                
 let mask_model_sym : symmetry -> (Grid.Mask_model.t -> Grid.Mask_model.t result) = function
   | `Id -> (fun g -> Result.Ok g)
   | `FlipHeight -> Grid.Mask_model.flipHeight
@@ -2577,34 +2568,34 @@ let unfold_size sym_matrix = function
      Result.Ok (`Vec (`Int h', `Int w'))
   | _ -> Result.Error (Undefined_result "Model2.unfold_size: not a size")
 
-let unfold_mask sym_matrix = function
-  | `Mask m ->
-     let| m' = unfold_any Grid.Mask.concatHeight Grid.Mask.concatWidth mask_sym sym_matrix m in
-     Result.Ok (`Mask m')
-  | `Full -> Result.Ok `Full
-  | _ -> Result.Error (Undefined_result "Model2.unfold_mask: not a custom mask")
-let unfold_mask, reset_unfold_mask =
-  Common.memoize2 ~size:101 unfold_mask                   
-
 let unfold_grid sym_matrix g =
   unfold_any Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym sym_matrix g
 let unfold_grid, reset_unfold_grid =
   Common.memoize2 ~size:101 unfold_grid                     
 
+let unfold_mask_model sym_matrix = function
+  | `Mask m ->
+     let| m' = unfold_grid sym_matrix m in
+     Result.Ok (`Mask m')
+  | `Full -> Result.Ok `Full
+  | _ -> Result.Error (Undefined_result "Model2.unfold_mask: not a custom mask")
+let unfold_mask_model, reset_unfold_mask_model =
+  Common.memoize2 ~size:101 unfold_mask_model                   
+
 let unfold_symmetry (sym_matrix : symmetry list list) =
   fun e d ->
   match d with
   | `Mask mm ->
-     let| mm = unfold_mask sym_matrix mm in
+     let| mm = unfold_mask_model sym_matrix mm in
      Result.Ok (`Mask mm)
   | `Rectangle (size, col, `Mask mm) ->
      let| size = unfold_size sym_matrix size in
-     let| mm = unfold_mask sym_matrix mm in
+     let| mm = unfold_mask_model sym_matrix mm in
      Result.Ok (`Rectangle (size, col, `Mask mm))
   | `Point _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
      let| size = unfold_size sym_matrix size in
-     let| mm = unfold_mask sym_matrix mm in
+     let| mm = unfold_mask_model sym_matrix mm in
      Result.Ok (`PosShape (pos, `Rectangle (size, col, `Mask mm)))
   | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `Grid g ->
@@ -2627,15 +2618,6 @@ let close_any
          let| x2 = stack [x1; y1] in
          g x2) in
   gen_seq sym_seq
-
-let close_mask sym_seq = function
-  | `Mask m ->
-     let| m' = close_any Grid.Mask.layers mask_sym sym_seq m in
-     Result.Ok (`Mask m)
-  | `Full -> Result.Ok `Full
-  | _ -> Result.Error (Undefined_result "Model2.close_symmetry: not a custom mask")
-let close_mask, reset_close_mask =
-  Common.memoize2 ~size:101 close_mask                   
        
 let close_grid sym_seq bgcolor g =
   let| g' = close_any (Grid.Transf.layers ~bgcolor) grid_sym sym_seq g in
@@ -2643,18 +2625,27 @@ let close_grid sym_seq bgcolor g =
 let close_grid, reset_close_grid =
   Common.memoize3 ~size:101 close_grid
 
+let close_mask_model sym_seq = function
+  | `Mask m ->
+     let| m' = close_grid sym_seq 0 m in
+     Result.Ok (`Mask m)
+  | `Full -> Result.Ok `Full
+  | _ -> Result.Error (Undefined_result "Model2.close_symmetry: not a custom mask")
+let close_mask_model, reset_close_mask_model =
+  Common.memoize2 ~size:101 close_mask_model                   
+
 let close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
   fun e d ->
   match d with
   | `Mask mm ->
-     let| mm = close_mask sym_seq mm in
+     let| mm = close_mask_model sym_seq mm in
      Result.Ok (`Mask mm)
   | `Rectangle (size, col, `Mask mm) ->
-     let| mm = close_mask sym_seq mm in
+     let| mm = close_mask_model sym_seq mm in
      Result.Ok (`Rectangle (size, col, `Mask mm))
   | `Point _ -> Result.Error (Undefined_result "Model2.close_symmetry: point")
   | `PosShape (pos, `Rectangle (size, col, `Mask mm)) ->
-     let| mm = close_mask sym_seq mm in
+     let| mm = close_mask_model sym_seq mm in
      Result.Ok (`PosShape (pos, `Rectangle (size, col, `Mask mm)))
   | `PosShape (_, `Point _) -> Result.Error (Undefined_result "Model2.close_symmetry: point")
   | `Grid g ->
@@ -2663,10 +2654,10 @@ let close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
   | _ -> Result.Error (Invalid_expr e)
 
 let reset_memoized_functions_apply () =
-  reset_unfold_mask ();
   reset_unfold_grid ();
-  reset_close_mask ();
-  reset_close_grid ()
+  reset_unfold_mask_model ();
+  reset_close_grid ();
+  reset_close_mask_model ()
 
   
 let apply_expr_gen
@@ -3032,7 +3023,7 @@ let apply_expr_gen
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
        (function
-        | `Grid g -> Result.Ok (`Mask (`Mask (Grid.Transf.mask_of_grid g)))
+        | `Grid g -> Result.Ok (`Mask (`Mask (Grid.Mask.from_grid g)))
         | _ -> Result.Error (Invalid_expr e))
   | `GridOfMask (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -3040,7 +3031,7 @@ let apply_expr_gen
      broadcast2_result (res1,res2)
        (function
         | `Mask (`Mask m), `Color c ->
-           Result.Ok (`Grid (Grid.Transf.grid_of_mask m c))
+           Result.Ok (`Grid (Grid.Mask.to_grid m c))
         | _ -> Result.Error (Invalid_expr e))
   | `TranslationOnto (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -3121,14 +3112,14 @@ let apply_expr_gen
            match d1 with
            | `Mask (`Mask m1) -> Result.Ok m1
            | `Rectangle (_, _, `Mask (`Mask m1)) -> Result.Ok m1 (* TODO: extend to other mask models, using shape size *)
-           | `Grid g1 -> Result.Ok (Grid.Transf.mask_of_grid g1)
+           | `Grid g1 -> Result.Ok (Grid.Mask.from_grid g1)
            | _ -> Result.Error (Invalid_expr e) in
          match d2 with
          | `Mask mm2 ->
             let| mm = Grid.Mask_model.compose m1 mm2 in
             Result.Ok (`Mask mm)
          | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
-            let h1, w1 = Grid.Mask.dims m1 in
+            let h1, w1 = Grid.dims m1 in
             let| mm = Grid.Mask_model.compose m1 mm2 in
             Result.Ok (`Rectangle (`Vec (`Int (h1*h2), `Int (w1*w2)), col2, `Mask mm))
          | `Grid g2 ->
