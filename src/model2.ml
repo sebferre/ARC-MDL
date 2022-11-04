@@ -524,7 +524,7 @@ type 'a expr =
   | `Middle of 'a (* on Object *)
   | `ProjI of 'a (* on Vec *)
   | `ProjJ of 'a (* on Vec *)
-  | `MaskOfGrid of 'a (* Grid -> Mask *)
+  | `MaskOfGrid of 'a (* Grid -> Mask TODO: specify bgcolor *)
   | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
@@ -538,6 +538,7 @@ type 'a expr =
   (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
   | `MajorityColor of 'a (* Grid -> Color *)
+  | `ColorCount of 'a (* Grid -> Int *)
   | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
   | `SwapColors of 'a * 'a * 'a (* Grid, Color, Color -> Grid *)
   ]
@@ -825,6 +826,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                                     (fun print -> xp print a);
                                     (fun print -> xp print b)]
   | `MajorityColor a -> xp_apply "majorityColor" xp print [a]
+  | `ColorCount a -> xp_apply "colorCount" xp print [a]
   | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b]
   | `SwapColors (a,b,c) -> xp_apply "swapColor" xp print [a;b;c]
 and xp_symmetry print : symmetry -> unit = function
@@ -972,6 +974,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `CloseSym (sym_seq,a,b) -> max (dim a) (dim b)
   | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
   | `MajorityColor a -> dim a
+  | `ColorCount a -> dim a
   | `Coloring (a,b) -> max (dim a) (dim b)
   | `SwapColors (a,b,c) -> max (dim a) (max (dim b) (dim c))
     
@@ -1804,7 +1807,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
   KindMap.make
     ~int:(uniform_among [
               `ConstInt 0;
-              `Area `X;
+              `Area `X; `ColorCount `X;
               (*`Left `X; *) `Right `X; `Center `X;
               (*`Top `X; *) `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
@@ -1813,7 +1816,8 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Min [`X;`X]; `Max [`X;`X]; `Average [`X;`X]; `Span (`X,`X);
               (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*) ])
     ~bool:(uniform_among [])
-    ~color:(uniform_among [])
+    ~color:(uniform_among [
+                `MajorityColor `X ])
     ~mask:(uniform_among [
                `MaskOfGrid `X;
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
@@ -1846,7 +1850,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
                `GridOfMask (`X,`X);
-               `MajorityColor `X; `SwapColors (`X,`X,`X);
+               `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
@@ -2011,6 +2015,9 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
      +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
   | `MajorityColor e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Grid, path)) e1
+  | `ColorCount e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some `Grid, path)) e1
   | `Coloring (e1,e2) ->
@@ -3129,6 +3136,14 @@ let apply_expr_gen
         | `Grid g ->
            let c = Grid.majority_color g in
            Result.Ok (`Color c)
+        | _ -> Result.Error (Invalid_expr e))
+  | `ColorCount e1 ->
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
+       (function
+        | `Grid g ->
+           let n = Grid.color_count g in
+           Result.Ok (`Int n)
         | _ -> Result.Error (Invalid_expr e))
   | `Coloring (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -4567,6 +4582,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     let _ = (* MajorityColor on grids *)
       match role1 with
       | `Grid -> push (`Color `Shape, `MajorityColor e1)
+      | _ -> () in
+    let _ = (* ColorCount on grids *)
+      match role1 with
+      | `Grid -> push (`Int (`X, `Size `X), `ColorCount e1)
       | _ -> () in
     let _ = (* Strip on grids *)
       match role1 with

@@ -172,6 +172,14 @@ let majority_color (g : t) : color =
       nb_max := nb)
   done;
   !res
+
+let color_count (grid : t) : int = (* not counting black *)
+  let res = ref 0 in
+  for c = 1 to nb_color-1 do
+    if grid.color_count.(c) > 0
+    then incr res
+  done;
+  !res
   
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
