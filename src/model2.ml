@@ -530,13 +530,14 @@ type 'a expr =
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
   | `FillAlike of bool (* total *) * 'a * 'a (* on Color, Grid -> Grid *)
-  | `Compose of 'a * 'a (* Mask, Mask/Shape/Grid as T -> T *)
+  | `Compose of 'a * 'a (* Mask/Shape/Grid as T, T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
   (* sym list list = matrix to be filled with symmetries of some mask *)
   | `CloseSym of symmetry list * 'a * 'a (* Color, Mask/Shape/Object/Grid as T -> T *)
   (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
+  | `MajorityColor of 'a (* Grid -> Color *)
   | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
   | `SwapColors of 'a * 'a * 'a (* Grid, Color, Color -> Grid *)
   ]
@@ -823,6 +824,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                                    [(fun print -> xp_symmetry print sym);
                                     (fun print -> xp print a);
                                     (fun print -> xp print b)]
+  | `MajorityColor a -> xp_apply "majorityColor" xp print [a]
   | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b]
   | `SwapColors (a,b,c) -> xp_apply "swapColor" xp print [a;b;c]
 and xp_symmetry print : symmetry -> unit = function
@@ -969,6 +971,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `UnfoldSym (sym_arr,a) -> dim a
   | `CloseSym (sym_seq,a,b) -> max (dim a) (dim b)
   | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
+  | `MajorityColor a -> dim a
   | `Coloring (a,b) -> max (dim a) (dim b)
   | `SwapColors (a,b,c) -> max (dim a) (max (dim b) (dim c))
     
@@ -1843,7 +1846,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
                `GridOfMask (`X,`X);
-               `SwapColors (`X,`X,`X);
+               `MajorityColor `X; `SwapColors (`X,`X,`X);
                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
@@ -2007,6 +2010,9 @@ let rec dl_expr
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
      +. dl ~ctx ~path:(`Arg (2, Some `Layer, path)) e1
      +. dl ~ctx ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
+  | `MajorityColor e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1, Some `Grid, path)) e1
   | `Coloring (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
@@ -3116,6 +3122,14 @@ let apply_expr_gen
             in
             Result.Ok (`Vec (`Int ti, `Int tj))
          | _ -> Result.Error (Invalid_expr e))
+  | `MajorityColor e1 ->
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
+       (function
+        | `Grid g ->
+           let c = Grid.majority_color g in
+           Result.Ok (`Color c)
+        | _ -> Result.Error (Invalid_expr e))
   | `Coloring (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4549,6 +4563,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | `Vec _ ->
          push (role1, `ProjI e1);
          push (role1, `ProjJ e1)
+      | _ -> () in
+    let _ = (* MajorityColor on grids *)
+      match role1 with
+      | `Grid -> push (`Color `Shape, `MajorityColor e1)
       | _ -> () in
     let _ = (* Strip on grids *)
       match role1 with

@@ -830,7 +830,7 @@ module Transf = (* black considered as neutral color by default *)
 
     (* TODO: selecting halves and quarters *)
 
-    let compose (g1 : t) (g2 : t) : t result = (* repeating g2 for each non-black pixel of g1 *)
+    let compose (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that is non-black (g1 should be monocolor) *)
       let h1, w1 = dims g1 in
       let h2, w2 = dims g2 in
       let h, w = h1*h2, w1*w2 in
