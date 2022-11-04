@@ -187,7 +187,8 @@ module KindMap =
 let ( .&() ) map k = KindMap.find k map [@@inline]
   
 type role = (* same information as kind + contextual information *)
-  [ `Int of [`I | `J] * role_vec
+  [ `IntCoord of [`I | `J] * role_vec
+  | `IntCard (* cardinal, result of a count, in general strictly positive *)
   | `Color of role_frame
   | `Mask
   | `Vec of role_vec
@@ -203,7 +204,8 @@ and role_frame =
   [ `Shape | `Grid ]
 
 let kind_of_role : role -> kind = function
-  | `Int _ -> Int
+  | `IntCoord _ -> Int
+  | `IntCard -> Int
   | `Color _ -> Color
   | `Mask -> Mask
   | `Vec _ -> Vec
@@ -219,7 +221,8 @@ let role_can_be_sequence = function
   | _ -> true (* layer attributes can be sequences *)
            
 type role_poly = (* polymorphic extension of role *)
-  [ `Int of [`I | `J | `X] * role_vec_poly
+  [ `IntCoord of [`I | `J | `X] * role_vec_poly
+  | `IntCard
   | `Color of role_frame_poly
   | `Mask
   | `Vec of role_vec_poly
@@ -235,7 +238,8 @@ and role_frame_poly =
 let role_poly_matches (role_x : role_poly) (role : role) : bool =
   let rec aux_role r_x r =
     match r_x, r with
-    | `Int (_,vec_x), `Int (_,vec) -> aux_vec vec_x vec
+    | `IntCoord (_,vec_x), `IntCoord (_,vec) -> aux_vec vec_x vec
+    | `IntCard, `IntCard -> true
     | `Color fr_x, `Color fr -> true
     | `Mask, `Mask -> true
     | `Vec vec_x, `Vec vec -> aux_vec vec_x vec
@@ -1006,7 +1010,7 @@ let rec path_kind (p : revpath) : kind =
 let rec path_role (p : revpath) : role =
   match p with
   | `Root -> `Grid
-  | `Field ((`I | `J as f), p1) -> `Int (f, path_role_vec p1)
+  | `Field ((`I | `J as f), p1) -> `IntCoord (f, path_role_vec p1)
   | `Field (`Color, p1) -> `Color (path_role_frame p1)
   | `Field (`Mask, _) -> `Mask
   | `Field (`Pos, _) -> `Vec `Pos
@@ -1268,10 +1272,11 @@ let default_grid = `Background (default_grid_raw,
                                 default_grid_size, default_grid_color, `Nil)
 let default_data_of_path (p : revpath) : data =
   match path_role p with
-  | `Int (_, `Pos) -> `Int 0
-  | `Int (_, `Size `Grid) -> `Int 10
-  | `Int (_, `Size `Shape) -> `Int 2
-  | `Int (_, `Move) -> `Int 0
+  | `IntCoord (_, `Pos) -> `Int 0
+  | `IntCoord (_, `Size `Grid) -> `Int 10
+  | `IntCoord (_, `Size `Shape) -> `Int 2
+  | `IntCoord (_, `Move) -> `Int 0
+  | `IntCard -> `Int 2
   | `Color `Grid -> default_grid_color
   | `Color `Shape -> default_shape_color
   | `Mask -> default_mask
@@ -1578,11 +1583,12 @@ let dl_patt
   match patt with
   | `Int n ->
      ( match path_role path with
-       | `Int (`I, `Pos) -> dl_int_pos ~bound:ctx.box_height n
-       | `Int (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
-       | `Int (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
-       | `Int (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
-       | `Int (_, `Move) -> assert false (* only computation intermediate value *)
+       | `IntCoord (`I, `Pos) -> dl_int_pos ~bound:ctx.box_height n
+       | `IntCoord (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
+       | `IntCoord (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
+       | `IntCoord (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
+       | `IntCoord (_, `Move) -> assert false (* only computation intermediate value *)
+       | `IntCard -> assert false (* only computation intermediate value *)
        | _ -> assert false )
 
   | `Color c ->
@@ -1692,7 +1698,8 @@ let rec dl_path_role (role : role) (p : revpath) : dl =
   (* assuming the length of [p] is known => no need to code for `Root *)
   (* TODO: how to cleanly encode choice between Field/Item/AnyItem *)
   match role with
-  | `Int (rij,rvec) -> dl_path_int rij rvec  p
+  | `IntCoord (rij,rvec) -> dl_path_int rij rvec  p
+  | `IntCard -> dl_path_card p
   | `Color _ -> dl_path_color p
   | `Mask -> dl_path_mask p
   | `Vec rvec -> dl_path_vec rvec p
@@ -1710,6 +1717,14 @@ and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
      +. dl_path_int rij rvec p1
   | `AnyItem p1 ->
      dl_path_int rij rvec p1
+  | _ -> assert false
+and dl_path_card = function
+  | `Root -> 0.
+  | `Item (i,p1) ->
+     Mdl.Code.universal_int_star i
+     +. dl_path_card p1
+  | `AnyItem p1 ->
+     dl_path_card p1
   | _ -> assert false
 and dl_path_color = function
   | `Root -> 0.
@@ -4348,9 +4363,10 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
          then Some (`Cst t0)
          else None in
     let valid_PrefixInitExtend_n_maket =
-      let valid_role =
+      let valid_role = (* instantiable role in model *)
         match role with
-        | `Int _ -> in_output
+        | `IntCoord _ -> in_output
+        | `IntCard -> in_output
         | `Color _ -> true
         | `Mask -> true
         | `Vec _ -> in_output
@@ -4555,23 +4571,23 @@ and defs_expressions ~env_sig : (role_poly * template) list =
     (* unary operators *)
     let _ = (* area(_) *)
       match role1 with
-      | `Shape -> push (`Int (`X, `Size `X), `Area e1)
+      | `Shape -> push (`IntCoord (`X, `Size `X), `Area e1)
       | _ -> () in
     let _ = (* right(_) *)
       match role1 with
-      | `Layer -> push (`Int (`J, `Pos), `Right e1)
+      | `Layer -> push (`IntCoord (`J, `Pos), `Right e1)
       | _ -> () in
     let _ = (* center(_) *)
       match role1 with
-      | `Layer -> push (`Int (`J, `Pos), `Center e1)
+      | `Layer -> push (`IntCoord (`J, `Pos), `Center e1)
       | _ -> () in
     let _ = (* bottom(_) *)
       match role1 with
-      | `Layer -> push (`Int (`I, `Pos), `Bottom e1)
+      | `Layer -> push (`IntCoord (`I, `Pos), `Bottom e1)
       | _ -> () in
     let _ = (* middle(_) *)
       match role1 with
-      | `Layer -> push (`Int (`I, `Pos), `Middle e1)
+      | `Layer -> push (`IntCoord (`I, `Pos), `Middle e1)
       | _ -> () in
     let _ = (* ProjI/J *)
       match role1 with
@@ -4585,7 +4601,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | _ -> () in
     let _ = (* ColorCount on grids *)
       match role1 with
-      | `Grid -> push (`Int (`X, `Size `X), `ColorCount e1)
+      | `Grid -> push (`IntCard, `ColorCount e1)
       | _ -> () in
     let _ = (* Strip on grids *)
       match role1 with
@@ -4607,36 +4623,36 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | _ -> () in (* TEST: var/feat *)
       let _ = (* span(_,_) *)
         match role1, role2 with
-        | `Int ((`I | `J as ij1), `Pos), `Int ((`I | `J as ij2), `Pos) when ij1=ij2 && e1 < e2 ->
-           push (`Int (ij1, `Pos), `Span (e1,e2))
+        | `IntCoord ((`I | `J as ij1), `Pos), `IntCoord ((`I | `J as ij2), `Pos) when ij1=ij2 && e1 < e2 ->
+           push (`IntCoord (ij1, `Pos), `Span (e1,e2))
         | `Vec `Pos, `Vec `Pos when e1 < e2 ->
            push (`Vec (`Size `X), `Span (e1,e2))
         | _ -> () in
       let _ = (* min([_;_]) *)
         match role1, role2 with
-        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+        | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Min [e1;e2])
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Min [e1;e2])
         | _ -> () in
       let _ = (* max([_;_]) *)
         match role1, role2 with
-        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+        | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Max [e1;e2])
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Max [e1;e2])
         | _ -> () in
       let _ = (* average([_;_]) *)
         match role1, role2 with
-        | `Int xx1, `Int xx2 when xx1 = xx2 && e1 < e2 ->
+        | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Average [e1;e2])
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
            push (role1, `Average [e1;e2])
         | _ -> () in
       let _ = (* translation = pos - pos *)
         match role1, role2 with
-        | `Int (ij1, `Pos), `Int (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
-           push (`Int (ij1, `Move), `Minus (e1,e2))
+        | `IntCoord (ij1, `Pos), `IntCoord (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
+           push (`IntCoord (ij1, `Move), `Minus (e1,e2))
         | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
            push (`Vec `Move, `Minus (e1,e2))
         | _ -> () in
@@ -4662,14 +4678,14 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   let _ = 
     let _ = (* constants *)
       let& k = [0;1;2;3] in
-      push (`Int (`X, (if k=0 then `Pos else `X)), `ConstInt k);
+      push (`IntCoord (`X, (if k=0 then `Pos else `X)), `ConstInt k);
       let& l = [0;1;2;3] in
       push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l)) in
     let& (role1,e1) = exprs_1 in
     (* unary operators *)
     let _ = (* IncrInt, DecrInt *)
       match role1 with
-      | `Int (_,rvec) when rvec <> `Move ->
+      | `IntCoord (_,rvec) when rvec <> `Move ->
          let& k = [1;2;3] in
          push (role1, `IncrInt (e1,k));
          push (role1, `DecrInt (e1,k))
@@ -4688,7 +4704,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       let& n = [2;3] in
       let _ = (* ScaleUp, ScaleDown *)
         match role1 with
-        | `Int (_,rvec) | `Vec rvec when rvec <> `Move ->
+        | `IntCoord (_,rvec) | `Vec rvec when rvec <> `Move ->
            push (role1, `ScaleUp (e1,n));
            push (role1, `ScaleDown (e1,n))
         | `Mask | `Shape | `Grid ->
@@ -4698,7 +4714,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       () in
     let _ = (* 0 + move -> pos *)
       match role1 with
-      | `Int (ij, `Move) -> push (`Int (ij, `Pos), `Plus (`ConstInt 0, e1))
+      | `IntCoord (ij, `Move) -> push (`IntCoord (ij, `Pos), `Plus (`ConstInt 0, e1))
       | `Vec `Move -> push (`Vec `Pos, `Plus (`ConstVec (0,0), e1))
       | _ -> () in
     let _ = (* ApplySym *)
@@ -4717,14 +4733,14 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       (* binary operators *)
       let _ = (* _ + _ *)
         match role1, role2 with
-        | `Int (_, xx1), `Int (_, (`X | `Size _ | `Move))
+        | `IntCoord (_, xx1), `IntCoord (_, (`X | `Size _ | `Move))
           | `Vec xx1, `Vec (`X | `Size _ | `Move)
              when xx1 <> `Move && (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
            push (role1, `Plus (e1,e2))
         | _ -> () in
       let _ = (* _ - _ *)
         match role1, role2 with (* not generating Moves *)
-        | `Int (_, rvec), `Int (_, (`X | `Size _ | `Move)) when rvec <> `Move && e1 <> e2 ->
+        | `IntCoord (_, rvec), `IntCoord (_, (`X | `Size _ | `Move)) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2))
         | `Vec rvec, `Vec (`X | `Size _ | `Move) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2))
