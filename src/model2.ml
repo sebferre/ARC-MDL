@@ -3432,7 +3432,7 @@ type parse_state =
   { quota_diff: int; (* nb of allowed additional diffs *)
     diff: diff; (* paths to data that differ from template patterns *)
     delta: delta; (* pixels that are not explained by the template *)
-    mask: Grid.Mask.t; (* remaining part of the grid to be explained *)
+    bmp: Grid.Bitmap.t; (* remaining part of the grid to be explained *)
     parts: Grid.part list; (* remaining parts that can be used *)
     grid: Grid.t; (* the grid to parse *)
   }
@@ -3441,18 +3441,18 @@ let add_diff path state =
   { state with quota_diff = state.quota_diff - 1;
                diff = path::state.diff }
 
-let add_delta_with_mask ~mask delta new_delta =
+let add_delta_with_bmp ~bmp delta new_delta =
   List.fold_left
     (fun delta (i,j,c as pixel) ->
-      if Grid.Mask.mem i j mask
+      if Grid.Bitmap.mem i j bmp
       then pixel::delta
       else delta)
     delta new_delta
   
-let filter_parts_with_mask ~new_mask parts = (* QUICK *)
+let filter_parts_with_bmp ~new_bmp parts = (* QUICK *)
   List.filter
     (fun p ->
-      not (Grid.Mask.inter_is_empty p.Grid.pixels new_mask))
+      not (Grid.Bitmap.inter_is_empty p.Grid.pixels new_bmp))
     parts
 
 type ('a,'b) parseur = (* input -> state -> results *)
@@ -3660,22 +3660,22 @@ let parseur_vec t p : (int * int, data) parseur = (* QUICK *)
     t p
 
 let state_minus_shape_gen state occ_color occ_delta occ_new_cover = (* QUICK *)
-  let new_mask = Grid.Mask.diff state.mask occ_new_cover in
-  if Grid.Mask.equal new_mask state.mask
+  let new_bmp = Grid.Bitmap.diff state.bmp occ_new_cover in
+  if Grid.Bitmap.equal new_bmp state.bmp
   then None (* the shape is fully hidden, explains nothing new *)
   else
     let new_state =
       { state with
-	mask = new_mask;
-        delta = add_delta_with_mask ~mask:state.mask state.delta occ_delta;
-	parts = filter_parts_with_mask ~new_mask state.parts
-                |> List.filter (fun (p : Grid.part) -> not (occ_color = p.color && Grid.Mask.is_subset occ_new_cover p.Grid.pixels))
+	bmp = new_bmp;
+        delta = add_delta_with_bmp ~bmp:state.bmp state.delta occ_delta;
+	parts = filter_parts_with_bmp ~new_bmp state.parts
+                |> List.filter (fun (p : Grid.part) -> not (occ_color = p.color && Grid.Bitmap.is_subset occ_new_cover p.Grid.pixels))
                                (* that would make occ useless if selecting p later *)
       } in
     Some new_state
 let state_minus_point state (i,j,c) =
   let occ_delta = [] in
-  let occ_new_cover = Grid.Mask.singleton state.grid.height state.grid.width i j in
+  let occ_new_cover = Grid.Bitmap.singleton state.grid.height state.grid.width i j in
   state_minus_shape_gen state c occ_delta occ_new_cover
 let state_minus_rectangle state (rect : Grid.rectangle) =
   state_minus_shape_gen state rect.color rect.delta rect.new_cover  
@@ -3735,8 +3735,8 @@ let parseur_object t p : (unit, data) parseur =
       parseur_rec1
         (parseur_shape `Any (p ++ `Shape))
         (fun parse_shape () state ->
-          let points = lazy (Grid.points state.grid state.mask state.parts) in
-          let rects = lazy (Grid.rectangles state.grid state.mask state.parts) in
+          let points = lazy (Grid.points state.grid state.bmp state.parts) in
+          let rects = lazy (Grid.rectangles state.grid state.bmp state.parts) in
           let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
           (* no constraint on position *)
           Myseq.return (dobject, state, stop_shape, next_shape)))
@@ -3746,8 +3746,8 @@ let parseur_object t p : (unit, data) parseur =
            (parseur_vec pos (p ++ `Pos))
            (parseur_shape shape (p ++ `Shape))
            (fun parse_pos parse_shape () state ->
-             let points = lazy (Grid.points state.grid state.mask state.parts) in
-             let rects = lazy (Grid.rectangles state.grid state.mask state.parts) in
+             let points = lazy (Grid.points state.grid state.bmp state.parts) in
+             let rects = lazy (Grid.rectangles state.grid state.bmp state.parts) in
              let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
              match dobject with
              | `PosShape (`Vec (`Int i, `Int j), dshape) ->
@@ -3848,15 +3848,15 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
 	  (* adding mask pixels with other color than background to delta *)
           let new_state =
             let new_delta = ref state.delta in
-	    Grid.Mask.iter
+	    Grid.Bitmap.iter
 	      (fun i j ->
                 let c = Grid.get_pixel ~source:"parseur_grid" g i j in
 	        if c <> bc then
 	          new_delta := (i,j,c)::!new_delta)
-	      state.mask;
+	      state.bmp;
             { state with
               delta = (!new_delta);
-	      mask = Grid.Mask.empty g.height g.width;
+	      bmp = Grid.Bitmap.empty g.height g.width;
 	      parts = [] } in
 	  Myseq.return (data, new_state, true, parseur_empty)))
      | _ -> parseur_empty)
@@ -3929,7 +3929,7 @@ let read_grid
   let state = { quota_diff;
                 diff = diff0;
                 delta = delta0;
-                mask = Grid.Mask.full g.height g.width;
+                bmp = Grid.Bitmap.full g.height g.width;
                 parts = Grid.segment_by_color g;
                 grid = g } in
   let parses =

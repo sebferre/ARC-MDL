@@ -554,9 +554,9 @@ let checker_segmentation : checker =
 	 |> List.iter
 	      (fun g ->
 	       let parts = Grid.segment_by_color g in
-	       let full_mask = Grid.(Mask.full g.height g.width) in
-	       let points = Grid.points g full_mask parts in
-	       let rects = Grid.rectangles g full_mask parts in
+	       let full_bmp = Grid.(Bitmap.full g.height g.width) in
+	       let points = Grid.points g full_bmp parts in
+	       let rects = Grid.rectangles g full_bmp parts in
 	       Grid.pp_parts g parts;
 	       Grid.pp_points g points;
 	       Grid.pp_rectangles g rects;
