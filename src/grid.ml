@@ -1,13 +1,6 @@
 
+open Arc_common
 open Bigarray
-
-module Xprint = Arc_xprint
-   
-exception Undefined_result of string (* for undefined computations *)
-
-type 'a result = ('a,exn) Result.t
-
-let ( let| ) res f = Result.bind res f [@@inline]
 
 type color = int
 

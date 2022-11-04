@@ -1,6 +1,6 @@
 
 OBJ=bintree.cmo common.cmo xprint.cmo iterator.cmo myseq.cmo mdl.cmo find_merge.cmo intmap.cmo
-SRC=arc_xprint.cmo bitmap.cmo grid.cmo mask_model.cmo segment.cmo task.cmo model2.cmo
+SRC=arc_xprint.cmo arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo segment.cmo task.cmo model2.cmo
 SRC_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
 
 # add -g to have backtractes in case of uncaught exceptions

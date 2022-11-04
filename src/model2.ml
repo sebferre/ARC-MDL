@@ -1,11 +1,6 @@
 
+open Arc_common
 open Task
-
-module Xprint = Arc_xprint
-  
-let def_param name v to_str =
-  Printf.printf "## %s = %s\n" name (to_str v);
-  ref v
 
 let seq = def_param "seq" false (* TEST *) string_of_bool
 let max_seq_length = def_param "max_seq_length" (if !seq then 10 else 1) string_of_int (* max size of collected sequences *)
@@ -20,82 +15,6 @@ let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed d
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
 let max_expressions = def_param "max_expressions" 50000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
 let max_refinements = def_param "max_refinements" 20 string_of_int (* max nb of considered refinements *)
-
-exception TODO
-
-module TEST = (* for profiling visually, used for the JS version *)
-  struct
-    let prof name f =
-      print_endline (name ^ "...");
-      let res = f () in
-      print_endline ("DONE " ^ name);
-      res
-  end
-        
-(* binders and syntactic sugar *)
-
-let ( %* ) = Myseq.empty
-let ( !* ) = Myseq.return
-let ( ** ) = Myseq.cons
-let ( @* ) = fun seq1 seq2 -> Myseq.concat [seq1; seq2]
-
-type 'a result = ('a,exn) Result.t
-
-let ( let| ) res f = Result.bind res f [@@inline]
-let ( let|? ) res f = Option.bind res f [@@inline]
-                   
-let ( let* ) seq f = seq |> Myseq.flat_map f [@@inline]
-let ( let*? ) seq f = seq |> Myseq.filter_map f [@@inline]
-let ( let*! ) seq f = seq |> Myseq.map f [@@inline]
-
-let ( let$ ) (init,l) f =
-  l |> List.fold_left (fun res x -> f (res, x)) init [@@inline]
-let ( let& ) l f =
-  l |> List.iter f [@@inline]
-
-let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 'c) Result.t =
-  match lx with
-  | [] -> Result.Ok []
-  | x::lx1 ->
-     let| y = f x in
-     let| ly1 = list_map_result f lx1 in
-     Result.Ok (y::ly1)
-
-let rec list_mapi_result (f : int -> 'a -> ('b,'c) Result.t) (i : int) (lx : 'a list) : ('b list, 'c) Result.t =
-  match lx with
-  | [] -> Result.Ok []
-  | x::lx1 ->
-     let| y = f i x in
-     let| ly1 = list_mapi_result f (i+1) lx1 in
-     Result.Ok (y::ly1)
-
-let result_list_bind_some (lx_res : ('a list,'c) Result.t) (f : 'a -> ('b list,'c) Result.t) : ('b list, 'c) Result.t =
-  let rec aux = function
-  | [] -> Result.Error (Failure "Model2.result_list_bind_some: empty list")
-  | [x] -> f x
-  | x::lx1 ->
-     let open Result in
-     match f x, aux lx1 with
-     | Ok ly0, Ok ly1 -> Ok (List.append ly0 ly1)
-     | Ok ly0, Error _ -> Ok ly0
-     | Error _, Ok ly1 -> Ok ly1
-     | Error e1, Error _ -> Error e1
-  in
-  let| lx = lx_res in
-  aux lx
-let ( let+|+ ) = result_list_bind_some
-
-let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
-  match lx with
-  | [] -> Some []
-  | x::lx1 ->
-     match f x with
-     | None -> None
-     | Some y ->
-        match option_list_bind lx1 f with
-        | None -> None
-        | Some ly1 -> Some (y::ly1)
-
 
 (** Part 1: grids *)
 

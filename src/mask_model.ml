@@ -1,9 +1,5 @@
 
-exception Undefined_result of string (* for undefined computations *)
-
-type 'a result = ('a,exn) Result.t
-
-let ( let| ) res f = Result.bind res f [@@inline]
+open Arc_common
 
 type t =
   [ `Mask of Grid.t (* only monocolor grids *)
