@@ -500,8 +500,8 @@ type 'a expr =
   | `IncrVec of 'a * int * int (* on Vec *)
   | `DecrVec of 'a * int * int (* in Vec *)
   | `Modulo of 'a * 'a (* on Int *)
-  | `ScaleUp of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
-  | `ScaleDown of 'a * int (* on Int, Vec, Mask, Shape, Grid *)
+  | `ScaleUp of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
+  | `ScaleDown of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
   | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
   | `Crop of 'a * 'a (* Grid, Rectangle -> Grid *)
   | `Strip of 'a (* on Grid *)
@@ -760,8 +760,8 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `IncrVec (a,k,l) -> xp print a; print#string " + ("; print#int k; print#string ", "; print#int l; print#string ")"
   | `DecrVec (a,k,l) -> xp print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
   | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
-  | `ScaleUp (a,k) -> xp print a; print#string " * "; print#int k
-  | `ScaleDown (a,k) -> xp print a; print#string " / "; print#int k
+  | `ScaleUp (a,b) -> xp print a; print#string " * "; xp print b
+  | `ScaleDown (a,b) -> xp print a; print#string " / "; xp print b
   | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
   | `Crop (a,b) -> xp_apply "crop" xp print [a;b]
   | `Strip a -> xp_apply "strip" xp print [a]
@@ -938,8 +938,8 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `IncrVec (a,k,l) -> dim a
   | `DecrVec (a,k,l) -> dim a
   | `Modulo (a,b) -> max (dim a) (dim b)
-  | `ScaleUp (a,k) -> dim a
-  | `ScaleDown (a,k) -> dim a
+  | `ScaleUp (a,b) -> max (dim a) (dim b)
+  | `ScaleDown (a,b) -> max (dim a) (dim b)
   | `ScaleTo (a,b) -> max (dim a) (dim b)
   | `Crop (a,b) -> max (dim a) (dim b)
   | `Strip a -> dim a
@@ -1827,7 +1827,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               (*`Top `X; *) `Bottom `X; `Middle `X;
               `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
               `IncrInt (`X,1); `DecrInt (`X,1);
-              `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `ScaleUp (`X,`X); `ScaleDown (`X,`X);
               `Min [`X;`X]; `Max [`X;`X]; `Average [`X;`X]; `Span (`X,`X);
               (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*) ])
     ~bool:(uniform_among [])
@@ -1835,7 +1835,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                 `MajorityColor `X ])
     ~mask:(uniform_among [
                `MaskOfGrid `X;
-               `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
+               `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
@@ -1846,13 +1846,13 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `ConstVec (0,0);
               `Plus (`X,`X); `Minus (`X,`X);
               `IncrVec (`X,1,1); `DecrVec (`X,1,1);
-              `ScaleUp (`X,2); `ScaleDown (`X,2);
+              `ScaleUp (`X,`X); `ScaleDown (`X,`X);
               `Tiling (`X,1,1);
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `TranslationOnto (`X,`X);
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
-                `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
+                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                 `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
@@ -1866,7 +1866,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~grid:(uniform_among [
                `GridOfMask (`X,`X);
                `SwapColors (`X,`X,`X);
-               `ScaleUp (`X,2); `ScaleDown (`X,2); `ScaleTo (`X,`X);
+               `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
@@ -1908,14 +1908,14 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,None,path)) e2
-  | `ScaleUp (e1,k) ->
+  | `ScaleUp (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
-     +. Mdl.Code.universal_int_plus k
-  | `ScaleDown (e1,k) ->
+     +. dl ~ctx ~path:(`Arg (2,Some `IntCard,path)) e2
+  | `ScaleDown (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
-     +. Mdl.Code.universal_int_plus k
+     +. dl ~ctx ~path:(`Arg (2,Some `IntCard,path)) e2
   | `ScaleTo (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -2663,52 +2663,66 @@ let apply_expr_gen
        (function
         | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
         | _ -> Result.Error (Invalid_expr e))
-  | `ScaleUp (e1,k) ->
+  | `ScaleUp (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Int i1 -> Result.Ok (`Int (i1 * k))
-        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
-        | `Mask mm ->
-           let| mm' = Mask_model.scale_up k k mm in
-           Result.Ok (`Mask mm')
-        | `Point col ->
-           Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask `Full))
-        | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
-           let| mm' = Mask_model.scale_up k k mm in
-           Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
-        | `Grid g ->
-           let| g' = Grid.Transf.scale_up k k g in
-           Result.Ok (`Grid g')
-        | _ -> Result.Error (Invalid_expr e))
-  | `ScaleDown (e1,k) ->
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (fun (d1,d2) ->
+         match d2 with
+         | `Int 0 -> Result.Error (Invalid_argument "ScaleUp: k=0") 
+         | `Int k ->
+            assert (k > 0);
+            (match d1 with
+             | `Int i1 -> Result.Ok (`Int (i1 * k))
+             | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
+             | `Mask mm ->
+                let| mm' = Mask_model.scale_up k k mm in
+                Result.Ok (`Mask mm')
+             | `Point col ->
+                Result.Ok (`Rectangle (`Vec (`Int k, `Int k), col, `Mask `Full))
+             | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
+                let| mm' = Mask_model.scale_up k k mm in
+                Result.Ok (`Rectangle (`Vec (`Int (h * k), `Int (w * k)), col, `Mask mm'))
+             | `Grid g ->
+                let| g' = Grid.Transf.scale_up k k g in
+                Result.Ok (`Grid g')
+             | _ -> Result.Error (Invalid_expr e))
+         | _ -> Result.Error (Invalid_expr e))
+  | `ScaleDown (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Int i1 ->
-           let rem = i1 mod k in
-           if rem = 0 || rem = k - 1 (* account for separators *)
-           then Result.Ok (`Int (i1 / k))
-           else Result.Error (Undefined_result "ScaleDown: not an integer")
-        | `Vec (`Int i1, `Int j1) ->
-           let remi, remj = i1 mod k, j1 mod k in
-           if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
-           then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
-           else Result.Error (Undefined_result "ScaleDown: not an integer")
-        | `Mask mm ->
-           let| mm' = Mask_model.scale_down k k mm in
-           Result.Ok (`Mask mm')
-        | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
-           let remh, remw = h mod k, w mod k in
-           if remh = remw && (remh = 0 || remh = k-1) (* account for separators *)
-           then
-             let| mm' = Mask_model.scale_down k k mm in
-             Result.Ok (`Rectangle (`Vec (`Int (h / k), `Int (w / k)), col, `Mask mm'))
-           else Result.Error (Undefined_result "ScaleDown: not an integer size")
-        | `Grid g ->
-           let| g' = Grid.Transf.scale_down k k g in
-           Result.Ok (`Grid g')
-        | _ -> Result.Error (Invalid_expr e))
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (fun (d1,d2) ->
+         match d2 with
+         | `Int 0 -> Result.Error (Invalid_argument "ScaleDown: k=0") 
+         | `Int k ->
+            assert (k > 0);
+            (match d1 with
+             | `Int i1 ->
+                let rem = i1 mod k in
+                if rem = 0 || rem = k - 1 (* account for separators *)
+                then Result.Ok (`Int (i1 / k))
+                else Result.Error (Undefined_result "ScaleDown: not an integer")
+             | `Vec (`Int i1, `Int j1) ->
+                let remi, remj = i1 mod k, j1 mod k in
+                if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
+                then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
+                else Result.Error (Undefined_result "ScaleDown: not an integer")
+             | `Mask mm ->
+                let| mm' = Mask_model.scale_down k k mm in
+                Result.Ok (`Mask mm')
+             | `Rectangle (`Vec (`Int h, `Int w), col, `Mask mm) ->
+                let remh, remw = h mod k, w mod k in
+                if remh = remw && (remh = 0 || remh = k-1) (* account for separators *)
+                then
+                  let| mm' = Mask_model.scale_down k k mm in
+                  Result.Ok (`Rectangle (`Vec (`Int (h / k), `Int (w / k)), col, `Mask mm'))
+                else Result.Error (Undefined_result "ScaleDown: not an integer size")
+             | `Grid g ->
+                let| g' = Grid.Transf.scale_down k k g in
+                Result.Ok (`Grid g')
+             | _ -> Result.Error (Invalid_expr e))
+         | _ -> Result.Error (Invalid_expr e))
   | `ScaleTo (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4700,18 +4714,17 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `DecrVec (e1,k,l))
          )
       | _ -> () in
-    let _ =
+    let _ = (* ScaleUp, ScaleDown by constant *)
       let& n = [2;3] in
-      let _ = (* ScaleUp, ScaleDown *)
-        match role1 with
-        | `IntCoord (_,rvec) | `Vec rvec when rvec <> `Move ->
-           push (role1, `ScaleUp (e1,n));
-           push (role1, `ScaleDown (e1,n))
-        | `Mask | `Shape | `Grid ->
-           push (role1, `ScaleUp (e1,n));
-           push (role1, `ScaleDown (e1,n))
-        | _ -> () in
-      () in
+      let e2 = `ConstInt n in
+      match role1 with
+      | `IntCoord (_,rvec) | `Vec rvec when rvec <> `Move ->
+         push (role1, `ScaleUp (e1,e2));
+         push (role1, `ScaleDown (e1,e2))
+      | `Mask | `Shape | `Grid ->
+         push (role1, `ScaleUp (e1,e2));
+         push (role1, `ScaleDown (e1,e2))
+      | _ -> () in
     let _ = (* 0 + move -> pos *)
       match role1 with
       | `IntCoord (ij, `Move) -> push (`IntCoord (ij, `Pos), `Plus (`ConstInt 0, e1))
@@ -4731,6 +4744,15 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | _ -> () in
     let& (role2,e2) = exprs_1 in
       (* binary operators *)
+      let _ = (* ScaleUp, ScaleDown by IntCard-expression*)
+        match role1, role2 with
+        | (`IntCoord (_,rvec) | `Vec rvec), `IntCard when rvec <> `Move ->
+           push (role1, `ScaleUp (e1,e2));
+           push (role1, `ScaleDown (e1,e2))
+        | (`Mask | `Shape | `Grid), `IntCard ->
+           push (role1, `ScaleUp (e1,e2));
+           push (role1, `ScaleDown (e1,e2))
+        | _ -> () in
       let _ = (* _ + _ *)
         match role1, role2 with
         | `IntCoord (_, xx1), `IntCoord (_, (`X | `Size _ | `Move))

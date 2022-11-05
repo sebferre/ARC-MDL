@@ -378,8 +378,8 @@ module Transf = (* black considered as neutral color by default *)
     let scale_up (k : int) (l : int) (g : t) : t result = (* scaling up grid [g] by a factor (k,l) *)
       let h, w = dims g in
       let h', w' = h * k, w * l in
-      if h' > max_size || w' > max_size
-      then Result.Error (Undefined_result "scale_up: result grid too large")
+      if h' > max_size || w' > max_size || h' <= 0 || w' <= 0
+      then Result.Error (Undefined_result "scale_up: result grid too large or ill-formed")
       else (
         let res = make h' w' black in
         iter_pixels
@@ -396,7 +396,7 @@ module Transf = (* black considered as neutral color by default *)
 
     let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
       let h, w = dims g in
-      if h mod k = 0 && w mod l = 0
+      if k > 0 && l > 0 && h mod k = 0 && w mod l = 0
       then (
         let ok = ref true in
         iter_pixels
