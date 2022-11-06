@@ -554,15 +554,27 @@ module Transf = (* black considered as neutral color by default *)
 
     let periodicity_is_total : periodicity -> bool = function
       | Period1 (_,k_ar) ->
-         not (Array.exists (fun (_,_,c) ->
-                  c = no_color)
-                k_ar)
+         Array.for_all (fun (nc,n,c) ->
+             nc <> 0)
+           k_ar
       | Period2 (_,_,k2_ar) ->
-         not (Array.exists (fun k_ar ->
-                  Array.exists (fun (_,_,c) ->
-                      c = no_color)
-                    k_ar)
-                k2_ar)
+         Array.for_all (fun k_ar ->
+             Array.for_all (fun (nc,n,c) ->
+                 nc <> 0)
+               k_ar)
+           k2_ar
+
+    let periodicity_is_strict : periodicity -> bool = function
+      | Period1 (_,k_ar) ->
+         Array.for_all (fun (nc,n,c) ->
+             nc = 0 || nc = n)
+           k_ar
+      | Period2 (_,_,k2_ar) ->
+         Array.for_all (fun k_ar ->
+             Array.for_all (fun (nc,n,c) ->
+                 nc = 0 || nc = n)
+               k_ar)
+           k2_ar
 
     let xp_periodicity (print : Xprint.t) (per: periodicity) =
       let total = periodicity_is_total per in
@@ -752,21 +764,28 @@ module Transf = (* black considered as neutral color by default *)
            (fun i j ->
              let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
              if c_k = no_color then bgcolor else c_k)
-      
-    let fill_and_resize_alike (total : bool) (bgcolor : color) (new_size : int * int) (g : t) : t result =
+
+    type fill_and_resize_mode = [`Total | `Strict | `TradeOff]
+
+    let fill_and_resize_alike (mode : fill_and_resize_mode) (bgcolor : color) (new_size : int * int) (g : t) : t result =
       let periods = periodicities bgcolor g in
       match periods with
       | [] -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no periodicity")
       | period0::next ->
          let period_opt =
-           if total
-           then
-             if periodicity_is_total period0
-             then Some period0
-             else List.find_opt periodicity_is_total next
-           else Some period0 in
+           match mode with
+           | `Total ->
+              if periodicity_is_total period0
+              then Some period0
+              else List.find_opt periodicity_is_total next
+           | `Strict ->
+              if periodicity_is_strict period0
+              then Some period0
+              else List.find_opt periodicity_is_strict next
+           | `TradeOff ->
+              Some period0 in
          match period_opt with
-         | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no total periodicity")
+         | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no adequate periodicity found")
          | Some period ->
             let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
             Result.Ok g'
