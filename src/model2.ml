@@ -533,7 +533,7 @@ type 'a expr =
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
   | `FillResizeAlike of Grid.Transf.fill_and_resize_mode * 'a * 'a * 'a (* on Color, Vec, Grid -> Grid *)
-  | `Compose of 'a * 'a (* Mask/Shape/Grid as T, T -> T *)
+  | `Compose of 'a * 'a * 'a (* Color, Mask/Shape/Grid as T, T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
   (* sym list list = matrix to be filled with symmetries of some mask *)
@@ -805,7 +805,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
        | `Strict -> "_strict"
        | `TradeOff -> "" in
      xp_apply ("fillResizeAlike" ^ suffix_mode) xp print [a;b;c]
-  | `Compose (a,b) -> xp_apply "compose" xp print [a;b]
+  | `Compose (a,b,c) -> xp_apply "compose" xp print [a;b;c]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
                             (fun print -> xp print a)]
@@ -975,7 +975,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `TranslationOnto (a,b) -> max (dim a) (dim b)
   | `Tiling (a,k,l) -> dim a
   | `FillResizeAlike (_,a,b,c) -> max (dim a) (max (dim b) (dim c))
-  | `Compose (a,b) -> max (dim a) (dim b)
+  | `Compose (a,b,c) -> max (dim a) (max (dim b) (dim c))
   | `ApplySym (sym,a,r) -> dim a
   | `UnfoldSym (sym_arr,a) -> dim a
   | `CloseSym (sym_seq,a,b) -> max (dim a) (dim b)
@@ -1839,7 +1839,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~mask:(uniform_among [
                `MaskOfGrid `X;
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
@@ -1856,7 +1856,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X);
+                `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
@@ -1871,7 +1871,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
@@ -2010,10 +2010,11 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
      +. dl ~ctx ~path:(`Arg (1, Some (`Vec (`Size `Grid)), path)) e2
      +. dl ~ctx ~path:(`Arg (2, None, path)) e3
-  | `Compose (e1,e2) ->
+  | `Compose (e1,e2,e3) ->
      code_expr
-     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
+     +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
      +. dl ~ctx ~path:(`Arg (2, None, path)) e2
+     +. dl ~ctx ~path:(`Arg (3, None, path)) e3
   | `ApplySym (sym,e1,role_e1) ->
      code_expr (* no need to encode role_e1, deducible from model *)
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
@@ -3060,35 +3061,37 @@ let apply_expr_gen
                Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
-  | `Compose (e1,e2) ->
+  | `Compose (e1,e2,e3) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         let| c_mask, g1 =
-           match d1 with
-           | `Mask (`Mask m1) ->
-              Result.Ok (1,m1)
-           | `Rectangle (`Vec (`Int h1, `Int w1), _, `Mask mm1) ->
-              let m1 = Mask_model.to_mask ~height:h1 ~width:w1 mm1 in
-              Result.Ok (1,m1)
-           | `Grid g1 ->
-              let| c_mask = Grid.majority_color ~except_black:true  g1 in
-              Result.Ok (c_mask, g1)
-           | _ -> Result.Error (Invalid_expr e) in
-         match d2 with
-         | `Mask (`Mask m2) ->
-            let| m = Grid.Transf.compose c_mask g1 m2 in
-            Result.Ok (`Mask (`Mask m))
-         | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
-            let m2 = Mask_model.to_mask ~height:h2 ~width:w2 mm2 in
-            let| m = Grid.Transf.compose c_mask g1 m2 in (* TODO: reconvert as mask_model *)
-            let h, w = Grid.dims m in
-            Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col2, `Mask (`Mask m)))
-         | `Grid g2 ->
-            let| g = Grid.Transf.compose c_mask g1 g2 in
-            Result.Ok (`Grid g)
-         | _ -> Result.Error (Invalid_expr e))
+     let| res3 = apply ~lookup p e3 in
+     broadcast_list_result [res1;res2;res3]
+       (function
+        | [`Color c_mask;d1;d2] ->
+           let| g1 =
+             match d2 with
+             | `Mask (`Mask m1) ->
+                Result.Ok m1
+             | `Rectangle (`Vec (`Int h1, `Int w1), _, `Mask mm1) ->
+                let m1 = Mask_model.to_mask ~height:h1 ~width:w1 mm1 in
+                Result.Ok m1
+             | `Grid g1 ->
+                Result.Ok g1
+             | _ -> Result.Error (Invalid_expr e) in
+           (match d2 with
+           | `Mask (`Mask m2) ->
+              let| m = Grid.Transf.compose c_mask g1 m2 in
+              Result.Ok (`Mask (`Mask m))
+           | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
+              let m2 = Mask_model.to_mask ~height:h2 ~width:w2 mm2 in
+              let| m = Grid.Transf.compose c_mask g1 m2 in (* TODO: reconvert as mask_model *)
+              let h, w = Grid.dims m in
+              Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col2, `Mask (`Mask m)))
+           | `Grid g2 ->
+              let| g = Grid.Transf.compose c_mask g1 g2 in
+              Result.Ok (`Grid g)
+           | _ -> Result.Error (Invalid_expr e))
+        | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
      let| res1 = apply ~lookup p e1 in
      broadcast1_result res1
@@ -4570,6 +4573,9 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   let exprs_0 = List.rev !exprs in
   (* LEVEL 1 *)
   let _ =
+    let _ = (* color constants *)
+      let& c = Grid.all_colors in
+      push (`Color `X, `Color c) in
     let& (role1,e1) = exprs_0 in
     (* unary operators *)
     let _ = (* area(_) *)
@@ -4677,9 +4683,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       push (`IntCoord (`X, (if k=0 then `Pos else `X)), `ConstInt k);
       let& l = [0;1;2;3] in
       push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l)) in
-(*    let _ = (* color constants *)
-      let& c = Grid.all_colors in
-      push (`Color `X, `Color c) in *)
     let& (role1,e1) = exprs_1 in
     (* unary operators *)
     let _ = (* IncrInt, DecrInt *)
@@ -4721,12 +4724,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          let& sym = all_symmetry in
          push (role1, `ApplySym (sym, e1, role1))
       | _ -> () in
-    let _ = (* Coloring(_, const) *)
-      match role1 with
-      | (`Shape | `Layer) ->
-         let& c = Grid.all_colors in
-         push (role1, `Coloring (e1, `Color c))
-      | _ -> () in
     let& (role2,e2) = exprs_1 in
       (* binary operators *)
       let _ = (* ScaleUp, ScaleDown by IntCard-expression*)
@@ -4737,6 +4734,11 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | (`Mask | `Shape | `Grid), `IntCard ->
            push (role1, `ScaleUp (e1,e2));
            push (role1, `ScaleDown (e1,e2))
+        | _ -> () in
+      let _ = (* Coloring *)
+        match role1, role2 with
+        | (`Shape | `Layer), `Color _ ->
+           push (role1, `Coloring (e1, e2))
         | _ -> () in
       let _ = (* _ + _ *)
         match role1, role2 with
@@ -4751,10 +4753,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
            push (role1, `Minus (e1,e2))
         | `Vec rvec, `Vec (`X | `Size _ | `Move) when rvec <> `Move && e1 <> e2 ->
            push (role1, `Minus (e1,e2))
-        | _ -> () in
-      let _ = (* Coloring (_, ref) *)
-        match role1, role2 with
-        | (`Shape | `Layer), `Color _ -> push (role1, `Coloring (e1,e2))
         | _ -> () in
       () in
   let exprs_2 = List.rev !exprs in
@@ -4780,10 +4778,14 @@ and defs_expressions ~env_sig : (role_poly * template) list =
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
           | _ -> ())
       | _ -> () in
-    let _ = (* Compose(e1,e1) *)
+    let _ = (* Compose(c,e1,e1) *)
       match role1 with
-      | `Mask | `Grid ->
-         push (role1, `Compose (e1,e1))
+      | `Mask | `Shape ->
+         push (role1, `Compose (`Color 1, e1, e1))
+      | `Grid ->
+         push (role1, `Compose (`MajorityColor e1, e1, e1));
+         let& c = Grid.all_colors in
+         push (role1, `Compose (`Color c, e1, e1))
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
@@ -4791,20 +4793,17 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          let& sym_matrix = all_symmetry_unfold in
          push (role1, `UnfoldSym (sym_matrix, e1))
       | _ -> () in
-    let _ = (* CloseSym *)
+    let _ = (* CloseSym on masks *)
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& sym_seq = all_symmetry_close in
          push (role1, `CloseSym (sym_seq, `Color Grid.black, e1)) (* bgcolor does not matter for masks *)
-      | `Grid ->
-         let& sym_seq = all_symmetry_close in
-         let& bgcolor = Grid.all_colors in
-         push (role1, `CloseSym (sym_seq, `Color bgcolor, e1))
-      | _ -> () in   
+      | _ -> () in
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
       | `Grid ->
          let& c1 = Grid.all_colors in
+         push (role1, `SwapColors (e1, `Color c1, `MajorityColor e1));
          let& c2 = Grid.all_colors in
          if c1 > c2 (* symmetric operation *)
          then push (role1, `SwapColors (e1, `Color c1, `Color c2))
@@ -4820,11 +4819,11 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | (`Mask | `Shape | `Grid), `Vec (`X | `Size _) ->
            push (role1, `ScaleTo (e1,e2))
         | _ -> () in
-      let _ = (* CloseSym on grid with color path *)
+      let _ = (* CloseSym on grids *)
         match role1, role2 with
-        | `Color _, `Grid ->
+        | `Grid, `Color _ ->
            let& sym_seq = all_symmetry_close in
-           push (role1, `CloseSym (sym_seq, e1, e2))
+           push (role1, `CloseSym (sym_seq, e2, e1))
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with
