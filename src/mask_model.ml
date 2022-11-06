@@ -36,14 +36,17 @@ let mem ~height ~width i j = (* mask height and width, relative position (i,j) *
   | `TimesCross -> height=width && (i=j || (height-1-i) = j)
                  
 let to_mask ~height ~width (mm : t) : Grid.t =
-  let res = Grid.Mask.empty height width in
-  for i = 0 to height - 1 do
-    for j = 0 to width - 1 do
-      if mem ~height ~width i j mm then
-        Grid.Mask.set res i j
-    done
-  done;
-  res
+  match mm with
+  | `Mask m -> m
+  | _ ->
+     let res = Grid.Mask.empty height width in
+     for i = 0 to height - 1 do
+       for j = 0 to width - 1 do
+         if mem ~height ~width i j mm then
+           Grid.Mask.set res i j
+       done
+     done;
+     res
   
 let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : t list =
   let height, width = maxi-mini+1, maxj-minj+1 in
@@ -128,15 +131,6 @@ let fill_and_resize_alike total bgcolor new_size : t -> t result = function
 let fill_and_resize_alike, reset_fill_and_resize_alike =
   Common.memoize4 ~size:101 fill_and_resize_alike
   
-let compose (m1 : Grid.t) (mm2 : t) : t result =
-  match mm2 with
-  | `Mask m2 ->
-     let| m = Grid.Transf.compose m1 m2 in
-     Result.Ok (`Mask m)
-  | _ -> Result.Error (Undefined_result "Grid.Mask_model.compose: undefined")
-let compose, reset_compose =
-  Common.memoize2 ~size:101 compose
-      
 let symmetry (f : Grid.t -> Grid.t) : t -> t result = function
   | `Mask m -> Result.Ok (`Mask (f m))
   | (`Full | `Border | `TimesCross | `PlusCross as mm) -> Result.Ok mm
@@ -223,7 +217,6 @@ let reset_memoized_functions () =
   reset_tile ();
   reset_resize_alike ();
   reset_fill_and_resize_alike ();
-  reset_compose (); 
   reset_flipHeight ();
   reset_flipWidth ();
   reset_flipDiag1 ();

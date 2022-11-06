@@ -174,16 +174,18 @@ let for_all_pixels f grid =
   done;
   !res [@@inline]
 
-let majority_color (g : t) : color =
-  let res = ref black in
-  let nb_max = ref (g.color_count.(black)) in
-  for c = 1 to nb_color do
+let majority_color ?(except_black = false) (g : t) : color result =
+  let res = ref no_color in
+  let nb_max = ref 0 in
+  for c = (if except_black then 1 else 0) to nb_color do
     let nb = g.color_count.(c) in
     if nb > !nb_max then (
       res := c;
       nb_max := nb)
   done;
-  !res
+  if !res = no_color
+  then Result.Error (Undefined_result "majority_color: all black")
+  else Result.Ok !res
 
 let color_count (grid : t) : int = (* not counting black *)
   let res = ref 0 in
@@ -817,7 +819,7 @@ module Transf = (* black considered as neutral color by default *)
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
     let strip (g : t) : t result = (* croping on anything else than the majority color, the remaining majority color is made black *)
-      let c_strip = majority_color g in
+      let| c_strip = majority_color g in
       let h, w = dims g in
       let min_i, max_i = ref h, ref (-1) in
       let min_j, max_j = ref w, ref (-1) in
@@ -884,7 +886,7 @@ module Transf = (* black considered as neutral color by default *)
 
     (* TODO: selecting halves and quarters *)
 
-    let compose (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that is non-black (g1 should be monocolor) *)
+    let compose (c_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color c_mask *)
       let h1, w1 = dims g1 in
       let h2, w2 = dims g2 in
       let h, w = h1*h2, w1*w2 in
@@ -894,7 +896,7 @@ module Transf = (* black considered as neutral color by default *)
         let res = make h w black in
         iter_pixels
           (fun i1 j1 c1 ->
-            if c1 <> black then
+            if c1 = c_mask then
               iter_pixels
                 (fun i2 j2 c2 ->
                   if c2 <> black then
@@ -903,7 +905,7 @@ module Transf = (* black considered as neutral color by default *)
           g1;
         Result.Ok res)
     let compose, reset_compose =
-      Common.memoize2 ~size:101 compose
+      Common.memoize3 ~size:101 compose
 
     (* symmetrization *)
 

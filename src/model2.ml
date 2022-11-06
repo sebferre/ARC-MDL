@@ -3065,22 +3065,28 @@ let apply_expr_gen
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (fun (d1,d2) ->
-         let| m1 =
+         let| c_mask, g1 =
            match d1 with
-           | `Mask (`Mask m1) -> Result.Ok m1
-           | `Rectangle (_, _, `Mask (`Mask m1)) -> Result.Ok m1 (* TODO: extend to other mask models, using shape size *)
-           | `Grid g1 -> Result.Ok (Grid.Mask.from_grid g1)
+           | `Mask (`Mask m1) ->
+              Result.Ok (1,m1)
+           | `Rectangle (`Vec (`Int h1, `Int w1), _, `Mask mm1) ->
+              let m1 = Mask_model.to_mask ~height:h1 ~width:w1 mm1 in
+              Result.Ok (1,m1)
+           | `Grid g1 ->
+              let| c_mask = Grid.majority_color ~except_black:true  g1 in
+              Result.Ok (c_mask, g1)
            | _ -> Result.Error (Invalid_expr e) in
          match d2 with
-         | `Mask mm2 ->
-            let| mm = Mask_model.compose m1 mm2 in
-            Result.Ok (`Mask mm)
+         | `Mask (`Mask m2) ->
+            let| m = Grid.Transf.compose c_mask g1 m2 in
+            Result.Ok (`Mask (`Mask m))
          | `Rectangle (`Vec (`Int h2, `Int w2), col2, `Mask mm2) ->
-            let h1, w1 = Grid.dims m1 in
-            let| mm = Mask_model.compose m1 mm2 in
-            Result.Ok (`Rectangle (`Vec (`Int (h1*h2), `Int (w1*w2)), col2, `Mask mm))
+            let m2 = Mask_model.to_mask ~height:h2 ~width:w2 mm2 in
+            let| m = Grid.Transf.compose c_mask g1 m2 in (* TODO: reconvert as mask_model *)
+            let h, w = Grid.dims m in
+            Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col2, `Mask (`Mask m)))
          | `Grid g2 ->
-            let| g = Grid.Transf.compose m1 g2 in
+            let| g = Grid.Transf.compose c_mask g1 g2 in
             Result.Ok (`Grid g)
          | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
@@ -3146,7 +3152,7 @@ let apply_expr_gen
      broadcast1_result res1
        (function
         | `Grid g ->
-           let c = Grid.majority_color g in
+           let| c = Grid.majority_color ~except_black:true g in
            Result.Ok (`Color c)
         | _ -> Result.Error (Invalid_expr e))
   | `ColorCount e1 ->
@@ -4666,11 +4672,14 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   let exprs_1 = List.rev !exprs in
   (* LEVEL 2, not generating Move at this level *)
   let _ = 
-    let _ = (* constants *)
+    let _ = (* int and vec constants *)
       let& k = [0;1;2;3] in
       push (`IntCoord (`X, (if k=0 then `Pos else `X)), `ConstInt k);
       let& l = [0;1;2;3] in
       push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l)) in
+(*    let _ = (* color constants *)
+      let& c = Grid.all_colors in
+      push (`Color `X, `Color c) in *)
     let& (role1,e1) = exprs_1 in
     (* unary operators *)
     let _ = (* IncrInt, DecrInt *)
