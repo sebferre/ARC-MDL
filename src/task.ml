@@ -5,16 +5,20 @@ type pair = { input : Grid.t; output : Grid.t }
 type task = { train : pair list; test : pair list }
 
 let rec task_of_json : Yojson.Safe.t -> task = function
-  | `Assoc ["train", `List trains; "test", `List tests]
-  | `Assoc ["test", `List tests; "train", `List trains] ->
-     { train = List.map pair_of_json trains;
-       test = List.map pair_of_json tests }
+  | `Assoc pairs ->
+     (match List.assoc_opt "train" pairs, List.assoc_opt "test" pairs with
+      | Some (`List trains), Some (`List tests) ->
+         { train = List.map pair_of_json trains;
+           test = List.map pair_of_json tests }
+      | _ -> invalid_arg "Invalid JSON task")
   | _ -> invalid_arg "Invalid JSON task"
 and pair_of_json : Yojson.Safe.t -> pair = function
-  | `Assoc ["input", input; "output", output]
-  | `Assoc ["output", output; "input", input] ->
-     { input = grid_of_json input;
-       output = grid_of_json output }
+  | `Assoc pairs ->
+     (match List.assoc_opt "input" pairs, List.assoc_opt "output" pairs with
+      | Some input, Some output ->
+         { input = grid_of_json input;
+           output = grid_of_json output }
+      | _ -> invalid_arg "Invalid JSON pair")
   | _ -> invalid_arg "Invalid JSON pair"
 and grid_of_json : Yojson.Safe.t -> Grid.t = function
   | `List (`List row::_ as rows) ->
