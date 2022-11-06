@@ -532,8 +532,7 @@ type 'a expr =
   | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
-  | `ResizeAlikeTo of 'a * 'a (* on Mask/Shape/Object as T, Vec -> T *)
-  | `FillAlike of bool (* total *) * 'a * 'a (* on Color, Grid -> Grid *)
+  | `FillResizeAlike of bool (* total *) * 'a * 'a * 'a (* on Color, Vec, Grid -> Grid *)
   | `Compose of 'a * 'a (* Mask/Shape/Grid as T, T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
@@ -799,8 +798,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                          [(fun print -> xp print a);
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
-  | `ResizeAlikeTo (a,b) -> xp_apply "resizeAlikeTo" xp print [a;b]
-  | `FillAlike (total,a,b) -> xp_apply ("fillAlike" ^ if total then "_total" else "") xp print [a;b]
+  | `FillResizeAlike (total,a,b,c) -> xp_apply ("fillAlike" ^ if total then "_total" else "_partial") xp print [a;b;c]
   | `Compose (a,b) -> xp_apply "compose" xp print [a;b]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
@@ -970,8 +968,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `GridOfMask (a,b) -> max (dim a) (dim b)
   | `TranslationOnto (a,b) -> max (dim a) (dim b)
   | `Tiling (a,k,l) -> dim a
-  | `ResizeAlikeTo (a,b) -> max (dim a) (dim b)
-  | `FillAlike (_,a,b) -> max (dim a) (dim b)
+  | `FillResizeAlike (_,a,b,c) -> max (dim a) (max (dim b) (dim c))
   | `Compose (a,b) -> max (dim a) (dim b)
   | `ApplySym (sym,a,r) -> dim a
   | `UnfoldSym (sym_arr,a) -> dim a
@@ -1836,7 +1833,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~mask:(uniform_among [
                `MaskOfGrid `X;
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `FillResizeAlike (false,`X,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
@@ -1853,13 +1850,13 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
+                `Tiling (`X,1,1); `FillResizeAlike (false,`X,`X,`X); `Compose (`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
-                `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X);
+                `FillResizeAlike (false,`X,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
@@ -1868,7 +1865,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `ResizeAlikeTo (`X,`X); `FillAlike (false,`X,`X); `Compose (`X,`X);
+               `Tiling (`X,1,1); `FillResizeAlike (false,`X,`X,`X); `Compose (`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
@@ -1998,15 +1995,12 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. Mdl.Code.universal_int_plus k
      +. Mdl.Code.universal_int_plus l
-  | `ResizeAlikeTo (e1,e2) ->
-     code_expr
-     +. dl ~ctx ~path:(`Arg (1, None, path)) e1
-     +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
-  | `FillAlike (total,e1,e2) ->
+  | `FillResizeAlike (total,e1,e2,e3) ->
      code_expr
      +. 1. (* total *)
      +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl ~ctx ~path:(`Arg (2, None, path)) e2
+     +. dl ~ctx ~path:(`Arg (1, Some (`Vec (`Size `Grid)), path)) e2
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e3
   | `Compose (e1,e2) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
@@ -3029,54 +3023,34 @@ let apply_expr_gen
            let| g' = Grid.Transf.tile k l g in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
-  | `ResizeAlikeTo (e1,e2) ->
+  | `FillResizeAlike (total,e1,e2,e3) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
-     broadcast2_result (res1,res2)
+     let| res3 = apply ~lookup p e3 in
+     broadcast_list_result [res1;res2;res3]
        (function
-        | d1, `Vec (`Int h, `Int w) when h > 0 && w > 0 ->
-           let aux = function
-             | `Point col ->
-                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask `Full))
-             | `Rectangle (_size, col, `Mask mm) ->
-                let| mm' = Mask_model.resize_alike h w mm in
-                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), col, `Mask mm'))
-             | _ -> assert false in             
-           (match d1 with
-            | `Mask mm ->
-               let| mm' = Mask_model.resize_alike h w mm in
-               Result.Ok (`Mask mm')
-            | (`Point _ | `Rectangle _ as shape) -> aux shape
-            | `PosShape (pos,shape) ->
-               let| shape' = aux shape in
+        | [`Color bgcolor; `Vec (`Int h, `Int w); d3] when h > 0 && w > 0 ->
+           let new_size = h, w in
+           let aux_shape = function
+             | `Point color ->
+                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), color, `Mask `Full))
+             | `Rectangle (_size, color, `Mask mm) ->
+                let| mm' = Mask_model.fill_and_resize_alike total bgcolor new_size mm in
+                Result.Ok (`Rectangle (`Vec (`Int h, `Int w), color, `Mask mm'))
+             | _ -> assert false in
+           (match d3 with
+            | `Mask m ->
+               let| m' = Mask_model.fill_and_resize_alike total bgcolor new_size m in
+               Result.Ok (`Mask m')
+            | (`Point _ | `Rectangle _ as shape) -> aux_shape shape
+            | `PosShape (pos, shape) ->
+               let| shape' = aux_shape shape in
                Result.Ok (`PosShape (pos, shape'))
             | `Grid g ->
-               let| g' = Grid.Transf.resize_alike h w g in
+               let| g' = Grid.Transf.fill_and_resize_alike total bgcolor new_size g in
                Result.Ok (`Grid g')
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
-  | `FillAlike (total,e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         match d1 with
-         | `Color bgcolor ->
-            (match d2 with
-             | `Mask m ->
-                let| m' = Mask_model.fill_alike total bgcolor m in
-                Result.Ok (`Mask m')
-             | `Rectangle (size, color, `Mask m) ->
-                let| m' = Mask_model.fill_alike total bgcolor m in
-                Result.Ok (`Rectangle (size, color, `Mask m'))
-             | `PosShape (pos, `Rectangle (size, color, `Mask m)) ->
-                let| m' = Mask_model.fill_alike total bgcolor m in
-                Result.Ok (`PosShape (pos, `Rectangle (size, color, `Mask m')))
-             | `Grid g ->
-                let| g' = Grid.Transf.fill_alike total bgcolor g in
-                Result.Ok (`Grid g')
-             | _ -> Result.Error (Invalid_expr e))
-         | _ -> Result.Error (Invalid_expr e))
   | `Compose (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
      let| res2 = apply ~lookup p e2 in
@@ -4621,13 +4595,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       match role1 with
       | `Grid -> push (`Grid, `Strip e1)
       | _ -> () in
-    let _ = (* FillAlike *)
-      match role1 with
-      | (`Mask | `Shape | `Layer | `Grid) ->
-         let bgcolor = Grid.black in
-         let& total = [false; true] in
-         push (role1, `FillAlike (total, `Color bgcolor, e1))
-      | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
       let _ = (* corner(_,_) *)
@@ -4784,6 +4751,17 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          if k>1 || l>1 then
            push (role1, `Tiling (e1,k,l))
       | _ -> () in
+    let _ = (* FillResizeAlike *)
+      match role1 with
+      | `Vec (`X | `Size _) ->
+         let& (role2,e2) = exprs_0 in (* no expression for the mask-grid *)
+         (match role2 with
+          | `Mask | `Shape | `Layer | `Grid ->
+             let& total = [false; true] in
+             let& bgcolor = [`Color Grid.black; `MajorityColor e2] in
+             push (role2, `FillResizeAlike (total,bgcolor,e1,e2))
+          | _ -> ())
+      | _ -> () in
     let _ = (* Compose(e1,e1) *)
       match role1 with
       | `Mask | `Grid ->
@@ -4823,11 +4801,6 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         match role1, role2 with
         | (`Mask | `Shape | `Grid), `Vec (`X | `Size _) ->
            push (role1, `ScaleTo (e1,e2))
-        | _ -> () in
-      let _ = (* ResizeAlikeTo *)
-        match role1, role2 with
-        | (`Mask | `Shape | `Layer | `Grid), `Vec (`X | `Size _) ->
-           push (role1, `ResizeAlikeTo (e1,e2))
         | _ -> () in
       let _ = (* CloseSym on grid with color path *)
         match role1, role2 with

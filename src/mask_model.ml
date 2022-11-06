@@ -120,13 +120,13 @@ let resize_alike new_h new_w : t -> t result = function
 let resize_alike, reset_resize_alike =
   Common.memoize3 ~size:101 resize_alike
 
-let fill_alike total bgcolor : t -> t result = function
+let fill_and_resize_alike total bgcolor new_size : t -> t result = function
   | `Mask m ->
-     let| m' = Grid.Transf.fill_alike total bgcolor m in
+     let| m' = Grid.Transf.fill_and_resize_alike total bgcolor new_size m in
      Result.Ok (`Mask m')
   | mm -> Result.Ok mm
-let fill_alike, reset_fill_alike =
-  Common.memoize3 ~size:101 fill_alike
+let fill_and_resize_alike, reset_fill_and_resize_alike =
+  Common.memoize4 ~size:101 fill_and_resize_alike
   
 let compose (m1 : Grid.t) (mm2 : t) : t result =
   match mm2 with
@@ -222,7 +222,7 @@ let reset_memoized_functions () =
   reset_scale_to ();
   reset_tile ();
   reset_resize_alike ();
-  reset_fill_alike ();
+  reset_fill_and_resize_alike ();
   reset_compose (); 
   reset_flipHeight ();
   reset_flipWidth ();

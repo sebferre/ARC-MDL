@@ -64,6 +64,18 @@ let copy (g : t) =
   { g with
     color_count = Array.copy g.color_count;
     matrix = matrix' }
+
+let init height width (f : int -> int -> color) =
+  let matrix = Array2.create Int8_unsigned C_layout height width in
+  let color_count = Array.make (nb_color+1) 0 in 
+  for i = 0 to height-1 do
+    for j = 0 to width-1 do
+      let c = f i j in
+      matrix.{i,j} <- c;
+      color_count.(c) <- color_count.(c) + 1
+    done
+  done;
+  { height; width; matrix; color_count }
   
 let dummy = make 0 0 0
 
@@ -552,6 +564,18 @@ module Transf = (* black considered as neutral color by default *)
                     k_ar)
                 k2_ar)
 
+    let xp_periodicity (print : Xprint.t) (per: periodicity) =
+      let total = periodicity_is_total per in
+      ( match per with
+      | Period1 (period1,k_ar) ->
+         xp_period print period1
+      | Period2 (period1,period2,_) ->
+         xp_period print period1;
+         print#string " x ";
+         xp_period print period2);
+      print#string (if total then " (total)" else " (partial)")
+    let pp_periodicity = Xprint.to_stdout xp_periodicity
+                  
                   
     let all_axis : axis list = [I; J; PlusIJ; DiffIJ; MaxIJ; MinIJ; DivIJ]
     let all_axis_pairs : (axis * axis) list =
@@ -703,48 +727,51 @@ module Transf = (* black considered as neutral color by default *)
           res in
       List.map snd res
     let periodicities, reset_periodicities =
-      Common.memoize ~size:101 periodicities
+      Common.memoize2 ~size:101 periodicities
 
-    let fill_with_periodicity (bgcolor : color) (g : t) (period : periodicity) : t =
+(*    let _ = (* for testing function periodicities on concrete grids *)
+      let k_ar = [|1;2;3;4;5|] in
+      let g = init 5 5 (fun i j -> k_ar.(max i j mod 5)) in
+      print_endline "*** PERIODICITIES ***";
+      periodicities 0 g
+      |> List.iter (fun per -> pp_periodicity per; print_newline ()) *)
+      
+    let fill_and_resize_with_periodicity (bgcolor : color) (new_h, new_w : int * int) (g : t) (period : periodicity) : t =
+      assert (new_h > 0 && new_w > 0);
       match period with
       | Period1 ((axis,p),k_ar) ->
          let f_axis = eval_axis axis in
-         let g' = copy g in
-         iter_pixels
-           (fun i j c ->
-             if c = bgcolor then ( (* only modifying bgcolor pixels *)
-               let _, _, c_k = k_ar.(f_axis i j mod p) in
-               if c_k <> no_color then set_pixel g' i j c_k))
-           g;
-         g'
+         init new_h new_w
+           (fun i j ->
+             let _, _, c_k = k_ar.(f_axis i j mod p) in
+             if c_k = no_color then bgcolor else c_k)
       | Period2 ((axis1,p1),(axis2,p2),k2_ar) ->
          let f_axis1 = eval_axis axis1 in
          let f_axis2 = eval_axis axis2 in
-         let g' = copy g in
-         iter_pixels
-           (fun i j c ->
-             if c = bgcolor then ( (* only modifying bgcolor pixels *)
-               let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
-               if c_k <> no_color then set_pixel g' i j c_k))
-           g;
-         g'
+         init new_h new_w
+           (fun i j ->
+             let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
+             if c_k = no_color then bgcolor else c_k)
       
-    let fill_alike (total : bool) (bgcolor : color) (g : t) : t result =
+    let fill_and_resize_alike (total : bool) (bgcolor : color) (new_size : int * int) (g : t) : t result =
       let periods = periodicities bgcolor g in
       match periods with
       | [] -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no periodicity")
       | period0::next ->
-         if total
-         then
-           if periodicity_is_total period0
-           then Result.Error (Undefined_result "Grid.Transf.fill_alike: first period ok")
-           else
-             match List.find_opt periodicity_is_total next with
-             | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no total periodicity")
-             | Some period -> Result.Ok (fill_with_periodicity bgcolor g period)
-         else Result.Ok (fill_with_periodicity bgcolor g period0)
-    let fill_alike, reset_fill_alike =
-      Common.memoize3 ~size:101 fill_alike
+         let period_opt =
+           if total
+           then
+             if periodicity_is_total period0
+             then Some period0
+             else List.find_opt periodicity_is_total next
+           else Some period0 in
+         match period_opt with
+         | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no total periodicity")
+         | Some period ->
+            let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
+            Result.Ok g'
+    let fill_and_resize_alike, reset_fill_and_resize_alike =
+      Common.memoize4 ~size:101 fill_and_resize_alike
       
     (* cropping *)
 
@@ -955,7 +982,7 @@ module Transf = (* black considered as neutral color by default *)
       reset_factor ();
       reset_resize_alike ();
       reset_periodicities ();
-      reset_fill_alike ();
+      reset_fill_and_resize_alike ();
       reset_crop ();
       reset_strip ();
       reset_concatHeight ();
