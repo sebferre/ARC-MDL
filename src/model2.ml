@@ -13,7 +13,7 @@ let max_relaxation_level_parse_layers = def_param "max_relaxation_level_parse_la
 let def_match_threshold = def_param "def_match_threshold" (if !seq then 0.6 else 1.) string_of_float (* ratio threshold for considering that a definition is a match *)
 let max_nb_diff = def_param "max_nb_diff" 3 string_of_int (* max nb of allowed diffs in grid parse *)
 let max_nb_grid_reads = def_param "max_nb_grid_reads" 3 string_of_int (* max nb of selected grid reads, passed to the next stage *)
-let max_expressions = def_param "max_expressions" 50000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
+let max_expressions = def_param "max_expressions" 100000 string_of_int (* max nb of considered expressions when generating defs-refinements *)
 let max_refinements = def_param "max_refinements" 20 string_of_int (* max nb of considered refinements *)
 
 (** Part 1: grids *)
@@ -532,7 +532,8 @@ type 'a expr =
   | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
-  | `FillResizeAlike of Grid.Transf.fill_and_resize_mode * 'a * 'a * 'a (* on Color, Vec, Grid -> Grid *)
+  | `PeriodicFactor of Grid.Transf.periodicity_mode * 'a * 'a (* on Color, Mask/Shape/Object/Grid as T -> T *)
+  | `FillResizeAlike of Grid.Transf.periodicity_mode * 'a * 'a * 'a (* on Color, Vec, Mask/Shape/Object/Grid as T -> T *)
   | `Compose of 'a * 'a * 'a (* Color, Mask/Shape/Grid as T, T -> T *)
   | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
   | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
@@ -798,13 +799,10 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                          [(fun print -> xp print a);
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
+  | `PeriodicFactor (mode,a,b) ->
+     xp_apply ("periodicFactor" ^ suffix_periodicity_mode mode) xp print [a;b]
   | `FillResizeAlike (mode,a,b,c) ->
-     let suffix_mode =
-       match mode with
-       | `Total -> "_total"
-       | `Strict -> "_strict"
-       | `TradeOff -> "" in
-     xp_apply ("fillResizeAlike" ^ suffix_mode) xp print [a;b;c]
+     xp_apply ("fillResizeAlike" ^ suffix_periodicity_mode mode) xp print [a;b;c]
   | `Compose (a,b,c) -> xp_apply "compose" xp print [a;b;c]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
@@ -846,6 +844,11 @@ and xp_symmetry print : symmetry -> unit = function
   | `Rotate180 -> print#string "rotate180"
   | `Rotate90 -> print#string "rotate90"
   | `Rotate270 -> print#string "rotate270"
+and suffix_periodicity_mode = function
+  | `Total -> "_total"
+  | `Strict -> "_strict"
+  | `TradeOff -> ""
+
                   
 let string_of_expr xp = Xprint.to_string (xp_expr xp)
                          
@@ -974,6 +977,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `GridOfMask (a,b) -> max (dim a) (dim b)
   | `TranslationOnto (a,b) -> max (dim a) (dim b)
   | `Tiling (a,k,l) -> dim a
+  | `PeriodicFactor (_,a,b) -> max (dim a) (dim b)
   | `FillResizeAlike (_,a,b,c) -> max (dim a) (max (dim b) (dim c))
   | `Compose (a,b,c) -> max (dim a) (max (dim b) (dim c))
   | `ApplySym (sym,a,r) -> dim a
@@ -1839,7 +1843,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~mask:(uniform_among [
                `MaskOfGrid `X;
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
+               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
@@ -1856,13 +1860,13 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `TranslationSym (`FlipHeight,`X,`X) ])
     ~shape:(uniform_among [
                 `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
+                `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X);  `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Shape);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
-                `FillResizeAlike (`TradeOff,`X,`X,`X);
+                `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
@@ -1871,7 +1875,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `SwapColors (`X,`X,`X);
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
+               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
@@ -2001,15 +2005,17 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. Mdl.Code.universal_int_plus k
      +. Mdl.Code.universal_int_plus l
+  | `PeriodicFactor (mode,e1,e2) ->
+     code_expr
+     +. dl_periodicity_mode mode
+     +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl ~ctx ~path:(`Arg (2, None, path)) e2
   | `FillResizeAlike (mode,e1,e2,e3) ->
      code_expr
-     +. (match mode with
-         | `Total -> Mdl.Code.usage 0.25
-         | `Strict -> Mdl.Code.usage 0.25
-         | `TradeOff -> Mdl.Code.usage 0.5)
+     +. dl_periodicity_mode mode
      +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl ~ctx ~path:(`Arg (1, Some (`Vec (`Size `Grid)), path)) e2
-     +. dl ~ctx ~path:(`Arg (2, None, path)) e3
+     +. dl ~ctx ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
+     +. dl ~ctx ~path:(`Arg (3, None, path)) e3
   | `Compose (e1,e2,e3) ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1, Some (`Color `Grid), path)) e1
@@ -2048,6 +2054,10 @@ let rec dl_expr
      +. dl ~ctx ~path:(`Arg (1, None, path)) e1
      +. dl ~ctx ~path:(`Arg (2, Some (`Color `Grid), path)) e2
      +. dl ~ctx ~path:(`Arg (3, Some (`Color `Grid), path)) e3
+and dl_periodicity_mode = function
+  | `Total -> Mdl.Code.usage 0.25
+  | `Strict -> Mdl.Code.usage 0.25
+  | `TradeOff -> Mdl.Code.usage 0.5
 
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_any : dl;
@@ -3032,6 +3042,33 @@ let apply_expr_gen
         | `Grid g ->
            let| g' = Grid.Transf.tile k l g in
            Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))
+  | `PeriodicFactor (mode,e1,e2) ->
+     let| res1 = apply ~lookup p e1 in
+     let| res2 = apply ~lookup p e2 in
+     broadcast2_result (res1,res2)
+       (function
+        | `Color bgcolor, d2 ->
+           let aux_shape = function
+             | `Point color ->
+                Result.Ok (`Point color)
+             | `Rectangle (_size, color, `Mask (`Mask m)) ->
+                let| m' = Grid.Transf.periodic_factor mode bgcolor m in
+                let h', w' = Grid.dims m' in
+                Result.Ok (`Rectangle (`Vec (`Int h', `Int w'), color, `Mask (`Mask m')))
+             | _ -> Result.Error (Invalid_expr e) in
+           (match d2 with
+            | `Mask (`Mask m) ->
+               let| m' = Grid.Transf.periodic_factor mode bgcolor m in
+               Result.Ok (`Mask (`Mask m'))
+            | (`Point _ | `Rectangle _ as shape) -> aux_shape shape
+            | `PosShape (pos, shape) ->
+               let| shape' = aux_shape shape in
+               Result.Ok (`PosShape (pos, shape'))
+            | `Grid g ->
+               let| g' = Grid.Transf.periodic_factor mode bgcolor g in
+               Result.Ok (`Grid g')
+            | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `FillResizeAlike (mode,e1,e2,e3) ->
      let| res1 = apply ~lookup p e1 in
@@ -4616,6 +4653,17 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       match role1 with
       | `Grid -> push (`Grid, `Strip e1)
       | _ -> () in
+    let _ = (* PeriodicFactor *)
+      match role1 with
+      | `Mask | `Shape | `Layer ->
+         let& mode = [`TradeOff; `Strict] in
+         let bgcolor = 0 in
+         push (role1, `PeriodicFactor (mode, `Color bgcolor, e1))
+      | `Grid ->
+         let& mode = [`TradeOff; `Total; `Strict] in
+         let& bgcolor = [`Color Grid.black; `MajorityColor e1] in
+         push (role1, `PeriodicFactor (mode,bgcolor,e1))
+      | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
       let _ = (* corner(_,_) *)
@@ -4772,7 +4820,11 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | `Vec (`X | `Size _) ->
          let& (role2,e2) = exprs_0 in (* no expression for the mask-grid *)
          (match role2 with
-          | `Mask | `Shape | `Layer | `Grid ->
+          | `Mask | `Shape | `Layer ->
+             let& mode = [`TradeOff; `Strict] in
+             let bgcolor = `Color 1 in
+             push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
+          | `Grid ->
              let& mode = [`TradeOff; `Total; `Strict] in
              let& bgcolor = [`Color Grid.black; `MajorityColor e2] in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))

@@ -589,7 +589,18 @@ module Transf = (* black considered as neutral color by default *)
          xp_period print period2);
       print#string (if total then " (total)" else " (partial)")
     let pp_periodicity = Xprint.to_stdout xp_periodicity
-                  
+
+    let grid_of_periodicity : periodicity -> t = function
+      | Period1 ((axis,p),k_ar) ->
+         init 1 p
+           (fun _i j ->
+             let _, _, c_k = k_ar.(j) in
+             if c_k = no_color then black else c_k)
+      | Period2 ((axis1,p1),(axis2,p2),k2_ar) ->
+         init p1 p2
+           (fun i j ->
+             let _, _, c_k = k2_ar.(i).(j) in
+             if c_k = no_color then black else c_k)                       
                   
     let all_axis : axis list = [I; J; PlusIJ; DiffIJ; MaxIJ; MinIJ; DivIJ]
     let all_axis_pairs : (axis * axis) list =
@@ -750,6 +761,32 @@ module Transf = (* black considered as neutral color by default *)
       periodicities 0 g
       |> List.iter (fun per -> pp_periodicity per; print_newline ()) *)
       
+    type periodicity_mode = [`Total | `Strict | `TradeOff]
+
+    let find_periodicity (mode : periodicity_mode) (bgcolor : color) (g : t) : periodicity option =
+      let periods = periodicities bgcolor g in
+      match periods with
+      | [] -> None
+      | period0::next ->
+         match mode with
+         | `Total ->
+            if periodicity_is_total period0
+            then Some period0
+            else List.find_opt periodicity_is_total next
+         | `Strict ->
+            if periodicity_is_strict period0
+            then Some period0
+            else List.find_opt periodicity_is_strict next
+         | `TradeOff ->
+            Some period0
+
+    let periodic_factor (mode : periodicity_mode) (bgcolor : color) (g : t) : t result =
+      match find_periodicity mode bgcolor g with
+      | None -> Result.Error (Undefined_result "Grid.Transf.periodic_factor: no adequate periodicity")
+      | Some period -> Result.Ok (grid_of_periodicity period)
+    let periodic_factor, reset_periodic_factor =
+      Common.memoize3 ~size:101 periodic_factor
+           
     let fill_and_resize_with_periodicity (bgcolor : color) (new_h, new_w : int * int) (g : t) (period : periodicity) : t =
       assert (new_h > 0 && new_w > 0);
       match period with
@@ -767,30 +804,12 @@ module Transf = (* black considered as neutral color by default *)
              let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
              if c_k = no_color then bgcolor else c_k)
 
-    type fill_and_resize_mode = [`Total | `Strict | `TradeOff]
-
-    let fill_and_resize_alike (mode : fill_and_resize_mode) (bgcolor : color) (new_size : int * int) (g : t) : t result =
-      let periods = periodicities bgcolor g in
-      match periods with
-      | [] -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no periodicity")
-      | period0::next ->
-         let period_opt =
-           match mode with
-           | `Total ->
-              if periodicity_is_total period0
-              then Some period0
-              else List.find_opt periodicity_is_total next
-           | `Strict ->
-              if periodicity_is_strict period0
-              then Some period0
-              else List.find_opt periodicity_is_strict next
-           | `TradeOff ->
-              Some period0 in
-         match period_opt with
-         | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no adequate periodicity found")
-         | Some period ->
-            let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
-            Result.Ok g'
+    let fill_and_resize_alike (mode : periodicity_mode) (bgcolor : color) (new_size : int * int) (g : t) : t result =
+      match find_periodicity mode bgcolor g with
+      | None -> Result.Error (Undefined_result "Grid.Transf.fill_alike: no adequate periodicity found")
+      | Some period ->
+         let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
+         Result.Ok g'
     let fill_and_resize_alike, reset_fill_and_resize_alike =
       Common.memoize4 ~size:101 fill_and_resize_alike
       
@@ -1003,6 +1022,7 @@ module Transf = (* black considered as neutral color by default *)
       reset_factor ();
       reset_resize_alike ();
       reset_periodicities ();
+      reset_periodic_factor ();
       reset_fill_and_resize_alike ();
       reset_crop ();
       reset_strip ();

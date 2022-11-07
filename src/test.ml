@@ -261,7 +261,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names =
-  (* 89 tasks, 2.1s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=50000 *)
+  (* 90 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
   (* 85 tasks, 1.8s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=50000 *)
   (* 79 tasks, 1.4s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   (* 48 tasks, 1.6s/task for timeout=30s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
@@ -308,6 +308,7 @@ let solved_train_names =
     "6fa7a44f.json"; (* NEW unfold grid by flipHeight downward *)
     "7468f01a.json"; (* NEW strip then flipWith the input grid *)
     "74dd1130.json"; (* NEW flipDiag1 the grid *)
+    "7b7f7511.json"; (* NEW periodic factor of the grid *)
     "7e0986d6.json"; (* collection of rectangles + noise points to be removed, runtime=12.2 *)
     "7fe24cdd.json"; (* NEW unfold grid by rotate 90 *)
     "80af3007.json"; (* NEW strip grid; scale down /3; compose with itself *)
