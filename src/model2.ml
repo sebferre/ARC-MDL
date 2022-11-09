@@ -4793,7 +4793,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
         | `IntCoord (_, xx1), `IntCoord (_, (`X | `Size _ | `Move))
           | `Vec xx1, `Vec (`X | `Size _ | `Move)
              when xx1 <> `Move && (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
-           push (role1, `Plus (e1,e2))
+           push (role1, `Plus (e1,e2)) (* TODO: Abs(e2) if e1:Size and e2:Move *)
         | _ -> () in
       let _ = (* _ - _ *)
         match role1, role2 with (* not generating Moves *)

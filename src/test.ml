@@ -261,7 +261,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names =
-  (* 90 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
+  (* 91 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
   (* 85 tasks, 1.8s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=50000 *)
   (* 79 tasks, 1.4s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   (* 48 tasks, 1.6s/task for timeout=30s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
@@ -294,7 +294,7 @@ let solved_train_names =
     "539a4f51.json"; (* NEW fill and resize alike (max(i,j) mod ?, bg=black, mode=total) *)
     "5521c0d9.json"; (* three rectangles moving up by their height, runtime=0.3s *)
     "5582e5ca.json"; (* 3x3 grid, keep only majority color, runtime=0.2s *)
-    "5ad4f10b.json"; (* a big shape, points, return the shape scaled-down to 3x3 with same color as points. runtime=5.3s *)
+    "5ad4f10b.json"; (* a big shape, points, return the shape scaled-down to 3x3 with same color as points. TODO: scaleDownMax, runtime=5.3s *)
     "6150a2bd.json"; (* NEW rotate grid by 180 *)
     "62c24649.json"; (* NEW unfold grid by flipHeight and flipWidth *)
     "67a3c6ac.json"; (* NEW flipWidth the grid *)
@@ -326,6 +326,7 @@ let solved_train_names =
     "a79310a0.json"; (* cyan shape, moving 1 pixel down, runtime=0.1s *)
     "a87f7484.json"; (* crop on the largest 3x3 shape. runtime=0.2s *)
     "aabf363d.json"; (* shape and point => same shape but with point color, runtime=0.2s *)
+    "ac0a08a4.json"; (* NEW scale up grid by nb of colors *)
     "b1948b0a.json"; (* any bitmap, changing background color, or replacing pink by red, runtime=0.1s *)
     "b230c067.json"; (* three cyan shapes, set the two biggest blue (same shapes), and the smallest red, runtime=1.5s *)
     (* CAUTION: works because always three shapes, and the different shape always the smaller one *)
@@ -362,17 +363,11 @@ let solved_train_names =
 
 let nogen_train_names = (* tasks that succeeds on examples but fail on test cases *)
   [
-    "1caeab9d.json"; (* pb: ignores the side point in shapes (prefers Full like in other examples); with repeat, how to refer to the blue shape?
-                        todo: use Repeat to value the common shape, refine ordering of Grid.rectangles, take into account output delta (objective is zero) *)
     "2013d3e2.json"; (* pb: works by resizeTo(3,3) but should fold according to symmetry *)
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test
                         todo: prevoir un mecanisme de repetition de la transformation *)
-    "3af2c5a8.json"; (* pb: need for disconnected masks (but BEWARE to keep object-centric approach, full-grid bitmaps are too greedy) *)
     "4522001f.json"; (* pb: invariance par rotation
                         todo: construct where parsing gives a rotation angle (or a transpose bool, or a symmetry?) [ A = Rotation(A, angle) for A in layer, shape ]; consider full grid as is *)
-    "496994bd.json"; (* diff OK
-                        pb: needs complex expressions (a - b -c) (a - 2*(a+b)) 
-                        todo: simply consider application of symmetries to input grid! here vertical symmetry (requires neutral color, black?) *)
     "91714a58.json"; (* pb: subtle dl optim parsing two rectangles
                         todo: prune input model, stop condition to avoid explaining big noise *)
     "a61f2674.json"; (* pb: variable nb of bars
@@ -384,26 +379,21 @@ let nogen_train_names = (* tasks that succeeds on examples but fail on test case
     "d9fac9be.json"; (* pb: no way to choose point with 'other' color or inside 3x3 rect
                         todo: relative position; filling color *)
     "f76d97a5.json"; (* pb: good model but wrong test input parse, prefers having a diff, missing part
-                        todo: add full grid for each color as part. NO, too strong, not object-centric *)
+                        todo: complex recoloring *)
   ]
   
 let maybe_train_names =
   [
     "3de23699.json"; (* pb: collection or disconnected object *)
-    "5ad4f10b.json"; (* pb: need function to compact a mask (scaleDownMax ou scaleDownTo(3)) *)
     "56dc2b01.json"; (* pb: would need translationOnto(..) minus some number along the translation vector *) 
     "3345333e.json"; (* pb: needs to recover hidden part by symmetry *)
-    "ed36ccf7.json"; (* pb: need mask rotation *)
     "47c1f68c.json"; (* pb: need flips and rotate180, and opposite coordinates in grid *)
-    "8be77c9e.json"; (* pb: need symmetric extension of masks, expression concatHeight(mask,flipHeight(mask)) *)
-    "4c4377d9.json"; (* pb: same as 8be7 *)
     "b6afb2da.json"; (* pb: prefers a layer's size to bottom(some layer) *) 
     "d4a91cb9.json"; (* pb: missing position/size expressions, maybe a Segment(pos1,pos2) shape + Corner expr *)
     "b548a754.json"; (* pb: in test instance, different position and size+translation has a negative value *)
     "b9b7f026.json"; (* pb: selecting the one rectangle that is not full. Several ractangles, only one not full, generate a 1-cell grid with same color as non-full rectangle, runtime=1.5s *)
     "3bd67248.json"; (* pb: missing diagonals as shapes, maybe add along with Border... *)
     "99b1bc43.json"; (* TODO pb: subgrids, full-grid bitmaps, bitmap logic *)
-    "05269061.json"; (* pb: doesn't know which colors, 6 combinations, only 3 trials. diagonals alternating 3 colors, completion from only one diagonal per color at variable positions. runtime=36.6s *)
     "72ca375d.json"; (* SUCCESS: by trying the different options, not understanding proper *)
     "0b148d64.json"; (* SUCCESS crop on quadrant with different color, wins by relying on parse ordering. runtime=108s *)
     "ddf7fa4f.json"; (* SUCCESS: default ordering of points helps *)
@@ -417,7 +407,7 @@ let maybe_train_names =
     "d23f8c26.json"; (* pb: need for raster shape + crop *)
     "b9b7f026.json"; (* pb: need for nesting *)
     "d6ad076f.json"; (* pb: min/max operator, transpose, topological relation? *)
-    "b548a754.json"; (* pb: global rotation, overfit with cst *)
+    "b548a754.json"; (* pb: negative move, generalization difficulty *)
     "7f4411dc.json"; (* TODO pb: prefers to include adjacent point in rectangle (maximize nb_pixels) *)
     "05f2a901.json"; (* pb: relative position *)
     "1fad071e.json"; (* pb: collection, cardinal *)
