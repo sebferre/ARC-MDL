@@ -4,8 +4,8 @@ SRC=arc_xprint.cmo arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo segment.cmo
 SRC_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
 
 # add -g to have backtractes in case of uncaught exceptions
-FLAGS= -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
-FLAGS_FABLIS = -I ../../fablis/core -I ../../fablis/core/webapp
+FLAGS= -g -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
+FLAGS_FABLIS = -g -I ../../fablis/core -I ../../fablis/core/webapp
 #JSOO_FLAGS = --pretty --no-inline --debug-info # for dev
 JSOO_FLAGS = --opt 3 # for prod
 # +zarith_stubs_js/biginteger.js +zarith_stubs_js/runtime.js # JSOO options for using module Z
