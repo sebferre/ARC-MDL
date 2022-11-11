@@ -228,9 +228,8 @@ let html_of_grid (g : Grid.t) =
   Buffer.contents buf
 
 let html_of_grid_from_data data =
-  match Model2.grid_of_data data with
-  | Result.Ok g -> html_of_grid g
-  | Result.Error exn -> "(undefined grid)"
+  let g = Model2.grid_of_data data in
+  html_of_grid g
 
 let html_grid_pair html_i html_o =
   html_i ^ "&nbsp;" ^ html_o
