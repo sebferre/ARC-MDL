@@ -1540,99 +1540,6 @@ let dl_ctx_of_data (d : data) : dl_ctx = (* QUICK *)
     | `Grid (_, `Background (`Vec (`Int h, `Int w), _, _)) -> h, w
     | _ -> assert false in
   { box_height; box_width }
-   
-
-let dl_patt_as_template = Mdl.Code.usage 0.2
-
-let dl_data, reset_dl_data =
-  let rec aux ~ctx ~path (d : data) =
-    match d with
-    | `Seq items ->
-       Mdl.Code.list_star (fun item -> aux ~ctx ~path item) items
-    | _ ->
-       let dl =
-         match d with
-         | `Bool b -> 1.
-         | `Int n ->
-            ( match path_role path with
-              | `IntCoord (`I, `Pos) -> dl_int_pos ~bound:ctx.box_height n
-              | `IntCoord (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
-              | `IntCoord (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
-              | `IntCoord (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
-              | `IntCoord (_, `Move) -> assert false (* only computation intermediate value *)
-              | `IntCard -> assert false (* only computation intermediate value *)
-              | _ -> assert false )
-         | `Color c ->
-            ( match path_role path with
-              | `Color `Grid -> dl_background_color c
-              | `Color `Shape -> dl_color c
-              | _ -> assert false )
-         | `Mask m -> dl_mask m
-         | `Grid (g, `None) -> raise TODO
-                    
-         | `Vec (i,j) ->
-            aux ~ctx i ~path:(path ++ `I)
-            +. aux ~ctx j ~path:(path ++ `J)  
-
-         | `Point color ->
-            Mdl.Code.usage 0.5
-            +. aux ~ctx color ~path:(path ++ `Color)
-         | `Rectangle (size,color,mask) ->
-            Mdl.Code.usage 0.5
-            +. aux ~ctx size ~path:(path ++ `Size)
-            +. aux ~ctx color ~path:(path ++ `Color)
-            +. aux ~ctx mask ~path:(path ++ `Mask)
-
-         | `PosShape (pos,shape) ->
-            aux ~ctx pos ~path:(path ++ `Pos)
-            +. aux ~ctx shape ~path:(path ++ `Shape)
-
-         | `Grid (_, `Background (size,color,layers)) ->
-            let box_height =
-              match size with
-              | `Vec (`Int i, _) -> i
-              | _ -> ctx.box_height in
-            let box_width =
-              match size with
-              | `Vec (_, `Int j) -> j
-              | _ -> ctx.box_width in
-            let nb_layers = ilist_length layers in
-            let ctx_layers = { box_height; box_width } in
-            aux ~ctx size ~path:(path ++ `Size)
-            +. aux ~ctx color ~path:(path ++ `Color)
-            +. fold_ilist
-                 (fun sum lp shape ->
-                   sum +. aux ~ctx:ctx_layers shape ~path:(path ++ `Layer lp))
-                 (Mdl.Code.universal_int_star nb_layers)
-                 `Root layers
-
-         | `Seq _ -> assert false
-       in
-       (if !seq && path_dim path = Sequence then Mdl.Code.universal_int_star 1 else 0.) (* encoding d as singleton sequence *)
-       +. dl_patt_as_template (* NOTE: to align with dl_template on patterns *)
-       +. dl
-  in
-  (*  aux *)
-  let mem = Hashtbl.create 1003 in
-  let reset () = Hashtbl.clear mem in
-  let f =
-    fun ~(ctx : dl_ctx) ?(path = `Root) (d : data) -> (* QUICK *)
-    let role = path_role path in
-    let key = (ctx,role,d) in (* dl_patt in dl_data does not depend on exact path, only on role *)
-    match Hashtbl.find_opt mem key with
-    | Some dl -> dl
-    | None ->
-       let dl =
-         try aux ~ctx ~path d
-         with exn ->
-           print_string "dl_data: assertion failed: ";
-           pp_data d; print_string " @ "; pp_path path;
-           print_newline ();
-           raise exn in
-       Hashtbl.add mem key dl;
-       dl in
-  f, reset
-
 
 (* functions for computing the DL of paths, used as references
    - the coding takes into account the context of use (kind and role)
@@ -2018,8 +1925,8 @@ type code_template = (* dls must correspond to a valid prob distrib *)
     c_cst : dl;
     c_prefix : dl }
 let code_template0 =
-  { c_any = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
-    c_patt = dl_patt_as_template (* Mdl.Code.usage 0.2 *);
+  { c_any = Mdl.Code.usage 0.2;
+    c_patt = Mdl.Code.usage 0.2;
     c_ref = Mdl.Code.usage 0.3;
     c_expr = Mdl.Code.usage 0.2;
     c_seq = Mdl.Code.usage 0.03;
@@ -2139,15 +2046,34 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   in
   aux ~ctx ~path t
 
-(*let dl_data, reset_dl_data =
-  let aux ~ctx ~path (d : data) =
-    let t = template_of_data t in
-    dl_template ~ctx ~path t
-  in *)
-  
+
+let dl_data, reset_dl_data =
+  let rec aux ~ctx ~path (d : data) =
+    let t = template_of_data ~mode:`Pattern d in
+    dl_template ~env_sig:signature0 ~ctx ~path t (* no refs in data *)
+  in
+  let mem = Hashtbl.create 1003 in
+  let reset () = Hashtbl.clear mem in
+  let f =
+    fun ~(ctx : dl_ctx) ?(path = `Root) (d : data) -> (* QUICK *)
+    let role = path_role path in
+    let key = (ctx,role,d) in (* dl_patt in dl_data does not depend on exact path, only on role *)
+    match Hashtbl.find_opt mem key with
+    | Some dl -> dl
+    | None ->
+       let dl =
+         try aux ~ctx ~path d
+         with exn ->
+           print_string "dl_data: assertion failed: ";
+           pp_data d; print_string " @ "; pp_path path;
+           print_newline ();
+           raise exn in
+       Hashtbl.add mem key dl;
+       dl in
+  f, reset
+
   
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
-
 
 type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *)
 
