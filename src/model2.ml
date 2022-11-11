@@ -1171,19 +1171,25 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
 let size_of_template (t : template) : int =
   fold_template (fun res _ _ _ -> res+1) 0 path0 t []
 
-let rec template_of_data : data -> template = function
+let rec template_of_data ~(mode : [`Value | `Pattern]) : data -> template = function
   | (`Bool _ | `Int _ | `Color _ | `Mask _ as v) -> v
   | `Vec (i,j) ->
-     `Vec (template_of_data i, template_of_data j)
+     `Vec (template_of_data ~mode i, template_of_data ~mode j)
   | `Point color ->
-     `Point (template_of_data color)
+     `Point (template_of_data ~mode color)
   | `Rectangle (size,color,mask) ->
-     `Rectangle (template_of_data size, template_of_data color, template_of_data mask)
+     `Rectangle (template_of_data ~mode size, template_of_data ~mode color, template_of_data ~mode mask)
   | `PosShape (pos,shape) ->
-     `PosShape (template_of_data pos, template_of_data shape)
+     `PosShape (template_of_data ~mode pos, template_of_data ~mode shape)
   | `Grid (g, `None) -> `Grid g
-  | `Grid (g, `Background (size,color,layers)) -> `Grid g
-  | `Seq items -> `Seq (List.map template_of_data items)
+  | `Grid (g, `Background (size,color,layers)) ->
+     (match mode with
+      | `Value -> `Grid g
+      | `Pattern -> `GridBackground
+                      (template_of_data ~mode size,
+                       template_of_data ~mode color,
+                       map_ilist (fun _ layer -> template_of_data ~mode layer) `Root layers))
+  | `Seq items -> `Seq (List.map (template_of_data ~mode) items)
   
 let rec template_is_ground : template -> bool = function
   (* returns true if the template evaluates into ground data, hence can be casted as [data]  *)
@@ -2133,6 +2139,13 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   in
   aux ~ctx ~path t
 
+(*let dl_data, reset_dl_data =
+  let aux ~ctx ~path (d : data) =
+    let t = template_of_data t in
+    dl_template ~ctx ~path t
+  in *)
+  
+  
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
 
@@ -2595,7 +2608,7 @@ let apply_expr_gen
   match e with
   | `Ref p ->
      let| d = lookup (p :> var) in
-     Result.Ok (template_of_data d) (* TODO: compute expressions on data, and convert to template at the end *)
+     Result.Ok (template_of_data ~mode:`Value d) (* TODO: compute expressions on data, and convert to template at the end *)
   | `ConstInt k -> Result.Ok (`Int k)
   | `ConstVec (k,l) -> Result.Ok (`Vec (`Int k, `Int l))
   | `Plus (e1,e2) ->
@@ -4464,7 +4477,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
                | `Seq items ->
                   (match List.nth_opt items n with
                    | Some d_item -> (* the nth_item *)
-                      let t_item = template_of_data d_item in
+                      let t_item = template_of_data ~mode:`Pattern d_item in
                       let t = make_t t_item in
                       add_template t (dl_ctx,dl0,d,false) tmap
                    | None -> tmap)
