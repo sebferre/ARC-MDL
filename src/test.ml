@@ -430,14 +430,14 @@ let task_model =
   let open Model2 in
   [ "ba97ae07.json",
     {input_pattern =
-       `Background (u_any, `Color Grid.black,
+       `GridBackground (u_any, `Color Grid.black,
                     `Insert (`Nil,
                              `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Insert (`Nil,
                                       `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                                       `Nil)));
      output_template =
-       `Background (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
+       `GridBackground (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
                     `Insert (`Nil,
                              `Ref (`Field (`Layer (`Right `Root), `Root)),
                              `Insert (`Nil,
@@ -445,12 +445,12 @@ let task_model =
                                       `Nil))) };
     "1cf80156.json",
     {input_pattern =
-       `Background (u_any, `Color Grid.black,
+       `GridBackground (u_any, `Color Grid.black,
                     `Insert (`Nil,
                              `PosShape (u_any, `Rectangle (u_any,u_any,u_any)),
                              `Nil));
      output_template =
-       `Background (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
+       `GridBackground (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
                     `Ref (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
                     `Insert (`Nil,
                              `PosShape (`Vec (`Int 0, `Int 0),
