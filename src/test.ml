@@ -261,7 +261,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names =
-  (* 91 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
+  (* 90 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
   (* 85 tasks, 1.8s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=50000 *)
   (* 79 tasks, 1.4s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
   (* 48 tasks, 1.6s/task for timeout=30s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
@@ -299,7 +299,6 @@ let solved_train_names =
     "62c24649.json"; (* NEW unfold grid by flipHeight and flipWidth *)
     "67a3c6ac.json"; (* NEW flipWidth the grid *)
     "67e8384a.json"; (* NEW unfold grid by flipWidth and flipHeight *)
-    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=0.5s *)
     "68b16354.json"; (* NEW flipHeight the grid *)
     "694f12f3.json"; (* 2 yellow rectangles, fill the larger one in red, the smaller in blue, runtime=6.1 *)
     "6b9890af.json"; (* red border, colored shape; crop on border and fit colored shape inside. runtime=1.0s *)
@@ -363,6 +362,7 @@ let solved_train_names =
 
 let nogen_train_names = (* tasks that succeeds on examples but fail on test cases *)
   [
+    "681b3aeb.json"; (* 2 shapes, paving a 3x3 grid, a bit lucky. runtime=0.5s *)
     "2013d3e2.json"; (* pb: works by resizeTo(3,3) but should fold according to symmetry *)
     "29c11459.json"; (* pb: 1 instance in train, 2 instances in test
                         todo: prevoir un mecanisme de repetition de la transformation *)

@@ -266,7 +266,8 @@ type field =
   | `Size
   | `Mask
   | `Shape
-  | `Layer of ilist_revpath ]
+  | `Layer of ilist_revpath
+  | `Grid ]
 type revpath =
   [ `Root
   | `Field of field * revpath
@@ -460,7 +461,9 @@ type data =
   | `PosShape of data * data (* pos, shape -> object *)
   | `Grid of Grid.t
              * [ `None
-               | `Background of data * data * data ilist ] (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
+               | `Background of data * data * data ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
+               | `Tiling of data * data (* grid, size *)
+               ]
   | `Seq of data list ]
 let data0 : data =
   `Grid (Grid.make 1 1 Grid.black,
@@ -483,6 +486,7 @@ type 'a expr =
   | `ScaleUp of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
   | `ScaleDown of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
   | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
+  | `Size of 'a (* Grid -> Vec *)
   | `Crop of 'a * 'a (* Grid, Rectangle -> Grid *)
   | `Strip of 'a (* on Grid *)
   | `Corner of 'a * 'a (* on Vec *)
@@ -572,6 +576,7 @@ type template =
   | `Rectangle of template * template * template (* size, color, mask -> shape *)
   | `PosShape of template * template (* pos, shape -> object *)
   | `GridBackground of template * template * template ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
+  | `GridTiling of template * template (* grid, size *)
   | template expr (* an expression that evaluates into a template *)
   | `Seq of template list (* a sequence where items match the given template list, items should be ground *)
   | `Cst of template (* all sequence items are the same, and match the item template *)  
@@ -584,6 +589,8 @@ let u_any = `Any
 let u_cst = (* `Cst *) u_any (* TEST *)
 let u_vec_any : template = `Vec (u_any, u_any)
 let u_vec_cst : template = `Vec (u_cst, u_cst)
+let u_layers : template ilist = `Nil
+let u_background : template = `GridBackground (u_vec_any,u_any,u_layers)
 
 type signature = (kind * revpath list) list (* map from kinds to path lists *)
 let signature0 = []
@@ -648,6 +655,7 @@ let xp_field (print : Xprint.t) : field -> unit = function
   | `Mask -> print#string "mask"
   | `Shape -> print#string "shape"
   | `Layer lp -> print#string "layer_"; xp_ilist_path print lp
+  | `Grid -> print#string "grid"
 let pp_field = Xprint.to_stdout xp_field
 
 let rec xp_path (print : Xprint.t) : revpath -> unit = function
@@ -694,7 +702,10 @@ let xp_background xp print size color layers =
   print#string "a background with size "; xp print size;
   print#string " and color "; xp print color;
   print#string " and layers"; xp_ilist xp print layers
-                       
+let xp_tiling xp print grid size =
+  print#string "tiling by "; xp print size;
+  print#string "\nof "; xp print grid
+
 let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Bool b -> xp_bool print b
   | `Int i -> xp_int print i
@@ -706,6 +717,7 @@ let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Rectangle (size,color,mask) -> xp_rectangle xp_data print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_data print pos shape
   | `Grid (g, `Background (size,color,layers)) -> xp_background xp_data print size color layers
+  | `Grid (g, `Tiling (grid,size)) -> xp_tiling xp_data print grid size
   | `Seq items ->
      Xprint.bracket
        ("<\n\t", " >")
@@ -755,6 +767,7 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
   | `ScaleUp (a,b) -> xp print a; print#string " * "; xp print b
   | `ScaleDown (a,b) -> xp print a; print#string " / "; xp print b
   | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
+  | `Size a -> xp_apply "size" xp print [a]
   | `Crop (a,b) -> xp_apply "crop" xp print [a;b]
   | `Strip a -> xp_apply "strip" xp print [a]
   | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
@@ -857,6 +870,7 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Rectangle (size,color,mask) -> xp_rectangle xp_template print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_template print pos shape
   | `GridBackground (size,color,layers) -> xp_background xp_template print size color layers
+  | `GridTiling (grid,size) -> xp_tiling xp_template print grid size
   | #expr as e -> xp_expr xp_template print e
   | `Seq items ->
      Xprint.bracket
@@ -934,6 +948,7 @@ let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
   | `ScaleUp (a,b) -> max (dim a) (dim b)
   | `ScaleDown (a,b) -> max (dim a) (dim b)
   | `ScaleTo (a,b) -> max (dim a) (dim b)
+  | `Size a -> dim a
   | `Crop (a,b) -> max (dim a) (dim b)
   | `Strip a -> dim a
   | `Corner (a,b) -> max (dim a) (dim b)
@@ -987,6 +1002,7 @@ let rec template_dim : template -> dim = function
        (fun res lp layer -> max res (template_dim layer))
        (max (template_dim size) (template_dim color))
        `Root layers
+  | `GridTiling (grid,size) -> max (template_dim grid) (template_dim size)
   | #expr as e -> expr_dim template_dim e
   | `Seq items -> Sequence
   | `Cst item0 -> Sequence
@@ -1002,7 +1018,8 @@ let rec path_kind (p : revpath) : kind =
       | `Mask -> Mask
       | (`Pos | `Size) -> Vec
       | `Shape -> Shape
-      | `Layer _ -> Layer)
+      | `Layer _ -> Layer
+      | `Grid -> Grid)
   | `Item (_,p1) -> path_kind p1
   | `AnyItem p1 -> path_kind p1
   | `Arg (i,None,p1) -> path_kind p1
@@ -1018,6 +1035,7 @@ let rec path_role (p : revpath) : role =
   | `Field (`Size, p1) -> `Vec (`Size (path_role_frame p1))
   | `Field (`Shape, _) -> `Shape
   | `Field (`Layer _, _) -> `Layer
+  | `Field (`Grid, _) -> `Grid
   | `Item (_, p1) -> path_role p1
   | `AnyItem p1 -> path_role p1
   | `Arg (i, None, p1) -> path_role p1
@@ -1035,6 +1053,7 @@ and path_role_vec : revpath -> role_vec = function
 and path_role_frame : revpath -> role_frame = function
   | `Root -> `Grid
   | `Field (`Shape, _) -> `Shape
+  | `Field (`Grid, _) -> `Grid
   | `Item (i, p1) -> path_role_frame p1
   | `AnyItem p1 -> path_role_frame p1
   | `Arg (i, None, p1) -> path_role_frame p1
@@ -1093,30 +1112,37 @@ and find_data_field (f : field) (d1 : data) : data option =
   | `Size, `Grid (_, `Background (size,color,layers)) -> Some size
   | `Color, `Grid (_, `Background (size,color,layers)) -> Some color
   | `Layer lp, `Grid (_, `Background (size,color,layers)) -> find_ilist lp layers
-  | _, `Seq items -> (*find_field_seq f items*)
+  | `Grid, `Grid (_, `Tiling (grid,size)) -> Some grid
+  | `Size, `Grid (_, `Tiling (grid,size)) -> Some size
+  | _, `Seq items ->
      option_list_bind items (find_data_field f)
      |> Option.map (fun lx -> `Seq lx)
   | _ ->
-     pp_field f; print_string " field not defined in data: ";
+     (* pp_field f; print_string " field not defined in data: ";
      pp_data d1;
-     print_newline ();
-     assert false
+     print_newline (); *)
+     None
 
             
 let rec get_pos : template -> (int * int) option =
   function
-  | `Grid _ -> Some (0,0)
   | `PosShape (`Vec (`Int i, `Int j), _) -> Some (i,j)
+  | `Grid _ -> Some (0,0)
   | `GridBackground _ -> Some (0, 0)
+  | `GridTiling _ -> Some (0, 0)
   | _ -> None
           
 let rec get_size : template -> (int * int) option =
   function
-  | `Grid (g : Grid.t) -> Some (g.Grid.height, g.width)
   | `Point _ -> Some (1,1)
   | `Rectangle (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
   | `PosShape (_, shape) -> get_size shape
+  | `Grid (g : Grid.t) -> Some (g.Grid.height, g.width)
   | `GridBackground (`Vec (`Int h, `Int w), _, _) -> Some (h,w)
+  | `GridTiling (grid, `Vec (`Int k, `Int l)) ->
+     (match get_size grid with
+      | None -> None
+      | Some (h,w) -> Some (h*k, w*l))
   | _ -> None
   
 let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestry *) -> 'b) (acc : 'b) (p : revpath) (t : template) (ancestry : template list) : 'b =
@@ -1150,6 +1176,10 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
            fold_template f acc (p ++ `Layer lp) shape t_ancestry)
          acc `Root layers in
      acc
+  | `GridTiling (grid,size) ->
+     let acc = fold_template f acc (p ++ `Grid) grid t_ancestry in
+     let acc = fold_template f acc (p ++ `Size) size t_ancestry in
+     acc
   | #expr -> acc
   | `Seq items ->
      let _, acc =
@@ -1181,14 +1211,19 @@ let rec template_of_data ~(mode : [`Value | `Pattern]) : data -> template = func
      `Rectangle (template_of_data ~mode size, template_of_data ~mode color, template_of_data ~mode mask)
   | `PosShape (pos,shape) ->
      `PosShape (template_of_data ~mode pos, template_of_data ~mode shape)
-  | `Grid (g, `None) -> `Grid g
-  | `Grid (g, `Background (size,color,layers)) ->
-     (match mode with
-      | `Value -> `Grid g
-      | `Pattern -> `GridBackground
-                      (template_of_data ~mode size,
-                       template_of_data ~mode color,
-                       map_ilist (fun _ layer -> template_of_data ~mode layer) `Root layers))
+  | `Grid (g, patt) ->
+     (match mode, patt with
+      | `Value, _
+        | _, `None -> `Grid g
+      | `Pattern, `Background (size,color,layers) ->
+         `GridBackground
+           (template_of_data ~mode size,
+            template_of_data ~mode color,
+            map_ilist (fun _ layer -> template_of_data ~mode layer) `Root layers)
+      | `Pattern, `Tiling (grid,size) ->
+         `GridTiling
+           (template_of_data ~mode grid,
+            template_of_data ~mode size))
   | `Seq items -> `Seq (List.map (template_of_data ~mode) items)
   
 let rec template_is_ground : template -> bool = function
@@ -1202,6 +1237,8 @@ let rec template_is_ground : template -> bool = function
   | `GridBackground (s,c,layers) ->
      template_is_ground s && template_is_ground c
      && fold_ilist (fun res lp layer -> res && template_is_ground layer) true `Root layers
+  | `GridTiling (grid,size) ->
+     template_is_ground grid && template_is_ground size
   | #expr -> true (* assuming expressions are only made of functions and refs *)
   | `Seq items -> List.for_all template_is_ground items
   | `Cst item0 -> template_is_ground item0 (* if true, Cst superfluous *)
@@ -1213,7 +1250,6 @@ let signature_of_template (t : template) : signature = (* QUICK *)
     fold_template
       (fun () p t1 anc1 ->
         match t1 with
-        (* | `Background _ -> () (* not using full grid descriptions *) *)
         | `Cst _ (* only item0 matters for constant sequences *)
           | `Prefix _ (* this path is redundant with main *)
           -> ()
@@ -1422,6 +1458,15 @@ let rec matcher_template_aux (t : template) : matcher =
               | Result.Error _ -> false in (* ilists with different structure *)
             ok1 && ok2 && ok3, matcher_fail
          | _ -> false, matcher_fail)
+  | `GridTiling (grid,size) ->
+     let rec matcher_tiling (Matcher matcher_grid) (Matcher matcher_size) =
+       Matcher (function
+           | `Grid (_, `Tiling (dgrid,dsize)) ->
+              let ok1, next_grid = matcher_grid dgrid in
+              let ok2, next_size = matcher_size dsize in
+              ok1 && ok2, matcher_tiling next_grid next_size
+           | _ -> false, matcher_fail) in
+     matcher_tiling (matcher_template_aux grid) (matcher_template_aux size)
   | #expr -> assert false
   | `Seq items ->
      let rec matcher_seq = function
@@ -1536,8 +1581,7 @@ let dl_ctx0 =
 let dl_ctx_of_data (d : data) : dl_ctx = (* QUICK *)
   let box_height, box_width =
     match d with
-    | `Grid (g, `None) -> Grid.dims g
-    | `Grid (_, `Background (`Vec (`Int h, `Int w), _, _)) -> h, w
+    | `Grid (g, _) -> Grid.dims g
     | _ -> assert false in
   { box_height; box_width }
 
@@ -1633,12 +1677,14 @@ and dl_path_shape = function
   | `Root -> 0.
   | `Field (`Shape, p1) ->
      dl_path_layer p1
+  | `Field (`Grid, p1) ->
+     dl_path_grid p1 (* TODO: should encode choice between shape and grid *)
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_shape p1
   | `AnyItem p1 ->
      dl_path_shape p1
-  | _ -> assert false
+  | p -> assert false
 and dl_path_layer = function
   | `Root -> 0.
   | `Field (`Layer lp, p1) ->
@@ -1653,6 +1699,8 @@ and dl_path_layer = function
   | _ -> assert false
 and dl_path_grid = function
   | `Root -> 0.
+  | `Field (`Grid, p1) ->
+     dl_path_grid p1
   | _ -> assert false
 and dl_ilist_path lp = (* assuming lp length known *)
   let rec aux = function
@@ -1706,7 +1754,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
                `LogAndNot (`X,`X); `LogNot `X ])
     ~vec:(uniform_among [
-              `ProjI `X; `ProjJ `X;
+              `ProjI `X; `ProjJ `X; `Size `X;
               `ConstVec (0,0);
               `Plus (`X,`X); `Minus (`X,`X);
               `IncrVec (`X,1,1); `DecrVec (`X,1,1);
@@ -1784,10 +1832,13 @@ let rec dl_expr
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
      +. dl ~ctx ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
+  | `Size e1 ->
+     code_expr
+     +. dl ~ctx ~path:(`Arg (1,Some `Grid,path)) e1
   | `Crop (e1,e2) ->
      code_expr
-     +. dl ~ctx ~path:(`Arg(1,None,path)) e1
-     +. dl ~ctx ~path:(`Arg(2,Some `Layer,path)) e2
+     +. dl ~ctx ~path:(`Arg (1,None,path)) e1
+     +. dl ~ctx ~path:(`Arg (2,Some `Layer,path)) e2
   | `Strip e1 ->
      code_expr
      +. dl ~ctx ~path:(`Arg (1,None,path)) e1
@@ -1973,7 +2024,6 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
          | `Color `Shape -> dl_color c
          | _ -> assert false )
     | `Mask m -> code.c_patt +. dl_mask m
-    | `Grid g -> raise TODO
 
     | `Vec (i,j) ->
        code.c_patt
@@ -1996,6 +2046,13 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        +. aux ~ctx pos ~path:(path ++ `Pos)
        +. aux ~ctx shape ~path:(path ++ `Shape)
 
+    | `Grid g -> (* rough definition *)
+       let h, w = Grid.dims g in
+       code.c_patt
+       +. Mdl.Code.usage 0.1
+       +. dl_int_size ~bound:Grid.max_size h
+       +. dl_int_size ~bound:Grid.max_size w
+       +. 10. *. float h *. float w *. dl_color Grid.blue (* or any color *) 
     | `GridBackground (size,color,layers) ->
        let box_height =
          match size with
@@ -2008,14 +2065,20 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        let nb_layers = ilist_length layers in
        let ctx_layers = { box_height; box_width } in
        code.c_patt
+       +. Mdl.Code.usage 0.8
        +. aux ~ctx size ~path:(path ++ `Size)
        +. aux ~ctx color ~path:(path ++ `Color)
        +. fold_ilist
             (fun sum lp shape ->
               sum +. aux ~ctx:ctx_layers shape ~path:(path ++ `Layer lp))
             (Mdl.Code.universal_int_star nb_layers)
-            `Root layers                             
-
+            `Root layers
+    | `GridTiling (grid,size) ->
+       code.c_patt
+       +. Mdl.Code.usage 0.1
+       +. aux ~ctx grid ~path:(path ++ `Grid)
+       +. aux ~ctx size ~path:(path ++ `Size) (* TODO: adapt ctx ? *)
+       
     | `Ref p ->
        code.c_ref
        +. dl_path ~env_sig ~ctx_path:path p
@@ -2210,9 +2273,18 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
               | Result.Ok dl3 -> dl3
               | Result.Error _ -> assert false in
             dl1 +. dl2 +. dl3, encoder_fail
-         | d ->
-            pp_data d; print_newline ();
-            assert false)
+         | _ -> assert false)
+  | `GridTiling (grid,size) ->
+     let rec encoder_tiling (Encoder encoder_grid) (Encoder encoder_size) =
+       Encoder (function
+           | `Grid (_, `Tiling (dgrid,dsize)) ->
+              let dl1, next_grid = encoder_grid dgrid in
+              let dl2, next_size = encoder_size dsize in
+              dl1 +. dl2, encoder_tiling next_grid next_size
+           | _ -> assert false) in
+     encoder_tiling
+       (encoder_template_aux ~ctx ~path:(path ++ `Grid) grid)
+       (encoder_template_aux ~ctx ~path:(path ++ `Size) size)
   | #expr -> encoder_zero (* nothing to code *)
   | `Seq items -> encoder_seq (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items
   | `Cst item0 -> encoder_cst (encoder_template_aux ~ctx ~path:(`Item (0,path)) item0)
@@ -2378,9 +2450,13 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
     | `Grid g ->
        let g' = grid_sym sym g in
        Result.Ok (`Grid g')
-    | `GridBackground _ ->
+(*    | `GridBackground _ ->
        Result.Error (Undefined_result "ApplySym not defined on Background")
-    | _ -> assert false
+    | `GridTiling _ ->
+       Result.Error (Undefined_result "ApplySym not defined on Tiling") *)
+    | t ->
+       pp_template t; print_newline ();
+       assert false
   in
   match role_e1, d1 with
   | `Vec `Pos, _ -> Result.Ok (sym_pos d1)
@@ -2661,6 +2737,14 @@ let apply_expr_gen
         | `Grid g, `Vec (`Int new_h, `Int new_w) ->
            let| g' = Grid.Transf.scale_to new_h new_w g in
            Result.Ok (`Grid g')
+        | _ -> Result.Error (Invalid_expr e))
+  | `Size e1 ->
+     let| res1 = apply ~lookup p e1 in
+     broadcast1_result res1
+       (function
+        | `Grid g ->
+           let h, w = Grid.dims g in
+           Result.Ok (`Vec (`Int h, `Int w))
         | _ -> Result.Error (Invalid_expr e))
   | `Crop (e1,e2) ->
      let| res1 = apply ~lookup p e1 in
@@ -3171,6 +3255,10 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
          (fun lp shape -> apply_template_gen ~lookup (p ++ `Layer lp) shape)
          `Root layers in
      Result.Ok (`GridBackground (rsize,rcolor,rlayers))
+  | `GridTiling (grid,size) ->
+     let| rgrid = apply_template_gen ~lookup (p ++ `Grid) grid in
+     let| rsize = apply_template_gen ~lookup (p ++ `Size) size in
+     Result.Ok (`GridTiling (rgrid,rsize))
   | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
   | `Seq items ->
      let| applied_items =
@@ -3237,6 +3325,12 @@ and draw_layer g = function
   | `Seq items ->
      let| _ = list_map_result (draw_layer g) (List.rev items) in
      Result.Ok ()
+  | _ -> assert false
+
+let grid_tiling (dgrid : data) (dsize : data) : Grid.t result =
+  match dgrid, dsize with
+  | `Grid (g,_), `Vec (`Int k, `Int l) ->
+     Grid.Transf.tile k l g
   | _ -> assert false
 
                     
@@ -3325,6 +3419,14 @@ let rec generator_template (p : revpath) (t : template) : generator =
              `Root ilist_gen_layers in
          let| g = grid_background dsize dcolor dlayers in
          Result.Ok (`Grid (g, `Background (dsize,dcolor,dlayers)), true, generator_fail))
+  | `GridTiling (grid,size) ->
+     let rec gen_tiling (Generator gen_grid) (Generator gen_size) =
+       Generator (fun () ->
+           let| dgrid, stop_grid, next_grid = gen_grid () in
+           let| dsize, stop_size, next_size = gen_size () in
+           let| g = grid_tiling dgrid dsize in
+           Result.Ok (`Grid (g, `Tiling (dgrid,dsize)), stop_grid && stop_size, gen_tiling next_grid next_size)) in
+     gen_tiling (generator_template (p ++ `Grid) grid) (generator_template (p ++ `Size) size)
   | #expr -> assert false (* should be eliminated by call to apply_template *)
   | `Seq items ->
      let rec gen_seq = function
@@ -3516,7 +3618,6 @@ let rec parseur_template
         : ('a,data) parseur =
   match t with
   | `Any -> parseur_any ()
-  (*  | (#value | #patt as patt) -> parseur_patt patt *)
   | #expr -> assert false
   | `Seq items ->
      parseur_seq
@@ -3763,9 +3864,11 @@ let parseur_layers layers p : (unit, data ilist) parseur =
       assert (l = []);
       Myseq.return (dlayers, state, true, parseur_empty)))
   
-let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
+let rec parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
-    ~parseur_any:(fun () -> parseur_empty)
+    ~parseur_any:(fun () ->
+      Parseur (fun (g : Grid.t) state ->
+          Myseq.return (`Grid (g,`None), state, true, parseur_empty)))
     ~parseur_patt:
     (function
      | `Grid g0 ->
@@ -3789,12 +3892,10 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
                         parts = List.filter (fun (p : Segment.part) -> p.color <> bc) state.parts } in
           Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
-        Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid/seq" (
+        Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           let* dsize, state, _, _ = parse_size (g.height,g.width) state in
           let* (bc,dcolor), state, _, _ = parse_bg_color g state in
           let* dlayers, state, _, _ = parse_layers () state in
-          (*let* ((bc,dcolor),dlayers), state =
-            Myseq.pair_dependent_fair (parse_bg_color g) (parse_layers ()) state in*)
           let data = `Grid (g, `Background (dsize,dcolor,dlayers)) in
 	  (* adding mask pixels with other color than background to delta *)
           let new_state =
@@ -3810,6 +3911,37 @@ let parseur_grid t p : (Grid.t, data) parseur = (* QUICK, runtime in Myseq *)
 	      bmp = Bitmap.empty g.height g.width;
 	      parts = [] } in
 	  Myseq.return (data, new_state, true, parseur_empty)))
+     | `GridTiling (grid,size) ->
+        let Parseur parse_grid = parseur_grid grid (p ++ `Grid) in
+        let Parseur parse_size = parseur_vec size (p ++ `Size) in
+        Parseur (fun (g : Grid.t) state ->
+            match Grid.Transf.find_periodicity `Strict Grid.black g with
+            | Some Grid.(Period2 ((I,p1), (J,p2), k2_ar)) ->
+               let h, w = Grid.dims g in
+               if h mod p1 = 0 && w mod p2 = 0
+               then (
+                 let k, l = h / p1, w / p2 in
+                 let* (g1 : Grid.t) =
+                   match Grid.Transf.crop g 0 0 p1 p2 with
+                   | Result.Ok g1 -> Myseq.return g1
+                   | Result.Error _ -> Myseq.empty in
+                 let state =
+                   { state with
+                     bmp = Bitmap.full p1 p2;
+                     parts = Segment.segment_by_color g1;
+                     grid = g1 } in
+                 let* dgrid, state, _, _ = parse_grid g1 state in
+                 let* dsize, state, _, _ = parse_size (k,l) state in
+                 let data = `Grid (g, `Tiling (dgrid, dsize)) in
+                 (* should state be updated like for Background? *)
+                 let state =
+                   { state with
+                     bmp = Bitmap.empty h w;
+                     parts = [];
+                     grid = g } in
+                 Myseq.return (data, state, true, parseur_empty) )
+               else Myseq.empty
+            | _ -> Myseq.empty)
      | _ -> parseur_empty)
     t p
 
@@ -3941,14 +4073,22 @@ let pp_grids_read title gsr =
       1 gsr.reads in
   ()
   
-let grids_read_has_delta (gsr : grids_read) : bool =
+let rec grids_read_is_underdescribed (gsr : grids_read) : bool =
   gsr.reads
   |> List.exists (* NOT for_all: see be94 *)
        (fun egdls ->
          egdls
          |> List.exists (* NOT for_all: see e48d *)
               (fun (_env, (gd : grid_data), _dl) ->
-                gd.delta <> []))
+                grid_data_is_underdescribed gd))
+and grid_data_is_underdescribed (gd : grid_data) : bool = (* TODO: generalize *)
+  match gd.data with
+  | `Grid (_, patt) ->
+     (match patt with
+      | `None -> true
+      | `Background _ -> gd.delta <> []
+      | `Tiling (grid,_) -> grid_data_is_underdescribed { gd with data=grid })
+  | _ -> assert false
 
 let read_grids ?dl_assuming_grid_known ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
   let dl_m =
@@ -3973,12 +4113,7 @@ type model = (* input->output models *)
   }
 
 let init_template =
-(*  let u_rect = `PosShape (u_vec_cst, `Rectangle (u_vec_cst, `U, `U)) in
-  let u_point = `PosShape (u_vec_cst, `Point (`U)) in *)
-  (*let u_layer = `PosShape (u_vec_any, `Any) in*)
-  let u_layers = `Nil in
-  (*let u_layers = `Insert (`Nil, u_layer, `Nil) in*)
-  `GridBackground (u_vec_any, u_any, u_layers )
+  `Any (* u_background *)
 let init_model =
   { input_pattern = init_template;
     output_template = init_template }
@@ -4145,6 +4280,13 @@ let change_template_at_path (f : template option -> template option) (p : revpat
     | `Layer revlp, `GridBackground (size,color,layers) ->
        let layers' = aux_ilist revlp revp1 layers in
        Some (`GridBackground (size, color, layers'))
+
+    | `Grid, `GridTiling (grid,size) ->
+       let|? grid' = aux revp1 grid in
+       Some (`GridTiling (grid', size))
+    | `Size, `GridTiling (grid,size) ->
+       let|? size' = aux revp1 size in
+       Some (`GridTiling (grid, size'))
        
     | _ ->
        pp_field field; print_string " field undefined in template ";
@@ -4587,6 +4729,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       match role1 with
       | `Grid -> push (`IntCard, `ColorCount e1)
       | _ -> () in
+    let _ = (* Size on grids *)
+      match role1 with
+      | `Grid -> push (`Vec (`Size `X), `Size e1)
+      | _ -> () in
     let _ = (* Strip on grids *)
       match role1 with
       | `Grid -> push (`Grid, `Strip e1)
@@ -4843,56 +4989,67 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   
 let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement Myseq.t =
   Common.prof "Model2.shape_refinements" (fun () ->
-  let rec aux ~(objs : template list) lp = function
+  let rec aux_layers ~(objs : template list) p lp = function
     | `Nil ->
        let* obj = Myseq.from_list objs in
-       Myseq.return (RAdd (`Field (`Layer lp, `Root), obj))
+       Myseq.return (RAdd (p ++ (`Layer lp), obj))
     | `Insert (above,_,below)
       | `Append (above,below) ->
        Myseq.concat
-         [ aux ~objs (`Right lp) below; (* insert below first *)
-           aux ~objs (`Left lp) above ]
+         [ aux_layers ~objs p (`Right lp) below; (* insert below first *)
+           aux_layers ~objs p (`Left lp) above ]
+  and aux p t =
+    match t with
+    | `Any ->
+       Myseq.from_list
+         (RSpe (p, u_background, false)
+          :: if p = `Field (`Grid, `Root)
+             then []
+             else [RSpe (p, `GridTiling (u_any, u_vec_any), false)])
+    | `GridBackground (_,_,layers) ->
+       if ilist_length layers >= !max_nb_layers
+       then Myseq.empty
+       else (
+         (* TEST let su =
+       let objs =     [`PosShape (u_vec_cst, `Any)] in
+       aux ~objs `Roo t layers in *)
+         let sp =
+           let objs = [`PosShape (u_vec_cst, `Point (u_cst))] in (* TEST *)
+           aux_layers ~objs p `Root layers in
+         let sr =
+           let objs = [`PosShape (u_vec_cst, `Rectangle (u_vec_cst, u_cst, u_cst))] in (* TEST *)
+           aux_layers ~objs p `Root layers in
+         let ss =
+           let ps_shape = signature_of_kind env_sig Shape in
+           Myseq.concat
+             (List.map
+                (fun p_shape ->
+                  let objs = [`PosShape (u_vec_cst, `Ref p_shape)] in
+                  aux_layers ~objs p `Root layers)
+                ps_shape) in
+         let so =
+           let ps_layer = signature_of_kind env_sig Layer in
+           Myseq.concat
+             (List.map
+                (fun p_layer ->
+                  let objs = [`Ref p_layer] in
+                  aux_layers ~objs p `Root layers)
+                ps_layer) in
+         Myseq.concat [so; ss; sr; sp (* TEST ; su *)])
+    | `GridTiling (grid,size) ->
+       aux (p ++ `Grid) grid
+    | #expr -> Myseq.empty
     | _ -> assert false
   in
-  match t with
-  | `GridBackground (_,_,layers) ->
-     if ilist_length layers >= !max_nb_layers
-     then Myseq.empty
-     else (
-     (* TEST let su =
-       let objs = [`PosShape (u_vec_cst, `Any)] in
-       aux ~objs `Root layers in *)
-     let sp =
-       let objs = [`PosShape (u_vec_cst, `Point (u_cst))] in (* TEST *)
-       aux ~objs `Root layers in
-     let sr =
-       let objs = [`PosShape (u_vec_cst, `Rectangle (u_vec_cst, u_cst, u_cst))] in (* TEST *)
-       aux ~objs `Root layers in
-     let ss =
-       let ps_shape = signature_of_kind env_sig Shape in
-       Myseq.concat
-         (List.map
-            (fun p_shape ->
-              let objs = [`PosShape (u_vec_cst, `Ref p_shape)] in
-              aux ~objs `Root layers)
-            ps_shape) in
-     let so =
-       let ps_layer = signature_of_kind env_sig Layer in
-       Myseq.concat
-         (List.map
-            (fun p_layer ->
-              let objs = [`Ref p_layer] in
-              aux ~objs `Root layers)
-            ps_layer) in
-     Myseq.concat [so; ss; sr; sp (* TEST ; su *)])
-  | #expr -> Myseq.empty
-  | _ -> assert false)
+  aux `Root t)
 
 let prune_refinements (t : template) : grid_refinement Myseq.t =
   let l =
     fold_template
       (fun res p1 t1 anc1 ->
         match p1, t1 with
+        | _, `GridBackground _ -> RGen (p1, `Any) :: res
+        | _, `GridTiling _ -> RGen (p1, `Any) :: res
         | _, `Color _ -> RGen (p1, `Any) :: res
         | _, `Mask _ -> RGen (p1, `Any) :: res
         | `Field (`Layer _, _), _ -> RDel p1 :: res
@@ -4907,7 +5064,6 @@ let grid_refinements ~(env_sig : signature) (t : template) (grss : grid_read lis
      shape_refinements ~env_sig t]
   |> Myseq.filter_map
        (fun r ->
-         pp_grid_refinement r; print_newline (); (* TEST *)
          let|? t' = apply_grid_refinement r t in
          Some (r,t')
     ))
@@ -4986,7 +5142,7 @@ let model_refinements_build (last_r : refinement) (m : model) (gsri : grids_read
            let|? m' = apply_refinement r m in
            Some (r,m')) in
   let ref_shapis =
-    if grids_read_has_delta gsri
+    if grids_read_is_underdescribed gsri
     then
       shape_refinements ~env_sig:signature0 m.input_pattern
       |> Myseq.filter_map (fun gr ->
@@ -4995,7 +5151,7 @@ let model_refinements_build (last_r : refinement) (m : model) (gsri : grids_read
              Some (r,m'))
     else Myseq.empty in
   let ref_shapos =
-    if grids_read_has_delta gsro
+    if grids_read_is_underdescribed gsro
     then
       shape_refinements ~env_sig:envo_sig m.output_template
       |> Myseq.filter_map (fun gr ->
