@@ -820,8 +820,8 @@ module Transf = (* black considered as neutral color by default *)
       if offset_i >= 0 && offset_i < h
          && offset_j >= 0 && offset_j < w
          && new_h > 0 && new_w > 0
-         && offset_i + new_h < h
-         && offset_j + new_w < w
+         && offset_i + new_h <= h
+         && offset_j + new_w <= w
       then
         let res = make new_h new_w black in
         for i = 0 to new_h - 1 do
