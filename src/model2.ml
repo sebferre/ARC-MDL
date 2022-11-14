@@ -3481,32 +3481,79 @@ let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Re
 
 (* parsing grids with templates *)
 
-type parse_state =
-  { quota_diff: int; (* nb of allowed additional diffs *)
-    diff: diff; (* paths to data that differ from template patterns *)
-    delta: delta; (* pixels that are not explained by the template *)
-    bmp: Bitmap.t; (* remaining part of the grid to be explained *)
-    parts: Segment.part list; (* remaining parts that can be used *)
-    grid: Grid.t; (* the grid to parse *)
-  }
+class parse_state_base ?(quota_diff : int = 0) ?(diff = []) ?(delta = []) () =
+object
+  val quota_diff : int = quota_diff (* nb of allowed additional diffs *)
+  val diff : diff = diff (* paths to data that differ from template patterns *)
+  val delta : delta = delta (* pixels that are not explained by the template *)
 
-let add_diff path state =
-  { state with quota_diff = state.quota_diff - 1;
-               diff = path::state.diff }
+  method quota_diff = quota_diff
+  method quota_diff_is_null = (quota_diff <= 0)
+  method diff = diff
+  method delta = delta
+                    
+  method add_diff path =
+    {< quota_diff = quota_diff - 1;
+       diff = path::diff >}
+  method add_delta pixels =
+    {< delta = List.rev_append pixels delta >}
+end
 
-let add_delta_with_bmp ~bmp delta new_delta =
-  List.fold_left
-    (fun delta (i,j,c as pixel) ->
-      if Bitmap.mem i j bmp
-      then pixel::delta
-      else delta)
-    delta new_delta
-  
-let filter_parts_with_bmp ~new_bmp parts = (* QUICK *)
-  List.filter
-    (fun p ->
-      not (Bitmap.inter_is_empty p.Segment.pixels new_bmp))
-    parts
+class parse_state_layers (state : #parse_state_base) (g : Grid.t) (bc : Grid.color) =
+object (self)
+  inherit parse_state_base ~quota_diff:state#quota_diff ~diff:state#diff ~delta:state#delta ()
+
+  val grid : Grid.t = g (* the grid to parse *)
+  val bmp : Bitmap.t = Bitmap.full g.height g.width (* remaining part of the grid to be explained *)
+  val parts : Segment.part list = (* remaining parts that can be used *)
+    List.filter
+      (fun (p : Segment.part) -> p.color <> bc)
+      (Segment.segment_by_color g)
+
+  method grid = grid
+  method bmp = bmp
+  method parts = parts
+
+  method private minus_shape_gen occ_color occ_delta occ_new_cover = (* QUICK *)
+    let new_bmp = Bitmap.diff bmp occ_new_cover in
+    if Bitmap.equal new_bmp bmp
+    then None (* the shape is fully hidden, explains nothing new *)
+    else
+      let new_delta =
+         List.fold_left
+           (fun delta (i,j,c as pixel) ->
+             if Bitmap.mem i j bmp
+             then pixel::delta
+             else delta)
+           delta occ_delta in
+      let new_parts =
+        List.filter
+          (fun (p : Segment.part) ->
+            not (Bitmap.inter_is_empty p.Segment.pixels new_bmp)
+            && not (occ_color = p.color && Bitmap.is_subset occ_new_cover p.Segment.pixels)) (* that would make occ useless if selecting p later *)
+          parts in
+      Some
+        {< delta = new_delta;
+           bmp = new_bmp;
+	   parts = new_parts >}                                 
+  method minus_point (i,j,c : Grid.pixel) =
+    let occ_delta = [] in
+    let occ_new_cover = Bitmap.singleton grid.height grid.width i j in
+    self#minus_shape_gen c occ_delta occ_new_cover
+  method minus_rectangle (rect : Segment.rectangle) =
+    self#minus_shape_gen rect.color rect.delta rect.new_cover    
+               
+  method base : parse_state_base =
+    let new_delta = ref delta in
+    Bitmap.iter
+      (fun i j ->
+        let c = Grid.get_pixel ~source:"parseur_grid" grid i j in
+	if c <> bc then
+	  new_delta := (i,j,c)::!new_delta)
+      bmp;
+    (self#add_delta !new_delta :> parse_state_base)
+end
+
 
 type ('a,'b,'state) parseur = (* input -> state -> results *)
   Parseur of ('a -> 'state -> ('b * 'state * bool * ('a,'b,'state) parseur) Myseq.t) [@@unboxed]
@@ -3635,21 +3682,21 @@ let rec parseur_template
   | patt -> parseur_patt patt
 
 
-let parseur_bool t p : (bool,data,parse_state) parseur = (* QUICK *)
+let parseur_bool t p : (bool,data,#parse_state_base) parseur = (* QUICK *)
   parseur_template
     ~parseur_patt:(function
       | `Bool b0 ->
          parseur_rec (fun b state ->
              if b=b0 then Myseq.return (`Bool b, state)
-             else if state.quota_diff > 0 then
-               Myseq.return (`Bool b, add_diff p state)
+             else if not state#quota_diff_is_null then
+               Myseq.return (`Bool b, state#add_diff p)
              else Myseq.empty)
       | _ -> parseur_empty)
     ~parseur_any:(fun () ->
       parseur_rec (fun b state -> Myseq.return (`Bool b, state)))
     t p
 
-let parseur_int t p : (int,data,parse_state) parseur = (* QUICK *)
+let parseur_int t p : (int,data,#parse_state_base) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun i state -> Myseq.return (`Int i, state)))
@@ -3657,13 +3704,13 @@ let parseur_int t p : (int,data,parse_state) parseur = (* QUICK *)
       | `Int i0 ->
          parseur_rec (fun i state ->
              if i=i0 then Myseq.return (`Int i, state)
-             else if state.quota_diff > 0 then
-               Myseq.return (`Int i, add_diff p state)
+             else if not state#quota_diff_is_null then
+               Myseq.return (`Int i, state#add_diff p)
              else Myseq.empty)
       | _ -> parseur_empty)
     t p
 
-let parseur_color t p : (Grid.color,data,parse_state) parseur = (* QUICK *)
+let parseur_color t p : (Grid.color,data,#parse_state_base) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun c state -> Myseq.return (`Color c, state)))
@@ -3671,13 +3718,13 @@ let parseur_color t p : (Grid.color,data,parse_state) parseur = (* QUICK *)
       | `Color c0 ->
          parseur_rec (fun c state ->
              if c0 = c then Myseq.return (`Color c0, state)
-             else if state.quota_diff > 0 then
-               Myseq.return (`Color c, add_diff p state)
+             else if not state#quota_diff_is_null then
+               Myseq.return (`Color c, state#add_diff p)
              else Myseq.empty)
       | _ -> parseur_empty)
     t p
   
-let parseur_mask t p : (Mask_model.t list, data, parse_state) parseur = (* QUICK *)
+let parseur_mask t p : (Mask_model.t list, data, #parse_state_base) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun ms state ->
@@ -3688,14 +3735,14 @@ let parseur_mask t p : (Mask_model.t list, data, parse_state) parseur = (* QUICK
          parseur_rec (fun ms state ->
              if List.exists (Mask_model.subsumes m0) ms then
                Myseq.return (`Mask m0, state)
-             else if state.quota_diff > 0 then
+             else if not state#quota_diff_is_null then
                let* m = Myseq.from_list ms in
-               Myseq.return (`Mask m, add_diff p state)
+               Myseq.return (`Mask m, state#add_diff p)
              else Myseq.empty)
       | _ -> parseur_empty)
     t p
 
-let parseur_vec t p : (int * int, data, parse_state) parseur = (* QUICK *)
+let parseur_vec t p : (int * int, data, #parse_state_base) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun (vi,vj) state ->
@@ -3712,36 +3759,15 @@ let parseur_vec t p : (int * int, data, parse_state) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
 
-let state_minus_shape_gen state occ_color occ_delta occ_new_cover = (* QUICK *)
-  let new_bmp = Bitmap.diff state.bmp occ_new_cover in
-  if Bitmap.equal new_bmp state.bmp
-  then None (* the shape is fully hidden, explains nothing new *)
-  else
-    let new_state =
-      { state with
-	bmp = new_bmp;
-        delta = add_delta_with_bmp ~bmp:state.bmp state.delta occ_delta;
-	parts = filter_parts_with_bmp ~new_bmp state.parts
-                |> List.filter (fun (p : Segment.part) -> not (occ_color = p.color && Bitmap.is_subset occ_new_cover p.Segment.pixels))
-                               (* that would make occ useless if selecting p later *)
-      } in
-    Some new_state
-let state_minus_point state (i,j,c) =
-  let occ_delta = [] in
-  let occ_new_cover = Bitmap.singleton state.grid.height state.grid.width i j in
-  state_minus_shape_gen state c occ_delta occ_new_cover
-let state_minus_rectangle state (rect : Segment.rectangle) =
-  state_minus_shape_gen state rect.color rect.delta rect.new_cover  
-
-let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy.t, data (* object *), parse_state) parseur =
+let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy.t, data (* object *), parse_state_layers) parseur =
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun (points,rects) state ->
           Myseq.concat
             [(let* rect = Myseq.from_list (Lazy.force rects) in
-              let* state = Myseq.from_option (state_minus_rectangle state rect) in
+              let* state = Myseq.from_option (state#minus_rectangle rect) in
               let open Grid in
-              let* m = Myseq.from_list rect.mask_models in
+              let* m = Myseq.from_list rect.Segment.mask_models in
               Myseq.return
                 (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j),
                             `Rectangle (`Vec (`Int rect.height, `Int rect.width),
@@ -3749,7 +3775,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
                                         `Mask m)),
                  state));
              (let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
-              let* state = Myseq.from_option (state_minus_point state point) in
+              let* state = Myseq.from_option (state#minus_point point) in
               Myseq.return
                 (`PosShape (`Vec (`Int i, `Int j), `Point (`Color c)),
                  state))
@@ -3761,7 +3787,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
            (fun parse_color (points,rects) state ->
              let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
              let* dcolor, state, stop_color, next_color = parse_color c state in
-             let* state = Myseq.from_option (state_minus_point state point) in
+             let* state = Myseq.from_option (state#minus_point point) in
              Myseq.return (`PosShape (`Vec (`Int i, `Int j), `Point dcolor), state, stop_color, next_color))
       | `Rectangle (size,color,mask) ->
          parseur_rec3
@@ -3774,7 +3800,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
              let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
              let* dcolor, state, stop_color, next_color = parse_color rect.color state in
              let* dmask, state, stop_mask, next_mask = parse_mask rect.mask_models state in
-             let* state = Myseq.from_option (state_minus_rectangle state rect) in
+             let* state = Myseq.from_option (state#minus_rectangle rect) in
              Myseq.return (`PosShape (`Vec (`Int rect.offset_i, `Int rect.offset_j), `Rectangle (dsize,dcolor,dmask)),
                            state,
                            stop_size, stop_color, stop_mask,
@@ -3782,14 +3808,14 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
       | _ -> parseur_empty)
     t p
 
-let parseur_object t p : (unit, data, parse_state) parseur =
+let parseur_object t p : (unit, data, parse_state_layers) parseur =
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec1
         (parseur_shape `Any (p ++ `Shape))
         (fun parse_shape () state ->
-          let points = lazy (Segment.points state.grid state.bmp state.parts) in
-          let rects = lazy (Segment.rectangles state.grid state.bmp state.parts) in
+          let points = lazy (Segment.points state#grid state#bmp state#parts) in
+          let rects = lazy (Segment.rectangles state#grid state#bmp state#parts) in
           let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
           (* no constraint on position *)
           Myseq.return (dobject, state, stop_shape, next_shape)))
@@ -3799,8 +3825,8 @@ let parseur_object t p : (unit, data, parse_state) parseur =
            (parseur_vec pos (p ++ `Pos))
            (parseur_shape shape (p ++ `Shape))
            (fun parse_pos parse_shape () state ->
-             let points = lazy (Segment.points state.grid state.bmp state.parts) in
-             let rects = lazy (Segment.rectangles state.grid state.bmp state.parts) in
+             let points = lazy (Segment.points state#grid state#bmp state#parts) in
+             let rects = lazy (Segment.rectangles state#grid state#bmp state#parts) in
              let* dobject, state, stop_shape, next_shape = parse_shape (points,rects) state in
              match dobject with
              | `PosShape (`Vec (`Int i, `Int j), dshape) ->
@@ -3834,7 +3860,7 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
     List.rev rev_items, state in
   Myseq.return (`Seq items, state))
    *)
-let parseur_layer (t : template) (p : revpath) : (unit,data,parse_state) parseur =
+let parseur_layer (t : template) (p : revpath) : (unit,data,parse_state_layers) parseur =
   let Parseur parse_objects = parseur_collect ~max_depth:!max_seq_length (parseur_object t p) in
   Parseur (fun () state ->
       let* ld, state, _, _ = parse_objects () state in
@@ -3843,7 +3869,7 @@ let parseur_layer (t : template) (p : revpath) : (unit,data,parse_state) parseur
       | [d] when not !seq -> Myseq.return (d, state, true, parseur_empty)
       | _ -> Myseq.return (`Seq ld, state, true, parseur_empty))
   
-let parseur_layers layers p : (unit, data ilist, parse_state) parseur =
+let parseur_layers layers p : (unit, data ilist, parse_state_layers) parseur =
   let rev_layer_parses =
     fold_ilist
       (fun revl lp layer ->
@@ -3864,7 +3890,7 @@ let parseur_layers layers p : (unit, data ilist, parse_state) parseur =
       assert (l = []);
       Myseq.return (dlayers, state, true, parseur_empty)))
   
-let rec parseur_grid t p : (Grid.t, data, parse_state) parseur = (* QUICK, runtime in Myseq *)
+let rec parseur_grid t p : (Grid.t, data, parse_state_base) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
     ~parseur_any:(fun () ->
       Parseur (fun (g : Grid.t) state ->
@@ -3874,8 +3900,8 @@ let rec parseur_grid t p : (Grid.t, data, parse_state) parseur = (* QUICK, runti
      | `Grid g0 ->
         parseur_rec (fun g state ->
             if Grid.diff g0 g = None then Myseq.return (`Grid (g, `None), state)
-            else if state.quota_diff > 0 then
-              Myseq.return (`Grid (g, `None), add_diff p state)
+            else if not state#quota_diff_is_null then
+              Myseq.return (`Grid (g, `None), state#add_diff p)
             else Myseq.empty)
      | `GridBackground (size,color,layers) ->
         let Parseur parse_size = parseur_vec size (p ++ `Size) in
@@ -3888,29 +3914,17 @@ let rec parseur_grid t p : (Grid.t, data, parse_state) parseur = (* QUICK, runti
         let parse_bg_color g state =
           let* bc = seq_background_colors g in
           let* dcolor, state, _, _ = parse_color bc state in
-          let state = { state with (* ignoring parts belonging to background *)
-                        parts = List.filter (fun (p : Segment.part) -> p.color <> bc) state.parts } in
           Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
         Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           let* dsize, state, _, _ = parse_size (g.height,g.width) state in
           let* (bc,dcolor), state, _, _ = parse_bg_color g state in
-          let* dlayers, state, _, _ = parse_layers () state in
+          let state_layers = new parse_state_layers state g bc in
+          let* dlayers, state_layers, _, _ = parse_layers () state_layers in
           let data = `Grid (g, `Background (dsize,dcolor,dlayers)) in
 	  (* adding mask pixels with other color than background to delta *)
-          let new_state =
-            let new_delta = ref state.delta in
-	    Bitmap.iter
-	      (fun i j ->
-                let c = Grid.get_pixel ~source:"parseur_grid" g i j in
-	        if c <> bc then
-	          new_delta := (i,j,c)::!new_delta)
-	      state.bmp;
-            { state with
-              delta = (!new_delta);
-	      bmp = Bitmap.empty g.height g.width;
-	      parts = [] } in
-	  Myseq.return (data, new_state, true, parseur_empty)))
+          let state = state_layers#base in
+	  Myseq.return (data, state, true, parseur_empty)))
      | `GridTiling (grid,size) ->
         let Parseur parse_grid = parseur_grid grid (p ++ `Grid) in
         let Parseur parse_size = parseur_vec size (p ++ `Size) in
@@ -3925,20 +3939,9 @@ let rec parseur_grid t p : (Grid.t, data, parse_state) parseur = (* QUICK, runti
                    match Grid.Transf.crop g 0 0 p1 p2 with
                    | Result.Ok g1 -> Myseq.return g1
                    | Result.Error _ -> Myseq.empty in
-                 let state =
-                   { state with
-                     bmp = Bitmap.full p1 p2;
-                     parts = Segment.segment_by_color g1;
-                     grid = g1 } in
                  let* dgrid, state, _, _ = parse_grid g1 state in
                  let* dsize, state, _, _ = parse_size (k,l) state in
                  let data = `Grid (g, `Tiling (dgrid, dsize)) in
-                 (* should state be updated like for Background? *)
-                 let state =
-                   { state with
-                     bmp = Bitmap.empty h w;
-                     parts = [];
-                     grid = g } in
                  Myseq.return (data, state, true, parseur_empty) )
                else Myseq.empty
             | _ -> Myseq.empty)
@@ -3981,7 +3984,6 @@ let rec parseur_grid t p : (Grid.t, data, parse_state) parseur = (* QUICK, runti
         print_newline ())
       (List.rev res)) *)
 
-  
 exception Parse_failure
 let _ = Printexc.register_printer
           (function
@@ -4009,25 +4011,20 @@ let read_grid
   Common.prof "Model2.read_grid" (fun () ->
   let| t = apply_template ~env t0 in (* reducing expressions *)
   let Parseur parse_grid = parseur_grid t path0 in
-  let state = { quota_diff;
-                diff = diff0;
-                delta = delta0;
-                bmp = Bitmap.full g.height g.width;
-                parts = Segment.segment_by_color g;
-                grid = g } in
   let parses =
-    let* qdiff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
-    let* data, state, stop, _next = parse_grid g {state with quota_diff = qdiff} in (* parse with this quota *)
+    let* quota_diff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
+    let state = new parse_state_base ~quota_diff () in
+    let* data, state, stop, _next = parse_grid g state in (* parse with this quota *)
     assert stop;
-    let* () = Myseq.from_bool (state.quota_diff = 0) in (* check quota fully used to avoid redundancy *)
+    let* () = Myseq.from_bool state#quota_diff_is_null in (* check quota fully used to avoid redundancy *)
     let ctx = dl_ctx_of_data data in
     let dl = (* QUICK *)
       let dl_data = encoder_template ~ctx t0 data in
-      let dl_diff = dl_diff ~ctx t0 state.diff data in
-      let dl_delta = dl_delta ~ctx state.delta in
+      let dl_diff = dl_diff ~ctx t0 state#diff data in
+      let dl_delta = dl_delta ~ctx state#delta in
       (* rounding before sorting to absorb float error accumulation *)
       dl_round (dl_data +. dl_diff +. dl_delta) in
-    let gd = {data; diff=state.diff; delta=state.delta} in
+    let gd = {data; diff=state#diff; delta=state#delta} in
     Myseq.return (env, gd, dl) in
   let l_parses =
     Common.prof "Model2.read_grid/first_parses" (fun () ->
