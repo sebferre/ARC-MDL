@@ -1541,13 +1541,20 @@ let dl_int_index : int -> dl =
   fun i -> Mdl.Code.universal_int_star i
 let dl_color : Grid.color -> dl =
   fun c -> Mdl.Code.uniform Grid.nb_color
+let dl_shape_color : Grid.color -> dl =
+  function
+  | 0 -> Mdl.Code.usage 0.091
+  | c -> (* 0.909 for other colors in total *)
+     if c > 0 && c < 10 (* 9 colors *)
+     then Mdl.Code.usage 0.101
+     else invalid_arg "dl_shape_color: Unexpected color"
 let dl_background_color : Grid.color -> dl =
   function
-  | 0 -> Mdl.Code.usage 0.91
-  | c ->
+  | 0 -> Mdl.Code.usage 0.910
+  | c -> (* 0.090 for other colors in total *)
      if c > 0 && c < 10 (* 9 colors *)
-     then Mdl.Code.usage 0.01
-     else invalid_arg "Unexpected color"
+     then Mdl.Code.usage 0.010
+     else invalid_arg "dl_background_color: Unexpected color"
 let dl_mask : Mask_model.t -> dl =
   function
   | `Full -> Mdl.Code.usage 0.5 (* TODO: give equal prob to all specific masks ? *)
@@ -1566,7 +1573,12 @@ let dl_mask : Mask_model.t -> dl =
      Mdl.Code.usage 0.5
      +. Mdl.Code.universal_int_plus missing
      +. Mdl.Code.comb missing n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *) *)
-
+let dl_grid : Grid.t -> dl =
+  fun g ->
+  let h, w = Grid.dims g in
+  +. dl_int_size ~bound:Grid.max_size h
+  +. dl_int_size ~bound:Grid.max_size w
+  +. 10. *. float h *. float w *. dl_color Grid.blue (* or any color *) 
      
     
 type dl_ctx =
@@ -2020,7 +2032,7 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        code.c_patt +.
        ( match path_role path with
          | `Color `Grid -> dl_background_color c
-         | `Color `Shape -> dl_color c
+         | `Color `Shape -> dl_shape_color c
          | _ -> assert false )
     | `Mask m -> code.c_patt +. dl_mask m
 
@@ -2046,12 +2058,9 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
        +. aux ~ctx shape ~path:(path ++ `Shape)
 
     | `Grid g -> (* rough definition *)
-       let h, w = Grid.dims g in
        code.c_patt
        +. Mdl.Code.usage 0.1
-       +. dl_int_size ~bound:Grid.max_size h
-       +. dl_int_size ~bound:Grid.max_size w
-       +. 10. *. float h *. float w *. dl_color Grid.blue (* or any color *) 
+       +. dl_grid g
     | `GridBackground (size,color,layers) ->
        let box_height =
          match size with
