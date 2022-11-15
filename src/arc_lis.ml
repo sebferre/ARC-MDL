@@ -247,16 +247,14 @@ let html_of_cell : cell -> Html.t = function
        (html_of_grid gi)
        (html_of_grid go)
   | Descr (ri,ro) ->
-     let (_, {data=d_i; delta=delta_i}, dli : Model2.grid_read) = ri in
-     let (_, {data=d_o; delta=delta_o}, dlo : Model2.grid_read) = ro in
+     let (_, {data=d_i}, dli : Model2.grid_read) = ri in
+     let (_, {data=d_o}, dlo : Model2.grid_read) = ro in
      html_grid_pair
        (html_of_grid_from_data d_i)
        (html_of_grid_from_data d_o)
      ^ Printf.sprintf "<br/>DL = %.3f = %.3fi + %.3fo" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
-     ^ Printf.sprintf "+ %d delta pixels" (List.length delta_i)
      ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
-     ^ Printf.sprintf "+ %d delta pixels" (List.length delta_o)
   | Pred (expected_go, l_gdi_go) ->
      String.concat ""
        (List.map

@@ -449,6 +449,8 @@ let broadcast_list_result (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b re
     Result.Ok (`Seq lr)
   else f ts
 
+type delta = Grid.pixel list (* pixels not explained by a template *)
+let delta0 = []
        
 type data =
   [ `Bool of bool
@@ -461,13 +463,13 @@ type data =
   | `PosShape of data * data (* pos, shape -> object *)
   | `Grid of Grid.t
              * [ `None
-               | `Background of data * data * data ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
+               | `Background of data * data * data ilist * delta (* size, color, layers (top first), delta *)
                | `Tiling of data * data (* grid, size *)
                ]
   | `Seq of data list ]
 let data0 : data =
   `Grid (Grid.make 1 1 Grid.black,
-         `Background (`Vec (`Int 1, `Int 1), `Color Grid.black, `Nil))
+         `Background (`Vec (`Int 1, `Int 1), `Color Grid.black, `Nil, []))
 let _ = (data0 :> data seq) (* data is an instance of data seq *)
       
 type var = revpath
@@ -598,18 +600,12 @@ let signature0 = []
 type diff = revpath list (* paths to data parts differing from a template *)
 let diff0 = []
           
-type delta = Grid.pixel list (* pixels not explained by a template *)
-let delta0 = []
-
 type grid_data =
   { data: data;
-    diff: diff;
-    delta: delta }
+    diff: diff }
 let grid_data0 =
   { data = data0;
-    diff = diff0;
-    delta = delta0 }
-
+    diff = diff0 }
 
 (* stringifiers and pretty-printing *)
 
@@ -673,6 +669,11 @@ let xp_path_list (print : Xprint.t) lp =
   print#string ")"
 let pp_path_list = Xprint.to_stdout xp_path_list
 
+let pp_delta delta =
+  delta
+  |> List.sort Stdlib.compare
+  |> List.iter (fun (i,j,c) -> Printf.printf " (%d,%d)=" i j; Grid.pp_color c)
+    
 let xp_bool print b = print#string (if b then "true" else "false")
 let xp_int print i = print#int i
 let xp_color print c = print#string (Grid.name_of_color c)
@@ -698,10 +699,12 @@ let xp_rectangle xp print size color mask =
   print#string " and mask "; xp print mask
 let xp_pos_shape xp print pos shape =
   xp print shape; print#string " at "; xp print pos
-let xp_background xp print size color layers =
+let xp_background xp print size color layers delta =
   print#string "a background with size "; xp print size;
   print#string " and color "; xp print color;
-  print#string " and layers"; xp_ilist xp print layers
+  print#string " and layers"; xp_ilist xp print layers;
+  if delta <> [] then (
+    print#string "\n  + "; print#int (List.length delta); print#string " delta pixels")
 let xp_tiling xp print grid size =
   print#string "tiling by "; xp print size;
   print#string "\nof "; xp print grid
@@ -716,7 +719,7 @@ let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Point color -> xp_point xp_data print color
   | `Rectangle (size,color,mask) -> xp_rectangle xp_data print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_data print pos shape
-  | `Grid (g, `Background (size,color,layers)) -> xp_background xp_data print size color layers
+  | `Grid (g, `Background (size,color,layers,delta)) -> xp_background xp_data print size color layers delta
   | `Grid (g, `Tiling (grid,size)) -> xp_tiling xp_data print grid size
   | `Seq items ->
      Xprint.bracket
@@ -869,7 +872,7 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Point color -> xp_point xp_template print color
   | `Rectangle (size,color,mask) -> xp_rectangle xp_template print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_template print pos shape
-  | `GridBackground (size,color,layers) -> xp_background xp_template print size color layers
+  | `GridBackground (size,color,layers) -> xp_background xp_template print size color layers []
   | `GridTiling (grid,size) -> xp_tiling xp_template print grid size
   | #expr as e -> xp_expr xp_template print e
   | `Seq items ->
@@ -911,15 +914,9 @@ let xp_diff (print : Xprint.t) diff =
   |> List.iter (fun p1 -> print#string "  "; xp_path print p1)
 let pp_diff = Xprint.to_stdout xp_diff
                   
-let pp_delta delta =
-  delta
-  |> List.sort Stdlib.compare
-  |> List.iter (fun (i,j,c) -> Printf.printf " (%d,%d)=" i j; Grid.pp_color c)
-    
 let pp_grid_data gd =
   print_string "data: "; pp_data gd.data; print_newline ();
-  print_string "diff: "; pp_diff gd.diff; print_newline ();
-  print_string "delta:"; pp_delta gd.delta; print_newline ()
+  print_string "diff: "; pp_diff gd.diff; print_newline ()
 
 
 (* data utilities *)
@@ -1109,9 +1106,9 @@ and find_data_field (f : field) (d1 : data) : data option =
   | `Pos, `PosShape (pos,shape) -> Some pos
   | `Shape, `PosShape (pos,shape) -> Some shape
   | `Size, `Grid (g, `None) -> Some (`Vec (`Int g.Grid.height, `Int g.Grid.width))
-  | `Size, `Grid (_, `Background (size,color,layers)) -> Some size
-  | `Color, `Grid (_, `Background (size,color,layers)) -> Some color
-  | `Layer lp, `Grid (_, `Background (size,color,layers)) -> find_ilist lp layers
+  | `Size, `Grid (_, `Background (size,color,layers,_delta)) -> Some size
+  | `Color, `Grid (_, `Background (size,color,layers,_delta)) -> Some color
+  | `Layer lp, `Grid (_, `Background (size,color,layers,_delta)) -> find_ilist lp layers
   | `Grid, `Grid (_, `Tiling (grid,size)) -> Some grid
   | `Size, `Grid (_, `Tiling (grid,size)) -> Some size
   | _, `Seq items ->
@@ -1215,7 +1212,7 @@ let rec template_of_data ~(mode : [`Value | `Pattern]) : data -> template = func
      (match mode, patt with
       | `Value, _
         | _, `None -> `Grid g
-      | `Pattern, `Background (size,color,layers) ->
+      | `Pattern, `Background (size,color,layers,delta) ->
          `GridBackground
            (template_of_data ~mode size,
             template_of_data ~mode color,
@@ -1282,7 +1279,7 @@ let default_shape = `Rectangle (default_shape_size, default_shape_color, default
 let default_object = `PosShape (default_pos, default_shape)
 let default_layer = default_object
 let default_grid_raw = Grid.make 10 10 Grid.black
-let default_grid = `Grid (default_grid_raw, `Background (default_grid_size, default_grid_color, `Nil))
+let default_grid = `Grid (default_grid_raw, `Background (default_grid_size, default_grid_color, `Nil, []))
 let default_data_of_path (p : revpath) : data =
   match path_role p with
   | `IntCoord (_, `Pos) -> `Int 0
@@ -1443,7 +1440,7 @@ let rec matcher_template_aux (t : template) : matcher =
          (fun lp layer -> matcher_collect (matcher_template_aux layer))
          `Root layers in
      Matcher (function
-         | `Grid (_, `Background (dsize,dcolor,dlayers)) ->
+         | `Grid (_, `Background (dsize,dcolor,dlayers,_)) ->
             let ok1, _ = matcher_size dsize in
             let ok2, _ = matcher_color dcolor in
             let ok3 =
@@ -1571,6 +1568,7 @@ let dl_mask : Mask_model.t -> dl =
      +. Mdl.Code.comb missing n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *) *)
 
      
+    
 type dl_ctx =
   { box_height : int;
     box_width : int }
@@ -1967,6 +1965,7 @@ and dl_periodicity_mode = function
   | `Strict -> Mdl.Code.usage 0.25
   | `TradeOff -> Mdl.Code.usage 0.5
 
+               
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_any : dl;
     c_patt : dl;
@@ -2135,6 +2134,30 @@ let dl_data, reset_dl_data =
        dl in
   f, reset
 
+let dl_delta_path = `Item (0, `Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
+(* let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *) *)
+let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask `Full)) (* dummy point shape as rectangle *)
+let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
+  if delta = []
+  then 0.
+  else (* assuming dl_data is constant over point shapes *)
+    let n = List.length delta in
+    -. 1. (* some normalization to get 0 for empty grid data *)
+    +. Mdl.Code.universal_int_star n
+    +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape
+  
+(* OLD
+  -. 1. (* some normalization to get 0 for empty grid data *)
+  +. Mdl.Code.list_star
+       (fun (i,j,c) -> (* TODO: optimize: hint, all points have the same DL ? *)
+         dl_data ~ctx ~path:(any_item (`Field (`Layer `Root, `Root))) (* dummy path with kind Shape *)
+           (`Point (`Vec (`Int i, `Int j), `Color c)))
+       delta)
+   *)
+(* NOT using optimized DL below for fair comparisons with model points: 
+  +. Mdl.Code.comb nb_pixels area (* where they are *)
+  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
+
   
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
@@ -2259,7 +2282,7 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
          (fun lp layer -> encoder_collect (encoder_template_aux ~ctx ~path:(path ++ `Layer lp) layer))
          `Root layers in
      Encoder (function
-         | `Grid (_, `Background (dsize,dcolor,dlayers)) ->
+         | `Grid (_, `Background (dsize,dcolor,dlayers,delta)) ->
             let dl1, _ = encoder_size dsize in
             let dl2, _ = encoder_color dcolor in
             let dl3 =
@@ -2272,7 +2295,8 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
               with
               | Result.Ok dl3 -> dl3
               | Result.Error _ -> assert false in
-            dl1 +. dl2 +. dl3, encoder_fail
+            let dl4 = dl_delta ~ctx delta in
+            dl1 +. dl2 +. dl3 +. dl4, encoder_fail
          | _ -> assert false)
   | `GridTiling (grid,size) ->
      let rec encoder_tiling (Encoder encoder_grid) (Encoder encoder_size) =
@@ -2323,30 +2347,6 @@ let dl_diff ~(ctx : dl_ctx) (t : template) (diff : diff) (data : data) : dl = (*
            dl_t_size
            +. dl_data ~ctx d1 ~path:p1)
          diff
-
-let dl_delta_path = `Item (0, `Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
-(* let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *) *)
-let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask `Full)) (* dummy point shape as rectangle *)
-let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
-  if delta = []
-  then 0.
-  else (* assuming dl_data is constant over point shapes *)
-    let n = List.length delta in
-    -. 1. (* some normalization to get 0 for empty grid data *)
-    +. Mdl.Code.universal_int_star n
-    +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape
-  
-(* OLD
-  -. 1. (* some normalization to get 0 for empty grid data *)
-  +. Mdl.Code.list_star
-       (fun (i,j,c) -> (* TODO: optimize: hint, all points have the same DL ? *)
-         dl_data ~ctx ~path:(any_item (`Field (`Layer `Root, `Root))) (* dummy path with kind Shape *)
-           (`Point (`Vec (`Int i, `Int j), `Color c)))
-       delta)
-   *)
-(* NOT using optimized DL below for fair comparisons with model points: 
-  +. Mdl.Code.comb nb_pixels area (* where they are *)
-  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
 
   
 (* evaluation of expression and templates on environment data *)
@@ -3418,7 +3418,7 @@ let rec generator_template (p : revpath) (t : template) : generator =
                Result.Ok dlayer)
              `Root ilist_gen_layers in
          let| g = grid_background dsize dcolor dlayers in
-         Result.Ok (`Grid (g, `Background (dsize,dcolor,dlayers)), true, generator_fail))
+         Result.Ok (`Grid (g, `Background (dsize,dcolor,dlayers,[])), true, generator_fail))
   | `GridTiling (grid,size) ->
      let rec gen_tiling (Generator gen_grid) (Generator gen_size) =
        Generator (fun () ->
@@ -3469,39 +3469,32 @@ let grid_of_data (d : data) : Grid.t =
   | `Grid (g,_) -> g
   | _ -> assert false (* undefined_grid *)
 
-let write_grid ~(env : data) ?(delta = delta0) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
+let write_grid ~(env : data) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
  let| t' = apply_template ~env t in
  let| d = generate_template t' in
  let g = grid_of_data d in
- List.iter
-   (fun (i,j,c) -> Grid.set_pixel g i j c)
-   delta;
  Result.Ok g)
 
 
 (* parsing grids with templates *)
 
-class parse_state_base ?(quota_diff : int = 0) ?(diff = []) ?(delta = []) () =
+class parse_state_base ?(quota_diff : int = 0) ?(diff = []) () =
 object
   val quota_diff : int = quota_diff (* nb of allowed additional diffs *)
   val diff : diff = diff (* paths to data that differ from template patterns *)
-  val delta : delta = delta (* pixels that are not explained by the template *)
-
+                  
   method quota_diff = quota_diff
   method quota_diff_is_null = (quota_diff <= 0)
   method diff = diff
-  method delta = delta
                     
   method add_diff path =
     {< quota_diff = quota_diff - 1;
        diff = path::diff >}
-  method add_delta pixels =
-    {< delta = List.rev_append pixels delta >}
 end
 
 class parse_state_layers (state : #parse_state_base) (g : Grid.t) (bc : Grid.color) =
 object (self)
-  inherit parse_state_base ~quota_diff:state#quota_diff ~diff:state#diff ~delta:state#delta ()
+  inherit parse_state_base ~quota_diff:state#quota_diff ~diff:state#diff ()
 
   val grid : Grid.t = g (* the grid to parse *)
   val bmp : Bitmap.t = Bitmap.full g.height g.width (* remaining part of the grid to be explained *)
@@ -3509,6 +3502,7 @@ object (self)
     List.filter
       (fun (p : Segment.part) -> p.color <> bc)
       (Segment.segment_by_color g)
+  val delta : delta = delta0 (* pixels that are not explained by the template *)
 
   method grid = grid
   method bmp = bmp
@@ -3532,10 +3526,10 @@ object (self)
             not (Bitmap.inter_is_empty p.Segment.pixels new_bmp)
             && not (occ_color = p.color && Bitmap.is_subset occ_new_cover p.Segment.pixels)) (* that would make occ useless if selecting p later *)
           parts in
-      Some
-        {< delta = new_delta;
-           bmp = new_bmp;
-	   parts = new_parts >}                                 
+      Some 
+        {< bmp = new_bmp;
+	   parts = new_parts;
+           delta = new_delta >}
   method minus_point (i,j,c : Grid.pixel) =
     let occ_delta = [] in
     let occ_new_cover = Bitmap.singleton grid.height grid.width i j in
@@ -3543,7 +3537,7 @@ object (self)
   method minus_rectangle (rect : Segment.rectangle) =
     self#minus_shape_gen rect.color rect.delta rect.new_cover    
                
-  method base : parse_state_base =
+  method delta_base : delta * parse_state_base =
     let new_delta = ref delta in
     Bitmap.iter
       (fun i j ->
@@ -3551,7 +3545,7 @@ object (self)
 	if c <> bc then
 	  new_delta := (i,j,c)::!new_delta)
       bmp;
-    (self#add_delta !new_delta :> parse_state_base)
+    !new_delta, (self :> parse_state_base)
 end
 
 
@@ -3921,9 +3915,9 @@ let rec parseur_grid t p : (Grid.t, data, parse_state_base) parseur = (* QUICK, 
           let* (bc,dcolor), state, _, _ = parse_bg_color g state in
           let state_layers = new parse_state_layers state g bc in
           let* dlayers, state_layers, _, _ = parse_layers () state_layers in
-          let data = `Grid (g, `Background (dsize,dcolor,dlayers)) in
+          let delta, state = state_layers#delta_base in
+          let data = `Grid (g, `Background (dsize,dcolor,dlayers,delta)) in
 	  (* adding mask pixels with other color than background to delta *)
-          let state = state_layers#base in
 	  Myseq.return (data, state, true, parseur_empty)))
      | `GridTiling (grid,size) ->
         let Parseur parse_grid = parseur_grid grid (p ++ `Grid) in
@@ -4021,10 +4015,9 @@ let read_grid
     let dl = (* QUICK *)
       let dl_data = encoder_template ~ctx t0 data in
       let dl_diff = dl_diff ~ctx t0 state#diff data in
-      let dl_delta = dl_delta ~ctx state#delta in
       (* rounding before sorting to absorb float error accumulation *)
-      dl_round (dl_data +. dl_diff +. dl_delta) in
-    let gd = {data; diff=state#diff; delta=state#delta} in
+      dl_round (dl_data +. dl_diff) in
+    let gd = {data; diff=state#diff} in
     Myseq.return (env, gd, dl) in
   let l_parses =
     Common.prof "Model2.read_grid/first_parses" (fun () ->
@@ -4077,14 +4070,14 @@ let rec grids_read_is_underdescribed (gsr : grids_read) : bool =
          egdls
          |> List.exists (* NOT for_all: see e48d *)
               (fun (_env, (gd : grid_data), _dl) ->
-                grid_data_is_underdescribed gd))
-and grid_data_is_underdescribed (gd : grid_data) : bool = (* TODO: generalize *)
-  match gd.data with
+                grid_data_is_underdescribed gd.data))
+and grid_data_is_underdescribed (d : data) : bool =
+  match d with
   | `Grid (_, patt) ->
      (match patt with
       | `None -> true
-      | `Background _ -> gd.delta <> []
-      | `Tiling (grid,_) -> grid_data_is_underdescribed { gd with data=grid })
+      | `Background (_,_,_,delta) -> delta <> []
+      | `Tiling (grid,_) -> grid_data_is_underdescribed grid)
   | _ -> assert false
 
 let read_grids ?dl_assuming_grid_known ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
