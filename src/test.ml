@@ -110,8 +110,8 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                     Model.pp_grid_data gdi; Printf.printf "   (%.1f bits)\n" dli;
                     Model.pp_grid_data gdo; Printf.printf "   (%.1f bits)\n" dlo;
                     if !grid_viz then
-                      Grid.pp_grids [Model.grid_of_data gdi.data;
-                                     Model.grid_of_data gdo.data])
+                      Grid.pp_grids [Model.grid_of_data_as_template gdi.data;
+                                     Model.grid_of_data_as_template gdo.data])
           | `TEST -> ()
         );
         if !verbose >= 2 then (
@@ -130,7 +130,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                if !grid_viz then (
                  Grid.pp_grids
                    (List.map
-                      (fun (_,gdi,_) -> Model.grid_of_data gdi.Model.data)
+                      (fun (_,gdi,_) -> Model.grid_of_data_as_template gdi.Model.data)
                       reads))
             | Result.Error _ ->
                print_endline "(No input readings)"
@@ -151,7 +151,7 @@ let score_learned_model name m (train_test : [`TRAIN of Model.grid_pairs_read |`
                    Printf.printf ">> Trial %d\n" rank;
                    if !training then (
                      Model.pp_grid_data gdi;
-                     if !grid_viz then Grid.pp_grids [Model2.grid_of_data gdi.data]
+                     if !grid_viz then Grid.pp_grids [Model2.grid_of_data_as_template gdi.data]
                    );
 	           ( match Grid.diff derived output with
 		     | None ->

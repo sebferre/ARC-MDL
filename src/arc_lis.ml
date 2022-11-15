@@ -228,7 +228,7 @@ let html_of_grid (g : Grid.t) =
   Buffer.contents buf
 
 let html_of_grid_from_data data =
-  let g = Model2.grid_of_data data in
+  let g = Model2.grid_of_data_as_template data in
   html_of_grid g
 
 let html_grid_pair html_i html_o =

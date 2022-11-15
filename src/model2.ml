@@ -3464,16 +3464,18 @@ let generate_template ?(p = `Root) (t : template) : data result =
   Result.Ok data
 
 let undefined_grid = Grid.make 1 1 Grid.no_color
-let grid_of_data (d : data) : Grid.t =
-  match d with
-  | `Grid (g,_) -> g
-  | _ -> assert false (* undefined_grid *)
+let grid_of_data_as_template (d : data) : Grid.t = (* for visualization of data *)
+  let t = template_of_data ~mode:`Pattern d in
+  match generate_template t with
+  | Result.Ok (`Grid (g,_)) -> g
+  | _ -> undefined_grid
 
 let write_grid ~(env : data) (t : template) : (Grid.t, exn) Result.t = Common.prof "Model2.write_grid" (fun () ->
  let| t' = apply_template ~env t in
  let| d = generate_template t' in
- let g = grid_of_data d in
- Result.Ok g)
+ match d with
+ | `Grid (g,_) -> Result.Ok g
+ | _ -> assert false)
 
 
 (* parsing grids with templates *)
@@ -5219,15 +5221,15 @@ let learn_model
         (fun reads_input reads_pair ->
           match reads_pair with
           | ((_,gdi_knowing_o,_), (_,gdo,_), _)::_ ->
-             let gi1 = grid_of_data gdi_knowing_o.data in
-             let go1 = grid_of_data gdo.data in
+             let gi1 = grid_of_data_as_template gdi_knowing_o.data in
+             let go1 = grid_of_data_as_template gdo.data in
              let res2 = (* searching for a parse able to generate an output *)
                let+|+ _, gdi2, _ = Result.Ok reads_input in
                let| go2 = write_grid ~env:gdi2.data m.output_template in
                Result.Ok [(gdi2,go2)] in
              (match res2 with
               | Result.Ok ((gdi2,go2)::_) ->
-                 let gi2 = grid_of_data gdi2.data in
+                 let gi2 = grid_of_data_as_template gdi2.data in
                  Grid.pp_grids [gi1; go1; gi2; go2]
               | Result.Ok [] -> assert false
               | Result.Error exn ->
