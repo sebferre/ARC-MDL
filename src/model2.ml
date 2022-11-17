@@ -2178,16 +2178,16 @@ let dl_data, reset_dl_data =
   
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
-type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *) (* TODO: move ~ctx inside Encoder *)
+type encoder = Encoder of (ctx:dl_ctx -> data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *)
 
 let rec encoder_zero : encoder =
-  Encoder (fun _ -> 0., encoder_zero)
+  Encoder (fun ~ctx _ -> 0., encoder_zero)
 let encoder_fail : encoder =
-  Encoder (fun _ -> assert false)
+  Encoder (fun ~ctx _ -> assert false)
 let encoder_lift (dl : 'a -> dl) : encoder =
-  Encoder (fun d -> dl d, encoder_fail)
-let encoder_pop (Encoder encoder) (d : data) : dl =
-  let dl, _ = encoder d in
+  Encoder (fun ~ctx d -> dl d, encoder_fail)
+let encoder_pop (Encoder encoder) ~ctx (d : data) : dl =
+  let dl, _ = encoder ~ctx d in
   dl
 
 let encoder_seq (make_encoder : int -> 'a -> encoder) (items : 'a list) : encoder =
@@ -2195,8 +2195,8 @@ let encoder_seq (make_encoder : int -> 'a -> encoder) (items : 'a list) : encode
   let rec aux = function
     | [] -> encoder_fail
     | (Encoder encoder_item)::next_encoders ->
-       Encoder (fun d ->
-           let dl, _ = encoder_item d in
+       Encoder (fun ~ctx d ->
+           let dl, _ = encoder_item ~ctx d in
            dl, aux next_encoders)
   in
   let encoder_items = List.mapi make_encoder items in
@@ -2205,147 +2205,153 @@ let encoder_seq (make_encoder : int -> 'a -> encoder) (items : 'a list) : encode
 let encoder_collect (Encoder encoder_item : encoder) : encoder =
   if !seq
   then
-    let rec aux encoder_item n dl = function
+    let rec aux encoder_item n dl ~ctx = function
       | [] -> n, dl
       | item::items ->
-         let dl1, Encoder next_encoder = encoder_item item in
-         aux next_encoder (n+1) (dl +. dl1) items
+         let dl1, Encoder next_encoder = encoder_item ~ctx item in
+         aux next_encoder (n+1) (dl +. dl1) ~ctx items
     in
-    Encoder (fun d ->
+    Encoder (fun ~ctx d ->
         let n, dl =
           match d with
           | `Seq items ->
              assert (items <> []);
-             aux encoder_item 0 0. items
+             aux encoder_item 0 0. ~ctx items
           | d ->
-             let dl, _ = encoder_item d in
+             let dl, _ = encoder_item ~ctx d in
              1, dl in
         Mdl.Code.universal_int_plus n +. dl, encoder_fail)
   else
-    Encoder (fun d ->
-        let dl, _ = encoder_item d in
+    Encoder (fun ~ctx d ->
+        let dl, _ = encoder_item ~ctx d in
         dl, encoder_fail)
   
-let rec encoder_any ~ctx ~path =
-  Encoder (fun d -> dl_data ~ctx ~path d, encoder_any ~ctx ~path)
+let rec encoder_any ~path =
+  Encoder (fun ~ctx d -> dl_data ~ctx ~path d, encoder_any ~path)
 (* TODO: compute once [dl_data ~ctx ~path], dl_data should return an encoder too ? *)
 
 let encoder_cst (Encoder encoder_item) =
-  Encoder (fun d ->
-      let dl, _ = encoder_item d in
+  Encoder (fun ~ctx d ->
+      let dl, _ = encoder_item ~ctx d in
       dl, encoder_zero) (* enough to encode the first, all other items are the same *)
 
 let rec encoder_prefix (encoder_main : encoder) (encoders_item : encoder list) : encoder =
   match encoders_item with
   | [] -> encoder_main
   | (Encoder encoder_item)::next_encoders ->
-     Encoder (fun d ->
-         let dl, _ = encoder_item d in
+     Encoder (fun ~ctx d ->
+         let dl, _ = encoder_item ~ctx d in
          dl, encoder_prefix encoder_main next_encoders)
     
-let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : encoder =
+let rec encoder_template_aux ~(path : revpath) (t : template) : encoder =
   match t with
-  | `Any -> encoder_any ~ctx ~path
+  | `Any -> encoder_any ~path
   | (`Bool _ | `Int _ | `Color _ | `Mask _ | `Grid _) -> encoder_zero (* nothing to code *)
   | `Vec (i,j) ->
      let rec encoder_vec (Encoder encoder_i) (Encoder encoder_j) =
-       Encoder (function
+       Encoder (fun ~ctx ->
+           function
            | `Vec (di,dj) ->
-              let dl1, next_i = encoder_i di in
-              let dl2, next_j = encoder_j dj in
+              let dl1, next_i = encoder_i ~ctx di in
+              let dl2, next_j = encoder_j ~ctx dj in
               dl1 +. dl2, encoder_vec next_i next_j
            | _ -> assert false) in
      encoder_vec
-       (encoder_template_aux ~ctx ~path:(path ++ `I) i)
-       (encoder_template_aux ~ctx ~path:(path ++ `J) j)
+       (encoder_template_aux ~path:(path ++ `I) i)
+       (encoder_template_aux ~path:(path ++ `J) j)
   | `Point color ->
      let rec encoder_point (Encoder encoder_color) =
-       Encoder (function
+       Encoder (fun ~ctx ->
+           function
            | `Point dcolor ->
-              let dl1, next_color = encoder_color dcolor in
+              let dl1, next_color = encoder_color ~ctx dcolor in
               dl1, encoder_point next_color
            | _ -> assert false) in
      encoder_point
-       (encoder_template_aux ~ctx ~path:(path ++ `Color) color)
+       (encoder_template_aux ~path:(path ++ `Color) color)
   | `Rectangle (size,color,mask) ->
        let rec encoder_rectangle (Encoder encoder_size) (Encoder encoder_color) (Encoder encoder_mask) =
-         Encoder (function
+         Encoder (fun ~ctx ->
+             function
              | `Rectangle (dsize,dcolor,dmask) ->
-                let dl1, next_size = encoder_size dsize in
-                let dl2, next_color = encoder_color dcolor in
-                let dl3, next_mask = encoder_mask dmask in
+                let dl1, next_size = encoder_size ~ctx dsize in
+                let dl2, next_color = encoder_color ~ctx dcolor in
+                let dl3, next_mask = encoder_mask ~ctx dmask in
                 dl1 +. dl2 +. dl3, encoder_rectangle next_size next_color next_mask
              | _ -> assert false) in
        encoder_rectangle
-         (encoder_template_aux ~ctx ~path:(path ++ `Size) size)
-         (encoder_template_aux ~ctx ~path:(path ++ `Color) color)
-         (encoder_template_aux ~ctx ~path:(path ++ `Mask) mask)
+         (encoder_template_aux ~path:(path ++ `Size) size)
+         (encoder_template_aux ~path:(path ++ `Color) color)
+         (encoder_template_aux ~path:(path ++ `Mask) mask)
   | `PosShape (pos,shape) ->
      let rec encoder_posshape (Encoder encoder_pos) (Encoder encoder_shape) =
-       Encoder (function
+       Encoder (fun ~ctx ->
+           function
            | `PosShape (dpos,dshape) ->
-              let dl1, next_pos = encoder_pos dpos in
-              let dl2, next_shape = encoder_shape dshape in
+              let dl1, next_pos = encoder_pos ~ctx dpos in
+              let dl2, next_shape = encoder_shape ~ctx dshape in
               dl1 +. dl2, encoder_posshape next_pos next_shape
            | _ -> assert false) in
      encoder_posshape
-       (encoder_template_aux ~ctx ~path:(path ++ `Pos) pos)
-       (encoder_template_aux ~ctx ~path:(path ++ `Shape) shape)
+       (encoder_template_aux ~path:(path ++ `Pos) pos)
+       (encoder_template_aux ~path:(path ++ `Shape) shape)
   | `GridBackground (size,color,layers) ->
-     let Encoder encoder_size = encoder_template_aux ~ctx ~path:(path ++ `Size) size in
-     let Encoder encoder_color = encoder_template_aux ~ctx ~path:(path ++ `Color) color in
+     let Encoder encoder_size = encoder_template_aux ~path:(path ++ `Size) size in
+     let Encoder encoder_color = encoder_template_aux ~path:(path ++ `Color) color in
      let ilist_encoder_layers =
        map_ilist
-         (fun lp layer -> encoder_collect (encoder_template_aux ~ctx ~path:(path ++ `Layer lp) layer))
+         (fun lp layer -> encoder_collect (encoder_template_aux ~path:(path ++ `Layer lp) layer))
          `Root layers in
-     Encoder (function
+     Encoder (fun ~ctx ->
+         function
          | `Grid (_, `Background (dsize,dcolor,dlayers,delta)) ->
-            let ctx =
+            let ctx_grid =
               match dsize with
               | `Vec (`Int h, `Int w) -> {box_height=h; box_width=w}
               | _ -> assert false in
-            let dl1, _ = encoder_size dsize in
-            let dl2, _ = encoder_color dcolor in
+            let dl1, _ = encoder_size ~ctx dsize in
+            let dl2, _ = encoder_color ~ctx dcolor in
             let dl3 =
               match
                 fold2_ilist
                   (fun sum lp (Encoder encoder_layer) dlayer ->
-                    let dl, _ = encoder_layer dlayer in
+                    let dl, _ = encoder_layer ~ctx:ctx_grid dlayer in
                     Result.Ok (sum +. dl))
                   0. `Root ilist_encoder_layers dlayers
               with
               | Result.Ok dl3 -> dl3
               | Result.Error _ -> assert false in
-            let dl4 = dl_delta dl_data ~ctx ~path (List.length delta) in
+            let dl4 = dl_delta dl_data ~ctx:ctx_grid ~path (List.length delta) in
             dl1 +. dl2 +. dl3 +. dl4, encoder_fail
          | _ -> assert false)
   | `GridTiling (grid,size) ->
      let rec encoder_tiling (Encoder encoder_grid) (Encoder encoder_size) =
-       Encoder (function
+       Encoder (fun ~ctx ->
+           function
            | `Grid (_, `Tiling (dgrid,dsize)) ->
-              let dl1, next_grid = encoder_grid dgrid in
-              let dl2, next_size = encoder_size dsize in
+              let dl1, next_grid = encoder_grid ~ctx dgrid in
+              let dl2, next_size = encoder_size ~ctx dsize in
               dl1 +. dl2, encoder_tiling next_grid next_size
            | _ -> assert false) in
      encoder_tiling
-       (encoder_template_aux ~ctx ~path:(path ++ `Grid) grid)
-       (encoder_template_aux ~ctx ~path:(path ++ `Size) size)
+       (encoder_template_aux ~path:(path ++ `Grid) grid)
+       (encoder_template_aux ~path:(path ++ `Size) size)
   | #expr -> encoder_zero (* nothing to code *)
-  | `Seq items -> encoder_seq (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items
-  | `Cst item0 -> encoder_cst (encoder_template_aux ~ctx ~path:(`Item (0,path)) item0)
+  | `Seq items -> encoder_seq (fun i item -> encoder_template_aux ~path:(`Item (i,path)) item) items
+  | `Cst item0 -> encoder_cst (encoder_template_aux ~path:(`Item (0,path)) item0)
   | `Prefix (main,items) ->
      encoder_prefix
-       (encoder_template_aux ~ctx ~path main)
-       (List.mapi (fun i item -> encoder_template_aux ~ctx ~path:(`Item (i,path)) item) items)
+       (encoder_template_aux ~path main)
+       (List.mapi (fun i item -> encoder_template_aux ~path:(`Item (i,path)) item) items)
      
-let encoder_template ~(ctx : dl_ctx) ?(path : revpath = `Root) (t : template) : data -> dl =
-  let encoder = encoder_template_aux ~ctx ~path t in
+let encoder_template ?(path : revpath = `Root) (t : template) : ctx:dl_ctx -> data -> dl =
+  let encoder = encoder_template_aux ~path t in
   let Encoder encoder =
     if !seq && path_dim path = Sequence
     then encoder_collect encoder
     else encoder in
-  fun d ->
-  let dl, _ = encoder d in
+  fun ~ctx d ->
+  let dl, _ = encoder ~ctx d in
   dl
 
 let dl_parse_rank (rank : int) : dl =
