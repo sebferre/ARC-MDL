@@ -1573,14 +1573,14 @@ let dl_mask : Mask_model.t -> dl =
      Mdl.Code.usage 0.5
      +. Mdl.Code.universal_int_plus missing
      +. Mdl.Code.comb missing n (* TODO: penalize more sparse masks ? also consider min area 50% in grid.ml *) *)
-let dl_grid : Grid.t -> dl =
+
+let dl_grid : Grid.t -> dl = (* too efficient a coding for being useful *)
   fun g ->
   let h, w = Grid.dims g in
   +. dl_int_size ~bound:Grid.max_size h
   +. dl_int_size ~bound:Grid.max_size w
-  +. 10. *. float h *. float w *. dl_color Grid.blue (* or any color *) 
-     
-    
+  +. float h *. float w *. dl_color Grid.blue (* or any color *) 
+
 type dl_ctx =
   { box_height : int;
     box_width : int }
@@ -1977,6 +1977,8 @@ and dl_periodicity_mode = function
   | `Strict -> Mdl.Code.usage 0.25
   | `TradeOff -> Mdl.Code.usage 0.5
 
+
+let code_patt0 = Mdl.Code.usage 0.2
                
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_any : dl;
@@ -1988,7 +1990,7 @@ type code_template = (* dls must correspond to a valid prob distrib *)
     c_prefix : dl }
 let code_template0 =
   { c_any = Mdl.Code.usage 0.2;
-    c_patt = Mdl.Code.usage 0.2;
+    c_patt = code_patt0 (*Mdl.Code.usage 0.2*);
     c_ref = Mdl.Code.usage 0.3;
     c_expr = Mdl.Code.usage 0.2;
     c_seq = Mdl.Code.usage 0.03;
@@ -2007,100 +2009,113 @@ let code_template_by_kind : code_template KindMap.t =
     ~layer:code_template0
     ~grid:code_template0
 
+let dl_Bool ~ctx ~path b =
+  1.
+
+let dl_Int ~ctx ~path n =
+  match path_role path with
+  | `IntCoord (`I, `Pos) -> dl_int_pos ~bound:ctx.box_height n
+  | `IntCoord (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
+  | `IntCoord (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
+  | `IntCoord (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
+  | `IntCoord (_, `Move) -> assert false (* only computation intermediate value *)
+  | `IntCard -> assert false (* only computation intermediate value *)
+  | _ -> assert false
+
+let dl_Color ~ctx ~path c =
+  match path_role path with
+  | `Color `Grid -> dl_background_color c
+  | `Color `Shape -> dl_shape_color c
+  | _ -> assert false
+
+let dl_Mask ~ctx ~path m =
+  dl_mask m
+
+let dl_Vec dl ~ctx ~path i j =
+  dl ~ctx ~path:(path ++ `I) i
+  +. dl ~ctx ~path:(path ++ `J) j
+
+let dl_Shape_Point dl ~ctx ~path color =
+  Mdl.Code.usage 0.5
+  +. dl ~ctx ~path:(path ++ `Color) color
+let dl_Shape_Rectangle dl ~ctx ~path size color mask =
+  Mdl.Code.usage 0.5
+  +. dl ~ctx ~path:(path ++ `Size) size
+  +. dl ~ctx ~path:(path ++ `Color) color
+  +. dl ~ctx ~path:(path ++ `Mask) mask
+  
+let dl_PosShape dl ~ctx ~path pos shape =
+  dl ~ctx ~path:(path ++ `Pos) pos
+  +. dl ~ctx ~path:(path ++ `Shape) shape
+
+let dl_layers dl ~ctx ~path layers =
+  let nb_layers = ilist_length layers in
+  fold_ilist
+    (fun sum lp obj ->
+      sum +. dl ~ctx ~path:(path ++ `Layer lp) obj)
+    (Mdl.Code.universal_int_star nb_layers)
+    `Root layers
+
+let dl_delta dl ~ctx ~path nb_delta =
+  Mdl.Code.universal_int_star nb_delta -. 1.
+  +. float nb_delta
+     *. dl ~ctx ~path:(path ++ `Layer `Root) (* all delta points treated alike *)
+          (`PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask `Full)))
+  
+let dl_Grid_Background dl ~ctx ~path size color layers nb_delta =
+  let box_height =
+    match size with
+    | `Vec (`Int i, _) -> i
+    | _ -> ctx.box_height in
+  let box_width =
+    match size with
+    | `Vec (_, `Int j) -> j
+    | _ -> ctx.box_width in
+  let ctx_grid = { box_height; box_width } in
+  Mdl.Code.usage 0.8
+  +. dl ~ctx ~path:(path ++ `Size) size
+  +. dl ~ctx ~path:(path ++ `Color) color
+  +. dl_layers dl ~ctx:ctx_grid ~path layers
+  +. dl_delta dl ~ctx:ctx_grid ~path nb_delta
+let dl_Grid_Tiling dl ~ctx ~path grid size =
+  Mdl.Code.usage 0.2
+  +. dl ~ctx ~path:(path ++ `Grid) grid
+  +. dl ~ctx ~path:(path ++ `Size) size (* TODO: adapt ctx ? *)
+
+let dl_Seq dl ~ctx ~path items =
+  let n, dl_items =
+    let$ (i,sum_dl), item = (0,0.), items in
+    i+1, dl ~ctx ~path:(`Item (i,path)) item in
+  (* TODO: should encode item templates according to main template ! *)
+  Mdl.Code.universal_int_star n (* how many items in sequence *)
+  +. dl_items
+  
 let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : template) : dl = (* QUICK *)
   let rec aux ~ctx ~path t =
     let k = path_kind path in
     let code = KindMap.find k code_template_by_kind in
     match t with
-    | `Any ->
-       code.c_any
-
-    | `Bool b ->
-       code.c_patt +.
-       1.
-    | `Int n ->
-       code.c_patt +.
-       ( match path_role path with
-         | `IntCoord (`I, `Pos) -> dl_int_pos ~bound:ctx.box_height n
-         | `IntCoord (`J, `Pos) -> dl_int_pos ~bound:ctx.box_width n
-         | `IntCoord (`I, `Size _) -> dl_int_size ~bound:ctx.box_height n
-         | `IntCoord (`J, `Size _) -> dl_int_size ~bound:ctx.box_width n
-         | `IntCoord (_, `Move) -> assert false (* only computation intermediate value *)
-         | `IntCard -> assert false (* only computation intermediate value *)
-         | _ -> assert false )
-    | `Color c ->
-       code.c_patt +.
-       ( match path_role path with
-         | `Color `Grid -> dl_background_color c
-         | `Color `Shape -> dl_shape_color c
-         | _ -> assert false )
-    | `Mask m -> code.c_patt +. dl_mask m
-
-    | `Vec (i,j) ->
-       code.c_patt
-       +. aux ~ctx i ~path:(path ++ `I)
-       +. aux ~ctx j ~path:(path ++ `J)  
-
-    | `Point (color) ->
-       code.c_patt
-       +. Mdl.Code.usage 0.5
-       +. aux ~ctx color ~path:(path ++ `Color)
-    | `Rectangle (size,color,mask) ->
-       code.c_patt
-       +. Mdl.Code.usage 0.5
-       +. aux ~ctx size ~path:(path ++ `Size)
-       +. aux ~ctx color ~path:(path ++ `Color)
-       +. aux ~ctx mask ~path:(path ++ `Mask)
-
-    | `PosShape (pos,shape) ->
-       code.c_patt
-       +. aux ~ctx pos ~path:(path ++ `Pos)
-       +. aux ~ctx shape ~path:(path ++ `Shape)
-
-    | `Grid g -> (* rough definition *)
-       code.c_patt
-       +. Mdl.Code.usage 0.1
-       +. dl_grid g
-    | `GridBackground (size,color,layers) ->
-       let box_height =
-         match size with
-         | `Vec (`Int i, _) -> i
-         | _ -> ctx.box_height in
-       let box_width =
-         match size with
-         | `Vec (_, `Int j) -> j
-         | _ -> ctx.box_width in
-       let nb_layers = ilist_length layers in
-       let ctx_layers = { box_height; box_width } in
-       code.c_patt
-       +. Mdl.Code.usage 0.8
-       +. aux ~ctx size ~path:(path ++ `Size)
-       +. aux ~ctx color ~path:(path ++ `Color)
-       +. fold_ilist
-            (fun sum lp shape ->
-              sum +. aux ~ctx:ctx_layers shape ~path:(path ++ `Layer lp))
-            (Mdl.Code.universal_int_star nb_layers)
-            `Root layers
-    | `GridTiling (grid,size) ->
-       code.c_patt
-       +. Mdl.Code.usage 0.1
-       +. aux ~ctx grid ~path:(path ++ `Grid)
-       +. aux ~ctx size ~path:(path ++ `Size) (* TODO: adapt ctx ? *)
-       
+    | `Any -> code.c_any
+    | `Bool b -> code.c_patt +. dl_Bool ~ctx ~path b
+    | `Int n -> code.c_patt +. dl_Int ~ctx ~path n
+    | `Color c -> code.c_patt +. dl_Color ~ctx ~path c
+    | `Mask m -> code.c_patt +. dl_Mask ~ctx ~path m
+    | `Vec (i,j) -> code.c_patt +. dl_Vec aux ~ctx ~path i j
+    | `Point (color) -> code.c_patt +. dl_Shape_Point aux ~ctx ~path color
+    | `Rectangle (size,color,mask) -> code.c_patt +. dl_Shape_Rectangle aux ~ctx ~path size color mask
+    | `PosShape (pos,shape) -> code.c_patt +. dl_PosShape aux ~ctx ~path pos shape
+    | `Grid g -> assert false (* no explicit grids in models *)
+    | `GridBackground (size,color,layers) -> code.c_patt +. dl_Grid_Background aux ~ctx ~path size color layers 0
+    | `GridTiling (grid,size) -> code.c_patt +. dl_Grid_Tiling aux ~ctx ~path grid size
+        
     | `Ref p ->
        code.c_ref
        +. dl_path ~env_sig ~ctx_path:path p
     | #expr as e ->
        code.c_expr
        +. dl_expr aux ~env_sig ~ctx ~path e
-    | `Seq items ->
-       let n, dl_items =
-         let$ (i,sum_dl), item = (0,0.), items in
-         i+1, aux ~ctx ~path:(`Item (i,path)) item in
-       (* TODO: should encode item templates according to main template ! *)
-       code.c_seq
-       +. Mdl.Code.universal_int_star n (* how many items in sequence *)
-       +. dl_items (* coding items as templates *)
+
+    | `Seq items -> code.c_seq +. dl_Seq aux ~ctx ~path items
     | `Cst item0 ->
        code.c_cst
        +. aux ~ctx ~path:(`Item (0,path)) item0
@@ -2117,23 +2132,40 @@ let dl_template ~(env_sig : signature) ~(ctx : dl_ctx) ?(path = `Root) (t : temp
   in
   aux ~ctx ~path t
 
-
+let rec dl_data ~ctx ~path (d : data) : dl =
+  code_patt0 +. (* to align with templates *)
+  match d with
+  | `Bool b -> dl_Bool ~ctx ~path b
+  | `Int n -> dl_Int ~ctx ~path n
+  | `Color c -> dl_Color ~ctx ~path c
+  | `Mask m -> dl_Mask ~ctx ~path m
+  | `Vec (i,j) -> dl_Vec dl_data ~ctx ~path i j
+  | `Point (color) -> dl_Shape_Point dl_data ~ctx ~path color
+  | `Rectangle (size,color,mask) -> dl_Shape_Rectangle dl_data ~ctx ~path size color mask
+  | `PosShape (pos,shape) -> dl_PosShape dl_data ~ctx ~path pos shape
+  | `Grid (g, `None) -> (* treated like a background with delta pixels for all pixels *)
+     let h, w = Grid.dims g in
+     dl_Grid_Background dl_data ~ctx ~path
+       (`Vec (`Int h, `Int w))
+       (`Color Grid.black)
+       `Nil
+       (h * w)     
+  | `Grid (_, `Background (size,color,layers,delta)) ->
+     dl_Grid_Background dl_data ~ctx ~path size color layers (List.length delta)
+  | `Grid (_, `Tiling (grid,size)) -> dl_Grid_Tiling dl_data ~ctx ~path grid size
+  | `Seq items -> raise TODO
 let dl_data, reset_dl_data =
-  let rec aux ~ctx ~path (d : data) =
-    let t = template_of_data ~mode:`Pattern d in
-    dl_template ~env_sig:signature0 ~ctx ~path t (* no refs in data *)
-  in
   let mem = Hashtbl.create 1003 in
   let reset () = Hashtbl.clear mem in
   let f =
-    fun ~(ctx : dl_ctx) ?(path = `Root) (d : data) -> (* QUICK *)
+    fun ~(ctx : dl_ctx) ~(path : revpath) (d : data) -> (* QUICK *)
     let role = path_role path in
     let key = (ctx,role,d) in (* dl_patt in dl_data does not depend on exact path, only on role *)
     match Hashtbl.find_opt mem key with
     | Some dl -> dl
     | None ->
        let dl =
-         try aux ~ctx ~path d
+         try dl_data ~ctx ~path d
          with exn ->
            print_string "dl_data: assertion failed: ";
            pp_data d; print_string " @ "; pp_path path;
@@ -2143,34 +2175,10 @@ let dl_data, reset_dl_data =
        dl in
   f, reset
 
-let dl_delta_path = `Item (0, `Field (`Layer `Root, `Root)) (* dummy path with kind Shape *)
-(* let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Point (`Color Grid.blue)) (* dummy point shape *) *)
-let dl_delta_shape = `PosShape (`Vec (`Int 0, `Int 0), `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Mask `Full)) (* dummy point shape as rectangle *)
-let dl_delta ~(ctx : dl_ctx) (delta : delta) : dl = (* QUICK *)
-  if delta = []
-  then 0.
-  else (* assuming dl_data is constant over point shapes *)
-    let n = List.length delta in
-    -. 1. (* some normalization to get 0 for empty grid data *)
-    +. Mdl.Code.universal_int_star n
-    +. float n *. dl_data ~ctx ~path:dl_delta_path dl_delta_shape
-  
-(* OLD
-  -. 1. (* some normalization to get 0 for empty grid data *)
-  +. Mdl.Code.list_star
-       (fun (i,j,c) -> (* TODO: optimize: hint, all points have the same DL ? *)
-         dl_data ~ctx ~path:(any_item (`Field (`Layer `Root, `Root))) (* dummy path with kind Shape *)
-           (`Point (`Vec (`Int i, `Int j), `Color c)))
-       delta)
-   *)
-(* NOT using optimized DL below for fair comparisons with model points: 
-  +. Mdl.Code.comb nb_pixels area (* where they are *)
-  +. float nb_pixels *. Mdl.Code.uniform (Grid.nb_color - 1) (* what are their color, different from the color generated by the model *) *)
-
   
 (* returning encoders from templates/patterns M, i.e. functions computing L(D|M) *)
 
-type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *)
+type encoder = Encoder of (data -> dl * encoder) [@@unboxed] (* the returned encoder is for the next sequence items, if any *) (* TODO: move ~ctx inside Encoder *)
 
 let rec encoder_zero : encoder =
   Encoder (fun _ -> 0., encoder_zero)
@@ -2292,6 +2300,10 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
          `Root layers in
      Encoder (function
          | `Grid (_, `Background (dsize,dcolor,dlayers,delta)) ->
+            let ctx =
+              match dsize with
+              | `Vec (`Int h, `Int w) -> {box_height=h; box_width=w}
+              | _ -> assert false in
             let dl1, _ = encoder_size dsize in
             let dl2, _ = encoder_color dcolor in
             let dl3 =
@@ -2304,7 +2316,7 @@ let rec encoder_template_aux ~(ctx : dl_ctx) ~(path : revpath) (t : template) : 
               with
               | Result.Ok dl3 -> dl3
               | Result.Error _ -> assert false in
-            let dl4 = dl_delta ~ctx delta in
+            let dl4 = dl_delta dl_data ~ctx ~path (List.length delta) in
             dl1 +. dl2 +. dl3 +. dl4, encoder_fail
          | _ -> assert false)
   | `GridTiling (grid,size) ->
