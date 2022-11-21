@@ -180,9 +180,9 @@ let xml_of_focus focus =
                      (match focus.stage with
                       | Build -> "building stage"
                       | Prune -> "pruning stage"))];
-      [Syntax.Kwd (Printf.sprintf "DL = %f" focus.norm_dl)];
-      [Syntax.Kwd (Printf.sprintf "DL = %.3f = %.3fm + %.3fd = (%.3fmi + %.3fmo) + (%.3fdi + %.3fdo) = %.3fi + %.3fo" md m d mi mo di do_ mdi mdo)];
-      [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))]]]
+      [Syntax.Kwd (Html.pre (Model2.string_of_model focus.model))];
+      [Syntax.Kwd (Printf.sprintf "DL = %.3f = %.3f M + %.3f D = (%.3f Mi + %.3f Mo) + (%.3f Di + %.3f Do) = %.3f i + %.3f o" md m d mi mo di do_ mdi mdo)];
+      [Syntax.Kwd (Printf.sprintf "normalized DL = %.3f / 2." focus.norm_dl)]]]
                                       
 let html_of_word (w : arc_word) : Html.t = assert false
 
@@ -252,7 +252,7 @@ let html_of_cell : cell -> Html.t = function
      html_grid_pair
        (html_of_grid_from_data d_i)
        (html_of_grid_from_data d_o)
-     ^ Printf.sprintf "<br/>DL = %.3f = %.3fi + %.3fo" (dli +. dlo) dli dlo
+     ^ Printf.sprintf "<br/>DL = %.3f = %.3f i + %.3f o" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
      ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
   | Pred (expected_go, l_gdi_go) ->
