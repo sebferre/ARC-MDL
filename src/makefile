@@ -27,6 +27,9 @@ docker: arcathon
 	docker build -t sferre/arcathon .
 	docker save sferre/arcathon > docker_madil.tar
 
+install:
+	cp -r html/index.html html/index.css html/script.js /local/ferre/web/ferre/arcmdl
+
 clean:
 	rm -f *.cm[ioax]
 
