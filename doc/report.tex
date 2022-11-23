@@ -84,12 +84,12 @@
   principle is used to guide the search for good models, i.e. models
   that compress the grids the most.
   %
-  We report on our progress over a year, improving on the general
-  approach and the models. Out of the 400 training tasks, our
-  performance increased from 5 to 29 solved tasks, only using 30s
-  computation time per task. Our approach not only predicts the output
-  grids, but also outputs an intelligible model and explanations for
-  how the model was incrementally built.
+  We report on our progress, improving on the general approach and the
+  models. Out of the 400 training tasks, our performance increased
+  from 5 to 94 solved tasks, only using 30s computation time per
+  task. Our approach not only predicts the output grids, but also
+  outputs an intelligible model and explanations for how the model was
+  incrementally built.
 \end{abstract}
 
 %% keywords
@@ -186,16 +186,16 @@ A major difference with those work is that the model to be learned
 needs not only explain the data but also be able to perform a
 structured prediction, here the output grid from the input grid.
 %
-At this stage (Version~2.3), we consider rather simple models that
-have no chance to cover a large proportion of ARC tasks: single-color
-points and shapes, and basic arithmetic of positions and sizes. Our
+At this stage (Version~2.6), we consider rather simple models that
+are far from covering a large proportion of ARC tasks: single-color
+points and shapes, and basic arithmetics and geometry. Our
 prime objective is to demonstrate the effectiveness of an MDL-based
 approach to the ARC challenge, and hopefully to AGI. Our approach
-succeeds on 31/400 (7.75\%) training tasks and 7/400 (1.75\%)
+succeeds on 94/400 (23.5\%) training tasks and 23/400 (5.75\%)
 evaluation tasks, with a learning timeout of 30s only per task. We
 find such a result quite encouraging given the difficulty of the
 problem. Moreover, the solved tasks are quite diverse, and the
-learned model is often close to the simplest model for the task (in
+learned models are often close to the simplest models for the task (in
 the chosen class of models).
 
 This report is organized as follows. Section~\ref{arc} gives a formal
@@ -466,40 +466,125 @@ obtained by a substitution of the pattern unknowns with ground data
 structures. For example, we have
 ${\bf Vec}(12,14) \sim {\bf Vec}(12,?)$.
 
-\begin{figure}[t]
+\begin{figure}[t!]
 \begin{center}
   \begin{datatype}
-    E_\nat \is 0 \alter F_\nat
-    \altis {\it Incr/Decr}(F_\nat, 1..3)
-    \altis {\it ScaleUp/ScaleDown}(F_\nat, 2..3)
-    \altis F_\nat + F_\nat \alter F_\nat - F_\nat
-    \\
-    E_{\it Vector} \is (0,0) \alter F_{\it Vector}
-    \altis {\it Incr/Decr}(F_{\it Vector}, 1..3)
-    \altis {\it ScaleUp/ScaleDown}(F_{\it Vector}, 2..3)
-    \altis F_{\it Vector} + F_{\it Vector} \alter F_{\it Vector} - F_{\it Vector}
-    \\
-    E_{\it Mask} \is {\it And}(F_{\it Mask},F_{\it Mask}) \alter {\it Or}(F_{\it Mask},F_{\it Mask}) \alter {\it XOr}(F_{\it Mask},F_{\it Mask})
-    \altis {\it AndNot}(F_{\it Mask},F_{\it Mask}) \alter {\it Not}(F_{\it Mask})
-    \\
-    \\
     F_\nat \is P_\nat
     \altis {\it Area}(P_{\it Shape})
+    \altis {\it ColorCount}(P_{\it Grid})
     \altis {\it Right/Center/Bottom/Middle}(P_{\it Object})
     \altis {\it Span/Average/Min/Max}(P_\nat, P_\nat)
     \\
     F_{\it Vector} \is P_{\it Vector}
+    \altis {\it Size}(P_{\it Grid})
+    \altis {\it TranslationOnto}(P_{\it Object},P_{\it Object})
+    \altis {\it TranslationSym}(P_{\it Object},P_{\it Object/Grid})
+    \altis {\it ProjI/ProjJ}(P_{\it Vector})
     \altis {\it Corner}(P_{\it Vector}, P_{\it Vector})
     \altis {\it Span/Average/Min/Max}(P_{\it Vector}, P_{\it Vector})
-    \altis {\it TranslationOnto}(P_{\it Object},P_{\it Object})
+    \\
+    F_{\it Color} \is P_{\it Color}
+    \altis {\it MajorityColor}(P_{\it Grid})
     \\
     F_{\it Mask} \is P_{\it Mask}
+    \\
+    F_{\it Shape} \is P_{\it Shape}
+    \\
+    F_{\it Object} \is P_{\it Object}
+    \\
+    F_{\it Grid} \is P_{\it Grid}
+    \altis {\it Strip/PeriodicFactor}(P_{\it Grid})
+    \altis {\it Crop}(P_{\it Grid}, P_{\it Object})
+  \end{datatype}
+\end{center}
+\caption{Factor-level expressions $F_\tau$ for each datatype~$\tau$, defined in terms of path variables~$P$.}
+\label{fig:expressions1}
+\end{figure}
+
+\begin{figure}[t!]
+\begin{center}
+  \begin{datatype}
+    T_\nat \is 0..3 \alter F_\nat
+    \altis {\it Incr/Decr}(F_\nat, 1..3)
+    \altis {\it ScaleUp/ScaleDown}(F_\nat, F_\nat)
+    \altis F_\nat + F_\nat \alter F_\nat - F_\nat
+    \\
+    T_{\it Vector} \is (0..3,0..3) \alter F_{\it Vector}
+    \altis {\it Incr/Decr}(F_{\it Vector}, 1..3)
+    \altis {\it ScaleUp/ScaleDown}(F_{\it Vector}, F_\nat)
+    \altis F_{\it Vector} + F_{\it Vector} \alter F_{\it Vector} - F_{\it Vector}
+    \\
+    T_{\it Color} \is black..brown \alter F_{\it Color}
+    \\
+    T_{\it Mask} \is F_{\it Mask}
+    \altis {\it ApplySym}(sym, F_{\it Mask})
+    \\
+    T_{\it Shape} \is F_{\it Shape}
+    \altis {\it ApplySym}(sym, F_{\it Shape})
+    \altis {\it Coloring}(F_{\it Shape}, F_{\it Color})
+    \\
+    T_{\it Object} \is F_{\it Object}
+    \altis {\it ApplySym}(sym, F_{\it Object})
+    \altis {\it Coloring}(F_{\it Object}, F_{\it Color})
+    \\
+    T_{\it Grid} \is F_{\it Grid}
+    \altis {\it ApplySym}(sym, F_{\it Grid}
+  \end{datatype}
+\end{center}
+\caption{Term-level expressions~$T_\tau$ for each datatype~$\tau$,
+  defined in terms of factor-level expressions~$F$. Notation $a..b$
+  stands for a constant value between $a$ and $b$.}
+\label{fig:expressions2}
+\end{figure}
+
+\begin{figure}[t!]
+\begin{center}
+  \begin{datatype}
+    E_\nat \is T_\nat
+    \\
+    E_{\it Vector} \is T_{\it Vector}
+    \altis {\it Tiling}(T_{\it Vector}, 1..3, 1..3)
+    \\
+    E_{\it Color} \is T_{\it Color}
+    \\
+    E_{\it Mask} \is T_{\it Mask}
+    \altis {\it Tiling}(T_{\it Mask}, 1..3, 1..3)
+    \altis {\it FillResizeAlike}(options, P_{\it Mask}, T_{\it Vec})
+    \altis {\it SelfCompose}(T_{\it Mask})
+    \altis {\it UnfoldSym}(sym,T_{\it Mask})
+    \altis {\it CloseSym}(sym,T_{\it Mask})
+    \altis {\it ScaleTo}(T_{\it Mask},T_{\it Vector})
+    \altis {\it And}(T_{\it Mask},T_{\it Mask}) \alter {\it Or}(T_{\it Mask},T_{\it Mask}) \alter {\it XOr}(T_{\it Mask},T_{\it Mask})
+    \altis {\it AndNot}(T_{\it Mask},T_{\it Mask}) \alter {\it Not}(T_{\it Mask})
+    \\
+    E_{\it Shape} \is T_{\it Shape}
+    \altis {\it Tiling}(T_{\it Shape}, 1..3, 1..3)
+    \altis {\it FillResizeAlike}(options, P_{\it Shape}, T_{\it Vec})
+    \altis {\it SelfCompose}(F_{\it Color}, T_{\it Shape})
+    \altis {\it UnfoldSym}(sym,T_{\it Shape})
+    \altis {\it CloseSym}(sym,T_{\it Shape})
+    \altis {\it ScaleTo}(T_{\it Shape},T_{\it Vector})
+    \\
+    E_{\it Object} \is T_{\it Object}
+    \altis {\it Tiling}(T_{\it Object}, 1..3, 1..3)
+    \altis {\it FillResizeAlike}(options, P_{\it Object}, T_{\it Vec})
+    \altis {\it UnfoldSym}(sym,T_{\it Object})
+    \altis {\it CloseSym}(sym,T_{\it Object})
+    \\
+    E_{\it Grid} \is T_{\it Grid}
+    \altis {\it Tiling}(T_{\it Grid}, 1..3, 1..3)
+    \altis {\it FillResizeAlike}(options, P_{\it Grid}, T_{\it Vec})
+    \altis {\it SelfCompose}(F_{\it Color}, T_{\it Grid})
+    \altis {\it UnfoldSym}(sym,T_{\it Grid})
+    \altis {\it CloseSym}(sym,T_{\it Grid},T_{\it Color})
+    \altis {\it ScaleTo}(T_{\it Grid},T_{\it Vector})
+    \altis {\it SwapColors}(T_{\it Grid},T_{\it Color},T_{\it Color})
   \end{datatype}
 \end{center}
 \caption{Expressions $E_\tau$ used in grid models for each
-  datatype~$\tau$. Expressions are decomposed into features~$F$ and
+  datatype~$\tau$. Expressions are decomposed into terms~$T$, features~$F$, and
   variables~$P$ of various datatypes. Notation $a..b$ stands for
-  a constant integer between $a$ and $b$.}
+  a constant value between $a$ and $b$.}
 \label{fig:expressions}
 \end{figure}
 
@@ -516,27 +601,49 @@ Expressions that would only be made of primitive values and
 constructors would actually be data structures, and are therefore not
 considered as expressions.
 %
-Figure~\ref{fig:expressions} defines the supported expressions in
-Version 2.4. Simple arithmetics on integers and vectors and Boolean
-logics on masks account for the majority of operators/functions. There
-are also the constant functions for the zero values, to favor them
-over arbitrary integers (e.g., $(0,0)$ is a common and special value
-for a position). The other functions are defined as follows:
+Figures~\ref{fig:expressions1}, \ref{fig:expressions2}, and
+\ref{fig:expressions} define the supported expressions in Version
+2.6. Simple arithmetics on integers and vectors, geometric
+transformations, and Boolean logics on masks account for the majority
+of operators/functions. There are also constant functions for common
+values to favor them over arbitrary integers (e.g., $(0,0)$ is a
+common and special value for a position). The other functions are
+defined as follows:
 \begin{itemize}
 \item ${\it Corner}((i_1,j_1), (i_2,j_2)) = (i_1,j_2)$;
 \item ${\it Span}((i_1,j_1), (i_2,j_2)) = (|i_2 - i_1|+1, |j_2 - j_1|+1)$;
+\item ${\it ProjI}((i,j)) = (i,0)$;
+\item ${\it ProjJ}((i,j)) = (0,j)$;
 \item ${\it Average}((i_1,j_1), (i_2,j_2)) = (\frac{i_1+i_2}{2}, \frac{j_1+j_2}{2})$ (only valid fractions are integers);
 \item ${\it Min}((i_1,j_1), (i_2,j_2)) = (min(i_1,i_2), min(j_1,j_2))$;
 \item ${\it Max}((i_1,j_1), (i_2,j_2)) = (max(i_1,i_2), max(j_1,j_2))$;
 \item ${\it Area}(shape)$ is the cardinal of its mask (how many cells belong to the shape);
+\item ${\it Size}(grid)$ is the size of a grid, as a vector;
+\item ${\it Strip}(grid)$ is a crop of the grid contents, considering the most used color as background; 
+\item ${\it ColorCount}(grid)$ is the number of non-black colors used in a grid;
+\item ${\it MajorityColor}(grid)$ is the most used non-black color in a grid;
 \item ${\it Right}(object) = object.pos.i + object.shape.size.i - 1$;
 \item ${\it Center}(object) = object.pos.i + object.shape.size.i / 2$ (only valid when $size.i$ is odd);
 \item ${\it Bottom}(object) = object.pos.j + object.shape.size.j - 1$;
 \item ${\it Middle}(object) = object.pos.j + object.shape.size.j / 2$ (only valid when $size.j$ is odd);
+\item ${\it ApplySym}(sym,x)$ is the result of applying some symmetry to~$x$ (a mask, shape, object or grid); 
 \item ${\it TranslationOnto}(o_1,o_2)$ is the vector that would move
   object $o_1$ in contact with object $o_2$, either straight onto a
   side or obliquely on a corner (not taking into account the objects'
-  masks, only their bouding box).
+  masks, only their bouding box);
+\item ${\it TranslationSym}(o_1,o_2)$ is the vector that would reflect
+  object $o_1$ with respect to object $o_2$. If $o_2$ is a grid, the
+  reflection is with respect to the median axes of the grid.
+\item ${\it PeriodicFactor}(grid)$ is the smallest subgrid such that the whole grid is a periodic repeat of it;
+\item ${\it Coloring}(x,color)$ is like $x$ (a shape or object) but with a different color;
+\item ${\it Tiling}(x,k,l)$ is the repeat of $x$ (a vector, mask, shape, object or grid) $k$ times horizontally, and $l$ times vertically;
+\item ${\it FillResizeAlike}(options,x,size)$ resizes $x$ (a mask, shape, object or grid) to the given $size$, filling as needed according to the periodic pattern of $x$;
+\item ${\it SelfCompose}(color,x)$ is the replacement of each cell of
+  $x$ with the given $color$ by $x$ itself (a mask, shape or grid);
+\item ${\it UnfoldSym}(sym,x)$ unfolds $x$ (a mask, shape, object or grid) according to some symmetric pattern;
+\item ${\it CloseSym}(sym,x)$ is the closure of $x$ (a mask, shape, object or grid) so that it matches some symetric pattern;
+\item ${\it ScaleTo}(x,size)$ scales $x$ (a mask, shape or grid) to the given $size$;
+\item ${\it SwapColors}(grid,c_1,c_2)$ is a recoloring of $grid$, exchanging colors $c_1$ and $c_2$.
 \end{itemize}
 
 The environment of the output grid is the input grid, so that parts of
@@ -731,11 +838,16 @@ function corresponds to the parsing of a grid.
 
 \begin{definition}[grid parsing]
   Let $m$ be a grid model, and $g$ be a grid. ${\it parse}(m,g)$
-  non-deterministically returns a grid parse tree~$\pi$ that
-  approximately agrees with model~$m$, and approximately draws as
-  grid~$g$. Non-determinism allows for different interpretations of
-  the grid by the model.
+  returns a ranked set of grid parse trees~$\pi$ at rank~$\rho$ that
+  approximately agree with model~$m$, and approximately draw as the
+  grid~$g$. The set allows for different interpretations of the grid
+  by the model, and the ranking reflect the fact that some
+  interpretations seem better than others.
 \end{definition}
+
+The description lengths that are used for guiding the learning process
+(see Section~\ref{dl}) are here used to rank the different parse
+trees.
 
 \paragraph{Version 2.} This is by far the most complex primitive
 function.
@@ -806,8 +918,8 @@ i.e. guessing at the missing elements.
 
 \begin{definition}[grid generation]
   Let $m$ be a grid model without any expression. ${\it generate}(m)$
-  non-deterministically returns a grid parse tree that is obtained by
-  replacing unknowns in the model by type-compatible sub-trees.
+  returns a set of grid parse trees that are obtained by replacing
+  unknowns in the model by type-compatible sub-trees.
 \end{definition}
 
 \paragraph{Version 2.} We simply replace unknowns by default
@@ -846,9 +958,9 @@ used as basic blocks for training and using models.
 
 \begin{definition}[grid reading]
   Let $m$ be a model. Function ${\it read}_m$ takes an environment and
-  a grid as input, and returns a grid parse tree and delta as output.
-  \[ {\it read}_m(\varepsilon,g) = \{ (\pi,\delta) \mid m_\varepsilon
-    = {\it apply}(m,\varepsilon), \pi \in {\it
+  a grid as input, and returns a ranked set of grid parse tree and delta as output.
+  \[ {\it read}_m(\varepsilon,g) = \{ (\rho,\pi,\delta) \mid m_\varepsilon
+    = {\it apply}(m,\varepsilon), (\rho, \pi) \in {\it
       parse}(m_\varepsilon,g), \delta = g - {\it draw}(\pi) \} \]
 \end{definition}
 
@@ -897,7 +1009,8 @@ generated.
 \end{figure}
 
 Using a task model~$M = {\bf InOut}(m^i,m^o)$ to predict the output
-grid from the input grid simply consists into the chaining of grid reading and grid writing.
+grid from the input grid simply consists into the chaining of grid
+reading and grid writing.
 
 % the input grid model, and writing the resulting input grid parse tree into an output grid.
 
@@ -929,8 +1042,9 @@ known. However, computing a grid delta between the predicted output
 grid and the expected output grid is not enough to learn a better
 model. It is more useuful to have the grid parse tree for each grid,
 because it provides an explanation of how the model ``sees'' the
-grids. We therefore define the ${\it train}$ function that chains the
-reading of the input and ouput grids.
+grids. We therefore define the ${\it describe}$ function that chains
+the reading of the input and ouput grids, and outputs a joint
+decription of the pair of grids.
 
 \HIDE{ On output grids~$y_k$, we use parsing rather than
   generating. This is explained by the fact that description lengths
@@ -946,18 +1060,19 @@ reading of the input and ouput grids.
 
 
 \[\begin{array}{rl}
-    {\it train}_M(g^i,g^o) = \{ (\pi^i,\delta^i,\pi^o,\delta^o) \mid & (\pi^i,\delta^i) \in {\it read}_{m^i}({\it nil},g^i),\\
-                                                                     & (\pi^o,\delta^o) \in {\it read}_{m^o}(\pi^i,g^o) \}
+    {\it describe}_M(g^i,g^o) = \{ (\rho^i,\pi^i,\delta^i,\rho^o,\pi^o,\delta^o) \mid & (\rho^i,\pi^i,\delta^i) \in {\it read}_{m^i}({\it nil},g^i),\\
+                                                                     & (\rho^o,\pi^o,\delta^o) \in {\it read}_{m^o}(\pi^i,g^o) \}
   \end{array}\]
 
 Figure~\ref{fig:train} gives a schematic description of training. The
 first step is the same as prediction. The input~$g^i$ is first read
 with the input grid model~$m^i$, using an empty environment, which
 non-deterministically resuts in an input grid parse tree~$\pi^i$ and
-an input grid delta~$\delta^i$. In the second step, the output
-grid~$g^o$ is read with the output grid model~$m^o$, using $\pi^i$ as
-environment, which non-deterministically results in an output grid
-parse tree~$\pi^o$ and an output grid delta~$\delta^o$.
+an input grid delta~$\delta^i$ at some rank~$\rho^i$. In the second
+step, the output grid~$g^o$ is read with the output grid model~$m^o$,
+using $\pi^i$ as environment, which non-deterministically results in
+an output grid parse tree~$\pi^o$ and an output grid delta~$\delta^o$
+at rank~$\rho^o$.
 %
 The two grid parse trees and the two grid deltas collectively form a
 lossless description of the two grids according to the task model.
@@ -1005,7 +1120,7 @@ decomposed in two parts according to the equation
 \[ L(M,D) = L(M) + L(D|M) \] where $L(M)$ is the DL of the model, and
 $L(D|M)$ is the DL of the data encoded with the model.
 %
-In our case, a model~$M$ is a task model~${\bf InOut}(m^i,m^o)$, and
+In our case, a model~$M$ is a task model~${\bf InOut}(M^i,M^o)$, and
 data~$D$ is the part of a task~$T = (E,F)$ that is accessible to
 the learner. As the objective is to learn a model that generalizes to
 new instances, only the train examples are accessible, so
@@ -1019,20 +1134,42 @@ lengths of its two grid models.
 We detail the description length of grid models below. The
 description length of the task data~$D = E$ is the sum of the
 description length of each example.
-\[ L(D|M) = L(E|M) = \alpha \sum_{(g^i,g^o) \in E} L(g^i|M) + L(g^o|M) \]
+\[ L(D|M) = L(E|M) = \alpha \sum_{(g^i,g^o) \in E} L(g^i,g^o|M) \]
 %
 Factor~$\alpha$ equals~10 by default to give more weights to the data,
 relative to the model, and hence allow the learning of more complex
 models. Indeed, ARC tasks have a very low number of examples (3 on
 average).
 
-The description length of each grid, according to a task model, is
-based on the chained reading of the pair of grids. First, the
-description length of a grid relative to a given reading boils down to
-description lengths of the grid parse tree and the grid delta.
-\[ L(g|m,\varepsilon,\pi,\delta) = L(\pi|{\it apply}(m,\varepsilon)) +
-  L(\delta|\pi) \]
+The DL of an example is based on the most compressive joint
+description of the pair of grids. The joint description is based on
+the chained reading of the two of grids according to the task
+model.
 %
+\begin{align*}
+  L(g^i,g^o|M) =\ & {\it min}_{\rho^i, \pi^i, \delta^i, \rho^o, \pi^o, \delta^o \in {\it describe}(M,g^i,g^o)} \\
+                 & [\  L(\rho^i,\pi^i,\delta^i|m^i,{\it nil}) + L(\rho^o,\pi^o,\delta^o|m^o,\pi^i) \ ]
+\end{align*}
+%
+The DL of a grid~$g$ according to a grid model~$m$ and an
+environment~$\varepsilon$ is computed by using the rank~$\rho$, the
+parsed description~$\pi$ and delta~$\delta$ as an intermediate grid
+representation.
+\[ L(\rho,\pi,\delta|m,\varepsilon) = [L_\nat(\rho) - L_\nat(0)] + L(\pi|{\it apply}(M,\varepsilon)) + L(\delta|\pi) \]
+%
+The first term measures the amount of information need to choose among
+the different descriptions. It is the universal encoding ($L_\nat$,
+see below) of the rank relative to the preferred description
+(rank=0). The second term measures the amount of information that must
+be added to the model and environment to get the description,
+typically unknown bindings and divergences found with approximate
+parsing. The third term measures the differences between the original
+grid and the grid that is generated by the parsed description.
+%
+A correct model is found when $L(\rho^o,\pi^o,\delta^o|m^o,\pi^i) = 0$
+for all examples, i.e. when output grids can be perfectly predicted
+from the input grids.
+
 Note that the description lengths of the grid parse
 tree~$\pi$ is relative to the grid model~$m$ applied to its
 environment. Indeed, we only need to encode the parts of the grid
@@ -1045,20 +1182,6 @@ parse tree~$\pi$. This is valid as the grid parse tree is encoded
 before the delta, and is therefore available when encoding the grid
 delta. Its detailed definition also slightly depends on grid models.
 
-Then, we define the absolute description length of input grids and
-output grids by choosing the ``best reading'', i.e. the chained
-reading that minimizes the cumulated DL of both grids.
-\begin{align*}
-  L(g^i|M) & = L(g^i|m^i,{\it nil},\pi^i_*,\delta^i_*) \\
-  L(g^o|M) & = L(g^o|m^o,\pi^i_*,\pi^o_*,\delta^o_*) \\
-  & \textrm{where~} (\pi^i_*,\delta^i_*,\pi^o_*,\delta^o_*) =\\
-  & \quad \binder{\operatorname{argmin}}{(\pi^i,\delta^i,\pi^o,
-  \delta^o) \in {\it train}_M(g^i,g^o)} L(g^i|m^i,{\it nil},\pi^i,\delta^i) + L(g^o|m^o,\pi^i,\pi^o,\delta^o)
-%
-%    L(g^i,g^o|M) = {\it Min}\ \{ & L(\pi^i|m^i) + L(\delta^i|\pi^i) + L(\pi^o|{\it apply}(m^o,\pi^i)) + L(\delta^o|\pi^o)\\
-%                             & \mid (\pi^i,\delta^i,\pi^o,\delta^o) \in {\it train}_M(g^i,g^o)\ \}
-\end{align*}
-
 We also introduce normalized definitions of description
 lengths~$\hat{L}$. Indeed, input and output grids may have very
 different sizes (e.g., the output grid has a single cell), and this
@@ -1066,12 +1189,14 @@ can hinder the learning of a grid model for the smaller grid. Our
 normalization gives the same weight to the input grids and to the
 output grids, taking the initial model~$M_0$ as a point of reference.
 We therefore define $\lambda^i$ and $\lambda^o$ as respectively the
-input and output contributions to $L(M_0,D) = \lambda^i + \lambda^o$.
+input and output contributions to $L(M_0,D) = \lambda^i + \lambda^o$:
 \begin{align*}
     \lambda^i = L(m^i_0) + \alpha \sum_{(g^i,g^o) \in E} L(g^i|M_0) \\
-    \lambda^o = L(m^o_0) + \alpha \sum_{(g^i,g^o) \in E} L(g^o|M_0)
+    \lambda^o = L(m^o_0) + \alpha \sum_{(g^i,g^o) \in E} L(g^o|M_0),
 \end{align*}
-From there, we define normalized description lengths as follows.
+where $L(g^i|M_0)$ is the input component of $L(g^i,g^o|M)$, and
+similarly for the output.  From there, we define normalized
+description lengths as follows.
 \begin{align*}
   \hat{L}(M,D) = \hat{L}(M) + \hat{L}(D|M) \\
   \hat{L}(M) = \frac{1}{\lambda^i}L(m^i) + \frac{1}{\lambda^o}L(m^o) \\
@@ -1105,14 +1230,15 @@ not known, the maximum grid size is used (30 in the ARC challenge).
 %
 For sizes, we use the universal encoding of natural numbers~$L_\nat$.
 %
-For the color of shapes, we use the uniform distribution~$L_C$. For
-the background color of grids, we use a probability
+For the background color of grids, we use a probability
 distribution~$P_{BC}$ that gives a higher probability to color black
 ($P_{BC} = 0.91$) than to other colors ($P_{BC} = 0.01$). Indeed, in
 most tasks, grids have a black background. Hence, for a background
 color~$c$, $L(c) = -\log P_{BC}(c)$. \KILL{We then define the
   description length of background colors $L_{BC}(c)$ as
-  $L_{P_{bc}}(c)$.}
+  $L_{P_{bc}}(c)$.} For the shape colors, we do the converse, giving a
+slightly higher probability to non-black colors ($P_{sc} = 0.101$)
+than to black ($P_{SC} = 0.091$).
 %
 \KILL{Version up to 2.2: The description length of a rectangular bitmap is simply defined as
   its number of cells: $L(m) = height(m) \times width(m)$.
@@ -1978,6 +2104,21 @@ timeout).
 \end{itemize}
 Those changes result in 10 additional successful training tasks, 52
 (13\%) in total.
+
+\paragraph{Version 2.6.} Here are the main changes in this version:
+\begin{itemize}
+\item many new functions:
+  \begin{itemize}
+  \item mask/grid functions: {\it Size}, {\it Strip}, {\it Crop}, {\it PeriodicFactor}, {\it ApplySym}, {\it TranslationSym}, {\it Tiling}, {\it FillResizeAlike}, {\it SelfCompose}, {\it UnfoldSym}, {\it CloseSym}, {\it ScaleTo};
+  \item coloring functions: {\it ColorCount}, {\it MajorityColor}, {\it Coloring}, {\it SwapColors}.
+  \end{itemize}
+\item the description length of parsed description includes a penalty for the parse rank;
+\item a pruning stage at the end of the learning process to remove unnecessary elements in the built model, in order to make it more general;
+\item various optimizations, in particular the memoization of grid and mask transformations;
+\item distinct timeouts for model building, model pruning, and model-based prediction.
+\end{itemize}
+Those changes result in a sharp increase of the number of solved
+tasks, from 52 to 94 training tasks (23.5\%), and from 9 to 23 evaluation tasks (5.75\%).
 
 %%%
 \section{Discussion and Perspectives}
