@@ -13,6 +13,11 @@ type 'a result = ('a,exn) Result.t
 let ( let| ) res f = Result.bind res f [@@inline]
 let ( let|? ) res f = Option.bind res f [@@inline]
 
+let result_force (r : 'a result) : 'a =
+  match r with
+  | Result.Ok x -> x
+  | Result.Error exn -> raise exn
+                    
 (* configuration, options *)
                    
 let def_param (name : string) (v : 'a) (to_str : 'a -> string) : 'a ref =
