@@ -34,6 +34,14 @@ let mem ~height ~width i j = (* mask height and width, relative position (i,j) *
   | `OddCheckboard -> (i+j) mod 2 = 1
   | `PlusCross -> (i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)
   | `TimesCross -> height=width && (i=j || (height-1-i) = j)
+
+let matches (m : Grid.t) (mm : t) : bool =
+  let h, w = Grid.dims m in
+  Grid.for_all_pixels
+    (fun i j c -> (c = 1) = mem ~height:h ~width:w i j mm)
+    m
+let matches, reset_matches =
+  Common.memoize2 ~size:103 matches
                  
 let to_mask ~height ~width (mm : t) : Grid.t =
   match mm with
@@ -48,7 +56,7 @@ let to_mask ~height ~width (mm : t) : Grid.t =
      done;
      res
   
-let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : t list =
+let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : Grid.t * t list =
   let height, width = maxi-mini+1, maxj-minj+1 in
   let is_visible =
     match visible_bmp with
@@ -70,9 +78,10 @@ let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : t li
           !models;
     done
   done;
-  !models @ [`Mask (Grid.Mask.from_bitmap !m)] (* still considering as raw mask for allowing some computations such as scaling *)
+  (Grid.Mask.from_bitmap !m,
+   !models)
   
-let from_bmp (bmp : Bitmap.t) : t list =
+let from_bmp (bmp : Bitmap.t) : Grid.t * t list =
   from_box_in_bmp
     ~mini:0 ~maxi:(Bitmap.height bmp - 1)
     ~minj:0 ~maxj:(Bitmap.width bmp - 1)
@@ -211,6 +220,7 @@ let compl, reset_compl =
   Common.memoize ~size:101 compl
       
 let reset_memoized_functions () =
+  reset_matches ();
   reset_scale_up ();
   reset_scale_down ();
   reset_scale_to ();

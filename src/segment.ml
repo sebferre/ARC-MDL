@@ -329,6 +329,7 @@ type rectangle = { height: int; width: int;
 		   offset_i: int; offset_j: int;
 		   color: Grid.color;
 		   new_cover : Bitmap.t; (* new covered pixels *)
+                   mask : Grid.t;
 		   mask_models : Mask_model.t list; (* mask models, relative to rectangle box *)
 		   delta : Grid.pixel list;
                    nb_explained_pixels : int }
@@ -337,9 +338,7 @@ let rectangle_as_grid (g : Grid.t) (r : rectangle) : Grid.t =
   let gr = Grid.make g.height g.width Grid.no_color in
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
-      if Mask_model.mem
-           ~height:r.height ~width:r.width (i - r.offset_i) (j - r.offset_j)
-           (try List.hd r.mask_models with _ -> assert false) then
+      if Grid.Mask.mem (i - r.offset_i) (j - r.offset_j) r.mask then
 	(*match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
 	| Some (_,_,c) -> set_pixel gr i j c
 	| None ->*) Grid.set_pixel gr i j r.color
@@ -412,6 +411,7 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
         offset_i = p.mini; offset_j = p.minj;
         color = p.color;
         new_cover;
+        mask = Grid.Mask.full height width;
         mask_models =
           (`Full ::
              if (height = 2 && width >= 2 || width = 2 && height >= 2)
@@ -424,13 +424,16 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
   let res = (* adding rectangle with specific mask model, without delta *)
     if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
     then
+      let mask, mask_models =
+        Mask_model.from_box_in_bmp ~visible_bmp:bmp
+          ~mini:p.mini ~maxi:p.maxi ~minj:p.minj ~maxj:p.maxj
+          p.pixels in
       { height; width;
         offset_i = p.mini; offset_j = p.minj;
         color = p.color;
         new_cover = p.pixels;
-        mask_models = Mask_model.from_box_in_bmp ~visible_bmp:bmp
-                        ~mini:p.mini ~maxi:p.maxi ~minj:p.minj ~maxj:p.maxj
-                        p.pixels;
+        mask;
+        mask_models;
         delta = [];
         nb_explained_pixels
       } :: res
