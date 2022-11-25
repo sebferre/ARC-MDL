@@ -63,7 +63,7 @@ let rec state_of_model (name : string) (task : Task.task) norm_dl_model_data (st
       gprs; gsri; gsro;
       dls;
       norm_dls;
-      norm_dl = lmd;
+      norm_dl = Model2.dl_round lmd;
       suggestions = [] }  
                
 let grid0 = Grid.make 10 10 Grid.black
@@ -97,15 +97,17 @@ object
                else
                  match state_of_model focus.name focus.task focus.norm_dl_model_data focus.stage r m with
                  | Result.Ok state ->
-                    if state.norm_dl < focus.norm_dl
-                    then (quota_compressive - 1, state::suggestions)
-                    else (quota_compressive, state::suggestions)
+                    let new_quota_compressive =
+                      if state.norm_dl < focus.norm_dl
+                      then quota_compressive - 1
+                      else quota_compressive in
+                    new_quota_compressive, state::suggestions
                  | Result.Error _ -> res)
              (!Model2.max_refinements, []) in
       let suggestions = (* sorting in increasing DL *)
         suggestions
         |> List.rev (* to preserve ordering from sequence *) 
-        |> List.sort
+        |> List.stable_sort
              (fun s1 s2 -> Stdlib.compare s1.norm_dl s2.norm_dl) in
       let suggestions =
         InputTask (new Focus.input (name0,task0))

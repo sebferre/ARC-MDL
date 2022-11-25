@@ -4361,7 +4361,7 @@ let read_grid_pairs ?(pruning = false) ?(env = data0) (m : model) (pairs : Task.
              let+|+ (envi,gdi,dli as gri) = Result.Ok reads_input in      
              let+|+ (envo,gdo,dlo as gro) =
                read_grid ~quota_diff:0 ~env:gdi.data m.output_template output in
-             let dl = dli +. dlo in
+             let dl = dl_round (dli +. dlo) in
              Result.Ok [(gri,gro,dl)] in
            let reads_pair =
              reads_pair
@@ -4821,7 +4821,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
               let box = box_of_data gd1.data in
               let dl_d_t0 = encoder_template ~box ~path:p t0 d1 in
               let dl_d_t = encoder_template ~box ~path:p t d1 in
-              Some (dl +. dl1 +. dl_d_t -. dl_d_t0, p, role, t0, t, partial || partial1))) in
+              Some (dl_round (dl +. dl1 +. dl_d_t -. dl_d_t0), p, role, t0, t, partial || partial1))) in
   (* sorting defs, and returning them as a sequence *)
   defs
   |> List.rev (* to correct for the above List.fold_left's that stack in reverse *)
@@ -5478,7 +5478,7 @@ let learn_model
   *)
            );
 	   flush stdout;
-           lmd)
+           dl_round lmd)
     ~refinements:
     (fun (r,m) (gpsr,gsri,gsro,dl_triples) dl ->
       if verbose >= 2 then print_newline ();
