@@ -556,7 +556,7 @@ let all_symmetry_unfold = [
     [[`Id]; [`FlipHeight]];
     [[`Id; `FlipWidth]];
     [[`Id; `Rotate90]; [`Rotate270; `Rotate180]]
-  ] (* TODO: in principle, should add more unfolds following the 10 symmetry groups. See sym_X_unfold in Grid.Transf/Mask_model *)
+  ] (* TODO: in principle, should add more unfolds following the 10 symmetry groups. See sym_X_unfold in Grid.Transf *)
 let nb_symmetry_unfold = List.length all_symmetry_unfold
 
 let all_symmetry_close = List.rev [ (* preferring stronger symmetries. TODO: do through DL *)
@@ -696,14 +696,6 @@ let xp_bool print b = print#string (if b then "true" else "false")
 let xp_int print i = print#int i
 let xp_color print c = print#string (Grid.name_of_color c)
 let xp_mask print m = print#string (Grid.Mask.to_string m)
-let xp_mask_model (print : Xprint.t) : Mask_model.t -> unit = function
-  | `Full -> print#string "Full"
-  | `Border -> print#string "Border"
-  | `EvenCheckboard -> print#string "Even Checkboard"
-  | `OddCheckboard -> print#string "Odd Checkboard"
-  | `PlusCross -> print#string "+-cross"
-  | `TimesCross -> print#string "x-cross"
-  | `Mask m -> xp_mask print m
 let xp_grid print g = Grid.xp_grid print g
 
 let xp_vec xp print i j =
@@ -733,7 +725,7 @@ let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Int i -> xp_int print i
   | `Color c -> xp_color print c
   | `Mask (m, `None) -> xp_grid print m
-  | `Mask (m, `Model mm) -> xp_mask_model print mm
+  | `Mask (m, `Model mm) -> Mask_model.xp print mm
   | `Grid (g, `None) -> xp_grid print g
   | `Vec (i,j) -> xp_vec xp_data print i j
   | `Shape (g, `Point color) -> xp_point xp_data print color
@@ -876,10 +868,8 @@ and suffix_periodicity_mode = function
   | `Total -> "_total"
   | `Strict -> "_strict"
   | `TradeOff -> ""
-
                   
 let string_of_expr xp = Xprint.to_string (xp_expr xp)
-                         
                    
 let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Any -> print#string "?"
@@ -887,7 +877,7 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Int i -> xp_int print i
   | `Color c -> xp_color print c
   | `Mask m -> xp_mask print m
-  | `MaskModel mm -> xp_mask_model print mm
+  | `MaskModel mm -> Mask_model.xp print mm
   | `Grid g -> xp_grid print g
   | `Vec (i,j) -> xp_vec xp_template print i j
   | `ShapePoint color -> xp_point xp_template print color
@@ -1387,14 +1377,13 @@ let rec matcher_template_aux (t : template) : matcher =
      let rec matcher_mask =
        Matcher (function
            | `Mask (dm, _) -> Grid.same dm m, matcher_mask
-           (* | `Mask (dm, dm -> Mask_model.subsumes m dm, matcher_mask *)
            | _ -> false, matcher_fail) in
      matcher_mask
   | `MaskModel mm ->
      let rec matcher_mask =
        Matcher (function
            | `Mask (dm, `None) -> Mask_model.matches dm mm, matcher_mask
-           | `Mask (dm, `Model dmm) -> dmm = mm (* || Mask_model.matches dm mm *), matcher_mask
+           | `Mask (dm, `Model dmm) -> dmm = mm, matcher_mask
            | _ -> false, matcher_fail) in
      matcher_mask
   | `Grid g ->
@@ -1581,7 +1570,6 @@ let dl_mask_model : Mask_model.t -> dl =
     | `OddCheckboard
     | `PlusCross
     | `TimesCross -> Mdl.Code.usage 0.05
-  | `Mask m -> Mdl.Code.usage 0. +. dl_mask m (* TODO: remove this case *)
 
 let dl_grid : Grid.t -> dl = (* too efficient a coding for being useful *)
   fun g ->
@@ -2718,10 +2706,9 @@ let apply_expr_gen
               | `Mask m ->
                  let| m' = Grid.Transf.scale_up k k m in
                  Result.Ok (`Mask m')
-              | `MaskModel mm ->
-                 let| mm' = Mask_model.scale_up k k mm in
-                 Result.Ok (`MaskModel mm')
-              | _ -> assert false in
+              | `MaskModel `Full ->
+                 Result.Ok (`MaskModel `Full)
+              | _ -> Result.Error (Invalid_expr e) in
             (match d1 with
              | `Int i1 -> Result.Ok (`Int (i1 * k))
              | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
@@ -2749,10 +2736,9 @@ let apply_expr_gen
               | `Mask m ->
                  let| m' = Grid.Transf.scale_down k k m in
                  Result.Ok (`Mask m')
-              | `MaskModel mm ->
-                 let| mm' = Mask_model.scale_down k k mm in
-                 Result.Ok (`MaskModel mm')
-              | _ -> assert false in
+              | `MaskModel `Full ->
+                 Result.Ok (`MaskModel `Full)
+              | _ -> Result.Error (Invalid_expr e) in
             (match d1 with
              | `Int i1 ->
                 let rem = i1 mod k in
@@ -2785,10 +2771,9 @@ let apply_expr_gen
         | `Mask m, `Vec (`Int new_h, `Int new_w) ->
            let| m' = Grid.Transf.scale_to new_h new_w m in
            Result.Ok (`Mask m')
-        | `MaskModel mm, `Vec (`Int new_h, `Int new_w) ->
-           let| mm' = Mask_model.scale_to new_h new_w mm in
-           Result.Ok (`MaskModel mm')
-        | _ -> assert false in
+        | `MaskModel `Full, _ ->
+           Result.Ok (`MaskModel `Full)
+        | _ -> Result.Error (Invalid_expr e) in
         function
         | (`Mask _ | `MaskModel _ as mask), size -> aux_mask (mask,size)
         | `ShapePoint col, size ->
