@@ -2813,7 +2813,7 @@ let apply_expr_gen
      let| res2 = apply ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `ShapeRectangle (`Vec (`Int rh, `Int rw), _, `MaskModel `Border)) -> (* TODO: allow crop on Full rectangles as well ? *)
+        | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `ShapeRectangle (`Vec (`Int rh, `Int rw), _, `Mask m)) when Mask_model.matches m `Border -> (* TODO: allow crop on Full rectangles as well ? *)
            let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
            let| g' = Grid.Transf.crop g i j h w in
            Result.Ok (`Grid g')
@@ -5231,6 +5231,7 @@ let prune_refinements (t : template) : grid_refinement Myseq.t =
         | _, `GridTiling _ -> RGen (p1, `Any) :: res
         | _, `Color _ -> RGen (p1, `Any) :: res
         | _, `Mask _ -> RGen (p1, `Any) :: res
+        | _, `MaskModel _ -> RGen (p1, `Any) :: res
         | `Field (`Layer _, _), _ -> RDel p1 :: res
         | _ -> res)
       [] `Root t [] in
