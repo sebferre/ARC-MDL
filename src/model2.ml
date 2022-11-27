@@ -480,10 +480,10 @@ let _ = (data0 :> data seq) (* data is an instance of data seq *)
       
 type var = revpath
 
-type 'a expr =
-  [ `Ref of revpath
-  | `ConstInt of int (* Int *)
+type 'a expr_func =
+  [ `ConstInt of int (* Int *)
   | `ConstVec of int * int (* Vec *)
+  | `ConstColor of Grid.color (* Color *)
   | `Plus of 'a * 'a (* on Int, Vec *)
   | `Minus of 'a * 'a (* on Int, Vec *)
   | `IncrInt of 'a * int (* on Int *)
@@ -543,6 +543,8 @@ and symmetry = [
   | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
   | `Rotate180 | `Rotate90 | `Rotate270 ]
 
+type expr = [ `Ref of revpath | expr expr_func ]
+             
 let all_symmetry = [
     `Id;
     `FlipHeight; `FlipWidth;
@@ -586,7 +588,7 @@ type template =
   | `PosShape of template * template (* pos, shape -> object *)
   | `GridBackground of template * template * template ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
   | `GridTiling of template * template (* grid, size *)
-  | template expr (* an expression that evaluates into a template *)
+  | expr (* an expression that evaluates into a template *)
   | `Seq of template list (* a sequence where items match the given template list, items should be ground *)
   | `Cst of template (* all sequence items are the same, and match the item template *)  
   | `Prefix of template * template list (* a sequence whose items match the main template, and whose K first items match the template list, items should be ground *)
@@ -766,67 +768,68 @@ let xp_apply_poly (func : string) print (xp_args : (Xprint.t -> unit) list) : un
         xps); 
   print#string ")"
 
-let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> unit = function
+let rec xp_expr (print : Xprint.t) : expr -> unit = function
   | `Ref p -> xp_path print p
   | `ConstInt k -> print#string "'"; print#int k
   | `ConstVec (k,l) -> xp_apply_poly "'" print
                          [(fun print -> print#int k);
                           (fun print -> print#int l)]
-  | `Plus (a,b) -> Xprint.infix " + " xp print (a, b)
-  | `Minus (a,b) -> Xprint.infix " - " xp print (a, b)
-  | `IncrInt (a,k) -> xp print a; print#string " + "; print#int k
-  | `DecrInt (a,k) -> xp print a; print#string " - "; print#int k
-  | `IncrVec (a,k,l) -> xp print a; print#string " + ("; print#int k; print#string ", "; print#int l; print#string ")"
-  | `DecrVec (a,k,l) -> xp print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
-  | `Modulo (a,b) -> Xprint.infix " % " xp print (a, b)
-  | `ScaleUp (a,b) -> xp print a; print#string " * "; xp print b
-  | `ScaleDown (a,b) -> xp print a; print#string " / "; xp print b
-  | `ScaleTo (a,b) -> xp_apply "scaleTo" xp print [a;b]
-  | `Size a -> xp_apply "size" xp print [a]
-  | `Crop (a,b) -> xp_apply "crop" xp print [a;b]
-  | `Strip a -> xp_apply "strip" xp print [a]
-  | `Corner (a,b) -> xp_apply "corner" xp print [a;b]
-  | `Min la -> xp_apply "min" xp print la
-  | `Max la -> xp_apply "max" xp print la
-  | `Average la -> xp_apply "average" xp print la
-  | `Span (a,b) -> xp_apply "span" xp print [a;b]
-  | `Norm a -> Xprint.bracket ("|","|") xp print a
+  | `ConstColor c -> xp_color print c
+  | `Plus (a,b) -> Xprint.infix " + " xp_expr print (a, b)
+  | `Minus (a,b) -> Xprint.infix " - " xp_expr print (a, b)
+  | `IncrInt (a,k) -> xp_expr print a; print#string " + "; print#int k
+  | `DecrInt (a,k) -> xp_expr print a; print#string " - "; print#int k
+  | `IncrVec (a,k,l) -> xp_expr print a; print#string " + ("; print#int k; print#string ", "; print#int l; print#string ")"
+  | `DecrVec (a,k,l) -> xp_expr print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
+  | `Modulo (a,b) -> Xprint.infix " % " xp_expr print (a, b)
+  | `ScaleUp (a,b) -> xp_expr print a; print#string " * "; xp_expr print b
+  | `ScaleDown (a,b) -> xp_expr print a; print#string " / "; xp_expr print b
+  | `ScaleTo (a,b) -> xp_apply "scaleTo" xp_expr print [a;b]
+  | `Size a -> xp_apply "size" xp_expr print [a]
+  | `Crop (a,b) -> xp_apply "crop" xp_expr print [a;b]
+  | `Strip a -> xp_apply "strip" xp_expr print [a]
+  | `Corner (a,b) -> xp_apply "corner" xp_expr print [a;b]
+  | `Min la -> xp_apply "min" xp_expr print la
+  | `Max la -> xp_apply "max" xp_expr print la
+  | `Average la -> xp_apply "average" xp_expr print la
+  | `Span (a,b) -> xp_apply "span" xp_expr print [a;b]
+  | `Norm a -> Xprint.bracket ("|","|") xp_expr print a
   | `Diag1 (a,k) -> xp_apply_poly "diag1" print
-                      [(fun print -> xp print a);
+                      [(fun print -> xp_expr print a);
                        (fun print -> print#int k)]
   | `Diag2 (a,k) -> xp_apply_poly "diag2" print
-                      [(fun print -> xp print a);
+                      [(fun print -> xp_expr print a);
                        (fun print -> print#int k)]
-  | `LogAnd (a,b) -> Xprint.infix " and " xp print (a, b)
-  | `LogOr (a,b) -> Xprint.infix " or " xp print (a, b)
-  | `LogXOr (a,b) -> Xprint.infix " xor " xp print (a, b)
-  | `LogAndNot (a,b) -> Xprint.infix " and not " xp print (a, b)
-  | `LogNot (a) -> print#string "not "; xp print a
-  | `Stack la -> xp_apply "stack" xp print la
-  | `Area a -> xp_apply "area" xp print [a]
-  | `Left a -> xp_apply "left" xp print [a]
-  | `Right a -> xp_apply "right" xp print [a]
-  | `Center a -> xp_apply "center" xp print [a]
-  | `Top a -> xp_apply "top" xp print [a]
-  | `Bottom a -> xp_apply "bottom" xp print [a]
-  | `Middle a -> xp_apply "middle" xp print [a]
-  | `ProjI a -> xp_apply "projI" xp print [a]
-  | `ProjJ a -> xp_apply "projJ" xp print [a]
-  | `MaskOfGrid a -> xp_apply "mask" xp print [a]
-  | `GridOfMask (a,b) -> xp_apply "grid" xp print [a;b]
-  | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp print [a;b]
+  | `LogAnd (a,b) -> Xprint.infix " and " xp_expr print (a, b)
+  | `LogOr (a,b) -> Xprint.infix " or " xp_expr print (a, b)
+  | `LogXOr (a,b) -> Xprint.infix " xor " xp_expr print (a, b)
+  | `LogAndNot (a,b) -> Xprint.infix " and not " xp_expr print (a, b)
+  | `LogNot (a) -> print#string "not "; xp_expr print a
+  | `Stack la -> xp_apply "stack" xp_expr print la
+  | `Area a -> xp_apply "area" xp_expr print [a]
+  | `Left a -> xp_apply "left" xp_expr print [a]
+  | `Right a -> xp_apply "right" xp_expr print [a]
+  | `Center a -> xp_apply "center" xp_expr print [a]
+  | `Top a -> xp_apply "top" xp_expr print [a]
+  | `Bottom a -> xp_apply "bottom" xp_expr print [a]
+  | `Middle a -> xp_apply "middle" xp_expr print [a]
+  | `ProjI a -> xp_apply "projI" xp_expr print [a]
+  | `ProjJ a -> xp_apply "projJ" xp_expr print [a]
+  | `MaskOfGrid a -> xp_apply "mask" xp_expr print [a]
+  | `GridOfMask (a,b) -> xp_apply "grid" xp_expr print [a;b]
+  | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp_expr print [a;b]
   | `Tiling (a,k,l) -> xp_apply_poly "tiling" print
-                         [(fun print -> xp print a);
+                         [(fun print -> xp_expr print a);
                           (fun print -> print#int k);
                           (fun print -> print#int l)]
   | `PeriodicFactor (mode,a,b) ->
-     xp_apply ("periodicFactor" ^ suffix_periodicity_mode mode) xp print [a;b]
+     xp_apply ("periodicFactor" ^ suffix_periodicity_mode mode) xp_expr print [a;b]
   | `FillResizeAlike (mode,a,b,c) ->
-     xp_apply ("fillResizeAlike" ^ suffix_periodicity_mode mode) xp print [a;b;c]
-  | `Compose (a,b,c) -> xp_apply "compose" xp print [a;b;c]
+     xp_apply ("fillResizeAlike" ^ suffix_periodicity_mode mode) xp_expr print [a;b;c]
+  | `Compose (a,b,c) -> xp_apply "compose" xp_expr print [a;b;c]
   | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
                            [(fun print -> xp_symmetry print sym);
-                            (fun print -> xp print a)]
+                            (fun print -> xp_expr print a)]
   | `UnfoldSym (sym_array,a) ->
      xp_apply_poly "unfoldSym" print
        [(fun print ->
@@ -838,23 +841,23 @@ let rec xp_expr (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) : 'a expr -> un
                  sym_row;
                print#string "]")
              sym_array);
-        (fun print -> xp print a)]
+        (fun print -> xp_expr print a)]
   | `CloseSym (sym_seq,a,b) ->
      xp_apply_poly "closeSym" print
        [(fun print ->
            List.iter
              (fun sym -> xp_symmetry print sym; print#string "; ")
              sym_seq);
-        (fun print -> xp print a);
-        (fun print -> xp print b)]
+        (fun print -> xp_expr print a);
+        (fun print -> xp_expr print b)]
   | `TranslationSym (sym,a,b) -> xp_apply_poly "translationSym" print
                                    [(fun print -> xp_symmetry print sym);
-                                    (fun print -> xp print a);
-                                    (fun print -> xp print b)]
-  | `MajorityColor a -> xp_apply "majorityColor" xp print [a]
-  | `ColorCount a -> xp_apply "colorCount" xp print [a]
-  | `Coloring (a,b) -> xp_apply "coloring" xp print [a;b]
-  | `SwapColors (a,b,c) -> xp_apply "swapColor" xp print [a;b;c]
+                                    (fun print -> xp_expr print a);
+                                    (fun print -> xp_expr print b)]
+  | `MajorityColor a -> xp_apply "majorityColor" xp_expr print [a]
+  | `ColorCount a -> xp_apply "colorCount" xp_expr print [a]
+  | `Coloring (a,b) -> xp_apply "coloring" xp_expr print [a;b]
+  | `SwapColors (a,b,c) -> xp_apply "swapColor" xp_expr print [a;b;c]
 and xp_symmetry print : symmetry -> unit = function
   | `Id -> print#string "id"
   | `FlipHeight -> print#string "flipHeight"
@@ -869,7 +872,7 @@ and suffix_periodicity_mode = function
   | `Strict -> "_strict"
   | `TradeOff -> ""
                   
-let string_of_expr xp = Xprint.to_string (xp_expr xp)
+let string_of_expr = Xprint.to_string xp_expr
                    
 let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Any -> print#string "?"
@@ -885,7 +888,7 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `PosShape (pos,shape) -> xp_pos_shape xp_template print pos shape
   | `GridBackground (size,color,layers) -> xp_background xp_template print size color layers []
   | `GridTiling (grid,size) -> xp_tiling xp_template print grid size
-  | #expr as e -> xp_expr xp_template print e
+  | #expr as e -> xp_expr print e
   | `Seq items ->
      Xprint.bracket
        ("<", " >")
@@ -941,62 +944,63 @@ let rec path_dim (p : revpath) : dim =
   | `AnyItem p1 -> Item
   | `Arg (_, _, p1) -> assert false (* depends on the function/argument, not used *)
 
-let expr_dim (dim : 'a -> dim) (e : 'a expr) : dim =
+let rec expr_dim (e : expr) : dim =
   match e with
   | `Ref p -> path_dim p
   | `ConstInt _ -> Item
   | `ConstVec _ -> Item
-  | `Plus (a,b) -> max (dim a) (dim b) (* broadcasting *)
-  | `Minus (a,b) -> max (dim a) (dim b)
-  | `IncrInt (a,k) -> dim a
-  | `DecrInt (a,k) -> dim a
-  | `IncrVec (a,k,l) -> dim a
-  | `DecrVec (a,k,l) -> dim a
-  | `Modulo (a,b) -> max (dim a) (dim b)
-  | `ScaleUp (a,b) -> max (dim a) (dim b)
-  | `ScaleDown (a,b) -> max (dim a) (dim b)
-  | `ScaleTo (a,b) -> max (dim a) (dim b)
-  | `Size a -> dim a
-  | `Crop (a,b) -> max (dim a) (dim b)
-  | `Strip a -> dim a
-  | `Corner (a,b) -> max (dim a) (dim b)
-  | `Min l -> max_dim_list (List.map dim l)
-  | `Max l -> max_dim_list (List.map dim l)
-  | `Average l -> max_dim_list (List.map dim l)
-  | `Span (a,b) -> max (dim a) (dim b)
-  | `Norm a -> dim a
-  | `Diag1 (a,k) -> dim a
-  | `Diag2 (a,k) -> dim a
-  | `LogAnd (a,b) -> max (dim a) (dim b)
-  | `LogOr (a,b) -> max (dim a) (dim b)
-  | `LogXOr (a,b) -> max (dim a) (dim b)
-  | `LogAndNot (a,b) -> max (dim a) (dim b)
-  | `LogNot a -> dim a
-  | `Stack l -> max_dim_list (List.map dim l)
-  | `Area a -> dim a
-  | `Left a -> dim a
-  | `Right a -> dim a
-  | `Center a -> dim a
-  | `Top a -> dim a
-  | `Bottom a -> dim a
-  | `Middle a -> dim a
-  | `ProjI a -> dim a
-  | `ProjJ a -> dim a
-  | `MaskOfGrid a -> dim a
-  | `GridOfMask (a,b) -> max (dim a) (dim b)
-  | `TranslationOnto (a,b) -> max (dim a) (dim b)
-  | `Tiling (a,k,l) -> dim a
-  | `PeriodicFactor (_,a,b) -> max (dim a) (dim b)
-  | `FillResizeAlike (_,a,b,c) -> max (dim a) (max (dim b) (dim c))
-  | `Compose (a,b,c) -> max (dim a) (max (dim b) (dim c))
-  | `ApplySym (sym,a,r) -> dim a
-  | `UnfoldSym (sym_arr,a) -> dim a
-  | `CloseSym (sym_seq,a,b) -> max (dim a) (dim b)
-  | `TranslationSym (sym,a,b) -> max (dim a) (dim b)
-  | `MajorityColor a -> dim a
-  | `ColorCount a -> dim a
-  | `Coloring (a,b) -> max (dim a) (dim b)
-  | `SwapColors (a,b,c) -> max (dim a) (max (dim b) (dim c))
+  | `ConstColor _ -> Item
+  | `Plus (a,b) -> max (expr_dim a) (expr_dim b) (* broadcasting *)
+  | `Minus (a,b) -> max (expr_dim a) (expr_dim b)
+  | `IncrInt (a,k) -> expr_dim a
+  | `DecrInt (a,k) -> expr_dim a
+  | `IncrVec (a,k,l) -> expr_dim a
+  | `DecrVec (a,k,l) -> expr_dim a
+  | `Modulo (a,b) -> max (expr_dim a) (expr_dim b)
+  | `ScaleUp (a,b) -> max (expr_dim a) (expr_dim b)
+  | `ScaleDown (a,b) -> max (expr_dim a) (expr_dim b)
+  | `ScaleTo (a,b) -> max (expr_dim a) (expr_dim b)
+  | `Size a -> expr_dim a
+  | `Crop (a,b) -> max (expr_dim a) (expr_dim b)
+  | `Strip a -> expr_dim a
+  | `Corner (a,b) -> max (expr_dim a) (expr_dim b)
+  | `Min l -> max_dim_list (List.map expr_dim l)
+  | `Max l -> max_dim_list (List.map expr_dim l)
+  | `Average l -> max_dim_list (List.map expr_dim l)
+  | `Span (a,b) -> max (expr_dim a) (expr_dim b)
+  | `Norm a -> expr_dim a
+  | `Diag1 (a,k) -> expr_dim a
+  | `Diag2 (a,k) -> expr_dim a
+  | `LogAnd (a,b) -> max (expr_dim a) (expr_dim b)
+  | `LogOr (a,b) -> max (expr_dim a) (expr_dim b)
+  | `LogXOr (a,b) -> max (expr_dim a) (expr_dim b)
+  | `LogAndNot (a,b) -> max (expr_dim a) (expr_dim b)
+  | `LogNot a -> expr_dim a
+  | `Stack l -> max_dim_list (List.map expr_dim l)
+  | `Area a -> expr_dim a
+  | `Left a -> expr_dim a
+  | `Right a -> expr_dim a
+  | `Center a -> expr_dim a
+  | `Top a -> expr_dim a
+  | `Bottom a -> expr_dim a
+  | `Middle a -> expr_dim a
+  | `ProjI a -> expr_dim a
+  | `ProjJ a -> expr_dim a
+  | `MaskOfGrid a -> expr_dim a
+  | `GridOfMask (a,b) -> max (expr_dim a) (expr_dim b)
+  | `TranslationOnto (a,b) -> max (expr_dim a) (expr_dim b)
+  | `Tiling (a,k,l) -> expr_dim a
+  | `PeriodicFactor (_,a,b) -> max (expr_dim a) (expr_dim b)
+  | `FillResizeAlike (_,a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
+  | `Compose (a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
+  | `ApplySym (sym,a,r) -> expr_dim a
+  | `UnfoldSym (sym_arr,a) -> expr_dim a
+  | `CloseSym (sym_seq,a,b) -> max (expr_dim a) (expr_dim b)
+  | `TranslationSym (sym,a,b) -> max (expr_dim a) (expr_dim b)
+  | `MajorityColor a -> expr_dim a
+  | `ColorCount a -> expr_dim a
+  | `Coloring (a,b) -> max (expr_dim a) (expr_dim b)
+  | `SwapColors (a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
     
 let rec template_dim : template -> dim = function
   | `Any -> Item
@@ -1011,7 +1015,7 @@ let rec template_dim : template -> dim = function
        (max (template_dim size) (template_dim color))
        `Root layers
   | `GridTiling (grid,size) -> max (template_dim grid) (template_dim size)
-  | #expr as e -> expr_dim template_dim e
+  | #expr as e -> expr_dim e
   | `Seq items -> Sequence
   | `Cst item0 -> Sequence
   | `Prefix (main,items) -> Sequence
@@ -1729,7 +1733,7 @@ let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl 
 
 let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
-  let uniform_among (l : [`X] expr list) =
+  let uniform_among (l : [`X] expr_func list) =
     if l = [] then 0. else Mdl.Code.uniform (List.length l) in
   KindMap.make
     ~int:(uniform_among [
@@ -1744,6 +1748,7 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*) ])
     ~bool:(uniform_among [])
     ~color:(uniform_among [
+                `ConstColor Grid.black;
                 `MajorityColor `X ])
     ~mask:(uniform_among [
                `MaskOfGrid `X;
@@ -1784,183 +1789,189 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
                `ApplySym (`FlipHeight, `X, `Mask);
                `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
   
-let rec dl_expr
-          (dl : box:box -> path:revpath -> 'a -> dl)
-          ~(env_sig : signature) ~(box : box) ~(path : revpath) (e : 'a expr) : dl = (* for overloaded functions, rather infer type bottom-up *)
+let code_ref = Mdl.Code.usage 0.6
+let code_func = Mdl.Code.usage 0.4
+
+let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for overloaded functions, rather infer type bottom-up *)
   let k = path_kind path in (* TODO: would be better to use more fine-grained role *)
-  let code_expr = code_expr_by_kind.&(k) in
+  let code_func = code_func +. code_expr_by_kind.&(k) in
   match e with
-  | `Ref p -> assert false
+  | `Ref p ->
+     code_ref
+     +. dl_path ~env_sig ~ctx_path:path p
   | `ConstInt k ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_star k
   | `ConstVec (k,l) ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_star k
      +. Mdl.Code.universal_int_star l
+  | `ConstColor c ->
+     code_func
+     +. dl_color c (* TODO: background vs shape ? *)
   | `Plus (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
   | `Minus (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
   | `IncrInt (e1,k) | `DecrInt (e1,k) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_plus k
   | `IncrVec (e1,k,l) | `DecrVec (e1,k,l) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
      +. Mdl.Code.universal_int_star k
      +. Mdl.Code.universal_int_star l
   | `Modulo (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
   | `ScaleUp (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,Some `IntCard,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `IntCard,path)) e2
   | `ScaleDown (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,Some `IntCard,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `IntCard,path)) e2
   | `ScaleTo (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
   | `Size e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,Some `Grid,path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,Some `Grid,path)) e1
   | `Crop (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,Some `Layer,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `Layer,path)) e2
   | `Strip e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
   | `Corner (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
   | `Min le1 ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
-          (fun e1 -> dl ~box ~path:(`Arg (1,None,path)) e1)
+          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
   | `Max le1 ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
-          (fun e1 -> dl ~box ~path:(`Arg (1,None,path)) e1)
+          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
   | `Average le1 ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
-          (fun e1 -> dl ~box ~path:(`Arg (1,None,path)) e1)
+          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
   | `Span (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
   | `Norm e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
   | `Diag1 (e1,k) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
      +. Mdl.Code.universal_int_plus k
   | `Diag2 (e1,k) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
      +. Mdl.Code.universal_int_plus k
   | `LogAnd (e1,e2) | `LogOr (e1,e2) | `LogXOr (e1,e2) | `LogAndNot (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
-     +. dl ~box ~path:(`Arg (2,None,path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
   | `LogNot e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1,None,path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
   | `Stack le1 ->
-     code_expr
+     code_func
      +. Mdl.Code.universal_int_plus (List.length le1)
      +. Mdl.sum le1
-          (fun e1 -> dl ~box ~path:(`Arg (1,None,path)) e1)
+          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
   | `Area e1 ->
-     code_expr +. dl ~box ~path:(`Arg (1, Some `Shape, path)) e1
+     code_func +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Shape, path)) e1
   | `Left e1 | `Right e1 | `Center e1
     | `Top e1 | `Bottom e1 | `Middle e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Layer, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Layer, path)) e1
   | `ProjI e1 | `ProjJ e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, None, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
   | `MaskOfGrid e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
   | `GridOfMask (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Mask, path)) e1
-     +. dl ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Mask, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
   | `TranslationOnto (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Layer, path)) e1
-     +. dl ~box ~path:(`Arg (2, Some `Layer, path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Layer, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some `Layer, path)) e2
   | `Tiling (e1,k,l) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, None, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
      +. Mdl.Code.universal_int_plus k
      +. Mdl.Code.universal_int_plus l
   | `PeriodicFactor (mode,e1,e2) ->
-     code_expr
+     code_func
      +. dl_periodicity_mode mode
-     +. dl ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl ~box ~path:(`Arg (2, None, path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
   | `FillResizeAlike (mode,e1,e2,e3) ->
-     code_expr
+     code_func
      +. dl_periodicity_mode mode
-     +. dl ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl ~box ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
-     +. dl ~box ~path:(`Arg (3, None, path)) e3
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
   | `Compose (e1,e2,e3) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl ~box ~path:(`Arg (2, None, path)) e2
-     +. dl ~box ~path:(`Arg (3, None, path)) e3
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
   | `ApplySym (sym,e1,role_e1) ->
-     code_expr (* no need to encode role_e1, deducible from model *)
+     code_func (* no need to encode role_e1, deducible from model *)
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
-     +. dl ~box ~path:(`Arg (2, Some role_e1, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some role_e1, path)) e1
   | `UnfoldSym (sym_array,e1) ->
-     code_expr (* includes encoding of sym list list *)
+     code_func (* includes encoding of sym list list *)
      +. Mdl.Code.uniform nb_symmetry_unfold (* encoding the choice of the symmetry matrix *)
-     +. dl ~box ~path:(`Arg (2, None, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e1
   | `CloseSym (sym_seq,e1,e2) ->
-     code_expr
+     code_func
      +. Mdl.Code.uniform nb_symmetry_close (* encoding sym_seq *)
-     +. dl ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e1
-     +. dl ~box ~path:(`Arg (3, None, path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e2
   | `TranslationSym (sym,e1,e2) ->
-     code_expr
+     code_func
      +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
-     +. dl ~box ~path:(`Arg (2, Some `Layer, path)) e1
-     +. dl ~box ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some `Layer, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
   | `MajorityColor e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
   | `ColorCount e1 ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
   | `Coloring (e1,e2) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, None, path)) e1
-     +. dl ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
   | `SwapColors (e1,e2,e3) ->
-     code_expr
-     +. dl ~box ~path:(`Arg (1, None, path)) e1
-     +. dl ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e2
-     +. dl ~box ~path:(`Arg (3, Some (`Color `Grid), path)) e3
+     code_func
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some (`Color `Grid), path)) e3
 and dl_periodicity_mode = function
   | `Total -> Mdl.Code.usage 0.25
   | `Strict -> Mdl.Code.usage 0.25
@@ -1972,7 +1983,6 @@ let code_patt0 = Mdl.Code.usage 0.2
 type code_template = (* dls must correspond to a valid prob distrib *)
   { c_any : dl;
     c_patt : dl;
-    c_ref : dl;
     c_expr : dl;
     c_seq : dl;
     c_cst : dl;
@@ -1980,8 +1990,7 @@ type code_template = (* dls must correspond to a valid prob distrib *)
 let code_template0 =
   { c_any = Mdl.Code.usage 0.2;
     c_patt = code_patt0 (*Mdl.Code.usage 0.2*);
-    c_ref = Mdl.Code.usage 0.3;
-    c_expr = Mdl.Code.usage 0.2;
+    c_expr = Mdl.Code.usage 0.5;
     c_seq = Mdl.Code.usage 0.03;
     c_cst = Mdl.Code.usage 0.04;
     c_prefix = Mdl.Code.usage 0.03 }
@@ -2106,14 +2115,7 @@ let dl_template ~(env_sig : signature) ~(box : box) ?(path = `Root) (t : templat
     | `Grid g -> assert false (* no explicit grids in models *)
     | `GridBackground (size,color,layers) -> code.c_patt +. dl_Grid_Background aux ~box ~path size color layers 0 template_delta
     | `GridTiling (grid,size) -> code.c_patt +. dl_Grid_Tiling aux ~box ~path grid size
-        
-    | `Ref p ->
-       code.c_ref
-       +. dl_path ~env_sig ~ctx_path:path p
-    | #expr as e ->
-       code.c_expr
-       +. dl_expr aux ~env_sig ~box ~path e
-
+    | #expr as e -> code.c_expr +. dl_expr ~env_sig ~box ~path e
     | `Seq items -> code.c_seq +. dl_Seq aux ~box ~path items
     | `Cst item0 ->
        code.c_cst
@@ -2382,7 +2384,7 @@ let dl_diff ~(box : box) (t : template) (diff : diff) (data : data) : dl = (* QU
 (* evaluation of expression and templates on environment data *)
 
 exception Unbound_var of var
-exception Invalid_expr of template expr (* this expression is ill-formed or ill-typed *)
+exception Invalid_expr of expr (* this expression is ill-formed or ill-typed *)
 exception Undefined_result of string (* to ignore parses where some expression is undefined *)
 (* special cases of undefined result *)
 exception Negative_integer
@@ -2390,7 +2392,7 @@ let _ =
   Printexc.register_printer
     (function
      | Unbound_var v -> Some ("unbound variable: " ^ string_of_var v)
-     | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr xp_template e)
+     | Invalid_expr e -> Some ("invalid expression: " ^ string_of_expr e)
      | Undefined_result msg -> Some ("undefined expression: " ^ msg)
      | Negative_integer -> Some ("negative integer")
      | _ -> None)
@@ -2635,9 +2637,7 @@ let reset_memoized_functions_apply () =
   reset_close_mask ()
 
   
-let apply_expr_gen
-      (apply : lookup:apply_lookup -> revpath -> 'a -> template result)
-      ~(lookup : apply_lookup) (p : revpath) (e : 'a expr) : template result = (* QUICK *)
+let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
   match e with
   | `Ref p ->
@@ -2645,57 +2645,58 @@ let apply_expr_gen
      Result.Ok (template_of_data ~mode:`Value d) (* TODO: compute expressions on data, and convert to template at the end *)
   | `ConstInt k -> Result.Ok (`Int k)
   | `ConstVec (k,l) -> Result.Ok (`Vec (`Int k, `Int l))
+  | `ConstColor c -> Result.Ok (`Color c)
   | `Plus (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Int i1, `Int i2 -> Result.Ok (`Int (i1 + i2))
         | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1+i2), `Int (j1+j2)))
         | _ -> Result.Error (Invalid_expr e))
   | `Minus (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Int i1, `Int i2 -> Result.Ok (`Int (i1-i2))
         | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1-i2), `Int (j1-j2)))
         | _ -> Result.Error (Invalid_expr e))
   | `IncrInt (e1,k) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Int i1 -> Result.Ok (`Int (i1 + k))
         | _ -> Result.Error (Invalid_expr e))
   | `DecrInt (e1,k) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Int i1 -> Result.Ok (`Int (i1 - k))
         | _ -> Result.Error (Invalid_expr e))
   | `IncrVec (e1,k,l) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 + k), `Int (j1 + l)))
         | _ -> Result.Error (Invalid_expr e))
   | `DecrVec (e1,k,l) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Int i1 -> Result.Ok (`Int (i1 - k))
         | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 - k), `Int (j1 - l)))
         | _ -> Result.Error (Invalid_expr e))
   | `Modulo (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
         | _ -> Result.Error (Invalid_expr e))
   | `ScaleUp (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (fun (d1,d2) ->
          match d2 with
@@ -2724,8 +2725,8 @@ let apply_expr_gen
              | _ -> Result.Error (Invalid_expr e))
          | _ -> Result.Error (Invalid_expr e))
   | `ScaleDown (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (fun (d1,d2) ->
          match d2 with
@@ -2764,8 +2765,8 @@ let apply_expr_gen
              | _ -> Result.Error (Invalid_expr e))
          | _ -> Result.Error (Invalid_expr e))
   | `ScaleTo (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (let aux_mask = function
         | `Mask m, `Vec (`Int new_h, `Int new_w) ->
@@ -2786,7 +2787,7 @@ let apply_expr_gen
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Size e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Grid g ->
@@ -2794,8 +2795,8 @@ let apply_expr_gen
            Result.Ok (`Vec (`Int h, `Int w))
         | _ -> Result.Error (Invalid_expr e))
   | `Crop (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `ShapeRectangle (`Vec (`Int rh, `Int rw), _, `Mask m)) when Mask_model.matches m `Border -> (* TODO: allow crop on Full rectangles as well ? *)
@@ -2804,7 +2805,7 @@ let apply_expr_gen
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Strip e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Grid g ->
@@ -2812,8 +2813,8 @@ let apply_expr_gen
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
@@ -2822,7 +2823,7 @@ let apply_expr_gen
            else Result.Error (Undefined_result "Corner: vectors on same row/column")
         | _ -> Result.Error (Invalid_expr e))
   | `Min le1 ->
-     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
      broadcast_list_result lres1
        (fun lt1 ->
          let| is_int, is_vec, mini, minj =
@@ -2840,7 +2841,7 @@ let apply_expr_gen
          | false, true -> Result.Ok (`Vec (`Int mini, `Int minj))
          | _ -> assert false)
   | `Max le1 ->
-     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
      broadcast_list_result lres1
        (fun lt1 ->
          let| is_int,is_vec,maxi,maxj =
@@ -2858,7 +2859,7 @@ let apply_expr_gen
          | false, true -> Result.Ok (`Vec (`Int maxi, `Int maxj))
          | _ -> assert false)
   | `Average le1 ->
-     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
      broadcast_list_result lres1
        (fun lt1 ->
          let| is_int,is_vec,n,sumi,sumj =
@@ -2882,8 +2883,8 @@ let apply_expr_gen
             else Result.Error (Undefined_result "Average: not an integer")
          | _ -> assert false) (* empty or ill-typed list *)
   | `Span (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Int i1, `Int i2 ->
@@ -2896,26 +2897,26 @@ let apply_expr_gen
            else Result.Ok (`Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1)))
         | _ -> Result.Error (Invalid_expr e))
   | `Norm e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (`Int i, `Int j) -> Result.Ok (`Int (i+j))
         | _ -> Result.Error (Invalid_expr e))
   | `Diag1 (e1,k) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i+j) mod k))
         | _ -> Result.Error (Invalid_expr e))
   | `Diag2 (e1,k) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i-j) mod k))
         | _ -> Result.Error (Invalid_expr e))
   | `LogAnd (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
@@ -2923,8 +2924,8 @@ let apply_expr_gen
            Result.Ok (`Mask m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogOr (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
@@ -2932,8 +2933,8 @@ let apply_expr_gen
            Result.Ok (`Mask m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogXOr (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
@@ -2941,8 +2942,8 @@ let apply_expr_gen
            Result.Ok (`Mask m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogAndNot (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
@@ -2950,7 +2951,7 @@ let apply_expr_gen
            Result.Ok (`Mask m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogNot e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Mask m1 ->
@@ -2958,14 +2959,14 @@ let apply_expr_gen
            Result.Ok (`Mask m)
         | _ -> Result.Error (Invalid_expr e))
   | `Stack le1 ->
-     let| lres1 = list_map_result (apply ~lookup p) le1 in
+     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
      broadcast_list_result lres1
        (fun lt1 ->
          let lg1 = List.map (function `Grid g1 -> g1 | _ -> assert false) lt1 in
          let| g = Grid.Transf.layers lg1 in
          Result.Ok (`Grid g))
   | `Area e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `ShapePoint _ -> Result.Ok (`Int 1)
@@ -2974,21 +2975,21 @@ let apply_expr_gen
         | `Grid g -> Result.Ok (`Int (g.height * g.width))
         | _ -> Result.Error (Invalid_expr e))
   | `Left e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (_, `Int j), `ShapeRectangle _) -> Result.Ok (`Int j)
         | `PosShape _ -> Result.Error (Undefined_result "Left: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `Right e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (_, `Int j), `ShapeRectangle (`Vec (_, `Int w), _, _)) -> Result.Ok (`Int (j+w-1))
         | `PosShape _ -> Result.Error (Undefined_result "Right: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `Center e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (_, `Int j), `ShapeRectangle (`Vec (_, `Int w), _, _)) ->
@@ -2998,21 +2999,21 @@ let apply_expr_gen
         | `PosShape _ -> Result.Error (Undefined_result "Center: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `Top e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (`Int i, _), `ShapeRectangle _) -> Result.Ok (`Int i)
         | `PosShape _ -> Result.Error (Undefined_result "Top: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `Bottom e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (`Int i, _), `ShapeRectangle (`Vec (`Int h, _), _, _)) -> Result.Ok (`Int (i+h-1))
         | `PosShape _ -> Result.Error (Undefined_result "Bottom: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `Middle e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `PosShape (`Vec (`Int i, _), `ShapeRectangle (`Vec (`Int h, _), _, _)) ->
@@ -3022,34 +3023,34 @@ let apply_expr_gen
         | `PosShape _ -> Result.Error (Undefined_result "Middle: not a rectangle")
         | _ -> Result.Error (Invalid_expr e))
   | `ProjI e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (`Int i, _) -> Result.Ok (`Vec (`Int i, `Int 0))
         | _ -> Result.Error (Invalid_expr e))
   | `ProjJ e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Vec (_, `Int j) -> Result.Ok (`Vec (`Int 0, `Int j))
         | _ -> Result.Error (Invalid_expr e))
   | `MaskOfGrid e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Grid g -> Result.Ok (`Mask (Grid.Mask.from_grid g))
         | _ -> Result.Error (Invalid_expr e))
   | `GridOfMask (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Mask m, `Color c ->
            Result.Ok (`Grid (Grid.Mask.to_grid m c))
         | _ -> Result.Error (Invalid_expr e))
   | `TranslationOnto (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
     (fun (d1,d2) ->
       match get_pos d1, get_size d1, get_pos d2, get_size d2 with
@@ -3067,7 +3068,7 @@ let apply_expr_gen
          Result.Ok (`Vec (`Int ti, `Int tj))
       | _ -> Result.Error (Invalid_expr e))
   | `Tiling (e1,k,l) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (let aux_mask = function
           | `Mask m ->
@@ -3088,8 +3089,8 @@ let apply_expr_gen
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `PeriodicFactor (mode,e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Color bgcolor, d2 ->
@@ -3115,9 +3116,9 @@ let apply_expr_gen
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `FillResizeAlike (mode,e1,e2,e3) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
-     let| res3 = apply ~lookup p e3 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
+     let| res3 = apply_expr ~lookup p e3 in
      broadcast_list_result [res1;res2;res3]
        (function
         | [`Color bgcolor; `Vec (`Int h, `Int w); d3] when h > 0 && w > 0 ->
@@ -3147,9 +3148,9 @@ let apply_expr_gen
             | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `Compose (e1,e2,e3) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
-     let| res3 = apply ~lookup p e3 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
+     let| res3 = apply_expr ~lookup p e3 in
      broadcast_list_result [res1;res2;res3]
        (function
         | [`Color c_mask;d1;d2] ->
@@ -3186,24 +3187,24 @@ let apply_expr_gen
            | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (apply_symmetry ~lookup sym role_e1 e)
   | `UnfoldSym (sym_matrix,e1) ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (unfold_symmetry sym_matrix e)
   | `CloseSym (sym_matrix,e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (fun (d1,d2) ->
          match d1 with
          | `Color bgcolor -> close_symmetry sym_matrix bgcolor e d2
          | _ -> Result.Error (Invalid_expr e))
   | `TranslationSym (sym,e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (fun (d1,d2) ->
          match get_pos d1, get_size d1, get_pos d2, get_size d2 with
@@ -3244,7 +3245,7 @@ let apply_expr_gen
             Result.Ok (`Vec (`Int ti, `Int tj))
          | _ -> Result.Error (Invalid_expr e))
   | `MajorityColor e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Grid g ->
@@ -3252,7 +3253,7 @@ let apply_expr_gen
            Result.Ok (`Color c)
         | _ -> Result.Error (Invalid_expr e))
   | `ColorCount e1 ->
-     let| res1 = apply ~lookup p e1 in
+     let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
         | `Grid g ->
@@ -3260,8 +3261,8 @@ let apply_expr_gen
            Result.Ok (`Int n)
         | _ -> Result.Error (Invalid_expr e))
   | `Coloring (e1,e2) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | d1, (`Color c as new_col) ->
@@ -3276,9 +3277,9 @@ let apply_expr_gen
             | _ -> aux d1)
         | _ -> Result.Error (Invalid_expr e))
   | `SwapColors (e1,e2,e3) ->
-     let| res1 = apply ~lookup p e1 in
-     let| res2 = apply ~lookup p e2 in
-     let| res3 = apply ~lookup p e3 in
+     let| res1 = apply_expr ~lookup p e1 in
+     let| res2 = apply_expr ~lookup p e2 in
+     let| res3 = apply_expr ~lookup p e3 in
      broadcast_list_result [res1; res2; res3]
        (function
         | [`Grid g; `Color c1; `Color c2] ->
@@ -3286,9 +3287,6 @@ let apply_expr_gen
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
 
-
-let apply_expr apply ~(env : data) e =
-  apply_expr_gen apply ~lookup:(lookup_of_env env) `Root e
   
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
@@ -3323,7 +3321,7 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
      let| rgrid = apply_template_gen ~lookup (p ++ `Grid) grid in
      let| rsize = apply_template_gen ~lookup (p ++ `Size) size in
      Result.Ok (`GridTiling (rgrid,rsize))
-  | #expr as e -> apply_expr_gen apply_template_gen ~lookup p e
+  | #expr as e -> apply_expr ~lookup p e
   | `Seq items ->
      let| applied_items =
        list_mapi_result
@@ -4734,7 +4732,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         (dl,p,role,t0,t,partial)::defs)
       tmap defs) in
   let defs = Common.prof "Model2.defs_refinements/first/by_expr" (fun () ->
-    let$ defs, (role_e,t) = defs, defs_expressions ~env_sig in
+    let$ defs, (role_e,e) = defs, defs_expressions ~env_sig in
+    let t = (e :> template) in             
     let data_fst = (* QUICK *)
       reads_fst
       |> List.filter_map
@@ -4823,7 +4822,7 @@ and defs_check_apply ~env (t : template) : template option =
   match apply_template ~env t with
   | Result.Ok t1 -> Some t1
   | Result.Error _ -> None
-and defs_expressions ~env_sig : (role_poly * template) list =
+and defs_expressions ~env_sig : (role_poly * expr) list =
   (* the [path option] is for the repeat context path, to be used in a For loop *)
   Common.prof "Model2.defs_expressions" (fun () -> (* QUICK *)
   if env_sig = [] then [] (* we are in the input model *)
@@ -4838,7 +4837,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       let$ res, i = res, [0;1;2] in
       (role, `Item (i,p))::res
     else res in
-  let exprs = ref ([] : (role_poly * template) list) in (* stack of expressions *)
+  let exprs = ref ([] : (role_poly * expr) list) in (* stack of expressions *)
   let quota = ref (!max_expressions) in (* bounding nb expressions because of combinatorial number in some tasks *)
   let push e = (* stacking an expression until quota exhausted *)
     exprs := e :: !exprs;
@@ -4856,7 +4855,7 @@ and defs_expressions ~env_sig : (role_poly * template) list =
   let _ =
     let _ = (* color constants *)
       let& c = Grid.all_colors in
-      push (`Color `X, `Color c) in
+      push (`Color `X, `ConstColor c) in
     let& (role1,e1) = exprs_0 in
     (* unary operators *)
     let _ = (* area(_) *)
@@ -4906,10 +4905,10 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       | `Mask | `Shape | `Layer ->
          let& mode = [`TradeOff; `Strict] in
          let bgcolor = 0 in
-         push (role1, `PeriodicFactor (mode, `Color bgcolor, e1))
+         push (role1, `PeriodicFactor (mode, `ConstColor bgcolor, e1))
       | `Grid ->
          let& mode = [`TradeOff; `Total; `Strict] in
-         let& bgcolor = [`Color Grid.black; `MajorityColor e1] in
+         let& bgcolor = [`ConstColor Grid.black; `MajorityColor e1] in
          push (role1, `PeriodicFactor (mode,bgcolor,e1))
       | _ -> () in
     let& (role2,e2) = exprs_0 in
@@ -5070,22 +5069,22 @@ and defs_expressions ~env_sig : (role_poly * template) list =
          (match role2 with
           | `Mask | `Shape | `Layer ->
              let& mode = [`TradeOff; `Strict] in
-             let bgcolor = `Color 1 in
+             let bgcolor = `ConstColor 1 in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
           | `Grid ->
              let& mode = [`TradeOff; `Total; `Strict] in
-             let& bgcolor = [`Color Grid.black; `MajorityColor e2] in
+             let& bgcolor = [`ConstColor Grid.black; `MajorityColor e2] in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
           | _ -> ())
       | _ -> () in
     let _ = (* Compose(c,e1,e1) *)
       match role1 with
       | `Mask | `Shape ->
-         push (role1, `Compose (`Color 1, e1, e1))
+         push (role1, `Compose (`ConstColor 1, e1, e1))
       | `Grid ->
          push (role1, `Compose (`MajorityColor e1, e1, e1));
          let& c = Grid.all_colors in
-         push (role1, `Compose (`Color c, e1, e1))
+         push (role1, `Compose (`ConstColor c, e1, e1))
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
@@ -5097,16 +5096,16 @@ and defs_expressions ~env_sig : (role_poly * template) list =
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& sym_seq = all_symmetry_close in
-         push (role1, `CloseSym (sym_seq, `Color Grid.black, e1)) (* bgcolor does not matter for masks *)
+         push (role1, `CloseSym (sym_seq, `ConstColor Grid.black, e1)) (* bgcolor does not matter for masks *)
       | _ -> () in
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
       | `Grid ->
          let& c1 = Grid.all_colors in
-         push (role1, `SwapColors (e1, `Color c1, `MajorityColor e1));
+         push (role1, `SwapColors (e1, `ConstColor c1, `MajorityColor e1));
          let& c2 = Grid.all_colors in
          if c1 > c2 (* symmetric operation *)
-         then push (role1, `SwapColors (e1, `Color c1, `Color c2))
+         then push (role1, `SwapColors (e1, `ConstColor c1, `ConstColor c2))
          else ()
       | _ -> () in
     let _ = (* not _ *)
