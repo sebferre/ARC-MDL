@@ -579,13 +579,13 @@ type template =
   | `Bool of bool
   | `Int of int
   | `Color of Grid.color
-  | `Grid of Grid.t
   | `Vec of template * template (* i, j *)
   | `Mask of Grid.t (* 0/1-colored grid *)
   | `MaskModel of Mask_model.t
   | `ShapePoint of template (* color *)
   | `ShapeRectangle of template * template * template (* size, color, mask *)
   | `PosShape of template * template (* pos, shape -> object *)
+  | `Grid of Grid.t
   | `GridBackground of template * template * template ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
   | `GridTiling of template * template (* grid, size *)
   | expr (* an expression that evaluates into a template *)
@@ -5170,7 +5170,8 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
              then []
              else [RSpe (p, `GridTiling (u_any, u_vec_any), false)])
     | `GridBackground (_,_,layers) ->
-       if ilist_length layers >= !max_nb_layers
+       let nb_layers = ilist_length layers in
+       if nb_layers >= !max_nb_layers
        then Myseq.empty
        else (
          (* TEST let su =
@@ -5198,7 +5199,10 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
                   let objs = [`Ref p_layer] in
                   aux_layers ~objs p `Root layers)
                 ps_layer) in
-         Myseq.concat [so; ss; sr; sp (* TEST ; su *)])
+         let refs = Myseq.concat [so; ss; sr; sp (* TEST ; su *)] in
+         if nb_layers <= 1
+         then Myseq.cons (RSpe (p, `GridTiling (u_any, u_vec_any), false)) refs
+         else refs)
     | `GridTiling (grid,size) ->
        aux (p ++ `Grid) grid
     | #expr -> Myseq.empty
