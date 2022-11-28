@@ -452,25 +452,20 @@ let broadcast_list_result (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b re
 
 type delta = Grid.pixel list (* pixels not explained by a template *)
 let delta0 = []
-       
+
 type data =
   [ `Bool of bool
   | `Int of int
   | `Color of Grid.color
-  | `Mask of Grid.t
-             * [ `None
-               | `Model of Mask_model.t
-               ]
   | `Vec of data * data (* i, j -> vec *)
-  | `Shape of Grid.t (* grid using no_color for out-of-shape pixels *)
-              * [ `Point of data (* color *)
-                | `Rectangle of data * data * data (* size, color, mask *)
-                ]
   | `PosShape of data * data (* pos, shape -> object *)
   | `Grid of Grid.t
              * [ `None
                | `Background of data * data * data ilist * delta (* size, color, layers (top first), delta *)
                | `Tiling of data * data (* grid, size *)
+               | `Point of data (* color *)
+               | `Rectangle of data * data * data (* size, color, mask *)
+               | `Model of Mask_model.t
                ]
   | `Seq of data list ]
 let data0 : data =
@@ -580,12 +575,11 @@ type template =
   | `Int of int
   | `Color of Grid.color
   | `Vec of template * template (* i, j *)
-  | `Mask of Grid.t (* 0/1-colored grid *)
+  | `Grid of Grid.t
   | `MaskModel of Mask_model.t
   | `ShapePoint of template (* color *)
   | `ShapeRectangle of template * template * template (* size, color, mask *)
   | `PosShape of template * template (* pos, shape -> object *)
-  | `Grid of Grid.t
   | `GridBackground of template * template * template ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
   | `GridTiling of template * template (* grid, size *)
   | expr (* an expression that evaluates into a template *)
@@ -726,15 +720,14 @@ let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Bool b -> xp_bool print b
   | `Int i -> xp_int print i
   | `Color c -> xp_color print c
-  | `Mask (m, `None) -> xp_grid print m
-  | `Mask (m, `Model mm) -> Mask_model.xp print mm
-  | `Grid (g, `None) -> xp_grid print g
   | `Vec (i,j) -> xp_vec xp_data print i j
-  | `Shape (g, `Point color) -> xp_point xp_data print color
-  | `Shape (g, `Rectangle (size,color,mask)) -> xp_rectangle xp_data print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_data print pos shape
-  | `Grid (g, `Background (size,color,layers,delta)) -> xp_background xp_data print size color layers delta
-  | `Grid (g, `Tiling (grid,size)) -> xp_tiling xp_data print grid size
+  | `Grid (g, `None) -> xp_grid print g
+  | `Grid (_, `Model mm) -> Mask_model.xp print mm
+  | `Grid (_, `Point color) -> xp_point xp_data print color
+  | `Grid (_, `Rectangle (size,color,mask)) -> xp_rectangle xp_data print size color mask
+  | `Grid (_, `Background (size,color,layers,delta)) -> xp_background xp_data print size color layers delta
+  | `Grid (_, `Tiling (grid,size)) -> xp_tiling xp_data print grid size
   | `Seq items ->
      Xprint.bracket
        ("<\n\t", " >")
@@ -879,10 +872,9 @@ let rec xp_template (print : Xprint.t) : template -> unit = function
   | `Bool b -> xp_bool print b
   | `Int i -> xp_int print i
   | `Color c -> xp_color print c
-  | `Mask m -> xp_mask print m
-  | `MaskModel mm -> Mask_model.xp print mm
-  | `Grid g -> xp_grid print g
   | `Vec (i,j) -> xp_vec xp_template print i j
+  | `MaskModel mm -> Mask_model.xp print mm
+  | `Grid g -> xp_grid print g (* xp_mask print m *)
   | `ShapePoint color -> xp_point xp_template print color
   | `ShapeRectangle (size,color,mask) -> xp_rectangle xp_template print size color mask
   | `PosShape (pos,shape) -> xp_pos_shape xp_template print pos shape
@@ -1004,7 +996,7 @@ let rec expr_dim (e : expr) : dim =
     
 let rec template_dim : template -> dim = function
   | `Any -> Item
-  | `Bool _ | `Int _ | `Color _ | `Mask _ | `MaskModel _ | `Grid _ -> Item
+  | `Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _ -> Item
   | `Vec (i,j) -> max (template_dim i) (template_dim j)
   | `ShapePoint color -> template_dim color
   | `ShapeRectangle (size,color,mask) -> max (template_dim size) (max (template_dim color) (template_dim mask))
@@ -1114,13 +1106,13 @@ and find_data_field (f : field) (d1 : data) : data option =
   match f, d1 with
   | `I, `Vec (i,j) -> Some i
   | `J, `Vec (i,j) -> Some j
-  | `Color, `Shape (_, `Point color) -> Some color
-  | `Size, `Shape (_, `Rectangle (size,color,mask)) -> Some size
-  | `Color, `Shape (_, `Rectangle (size,color,mask)) -> Some color
-  | `Mask, `Shape (_, `Rectangle (size,color,mask)) -> Some mask
   | `Pos, `PosShape (pos,shape) -> Some pos
   | `Shape, `PosShape (pos,shape) -> Some shape
   | `Size, `Grid (g, `None) -> Some (`Vec (`Int g.Grid.height, `Int g.Grid.width))
+  | `Color, `Grid (_, `Point color) -> Some color
+  | `Size, `Grid (_, `Rectangle (size,color,mask)) -> Some size
+  | `Color, `Grid (_, `Rectangle (size,color,mask)) -> Some color
+  | `Mask, `Grid (_, `Rectangle (size,color,mask)) -> Some mask
   | `Size, `Grid (_, `Background (size,color,layers,_delta)) -> Some size
   | `Color, `Grid (_, `Background (size,color,layers,_delta)) -> Some color
   | `Layer lp, `Grid (_, `Background (size,color,layers,_delta)) -> find_ilist lp layers
@@ -1162,7 +1154,7 @@ let rec fold_template (f : 'b -> revpath -> template -> template list (* ancestr
   let t_ancestry = t::ancestry in
   match t with
   | `Any -> acc
-  | `Bool _ | `Int _ | `Color _ | `Mask _ | `MaskModel _ | `Grid _ -> acc
+  | `Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _ -> acc
   | `Vec (i,j) ->
      let acc = fold_template f acc (p ++ `I) i t_ancestry in
      let acc = fold_template f acc (p ++ `J) j t_ancestry in
@@ -1217,24 +1209,15 @@ let rec template_of_data ~(mode : [`Value | `Pattern]) : data -> template = func
   | (`Bool _ | `Int _ | `Color _ as v) -> v
   | `Vec (i,j) ->
      `Vec (template_of_data ~mode i, template_of_data ~mode j)
-  | `Mask (m, patt) ->
-     (match mode, patt with
-      | `Value, _
-        | _, `None -> `Mask m
-      | `Pattern, `Model mm -> `MaskModel mm)
-  | `Shape (g, patt) ->
-     (match mode, patt with
-      (* | `Value, _ -> `Grid g *)
-      | _ (* `Pattern *), `Point color ->
-         `ShapePoint (template_of_data ~mode color)
-      | _ (* `Pattern *), `Rectangle (size,color,mask) ->
-         `ShapeRectangle (template_of_data ~mode size, template_of_data ~mode color, template_of_data ~mode mask))
   | `PosShape (pos,shape) ->
      `PosShape (template_of_data ~mode pos, template_of_data ~mode shape)
   | `Grid (g, patt) ->
      (match mode, patt with
-      | `Value, _
-        | _, `None -> `Grid g
+      | `Pattern, `Model mm -> `MaskModel mm
+      | _ (* `Pattern *), `Point color ->
+         `ShapePoint (template_of_data ~mode color)
+      | _ (* `Pattern *), `Rectangle (size,color,mask) ->
+         `ShapeRectangle (template_of_data ~mode size, template_of_data ~mode color, template_of_data ~mode mask)
       | `Pattern, `Background (size,color,layers,delta) ->
          `GridBackground
            (template_of_data ~mode size,
@@ -1243,13 +1226,14 @@ let rec template_of_data ~(mode : [`Value | `Pattern]) : data -> template = func
       | `Pattern, `Tiling (grid,size) ->
          `GridTiling
            (template_of_data ~mode grid,
-            template_of_data ~mode size))
+            template_of_data ~mode size)
+      | _ -> `Grid g)
   | `Seq items -> `Seq (List.map (template_of_data ~mode) items)
   
 let rec template_is_ground : template -> bool = function
   (* returns true if the template evaluates into ground data, hence can be casted as [data]  *)
   | `Any -> false
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ | `MaskModel _ | `Grid _) -> true
+  | (`Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _) -> true
   | `Vec (i,j) -> template_is_ground i && template_is_ground j
   | `ShapePoint c -> template_is_ground c
   | `ShapeRectangle (s,c,m) -> template_is_ground s && template_is_ground c && template_is_ground m
@@ -1291,7 +1275,8 @@ let signature_of_kind (sg : signature) (k : kind) : revpath list =
   | Some ps -> ps
   | None -> []
 
-let rec root_template_of_data ~(in_output : bool) (d : data) : (template * bool (* partial *)) list = (* QUICK *)
+let rec root_template_of_data ~(in_output : bool) (role : role) (d : data) : (template * bool (* partial *)) list = (* QUICK *)
+  (* TODO: take path/role into accound *)
   match d with
   | `Bool _ -> []
   | `Int i as d ->
@@ -1300,18 +1285,21 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : (template * bool 
      else [] (* position- and size-invariance of inputs *)
   | `Color _ as d -> [(d :> template), false] (* colors can be seen as patterns *)
   | `Vec _ -> [`Vec (u_cst, u_cst), false]
-  | `Mask (m, `None) -> [`Mask m, false]
-  | `Mask (m, `Model mm) -> [`MaskModel mm, false; `Mask m, false]
-  | `Shape (_, `Point _) -> [`ShapePoint u_cst, false]
-  | `Shape (_, `Rectangle _) -> [`ShapeRectangle (u_vec_cst, u_cst, u_cst), false]
   | `PosShape _ -> [`PosShape (u_vec_cst, u_cst), false]
-  | `Grid _ -> [] (* no literal grids in model *)
+  | `Grid (g, `None) ->
+     (match role with
+      | `Mask -> [`Grid g, false]
+      | _ -> []) (* no literal grids in models, except masks *)
+  | `Grid (m, `Model mm) -> [`MaskModel mm, false; `Grid m, false]
+  | `Grid (_, `Point _) -> [`ShapePoint u_cst, false]
+  | `Grid (_, `Rectangle _) -> [`ShapeRectangle (u_vec_cst, u_cst, u_cst), false]
+  | `Grid _ -> []
   | `Seq [] -> []
   | `Seq (item::items) ->
      let n, common_patterns =
        List.fold_left
          (fun (n,ltk) item ->
-           let item_patterns = root_template_of_data ~in_output item in
+           let item_patterns = root_template_of_data ~in_output role item in
            n+1,
            List.filter_map
              (fun (t,k) ->
@@ -1320,7 +1308,7 @@ let rec root_template_of_data ~(in_output : bool) (d : data) : (template * bool 
                else None)
              ltk)
          (1,
-          root_template_of_data ~in_output item
+          root_template_of_data ~in_output role item
           |> List.map (fun (t,_) -> t, 1))
          items in
      common_patterns
@@ -1377,25 +1365,6 @@ let rec matcher_template_aux (t : template) : matcher =
            | `Color dc -> dc = c, matcher_color
            | _ -> false, matcher_fail) in
      matcher_color
-  | `Mask m ->
-     let rec matcher_mask =
-       Matcher (function
-           | `Mask (dm, _) -> Grid.same dm m, matcher_mask
-           | _ -> false, matcher_fail) in
-     matcher_mask
-  | `MaskModel mm ->
-     let rec matcher_mask =
-       Matcher (function
-           | `Mask (dm, `None) -> Mask_model.matches dm mm, matcher_mask
-           | `Mask (dm, `Model dmm) -> dmm = mm, matcher_mask
-           | _ -> false, matcher_fail) in
-     matcher_mask
-  | `Grid g ->
-     let rec matcher_grid =
-       Matcher (function
-           | `Grid (dg, _) -> Grid.same g dg, matcher_grid
-           | _ -> false, matcher_fail) in
-     matcher_grid
   | `Vec (i,j) ->
      let rec matcher_vec (Matcher matcher_i) (Matcher matcher_j) =
        Matcher (function
@@ -1405,24 +1374,6 @@ let rec matcher_template_aux (t : template) : matcher =
               ok1 && ok2, matcher_vec next_i next_j
            | _ -> false, matcher_fail) in
      matcher_vec (matcher_template_aux i) (matcher_template_aux j)
-  | `ShapePoint color ->
-     let rec matcher_point (Matcher matcher_color) =
-       Matcher (function
-           | `Shape (_, `Point dcolor) ->
-              let ok1, next_color = matcher_color dcolor in
-              ok1, matcher_point next_color
-           | _ -> false, matcher_fail) in
-     matcher_point (matcher_template_aux color)
-  | `ShapeRectangle (size,color,mask) ->
-     let rec matcher_rectangle (Matcher matcher_size) (Matcher matcher_color) (Matcher matcher_mask) =
-       Matcher (function
-           | `Shape (_, `Rectangle (dsize,dcolor,dmask)) ->
-              let ok1, next_size = matcher_size dsize in
-              let ok2, next_color = matcher_color dcolor in
-              let ok3, next_mask = matcher_mask dmask in
-              ok1 && ok2 && ok3, matcher_rectangle next_size next_color next_mask
-           | _ -> false, matcher_fail) in
-     matcher_rectangle (matcher_template_aux size) (matcher_template_aux color) (matcher_template_aux mask)
   | `PosShape (pos,shape) ->
      let rec matcher_ps (Matcher matcher_pos) (Matcher matcher_shape) =
        Matcher (function
@@ -1432,6 +1383,37 @@ let rec matcher_template_aux (t : template) : matcher =
               ok1 && ok2, matcher_ps next_pos next_shape
            | _ -> false, matcher_fail) in
      matcher_ps (matcher_template_aux pos) (matcher_template_aux shape)
+  | `Grid g ->
+     let rec matcher_grid =
+       Matcher (function
+           | `Grid (dg, _) -> Grid.same g dg, matcher_grid
+           | _ -> false, matcher_fail) in
+     matcher_grid
+  | `MaskModel mm ->
+     let rec matcher_mask =
+       Matcher (function
+           | `Grid (dm, `None) -> Mask_model.matches dm mm, matcher_mask
+           | `Grid (dm, `Model dmm) -> dmm = mm, matcher_mask
+           | _ -> false, matcher_fail) in
+     matcher_mask
+  | `ShapePoint color ->
+     let rec matcher_point (Matcher matcher_color) =
+       Matcher (function
+           | `Grid (_, `Point dcolor) ->
+              let ok1, next_color = matcher_color dcolor in
+              ok1, matcher_point next_color
+           | _ -> false, matcher_fail) in
+     matcher_point (matcher_template_aux color)
+  | `ShapeRectangle (size,color,mask) ->
+     let rec matcher_rectangle (Matcher matcher_size) (Matcher matcher_color) (Matcher matcher_mask) =
+       Matcher (function
+           | `Grid (_, `Rectangle (dsize,dcolor,dmask)) ->
+              let ok1, next_size = matcher_size dsize in
+              let ok2, next_color = matcher_color dcolor in
+              let ok3, next_mask = matcher_mask dmask in
+              ok1 && ok2 && ok3, matcher_rectangle next_size next_color next_mask
+           | _ -> false, matcher_fail) in
+     matcher_rectangle (matcher_template_aux size) (matcher_template_aux color) (matcher_template_aux mask)
   | `GridBackground (size,color,layers) -> (* TODO: allow for sequences like other patts *) 
      let Matcher matcher_size = matcher_template_aux size in
      let Matcher matcher_color = matcher_template_aux color in
@@ -2062,13 +2044,11 @@ let template_delta =
   `PosShape (`Vec (`Int 0, `Int 0), `ShapeRectangle (`Vec (`Int 1, `Int 1), `Color 1, `MaskModel `Full))
 let data_delta =
   let g = Grid.make 1 1 1 in
-  `PosShape (`Vec (`Int 0, `Int 0), `Shape (g, `Rectangle (`Vec (`Int 1, `Int 1), `Color 1, `Mask (g, `Model `Full))))
+  `PosShape (`Vec (`Int 0, `Int 0), `Grid (g, `Rectangle (`Vec (`Int 1, `Int 1), `Color 1, `Grid (g, `Model `Full))))
 let dl_delta dl ~box ~path nb_delta object_delta =
   Mdl.Code.universal_int_star nb_delta -. 1.
   +. float nb_delta
      *. dl ~box ~path:(path ++ `Layer `Root) object_delta (* all delta points treated alike *)
-
-  
 let dl_Grid_Background dl ~box ~path size color layers nb_delta object_delta =
   let box_height =
     match size with
@@ -2089,6 +2069,28 @@ let dl_Grid_Tiling dl ~box ~path grid size =
   +. dl ~box ~path:(path ++ `Grid) grid
   +. dl ~box ~path:(path ++ `Size) size (* TODO: adapt box ? *)
 
+let dl_Grid dl object_delta ~box ~path g =
+  match path_role path with
+  | `Mask ->
+     dl_Mask ~box ~path g
+  | `Shape ->
+     let h, w = Grid.dims g in
+     let c = raise TODO in
+     let m = raise TODO in
+     dl_Shape_Rectangle dl ~box ~path
+       (`Vec (`Int h, `Int w))
+       (`Color c)
+       (`Grid m)
+  | `Grid ->
+     let h, w = Grid.dims g in
+     dl_Grid_Background dl ~box ~path
+       (`Vec (`Int h, `Int w))
+       (`Color Grid.black)
+       `Nil
+       (h * w) object_delta
+  | _ -> assert false 
+
+  
 let dl_Seq dl ~box ~path items =
   let n, dl_items =
     let$ (i,sum_dl), item = (0,0.), items in
@@ -2106,13 +2108,12 @@ let dl_template ~(env_sig : signature) ~(box : box) ?(path = `Root) (t : templat
     | `Bool b -> code.c_patt +. dl_Bool ~box ~path b
     | `Int n -> code.c_patt +. dl_Int ~box ~path n
     | `Color c -> code.c_patt +. dl_Color ~box ~path c
-    | `Mask m -> code.c_patt +. dl_Mask ~box ~path m
+    | `Grid g -> code.c_patt +. dl_Grid aux template_delta ~box ~path g
     | `MaskModel mm -> code.c_patt +. dl_Mask_Model ~box ~path mm
     | `Vec (i,j) -> code.c_patt +. dl_Vec aux ~box ~path i j
     | `ShapePoint color -> code.c_patt +. dl_Shape_Point aux ~box ~path color
     | `ShapeRectangle (size,color,mask) -> code.c_patt +. dl_Shape_Rectangle aux ~box ~path size color mask
     | `PosShape (pos,shape) -> code.c_patt +. dl_PosShape aux ~box ~path pos shape
-    | `Grid g -> assert false (* no explicit grids in models *)
     | `GridBackground (size,color,layers) -> code.c_patt +. dl_Grid_Background aux ~box ~path size color layers 0 template_delta
     | `GridTiling (grid,size) -> code.c_patt +. dl_Grid_Tiling aux ~box ~path grid size
     | #expr as e -> code.c_expr +. dl_expr ~env_sig ~box ~path e
@@ -2139,25 +2140,17 @@ let rec dl_data ~box ~path (d : data) : dl =
   | `Bool b -> dl_Bool ~box ~path b
   | `Int n -> dl_Int ~box ~path n
   | `Color c -> dl_Color ~box ~path c
-  | `Mask (m, `None) -> dl_Mask ~box ~path m
-  | `Mask (_, `Model mm) -> dl_Mask_Model ~box ~path mm
   | `Vec (i,j) -> dl_Vec dl_data ~box ~path i j
-  | `Shape (_, `Point color) ->
-     dl_Shape_Point dl_data ~box ~path color
-  | `Shape (_, `Rectangle (size,color,mask)) ->
-     dl_Shape_Rectangle dl_data ~box ~path size color mask
   | `PosShape (pos,shape) ->
      dl_PosShape dl_data ~box ~path pos shape
-  | `Grid (g, `None) -> (* treated like a background with delta pixels for all pixels *)
-     let h, w = Grid.dims g in
-     dl_Grid_Background dl_data ~box ~path
-       (`Vec (`Int h, `Int w))
-       (`Color Grid.black)
-       `Nil
-       (h * w) data_delta     
-  | `Grid (_, `Background (size,color,layers,delta)) ->
-     dl_Grid_Background dl_data ~box ~path size color layers (List.length delta) data_delta
-  | `Grid (_, `Tiling (grid,size)) -> dl_Grid_Tiling dl_data ~box ~path grid size
+  | `Grid (g, patt) ->
+     (match patt with
+      | `None -> dl_Grid dl_data data_delta ~box ~path g
+      | `Model mm -> dl_Mask_Model ~box ~path mm
+      | `Point color -> dl_Shape_Point dl_data ~box ~path color
+      | `Rectangle (size,color,mask) -> dl_Shape_Rectangle dl_data ~box ~path size color mask
+      | `Background (size,color,layers,delta) -> dl_Grid_Background dl_data ~box ~path size color layers (List.length delta) data_delta
+      | `Tiling (grid,size) -> dl_Grid_Tiling dl_data ~box ~path grid size)
   | `Seq items -> raise TODO
 let dl_data, reset_dl_data =
   let mem = Hashtbl.create 1003 in
@@ -2251,7 +2244,7 @@ let rec encoder_prefix (encoder_main : encoder) (encoders_item : encoder list) :
 let rec encoder_template_aux ~(path : revpath) (t : template) : encoder =
   match t with
   | `Any -> encoder_any ~path
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ | `MaskModel _ | `Grid _) -> encoder_zero (* nothing to code *)
+  | (`Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _) -> encoder_zero (* nothing to code *)
   | `Vec (i,j) ->
      let rec encoder_vec (Encoder encoder_i) (Encoder encoder_j) =
        Encoder (fun ~box ->
@@ -2268,7 +2261,7 @@ let rec encoder_template_aux ~(path : revpath) (t : template) : encoder =
      let rec encoder_point (Encoder encoder_color) =
        Encoder (fun ~box ->
            function
-           | `Shape (_, `Point dcolor) ->
+           | `Grid (_, `Point dcolor) ->
               let dl1, next_color = encoder_color ~box dcolor in
               dl1, encoder_point next_color
            | _ -> assert false) in
@@ -2278,7 +2271,7 @@ let rec encoder_template_aux ~(path : revpath) (t : template) : encoder =
        let rec encoder_rectangle (Encoder encoder_size) (Encoder encoder_color) (Encoder encoder_mask) =
          Encoder (fun ~box ->
              function
-             | `Shape (_, `Rectangle (dsize,dcolor,dmask)) ->
+             | `Grid (_, `Rectangle (dsize,dcolor,dmask)) ->
                 let dl1, next_size = encoder_size ~box dsize in
                 let dl2, next_color = encoder_color ~box dcolor in
                 let dl3, next_mask = encoder_mask ~box dmask in
@@ -2467,27 +2460,17 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
          | `Rotate270 -> -j, i in
        `Vec (`Int i', `Int j')
     | _ -> assert false in
-  let sym_mask = function
-    | `Mask m ->
-       let m' = grid_sym sym m in
-       Result.Ok (`Mask m')
-    | `MaskModel mm ->
-       let| mm' = mask_model_sym sym mm in
-       Result.Ok (`MaskModel mm')
-    | _ -> assert false in
-  let sym_shape = function
-(*    | `Grid g ->
-       let g' = grid_sym sym g in
-       Result.Ok (`Grid g') *)
-    | `ShapePoint col -> Result.Ok (`ShapePoint col)
-    | `ShapeRectangle (size, col, mask) ->
-       let| mask' = sym_mask mask in
-       Result.Ok (`ShapeRectangle (sym_size size, col, mask'))
-    | _ -> assert false in
-  let sym_grid = function
+  let rec sym_grid = function
     | `Grid g ->
        let g' = grid_sym sym g in
        Result.Ok (`Grid g')
+    | `MaskModel mm ->
+       let| mm' = mask_model_sym sym mm in
+       Result.Ok (`MaskModel mm')
+    | `ShapePoint col -> Result.Ok (`ShapePoint col)
+    | `ShapeRectangle (size, col, mask) ->
+       let| mask' = sym_grid mask in
+       Result.Ok (`ShapeRectangle (sym_size size, col, mask'))
 (*    | `GridBackground _ ->
        Result.Error (Undefined_result "ApplySym not defined on Background")
     | `GridTiling _ ->
@@ -2500,12 +2483,10 @@ let apply_symmetry ~lookup (sym : symmetry) (role_e1 : role) e d1 = (* : templat
   | `Vec `Pos, _ -> Result.Ok (sym_pos d1)
   | `Vec (`Size _), _ -> Result.Ok (sym_size d1)
   | `Vec `Move, _ -> Result.Ok (sym_move d1)
-  | `Mask, _ -> sym_mask d1
-  | `Shape, _ -> sym_shape d1
   | `Layer, `PosShape (pos, shape) ->
-     let| shape' = sym_shape shape in
+     let| shape' = sym_grid shape in
      Result.Ok (`PosShape (pos, shape')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
-  | `Grid, _ -> sym_grid d1
+  | (`Mask | `Shape | `Grid), _ -> sym_grid d1
   | _ -> Result.Error (Invalid_expr e)
 
 let unfold_any
@@ -2554,32 +2535,23 @@ let unfold_grid sym_matrix g =
 let unfold_grid, reset_unfold_grid =
   Common.memoize2 ~size:101 unfold_grid                     
 
-let unfold_mask sym_matrix = function
-  | `Mask m ->
-     let| m' = unfold_grid sym_matrix m in
-     Result.Ok (`Mask m')
-  | `MaskModel `Full -> Result.Ok (`MaskModel `Full)
-  | _ -> Result.Error (Undefined_result "Model2.unfold_mask: not a custom mask")
-let unfold_mask, reset_unfold_mask =
-  Common.memoize2 ~size:101 unfold_mask
-
-let unfold_symmetry (sym_matrix : symmetry list list) =
+let rec unfold_symmetry (sym_matrix : symmetry list list) =
   fun e d ->
   match d with
-  | (`Mask _ | `MaskModel _ as mask) -> unfold_mask sym_matrix mask
+  | `Grid g ->
+     let| g' = unfold_grid sym_matrix g in
+     Result.Ok (`Grid g')
+  | `MaskModel `Full -> Result.Ok (`MaskModel `Full)
   | `ShapePoint _ -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `ShapeRectangle (size, col, mask) ->
      let| size = unfold_size sym_matrix size in
-     let| mask = unfold_mask sym_matrix mask in
+     let| mask = unfold_symmetry sym_matrix e mask in
      Result.Ok (`ShapeRectangle (size, col, mask))
   | `PosShape (_, `ShapePoint _) -> Result.Error (Undefined_result "Model2.unfold_symmetry: point")
   | `PosShape (pos, `ShapeRectangle (size, col, mask)) ->
      let| size = unfold_size sym_matrix size in
-     let| mask = unfold_mask sym_matrix mask in
+     let| mask = unfold_symmetry sym_matrix e mask in
      Result.Ok (`PosShape (pos, `ShapeRectangle (size, col, mask)))
-  | `Grid g ->
-     let| g' = unfold_grid sym_matrix g in
-     Result.Ok (`Grid g')
   | _ -> Result.Error (Invalid_expr e)
 
        
@@ -2604,37 +2576,26 @@ let close_grid sym_seq bgcolor g =
 let close_grid, reset_close_grid =
   Common.memoize3 ~size:101 close_grid
 
-let close_mask sym_seq = function
-  | `Mask m ->
-     let| m' = close_grid sym_seq 0 m in
-     Result.Ok (`Mask m)
-  | `MaskModel `Full -> Result.Ok (`MaskModel `Full)
-  | _ -> Result.Error (Undefined_result "Model2.close_symmetry: not a custom mask")
-let close_mask, reset_close_mask =
-  Common.memoize2 ~size:101 close_mask
-
-let close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
+let rec close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
   fun e d ->
   match d with
-  | (`Mask _ | `MaskModel _ as mask) -> close_mask sym_seq mask
-  | `ShapePoint _ -> Result.Error (Undefined_result "Model2.close_symmetry: point")
-  | `ShapeRectangle (size, col, mask) ->
-     let| mask = close_mask sym_seq mask in
-     Result.Ok (`ShapeRectangle (size, col, mask))
-  | `PosShape (pos, `ShapeRectangle (size, col, mask)) ->
-     let| mask = close_mask sym_seq mask in
-     Result.Ok (`PosShape (pos, `ShapeRectangle (size, col, mask)))
-  | `PosShape (_, `ShapePoint _) -> Result.Error (Undefined_result "Model2.close_symmetry: point")
   | `Grid g ->
      let| g = close_grid sym_seq bgcolor g in
      Result.Ok (`Grid g)
+  | `MaskModel `Full -> Result.Ok (`MaskModel `Full)
+  | `ShapePoint _ -> Result.Error (Undefined_result "Model2.close_symmetry: point")
+  | `ShapeRectangle (size, col, mask) ->
+     let| mask = close_symmetry sym_seq 0 e mask in
+     Result.Ok (`ShapeRectangle (size, col, mask))
+  | `PosShape (pos, `ShapeRectangle (size, col, mask)) ->
+     let| mask = close_symmetry sym_seq 0 e mask in
+     Result.Ok (`PosShape (pos, `ShapeRectangle (size, col, mask)))
+  | `PosShape (_, `ShapePoint _) -> Result.Error (Undefined_result "Model2.close_symmetry: point")
   | _ -> Result.Error (Invalid_expr e)
 
 let reset_memoized_functions_apply () =
   reset_unfold_grid ();
-  reset_unfold_mask ();
-  reset_close_grid ();
-  reset_close_mask ()
+  reset_close_grid ()
 
   
 let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template result = (* QUICK *)
@@ -2703,26 +2664,21 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
          | `Int 0 -> Result.Error (Invalid_argument "ScaleUp: k=0") 
          | `Int k ->
             assert (k > 0);
-            let aux_mask = function
-              | `Mask m ->
-                 let| m' = Grid.Transf.scale_up k k m in
-                 Result.Ok (`Mask m')
-              | `MaskModel `Full ->
-                 Result.Ok (`MaskModel `Full)
-              | _ -> Result.Error (Invalid_expr e) in
-            (match d1 with
+            let rec aux = function
              | `Int i1 -> Result.Ok (`Int (i1 * k))
              | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 * k), `Int (j1 * k)))
-             | (`Mask _ | `MaskModel _ as mask) -> aux_mask mask
-             | `ShapePoint col ->
-                Result.Ok (`ShapeRectangle (`Vec (`Int k, `Int k), col, `MaskModel `Full))
-             | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask) ->
-                let| mask' = aux_mask mask in
-                Result.Ok (`ShapeRectangle (`Vec (`Int (h * k), `Int (w * k)), col, mask'))
              | `Grid g ->
                 let| g' = Grid.Transf.scale_up k k g in
                 Result.Ok (`Grid g')
-             | _ -> Result.Error (Invalid_expr e))
+             | `MaskModel `Full ->
+                Result.Ok (`MaskModel `Full)
+             | `ShapePoint col ->
+                Result.Ok (`ShapeRectangle (`Vec (`Int k, `Int k), col, `MaskModel `Full))
+             | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask) ->
+                let| mask' = aux mask in
+                Result.Ok (`ShapeRectangle (`Vec (`Int (h * k), `Int (w * k)), col, mask'))
+             | _ -> Result.Error (Invalid_expr e) in
+            aux d1
          | _ -> Result.Error (Invalid_expr e))
   | `ScaleDown (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -2733,14 +2689,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
          | `Int 0 -> Result.Error (Invalid_argument "ScaleDown: k=0") 
          | `Int k ->
             assert (k > 0);
-            let aux_mask = function
-              | `Mask m ->
-                 let| m' = Grid.Transf.scale_down k k m in
-                 Result.Ok (`Mask m')
-              | `MaskModel `Full ->
-                 Result.Ok (`MaskModel `Full)
-              | _ -> Result.Error (Invalid_expr e) in
-            (match d1 with
+            let rec aux = function
              | `Int i1 ->
                 let rem = i1 mod k in
                 if rem = 0 || rem = k - 1 (* account for separators *)
@@ -2751,41 +2700,39 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
                 if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
                 then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
                 else Result.Error (Undefined_result "ScaleDown: not an integer")
-             | (`Mask _ | `MaskModel _ as mask) -> aux_mask mask
+             | `Grid g ->
+                let| g' = Grid.Transf.scale_down k k g in
+                Result.Ok (`Grid g')
+             | `MaskModel `Full ->
+                Result.Ok (`MaskModel `Full)
              | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask) ->
                 let remh, remw = h mod k, w mod k in
                 if remh = remw && (remh = 0 || remh = k-1) (* account for separators *)
                 then
-                  let| mask' = aux_mask mask in
+                  let| mask' = aux mask in
                   Result.Ok (`ShapeRectangle (`Vec (`Int (h / k), `Int (w / k)), col, mask'))
                 else Result.Error (Undefined_result "ScaleDown: not an integer size")
-             | `Grid g ->
-                let| g' = Grid.Transf.scale_down k k g in
-                Result.Ok (`Grid g')
-             | _ -> Result.Error (Invalid_expr e))
+             | _ -> Result.Error (Invalid_expr e) in
+            aux d1
          | _ -> Result.Error (Invalid_expr e))
   | `ScaleTo (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
-       (let aux_mask = function
-        | `Mask m, `Vec (`Int new_h, `Int new_w) ->
-           let| m' = Grid.Transf.scale_to new_h new_w m in
-           Result.Ok (`Mask m')
-        | `MaskModel `Full, _ ->
-           Result.Ok (`MaskModel `Full)
-        | _ -> Result.Error (Invalid_expr e) in
-        function
-        | (`Mask _ | `MaskModel _ as mask), size -> aux_mask (mask,size)
-        | `ShapePoint col, size ->
-           Result.Ok (`ShapeRectangle (size, col, `MaskModel `Full))
-        | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask), size ->
-           let| mask' = aux_mask (mask,size) in
-           Result.Ok (`ShapeRectangle (size, col, mask'))
-        | `Grid g, `Vec (`Int new_h, `Int new_w) ->
-           let| g' = Grid.Transf.scale_to new_h new_w g in
-           Result.Ok (`Grid g')
-        | _ -> Result.Error (Invalid_expr e))
+       (fun (d1,d2) ->
+         let rec aux = function
+           | `Grid g, `Vec (`Int new_h, `Int new_w) ->
+              let| g' = Grid.Transf.scale_to new_h new_w g in
+              Result.Ok (`Grid g')
+           | `MaskModel `Full, _ ->
+              Result.Ok (`MaskModel `Full)
+           | `ShapePoint col, size ->
+              Result.Ok (`ShapeRectangle (size, col, `MaskModel `Full))
+           | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask), size ->
+              let| mask' = aux (mask,size) in
+              Result.Ok (`ShapeRectangle (size, col, mask'))
+           | _ -> Result.Error (Invalid_expr e) in
+         aux (d1,d2))
   | `Size e1 ->
      let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
@@ -2799,7 +2746,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `ShapeRectangle (`Vec (`Int rh, `Int rw), _, `Mask m)) when Mask_model.matches m `Border -> (* TODO: allow crop on Full rectangles as well ? *)
+        | `Grid g, `PosShape (`Vec (`Int ri, `Int rj), `ShapeRectangle (`Vec (`Int rh, `Int rw), _, `Grid m)) when Mask_model.matches m `Border -> (* TODO: allow crop on Full rectangles as well ? *)
            let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
            let| g' = Grid.Transf.crop g i j h w in
            Result.Ok (`Grid g')
@@ -2919,44 +2866,44 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
+        | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 -> (* TODO: generalize Mask logics to grids transfs *)
            let m = Grid.Mask.inter m1 m2 in
-           Result.Ok (`Mask m)
+           Result.Ok (`Grid m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogOr (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
+        | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
            let m = Grid.Mask.union m1 m2 in
-           Result.Ok (`Mask m)
+           Result.Ok (`Grid m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogXOr (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
+        | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
            let m = Grid.Mask.diff_sym m1 m2 in
-           Result.Ok (`Mask m)
+           Result.Ok (`Grid m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogAndNot (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m1, `Mask m2 when Grid.dims m1 = Grid.dims m2 ->
+        | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
            let m = Grid.Mask.diff m1 m2 in
-           Result.Ok (`Mask m)
+           Result.Ok (`Grid m)
         | _ -> Result.Error (Invalid_expr e))
   | `LogNot e1 ->
      let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
-        | `Mask m1 ->
+        | `Grid m1 ->
            let m = Grid.Mask.compl m1 in
-           Result.Ok (`Mask m)
+           Result.Ok (`Grid m)
         | _ -> Result.Error (Invalid_expr e))
   | `Stack le1 ->
      let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
@@ -2970,7 +2917,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast1_result res1
        (function
         | `ShapePoint _ -> Result.Ok (`Int 1)
-        | `ShapeRectangle (_, _, `Mask m) ->
+        | `ShapeRectangle (_, _, `Grid m) ->
            Result.Ok (`Int (Grid.Mask.area m))
         | `Grid g -> Result.Ok (`Int (g.height * g.width))
         | _ -> Result.Error (Invalid_expr e))
@@ -3038,14 +2985,14 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
-        | `Grid g -> Result.Ok (`Mask (Grid.Mask.from_grid g))
+        | `Grid g -> Result.Ok (`Grid (Grid.Mask.from_grid g))
         | _ -> Result.Error (Invalid_expr e))
   | `GridOfMask (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
-        | `Mask m, `Color c ->
+        | `Grid m, `Color c ->
            Result.Ok (`Grid (Grid.Mask.to_grid m c))
         | _ -> Result.Error (Invalid_expr e))
   | `TranslationOnto (e1,e2) ->
@@ -3070,50 +3017,40 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
   | `Tiling (e1,k,l) ->
      let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
-       (let aux_mask = function
-          | `Mask m ->
-             let| m' = Grid.Transf.tile k l m in
-             Result.Ok (`Mask m')
+       (fun d1 ->
+        let rec aux = function
+          | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
+          | `Grid g ->
+             let| g' = Grid.Transf.tile k l g in
+             Result.Ok (`Grid g')
           | `MaskModel `Full -> Result.Ok (`MaskModel `Full)
-          | _ -> assert false
-        in
-        function
-        | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
-        | (`Mask _ | `MaskModel _ as mask) -> aux_mask mask
-        | `ShapePoint _ -> Result.Error (Undefined_result "Tiling: undefined on points")
-        | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask) ->
-           let| mask' = aux_mask mask in
-           Result.Ok (`ShapeRectangle (`Vec (`Int (h*k), `Int (w*l)), col, mask'))
-        | `Grid g ->
-           let| g' = Grid.Transf.tile k l g in
-           Result.Ok (`Grid g')
-        | _ -> Result.Error (Invalid_expr e))
+          | `ShapePoint _ -> Result.Error (Undefined_result "Tiling: undefined on points")
+          | `ShapeRectangle (`Vec (`Int h, `Int w), col, mask) ->
+             let| mask' = aux mask in
+             Result.Ok (`ShapeRectangle (`Vec (`Int (h*k), `Int (w*l)), col, mask'))
+          | _ -> Result.Error (Invalid_expr e) in
+        aux d1)
   | `PeriodicFactor (mode,e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
      let| res2 = apply_expr ~lookup p e2 in
      broadcast2_result (res1,res2)
        (function
         | `Color bgcolor, d2 ->
-           let aux_shape = function
-             | `ShapePoint color ->
-                Result.Ok (`ShapePoint color)
-             | `ShapeRectangle (_size, color, `Mask m) ->
-                let| m' = Grid.Transf.periodic_factor mode bgcolor m in
-                let h', w' = Grid.dims m' in
-                Result.Ok (`ShapeRectangle (`Vec (`Int h', `Int w'), color, `Mask m'))
-             | _ -> Result.Error (Invalid_expr e) in
-           (match d2 with
-            | `Mask m ->
-               let| m' = Grid.Transf.periodic_factor mode bgcolor m in
-               Result.Ok (`Mask m')
-            | (`ShapePoint _ | `ShapeRectangle _ as shape) -> aux_shape shape
-            | `PosShape (pos, shape) ->
-               let| shape' = aux_shape shape in
-               Result.Ok (`PosShape (pos, shape'))
+           let rec aux = function
             | `Grid g ->
                let| g' = Grid.Transf.periodic_factor mode bgcolor g in
                Result.Ok (`Grid g')
-            | _ -> Result.Error (Invalid_expr e))
+            | `ShapePoint color ->
+               Result.Ok (`ShapePoint color)
+            | `ShapeRectangle (_size, color, `Grid m) ->
+               let| m' = Grid.Transf.periodic_factor mode bgcolor m in
+               let h', w' = Grid.dims m' in
+               Result.Ok (`ShapeRectangle (`Vec (`Int h', `Int w'), color, `Grid m'))
+            | `PosShape (pos, shape) ->
+               let| shape' = aux shape in
+               Result.Ok (`PosShape (pos, shape'))
+            | _ -> Result.Error (Invalid_expr e) in
+           aux d2
         | _ -> Result.Error (Invalid_expr e))
   | `FillResizeAlike (mode,e1,e2,e3) ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -3123,29 +3060,21 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
        (function
         | [`Color bgcolor; `Vec (`Int h, `Int w); d3] when h > 0 && w > 0 ->
            let new_size = h, w in
-           let aux_mask = function
-             | `Mask m ->
-                let| m' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size m in
-                Result.Ok (`Mask m')
-             | `MaskModel mm -> Result.Ok (`MaskModel mm)
-             | _ -> assert false in
-           let aux_shape = function
-             | `ShapePoint color ->
-                Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), color, `MaskModel `Full))
-             | `ShapeRectangle (_size, color, mask) ->
-                let| mask' = aux_mask mask in
-                Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), color, mask'))
-             | _ -> assert false in
-           (match d3 with
-            | (`Mask _ | `MaskModel _ as mask) -> aux_mask mask
-            | (`ShapePoint _ | `ShapeRectangle _ as shape) -> aux_shape shape
-            | `PosShape (pos, shape) ->
-               let| shape' = aux_shape shape in
-               Result.Ok (`PosShape (pos, shape'))
+           let rec aux = function
             | `Grid g ->
                let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size g in
                Result.Ok (`Grid g')
-            | _ -> Result.Error (Invalid_expr e))
+            | `MaskModel mm -> Result.Ok (`MaskModel mm)
+            | `ShapePoint color ->
+               Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), color, `MaskModel `Full))
+            | `ShapeRectangle (_size, color, mask) ->
+               let| mask' = aux mask in
+               Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), color, mask'))
+            | `PosShape (pos, shape) ->
+               let| shape' = aux shape in
+               Result.Ok (`PosShape (pos, shape'))
+            | _ -> Result.Error (Invalid_expr e) in
+           aux d3
         | _ -> Result.Error (Invalid_expr e))
   | `Compose (e1,e2,e3) ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -3156,34 +3085,29 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
         | [`Color c_mask;d1;d2] ->
            let| g1 =
              match d1 with
-             | `Mask m1 ->
-                Result.Ok m1
+             | `Grid g1 ->
+                Result.Ok g1
              | `ShapeRectangle (`Vec (`Int h1, `Int w1), _, mask1) ->
                 (match mask1 with
-                 | `Mask m1 -> Result.Ok m1
+                 | `Grid m1 -> Result.Ok m1
                  | `MaskModel mm1 ->
                     let m1 = Mask_model.to_mask ~height:h1 ~width:w1 mm1 in
                     Result.Ok m1
                  | _ -> assert false)
-             | `Grid g1 ->
-                Result.Ok g1
              | _ -> Result.Error (Invalid_expr e) in
            (match d2 with
-           | `Mask m2 ->
-              let| m = Grid.Transf.compose c_mask g1 m2 in
-              Result.Ok (`Mask m)
+           | `Grid g2 ->
+              let| g = Grid.Transf.compose c_mask g1 g2 in
+              Result.Ok (`Grid g)
            | `ShapeRectangle (`Vec (`Int h2, `Int w2), col2, mask2) ->
               let m2 =
                 match mask2 with
-                | `Mask m2 -> m2
+                | `Grid m2 -> m2
                 | `MaskModel mm2 -> Mask_model.to_mask ~height:h2 ~width:w2 mm2
                 | _ -> assert false in
               let| m = Grid.Transf.compose c_mask g1 m2 in (* TODO: reconvert as mask_model *)
               let h, w = Grid.dims m in
-              Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), col2, `Mask m))
-           | `Grid g2 ->
-              let| g = Grid.Transf.compose c_mask g1 g2 in
-              Result.Ok (`Grid g)
+              Result.Ok (`ShapeRectangle (`Vec (`Int h, `Int w), col2, `Grid m))
            | _ -> Result.Error (Invalid_expr e))
         | _ -> Result.Error (Invalid_expr e))
   | `ApplySym (sym,e1,role_e1) ->
@@ -3292,7 +3216,7 @@ let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template)
   (* SHOULD NOT use [p] *)
   match t with
   | `Any -> Result.Ok `Any
-  | (`Bool _ | `Int _ | `Color _ | `Mask _ | `MaskModel _ | `Grid _ as v) -> Result.Ok v
+  | (`Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _ as v) -> Result.Ok v
   | `Vec (i,j) ->
      let| ri = apply_template_gen ~lookup (p ++ `I) i in
      let| rj = apply_template_gen ~lookup (p ++ `J) j in
@@ -3364,10 +3288,10 @@ let draw_shape_rectangle (g : Grid.t) (mini : int) (minj : int) (h : int) (w : i
     Result.Ok ())
   else Result.Error (Invalid_argument "draw_shape_rectangle: negative or null rectangle size")
 
-let rec draw_layer g = function
-  | `PosShape (`Vec (`Int i, `Int j), `Shape (_, `Point (`Color c))) ->
+let rec draw_layer g : data -> unit result = function
+  | `PosShape (`Vec (`Int i, `Int j), `Grid (_, `Point (`Color c))) ->
      draw_shape_point g i j c
-  | `PosShape (`Vec (`Int mini, `Int minj), `Shape (_, `Rectangle (`Vec (`Int h, `Int w), `Color c, `Mask (m,_)))) ->
+  | `PosShape (`Vec (`Int mini, `Int minj), `Grid (_, `Rectangle (`Vec (`Int h, `Int w), `Color c, `Grid (m,_)))) ->
      draw_shape_rectangle g mini minj h w c m
   | `Seq items ->
      let| _ = list_map_result (draw_layer g) (List.rev items) in
@@ -3401,7 +3325,7 @@ let shape_point (color : data) : Grid.t result =
   | _ -> assert false
 let shape_rectangle (size : data) (color : data) (mask : data) : Grid.t result =
   match size, color, mask with
-  | `Vec (`Int h, `Int w), `Color c, `Mask (m, _) ->
+  | `Vec (`Int h, `Int w), `Color c, `Grid (m, _) ->
      let g = Grid.make h w Grid.no_color in
      let| () = draw_shape_rectangle g 0 0 h w c m in
      Result.Ok g
@@ -3431,9 +3355,9 @@ let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
 let default_move = `Vec (`Int 0, `Int 0)
 let default_mask_raw = result_force (mask_model default_shape_size `Full)
-let default_mask = `Mask (default_mask_raw, `Model `Full)
+let default_mask = `Grid (default_mask_raw, `Model `Full)
 let default_shape_raw = result_force (shape_rectangle default_shape_size default_shape_color default_mask)
-let default_shape = `Shape (default_shape_raw, `Rectangle (default_shape_size, default_shape_color, default_mask))
+let default_shape = `Grid (default_shape_raw, `Rectangle (default_shape_size, default_shape_color, default_mask))
 let default_object = `PosShape (default_pos, default_shape)
 let default_layer = default_object
 let default_grid_raw = result_force (grid_background default_grid_size default_grid_color `Nil) (* Grid.make 10 10 Grid.black *)
@@ -3491,18 +3415,15 @@ let rec generator_template (p : revpath) (t : template) : generator =
   | (`Bool _ | `Int _ | `Color _ as v) ->
      let rec gen_v = Generator (fun box -> Result.Ok (v, true, gen_v)) in
      gen_v
-  | `Mask m ->
-     let rec gen_v = Generator (fun box -> Result.Ok (`Mask (m, `None), true, gen_v)) in
+  | `Grid g ->
+     let rec gen_v = Generator (fun box -> Result.Ok (`Grid (g, `None), true, gen_v)) in
      gen_v
   | `MaskModel mm ->
      let rec gen_v =
        Generator (fun box ->
            let m = Mask_model.to_mask ~height:box.box_height ~width:box.box_width mm in
-           Result.Ok (`Mask (m, `Model mm), true, gen_v)) in
+           Result.Ok (`Grid (m, `Model mm), true, gen_v)) in
      gen_v     
-  | `Grid g ->
-     let rec gen_v = Generator (fun box -> Result.Ok (`Grid (g, `None), true, gen_v)) in
-     gen_v
   | `Vec (i,j) ->
      let rec gen_vec (Generator gen_i) (Generator gen_j) =
        Generator (fun box ->
@@ -3515,7 +3436,7 @@ let rec generator_template (p : revpath) (t : template) : generator =
        Generator (fun box ->
            let| dcolor, stop_color, next_color = gen_color box in
            let| g = shape_point dcolor in
-           Result.Ok (`Shape (g, `Point dcolor),
+           Result.Ok (`Grid (g, `Point dcolor),
                       stop_color, gen_point next_color)) in
      gen_point (generator_template (p ++ `Color) color)
   | `ShapeRectangle (size,color,mask) ->
@@ -3526,7 +3447,7 @@ let rec generator_template (p : revpath) (t : template) : generator =
            let| dmask, stop_mask, next_mask = gen_mask (box_of_size dsize) in
            let| g = shape_rectangle dsize dcolor dmask in
            Result.Ok
-             (`Shape (g,
+             (`Grid (g,
                       `Rectangle (dsize,dcolor,dmask)),
               stop_size && stop_color && stop_mask,
               gen_rectangle next_size next_color next_mask)) in
@@ -3594,16 +3515,6 @@ let rec generator_template (p : revpath) (t : template) : generator =
               let| d1, _, _ = gen_item box in
               Result.Ok (d1, next_gens=[], gen_prefix next_gens)) in
      gen_prefix (List.mapi (fun i item -> generator_template (`Item (i,p)) item) items)
-(* and generator_mask ~height ~width p mask : height:int -> width:int -> generator =
-  let m, patt =
-    match mask with
-    | `Mask m -> m, `None
-    | `MaskModel mm ->
-       let m = Mask_model.to_mask ~height ~width mm in
-       m, `Model mm in
-  let v = `Mask (m, patt) in
-  let rec gen_v = Generator (fun () -> Result.Ok (v, true, gen_v)) in
-  gen_v *)
 
      
 let generate_template ?(p = `Root) (t : template) : data result =
@@ -3874,24 +3785,24 @@ let parseur_mask t p : (Grid.t * Mask_model.t list, data, #parse_state_base) par
     ~parseur_any:(fun () ->
       parseur_rec (fun (m,mms) state ->
           if mms = []
-          then Myseq.return (`Mask (m, `None), state)
+          then Myseq.return (`Grid (m, `None), state)
           else
             let* mm = Myseq.from_list mms in
-            Myseq.return (`Mask (m, `Model mm), state)))
+            Myseq.return (`Grid (m, `Model mm), state)))
     ~parseur_patt:(function
-      | `Mask m0 ->
+      | `Grid m0 ->
          parseur_rec (fun (m,mms) state ->
              if Grid.same m m0 then
-               Myseq.return (`Mask (m0, `None), state)
+               Myseq.return (`Grid (m0, `None), state)
              else if not state#quota_diff_is_null then
-               Myseq.return (`Mask (m, `None), state#add_diff p)
+               Myseq.return (`Grid (m, `None), state#add_diff p)
              else Myseq.empty)
       | `MaskModel mm0 ->
          parseur_rec (fun (m,mms) state ->
              if List.mem mm0 mms then
-               Myseq.return (`Mask (m, `Model mm0), state)
+               Myseq.return (`Grid (m, `Model mm0), state)
              else if not state#quota_diff_is_null then
-               Myseq.return (`Mask (m, `None), state#add_diff p)
+               Myseq.return (`Grid (m, `None), state#add_diff p)
              else Myseq.empty)
       | _ -> parseur_empty)
     t p
@@ -3931,10 +3842,10 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
               let dpos = `Vec (`Int rect.offset_i, `Int rect.offset_j) in
               let dsize = `Vec (`Int rect.height, `Int rect.width) in
               let dcolor = `Color rect.color in
-              let dmask = `Mask (m, patt) in
+              let dmask = `Grid (m, patt) in
               let* g = Myseq.from_result (shape_rectangle dsize dcolor dmask) in
               Myseq.return
-                (`PosShape (dpos, `Shape (g, `Rectangle (dsize, dcolor, dmask))),
+                (`PosShape (dpos, `Grid (g, `Rectangle (dsize, dcolor, dmask))),
                  state));
              (let* (i,j,c as point) = Myseq.from_list (Lazy.force points) in
               let* state = Myseq.from_option (state#minus_point point) in
@@ -3942,7 +3853,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
               let dcolor = `Color c in
               let* g = Myseq.from_result (shape_point dcolor) in
               Myseq.return
-                (`PosShape (dpos, `Shape (g, `Point dcolor)),
+                (`PosShape (dpos, `Grid (g, `Point dcolor)),
                  state))
     ]))
     ~parseur_patt:(function
@@ -3955,7 +3866,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
              let* state = Myseq.from_option (state#minus_point point) in
              let* g = Myseq.from_result (shape_point dcolor) in
              let dpos = `Vec (`Int i, `Int j) in
-             Myseq.return (`PosShape (dpos, `Shape (g, `Point dcolor)), state, stop_color, next_color))
+             Myseq.return (`PosShape (dpos, `Grid (g, `Point dcolor)), state, stop_color, next_color))
       | `ShapeRectangle (size,color,mask) ->
          parseur_rec3
            (parseur_vec size (p ++ `Size))
@@ -3970,7 +3881,7 @@ let parseur_shape t p : (Segment.point list Lazy.t * Segment.rectangle list Lazy
              let* state = Myseq.from_option (state#minus_rectangle rect) in
              let* g = Myseq.from_result (shape_rectangle dsize dcolor dmask) in
              let dpos = `Vec (`Int rect.offset_i, `Int rect.offset_j) in
-             Myseq.return (`PosShape (dpos, `Shape (g, `Rectangle (dsize,dcolor,dmask))),
+             Myseq.return (`PosShape (dpos, `Grid (g, `Rectangle (dsize,dcolor,dmask))),
                            state,
                            stop_size, stop_color, stop_mask,
                            next_size, next_color, next_mask))
@@ -4249,7 +4160,8 @@ and grid_data_is_underdescribed (d : data) : bool =
      (match patt with
       | `None -> true
       | `Background (_,_,_,delta) -> delta <> []
-      | `Tiling (grid,_) -> grid_data_is_underdescribed grid)
+      | `Tiling (grid,_) -> grid_data_is_underdescribed grid
+      | _ -> assert false)
   | _ -> assert false
 
 let read_grids ?dl_assuming_grid_known ~quota_diff ~env_sig (t : template) (egrids: (data * Grid.t) list) : (grids_read, exn) Result.t =
@@ -4678,7 +4590,7 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       | Some d ->
          let tmap = (* Constr *)
            if valid_Constr then
-             let$ tmap, (t, partial) = tmap, root_template_of_data ~in_output d in
+             let$ tmap, (t, partial) = tmap, root_template_of_data ~in_output role d in
              if t <> t0 (* a different pattern *)
              then add_template t (box,dl0,d,partial) tmap
              else tmap
@@ -5218,7 +5130,7 @@ let prune_refinements (t : template) : grid_refinement Myseq.t =
         | _, `GridBackground _ -> RGen (p1, `Any) :: res
         | _, `GridTiling _ -> RGen (p1, `Any) :: res
         | _, `Color _ -> RGen (p1, `Any) :: res
-        | _, `Mask _ -> RGen (p1, `Any) :: res
+        | _, `Grid _ -> RGen (p1, `Any) :: res
         | _, `MaskModel _ -> RGen (p1, `Any) :: res
         | `Field (`Layer _, _), _ -> RDel p1 :: res
         | _ -> res)
