@@ -7,7 +7,7 @@ type part = { mini : int; maxi : int;
 	      pixels : Bitmap.t }
 
 let part_as_grid (g : Grid.t) (p : part) : Grid.t = Common.prof "Grid.part_as_grid" (fun () ->
-  let gp = Grid.make g.height g.width Grid.no_color in
+  let gp = Grid.make g.height g.width Grid.transparent in
   let col = p.color in
   Bitmap.iter
     (fun i j -> Grid.set_pixel gp i j col)
@@ -218,7 +218,7 @@ let segment_by_color (g : Grid.t) : part list =
     new Find_merge.hashtbl
       ~init_val:{ mini = h; maxi = 0;
                   minj = w; maxj = 0;
-                  color = Grid.no_color;
+                  color = Grid.transparent;
                   pixels = Bitmap.empty h w;
                   nb_pixels = 0 }
       ~merge_val:merge_parts_2
@@ -266,7 +266,7 @@ let segment_by_color, reset_segment_by_color =
 let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing frequency order *)
   let area = g.height * g.width in
   let l = ref [] in
-  for c = 0 to Grid.nb_color - 1 do
+  for c = Grid.black to Grid.last_color do
     let n = g.color_count.(c) in
     if n > 0 then l := (c,n)::!l (* keeping only occurring colors *)
   done;
@@ -287,7 +287,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
 type point = Grid.pixel
 
 let point_as_grid (g : Grid.t) (p : point) : Grid.t =
-  let gp = Grid.make g.height g.width Grid.no_color in
+  let gp = Grid.make g.height g.width Grid.transparent in
   let i, j, c = p in
   Grid.set_pixel gp i j c;
   gp
@@ -335,7 +335,7 @@ type rectangle = { height: int; width: int;
                    nb_explained_pixels : int }
 
 let rectangle_as_grid (g : Grid.t) (r : rectangle) : Grid.t =
-  let gr = Grid.make g.height g.width Grid.no_color in
+  let gr = Grid.make g.height g.width Grid.transparent in
   for i = r.offset_i to r.offset_i + r.height - 1 do
     for j = r.offset_j to r.offset_j + r.width - 1 do
       if Grid.Mask.mem (i - r.offset_i) (j - r.offset_j) r.mask then

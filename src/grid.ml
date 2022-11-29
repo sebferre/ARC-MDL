@@ -5,7 +5,7 @@ open Bigarray
 type color = int
 
 (* conventional colors like in web app *)
-let black = 0
+let black = 0 (* first color *)
 let blue = 1
 let red = 2
 let green = 3
@@ -16,9 +16,12 @@ let orange = 7
 let cyan = 8
 let brown = 9	       
 
-let no_color = 10
+(* special colors *)
+let undefined = -1 (* for use in special algos *)
+let transparent = 10 (* for non-covered parts *)
 
 let nb_color = 10
+let last_color = 9
 
 let all_colors = [0; 1; 2; 3; 4; 5; 6; 7; 8; 9]
              
@@ -34,11 +37,12 @@ let name_of_color : color -> string =
   | 7 -> "orange"
   | 8 -> "cyan"
   | 9 -> "brown"
+  | 10 -> "transparent"
   | c -> "col" ^ string_of_int c
 
 
 type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
-	       
+
 type t = { height : int; (* equals Array2.dim1 matrix *)
 	   width : int;  (* equals Array2.dim2 matrix *)
            color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
@@ -78,6 +82,7 @@ let init height width (f : int -> int -> color) =
   { height; width; matrix; color_count }
   
 let dummy = make 0 0 0
+
 
 let dims (grid : t) : int * int =
   grid.height, grid.width [@@inline]
@@ -127,7 +132,6 @@ let map_pixels (f : color -> color) g =
       let c = g.matrix.{i,j} in
       let c' = f c in
       if c' <> c then (
-        assert (c' >= 0 && c' <= no_color);
         g'.matrix.{i,j} <- c';
         (* maintaining color count *)
         g'.color_count.(c) <- g'.color_count.(c) - 1;
@@ -148,7 +152,6 @@ let map2_pixels (f : color -> color -> color) g1 g2 =
         let c2 = g2.matrix.{i,j} in
         let c' = f c1 c2 in
         if c' <> c1 then (
-          assert (c' >= 0 && c' <= no_color);
           g'.matrix.{i,j} <- c';
           (* maintaining color count *)
           g'.color_count.(c1) <- g'.color_count.(c1) - 1;
@@ -174,27 +177,27 @@ let for_all_pixels f grid =
   done;
   !res [@@inline]
 
-let majority_color ?(except_black = false) (g : t) : color result =
-  let res = ref no_color in
+let majority_color (bgcolor : color) (g : t) : color result = (* not counting bgcolor *)
+  let res = ref undefined in
   let nb_max = ref 0 in
-  for c = (if except_black then 1 else 0) to nb_color do
+  for c = black to last_color do
     let nb = g.color_count.(c) in
-    if nb > !nb_max then (
+    if c <> bgcolor && nb > !nb_max then (
       res := c;
       nb_max := nb)
   done;
-  if !res = no_color
-  then Result.Error (Undefined_result "majority_color: all black")
+  if !res = undefined
+  then Result.Error (Undefined_result "majority_color: all transparent of bgcolor")
   else Result.Ok !res
 
-let color_count (grid : t) : int = (* not counting black *)
+let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
   let res = ref 0 in
-  for c = 1 to nb_color-1 do
-    if grid.color_count.(c) > 0
+  for c = black to last_color do
+    if c <> bgcolor && grid.color_count.(c) > 0
     then incr res
   done;
   !res
-  
+
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
     (fun c -> grid.color_count.(c))
@@ -292,7 +295,7 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
 
 (* operations on grids *)
 
-module Transf = (* black considered as neutral color by default *)
+module Transf =
   struct
 
     (* coloring *)
@@ -301,16 +304,13 @@ module Transf = (* black considered as neutral color by default *)
       if g.color_count.(c1) = 0
       then Result.Error (Undefined_result "swap_colors: none of the color present")
       else (
-        let h, w = dims g in
-        let res = make h w black in
-        iter_pixels
-          (fun i j c ->
-            let c' =
+        let res =
+          map_pixels
+            (fun c ->
               if c = c1 then c2
               else if c = c2 then c1
-              else c in
-            set_pixel res i j c')
-          g;
+              else c)
+            g in
         Result.Ok res)
     let swap_colors, reset_swap_colors =
       Common.memoize3 ~size:101 swap_colors
@@ -319,71 +319,50 @@ module Transf = (* black considered as neutral color by default *)
 
     let flipHeight g =
       let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res (h - 1 - i) j c)
-        g;
-      res
+      init h w
+        (fun i j -> get_pixel ~source:"flipHeight" g (h - 1 - i) j)
     let flipHeight, reset_flipHeight =
       Common.memoize ~size:101 flipHeight
                      
     let flipWidth g =
       let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res i (w - 1 - j) c)
-        g;
-      res
+      init h w
+        (fun i j -> get_pixel ~source:"flipWidth" g i (w - 1 - j))
     let flipWidth, reset_flipWidth =
       Common.memoize ~size:101 flipWidth
 
     let flipDiag1 g =
       let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res j i c)
-        g;
-      res
+      init w h
+        (fun i j -> get_pixel ~source:"flipDiag1" g j i)
     let flipDiag1, reset_flipDiag1 =
       Common.memoize ~size:101 flipDiag1
 
     let flipDiag2 g =
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res (w - 1 - j) (h - 1 - i) c)
-        g;
-      res
+      let w', h' = dims g in
+      init h' w'
+        (fun i j -> get_pixel ~source:"flipDiag2" g (w' - 1 - j) (h' - 1 - i))
     let flipDiag2, reset_flipDiag2 =
       Common.memoize ~size:101 flipDiag2
 
     let rotate90 g = (* clockwise *)
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res j (h - 1 - i) c)
-        g;
-      res
+      let w', h' = dims g in
+      init h' w'
+        (fun i j -> get_pixel ~source:"rotate90" g (w' - 1 - j) i)
     let rotate90, reset_rotate90 =
       Common.memoize ~size:101 rotate90
       
     let rotate180 g = (* clockwise *)
       let h, w = dims g in
-      let res = make h w black in
-      iter_pixels
-        (fun i j c -> set_pixel res (h - 1 - i) (w - 1 - j) c)
-        g;
-      res
+      init h w
+        (fun i j -> get_pixel ~source:"rotate280" g (h - 1 - i) (w - 1 - j))
     let rotate180, reset_rotate180 =
       Common.memoize ~size:101 rotate180
       
     let rotate270 g = (* clockwise *)
-      let h, w = dims g in
-      let res = make w h black in
-      iter_pixels
-        (fun i j c -> set_pixel res (w - 1 - j) i c)
-        g;
-      res
+      let w', h' = dims g in
+      init h' w'
+        (fun i j -> get_pixel ~source:"rotate270" g j (h' - 1 - i))
     let rotate270, reset_rotate270 =
       Common.memoize ~size:101 rotate270
       
@@ -395,7 +374,7 @@ module Transf = (* black considered as neutral color by default *)
       if h' > max_size || w' > max_size || h' <= 0 || w' <= 0
       then Result.Error (Undefined_result "scale_up: result grid too large or ill-formed")
       else (
-        let res = make h' w' black in
+        let res = make h' w' black (* or whatever color *) in
         iter_pixels
           (fun i j c ->
             for i' = k*i to k*(i+1)-1 do
@@ -419,10 +398,9 @@ module Transf = (* black considered as neutral color by default *)
           g;
         if !ok (* all pixels scaling down to a single pixel have same color *)
         then (
-          let res = make (h / k) (w / l) black in
-          iter_pixels
-            (fun i j c -> set_pixel res i j (get_pixel ~source:"scale_down/2" g (i*k) (j*l)))
-            res;
+          let res =
+            init (h / k) (w / l)
+              (fun i j -> get_pixel ~source:"scale_down/2" g (i*k) (j*l)) in
           Result.Ok res )
         else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
       else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
@@ -447,7 +425,7 @@ module Transf = (* black considered as neutral color by default *)
       if h' > max_size || w' > max_size
       then Result.Error (Undefined_result "tile: result grid too large")
       else (
-        let res = make h' w' black in
+        let res = make h' w' black (* or whatever color *) in
         iter_pixels
           (fun i j c ->
             for u = 0 to k-1 do
@@ -460,6 +438,7 @@ module Transf = (* black considered as neutral color by default *)
     let tile, reset_tile =
       Common.memoize3 ~size:101 tile
 
+(* deprecated
     let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
       let rec range a b =
         if a > b then []
@@ -511,7 +490,8 @@ module Transf = (* black considered as neutral color by default *)
         Result.Ok res)
     let resize_alike, reset_resize_alike =
       Common.memoize3 ~size:101 resize_alike
-
+ *)
+      
     type axis = I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
     type period = axis * int (* axis(i,j) mod p: defines p equivalence classes *)
     type periodicity =
@@ -590,17 +570,17 @@ module Transf = (* black considered as neutral color by default *)
       print#string (if total then " (total)" else " (partial)")
     let pp_periodicity = Xprint.to_stdout xp_periodicity
 
-    let grid_of_periodicity : periodicity -> t = function
+    let grid_of_periodicity (bgcolor : color) : periodicity -> t = function
       | Period1 ((axis,p),k_ar) ->
          init 1 p
            (fun _i j ->
              let _, _, c_k = k_ar.(j) in
-             if c_k = no_color then black else c_k)
+             if c_k = undefined then bgcolor else c_k)
       | Period2 ((axis1,p1),(axis2,p2),k2_ar) ->
          init p1 p2
            (fun i j ->
              let _, _, c_k = k2_ar.(i).(j) in
-             if c_k = no_color then black else c_k)                       
+             if c_k = undefined then bgcolor else c_k)                       
                   
     let all_axis : axis list = [I; J; PlusIJ; DiffIJ; MaxIJ; MinIJ; DivIJ]
     let all_axis_pairs : (axis * axis) list =
@@ -637,7 +617,7 @@ module Transf = (* black considered as neutral color by default *)
             let p_map =
               List.map
                 (fun p ->
-                  let k_ar = Array.make p (0,0,no_color) in
+                  let k_ar = Array.make p (0,0,undefined) in
                   (p, k_ar))
                 (range 2 max_axis) in
             (axis, f_axis, ref p_map))
@@ -652,7 +632,7 @@ module Transf = (* black considered as neutral color by default *)
             let p2_map =
               List.map
                 (fun (p1,p2) ->
-                  let k2_ar = Array.make_matrix p1 p2 (0,0,no_color) in
+                  let k2_ar = Array.make_matrix p1 p2 (0,0,undefined) in
                   (p1, p2, k2_ar))
                 (product (range 2 max_axis1) (range 2 max_axis2)) in
             (axis1, f_axis1, axis2, f_axis2, ref p2_map))
@@ -670,7 +650,7 @@ module Transf = (* black considered as neutral color by default *)
                       let k = pre_k mod p in
                       let nc, n, c_k = k_ar.(k) in
                       if c = bgcolor then (k_ar.(k) <- (nc,n+1,c_k); true)
-                      else if c_k = no_color then (k_ar.(k) <- (1,n+1,c); true)
+                      else if c_k = undefined then (k_ar.(k) <- (1,n+1,c); true)
                       else if c_k = c then (k_ar.(k) <- (nc+1,n+1,c_k); true)
                       else (* inconsistency *) false)
                     !ref_p_map in
@@ -690,7 +670,7 @@ module Transf = (* black considered as neutral color by default *)
                       let k2 = pre_k2 mod p2 in
                       let nc, n, c_k = k2_ar.(k1).(k2) in
                       if c = bgcolor then (k2_ar.(k1).(k2) <- (nc,n+1,c_k); true)
-                      else if c_k = no_color then (k2_ar.(k1).(k2) <- (1,n+1,c); true)
+                      else if c_k = undefined then (k2_ar.(k1).(k2) <- (1,n+1,c); true)
                       else if c_k = c then (k2_ar.(k1).(k2) <- (nc+1,n+1,c_k); true)
                       else (* inconsistency *) false)
                     !ref_p2_map in
@@ -711,7 +691,7 @@ module Transf = (* black considered as neutral color by default *)
                   let diffs =
                     Array.fold_left
                       (fun res (nc,n,c) ->
-                        if c = no_color then res else res + (n-nc))
+                        if c = undefined then res else res + (n-nc))
                       0 k_ar in
                   let cost = p + diffs in
                   (cost, Period1 ((axis,p),k_ar))::res)
@@ -739,7 +719,7 @@ module Transf = (* black considered as neutral color by default *)
                       (fun res k_ar ->
                         Array.fold_left
                           (fun res (nc,n,c) ->
-                            if c = no_color then res else res + (n-nc))
+                            if c = undefined then res else res + (n-nc))
                           res k_ar)
                       0 k2_ar in
                   let cost = p1*p2 + diffs in
@@ -783,7 +763,7 @@ module Transf = (* black considered as neutral color by default *)
     let periodic_factor (mode : periodicity_mode) (bgcolor : color) (g : t) : t result =
       match find_periodicity mode bgcolor g with
       | None -> Result.Error (Undefined_result "Grid.Transf.periodic_factor: no adequate periodicity")
-      | Some period -> Result.Ok (grid_of_periodicity period)
+      | Some period -> Result.Ok (grid_of_periodicity bgcolor period)
     let periodic_factor, reset_periodic_factor =
       Common.memoize3 ~size:101 periodic_factor
            
@@ -795,14 +775,14 @@ module Transf = (* black considered as neutral color by default *)
          init new_h new_w
            (fun i j ->
              let _, _, c_k = k_ar.(f_axis i j mod p) in
-             if c_k = no_color then bgcolor else c_k)
+             if c_k = undefined then bgcolor else c_k)
       | Period2 ((axis1,p1),(axis2,p2),k2_ar) ->
          let f_axis1 = eval_axis axis1 in
          let f_axis2 = eval_axis axis2 in
          init new_h new_w
            (fun i j ->
              let _, _, c_k = k2_ar.(f_axis1 i j mod p1).(f_axis2 i j mod p2) in
-             if c_k = no_color then bgcolor else c_k)
+             if c_k = undefined then bgcolor else c_k)
 
     let fill_and_resize_alike (mode : periodicity_mode) (bgcolor : color) (new_size : int * int) (g : t) : t result =
       match find_periodicity mode bgcolor g with
@@ -823,40 +803,31 @@ module Transf = (* black considered as neutral color by default *)
          && offset_i + new_h <= h
          && offset_j + new_w <= w
       then
-        let res = make new_h new_w black in
-        for i = 0 to new_h - 1 do
-          for j = 0 to new_w - 1 do
-            let c = get_pixel ~source:"crop" g (offset_i + i) (offset_j + j) in
-            if c <> black then
-              set_pixel res i j c
-          done
-        done;
+        let res =
+          init new_h new_w
+            (fun i j -> get_pixel ~source:"crop" g (offset_i + i) (offset_j + j)) in
         Result.Ok res
       else Result.Error (Undefined_result "Grid.Transf.crop")
     let crop, reset_crop =
       let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
-    let strip (g : t) : t result = (* croping on anything else than the majority color, the remaining majority color is made black *)
-      let| c_strip = majority_color g in
+    let strip (bgcolor : color) (g : t) (out_bgcolor : color) : t result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
       let h, w = dims g in
       let min_i, max_i = ref h, ref (-1) in
       let min_j, max_j = ref w, ref (-1) in
       iter_pixels
         (fun i j c ->
-          if c <> c_strip then (
+          if c <> bgcolor then (
             min_i := min i !min_i;
             max_i := max i !max_i;
             min_j := min j !min_j;
             max_j := max j !max_j))
         g;
-      if !min_i < 0 (* grid is c_strip only *)
-      then Result.Error (Undefined_result "monocolor grid")
+      if !min_i < 0 (* grid is bgcolor only *)
+      then Result.Error (Undefined_result "grid has no contents")
       else
-        let| g' =
-          if c_strip <> black
-          then swap_colors g c_strip black
-          else Result.Ok g in
+        let| g' = swap_colors g bgcolor out_bgcolor in
         let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
         Result.Ok g'
     let strip, reset_strip =
@@ -870,7 +841,7 @@ module Transf = (* black considered as neutral color by default *)
       if w1 <> w2 then Result.Error Invalid_dim
       else if h1+h2 > max_size then Result.Error (Undefined_result "concatHeight: result grid too large")
       else (
-        let res = make (h1+h2) w1 black in
+        let res = make (h1+h2) w1 black (* or whatever color *) in
         iter_pixels
           (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
           g1;
@@ -887,7 +858,7 @@ module Transf = (* black considered as neutral color by default *)
       if h1 <> h2 then Result.Error Invalid_dim
       else if w1+w2 > max_size then Result.Error (Undefined_result "concatWidth: result grid too large")
       else (
-        let res = make h1 (w1+w2) black in
+        let res = make h1 (w1+w2) black (* or whatever color *) in
         iter_pixels
           (fun i1 j1 c1 -> set_pixel res i1 j1 c1)
           g1;
@@ -905,17 +876,17 @@ module Transf = (* black considered as neutral color by default *)
 
     (* TODO: selecting halves and quarters *)
 
-    let compose (c_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color c_mask *)
+    let compose (c1_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color bgcolor1 *)
       let h1, w1 = dims g1 in
       let h2, w2 = dims g2 in
       let h, w = h1*h2, w1*w2 in
       if h > max_size || w > max_size
       then Result.Error (Undefined_result "compose: result grid too large")
       else (
-        let res = make h w black in
+        let res = make h w black (* or whatever color *) in
         iter_pixels
           (fun i1 j1 c1 ->
-            if c1 = c_mask then
+            if c1 = c1_mask then
               iter_pixels
                 (fun i2 j2 c2 ->
                   if c2 <> black then
@@ -928,7 +899,7 @@ module Transf = (* black considered as neutral color by default *)
 
     (* symmetrization *)
 
-    let layers ?(bgcolor = black) gs : t result =
+    let layers (bgcolor : color) gs : t result =
       match gs with
       | [] -> Result.Error (Invalid_argument "Grid.Transf.layers: empty list")
       | g1::gs1 ->
@@ -946,34 +917,33 @@ module Transf = (* black considered as neutral color by default *)
            Result.Ok res)
          else Result.Error Invalid_dim
     let layers, reset_layers =
-      let f, reset = Common.memoize ~size:101 (fun (bgcolor,gs) -> layers ~bgcolor gs) in
-      (fun ?(bgcolor = black) gs -> f (bgcolor,gs)), reset
+      Common.memoize2 ~size:101 layers
       
-    let sym_flipHeight_inplace g = layers [g; flipHeight g]
-    let sym_flipWidth_inplace g = layers [g; flipWidth g]
-    let sym_rotate180_inplace g = layers [g; rotate180 g]
-    let sym_flipHeightWidth_inplace g = layers [g; flipHeight g; flipWidth g; rotate180 g]
-    let sym_flipDiag1_inplace g =
+    let sym_flipHeight_inplace bgcolor g = layers bgcolor [g; flipHeight g]
+    let sym_flipWidth_inplace bgcolor g = layers bgcolor [g; flipWidth g]
+    let sym_rotate180_inplace bgcolor g = layers bgcolor [g; rotate180 g]
+    let sym_flipHeightWidth_inplace bgcolor g = layers bgcolor [g; flipHeight g; flipWidth g; rotate180 g]
+    let sym_flipDiag1_inplace bgcolor g =
       if g.height <> g.width
       then Result.Error Invalid_dim
-      else layers [g; flipDiag1 g]
-    let sym_flipDiag2_inplace g =
+      else layers bgcolor [g; flipDiag1 g]
+    let sym_flipDiag2_inplace bgcolor g =
       if g.height <> g.width
       then Result.Error Invalid_dim
-      else layers [g; flipDiag2 g]
-    let sym_flipDiag1Diag2_inplace g =
+      else layers bgcolor [g; flipDiag2 g]
+    let sym_flipDiag1Diag2_inplace bgcolor g =
       if g.height <> g.width
       then Result.Error Invalid_dim
-      else layers [g; flipDiag1 g; flipDiag2 g; rotate180 g]
-    let sym_rotate90_inplace g =
+      else layers bgcolor [g; flipDiag1 g; flipDiag2 g; rotate180 g]
+    let sym_rotate90_inplace bgcolor g =
       if g.height <> g.width
       then Result.Error Invalid_dim
-      else layers [g; rotate90 g; rotate180 g; rotate270 g]
-    let sym_full_inplace g =
+      else layers bgcolor [g; rotate90 g; rotate180 g; rotate270 g]
+    let sym_full_inplace bgcolor g =
       if g.height <> g.width
       then Result.Error Invalid_dim
       else (* includes all symmetries *)
-        let| g' = layers [g; rotate90 g] in
+        let| g' = layers bgcolor [g; rotate90 g] in
         Result.Ok (flipHeight g')
 
 (* not ready for use
@@ -1019,8 +989,8 @@ module Transf = (* black considered as neutral color by default *)
       reset_scale_down ();
       reset_scale_to ();
       reset_tile ();
-      reset_factor ();
-      reset_resize_alike ();
+(*      reset_factor ();
+      reset_resize_alike (); *)
       reset_periodicities ();
       reset_periodic_factor ();
       reset_fill_and_resize_alike ();
@@ -1038,58 +1008,62 @@ module Transf = (* black considered as neutral color by default *)
 
 module Mask =
   struct
+    (* color coding of Boolean values *)
+    let zero = transparent
+    let one = black
+    let bool (b : bool) : color = if b then one else zero
+    
+    let area m = m.color_count.(one) [@@inline]
 
-    let area m = m.color_count.(1) [@@inline]
-
-    let empty height width = make height width 0
-    let full height width = make height width 1
+    let empty height width = make height width zero
+    let full height width = make height width one
     let singleton height width i j =
-      let m = make height width 0 in
-      set_pixel m i j 1;
+      let m = make height width zero in
+      set_pixel m i j one;
       m
       
     let equal m1 m2 = (m1 = m2) [@@inline]
     let is_empty m =
-      for_all_pixels (fun i j c -> c = 0) m
+      for_all_pixels (fun i j c -> c = zero) m
     let is_subset m1 m2 =
       for_all_pixels (fun i j c1 ->
           let c2 = get_pixel ~source:"is_subset" m2 i j in
-          c1 = 0 ||  c2 = 1)
+          c1 = zero ||  c2 = one)
         m1
     let inter_is_empty m1 m2 =
       for_all_pixels (fun i j c1 ->
           let c2 = get_pixel ~source:"inter_is_empty" m2 i j in
-          c1 = 0 || c2 = 0)
+          c1 = zero || c2 = zero)
         m1
 
     let mem i j m =
       i >= 0 && i < m.height
       && j >= 0 && j < m.width
-      && get_pixel m i j = 1 [@@inline]
+      && get_pixel m i j = one [@@inline]
     let set m i j =
-      set_pixel m i j 1
+      set_pixel m i j one
     let reset m i j =
-      set_pixel m i j 0
+      set_pixel m i j zero
 
     let union m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 lor c2) m1 m2
+      map2_pixels (fun c1 c2 -> bool (c1=one || c2=one)) m1 m2
     let inter m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 land c2) m1 m2
+      map2_pixels (fun c1 c2 -> bool (c1=one && c2=one)) m1 m2
     let diff m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 land (lnot c2)) m1 m2
+      map2_pixels (fun c1 c2 -> bool (c1=one && c2=zero)) m1 m2
     let diff_sym m1 m2 =
-      map2_pixels (fun c1 c2 -> c1 lxor c2) m1 m2
+      map2_pixels (fun c1 c2 -> bool (c1 <> c2)) m1 m2
     let compl m =
-      map_pixels (fun c -> 1 - c) m
+      map_pixels (fun c -> bool (c=zero)) m
 
     let fold f acc m =
       fold_pixels
-        (fun acc i j c -> if c = 1 then f acc i j else acc)
+        (fun acc i j c -> if c = one then f acc i j else acc)
         acc m
 
     let iter f m =
       iter_pixels
-        (fun i j c -> if c = 1 then f i j)
+        (fun i j c -> if c = one then f i j)
         m
 
     let from_bitmap (bmp : Bitmap.t) : t =
@@ -1099,7 +1073,7 @@ module Mask =
         bmp;
       m
           
-    let from_grid ?(bgcolor = black) (g : t) : t =
+    let from_grid_background (bgcolor : color) (g : t) : t =
       (* returns a non-bgcolor mask version of the grid *)
       let h, w = dims g in
       let res = empty h w in
@@ -1109,20 +1083,33 @@ module Mask =
             set res i j)
         g;
       res
-    let from_grid, reset_from_grid =
-      Common.memoize ~size:101 from_grid
+    let from_grid_background, reset_from_grid_background =
+      Common.memoize2 ~size:101 from_grid_background
 
-    let to_grid (m : t) (c : color) : t =
+    let from_grid_color (c_mask : color) (g : t) : t =
+      (* returns a non-bgcolor mask version of the grid *)
+      let h, w = dims g in
+      let res = empty h w in
+      iter_pixels
+        (fun i j c ->
+          if c = c_mask then
+            set res i j)
+        g;
+      res
+    let from_grid_color, reset_from_grid_color =
+      Common.memoize2 ~size:101 from_grid_color
+
+    let to_grid (m : t) (bgcolor : color) (c : color) : t =
       (* return a colored grid version of a mask *)
       let h, w = dims m in
-      let res = make h w black in
+      let res = make h w bgcolor in
       iter
         (fun i j ->
           set_pixel res i j c)
         m;
       res
     let to_grid, reset_to_grid =
-      Common.memoize2 ~size:101 to_grid
+      Common.memoize3 ~size:101 to_grid
 
     let to_string m =
       let h, w = dims m in
@@ -1144,7 +1131,8 @@ module Mask =
     let pp m = print_string (to_string m)
 
     let reset_memoized_functions () =
-      reset_from_grid ();
+      reset_from_grid_background ();
+      reset_from_grid_color ();
       reset_to_grid ()
              
   end

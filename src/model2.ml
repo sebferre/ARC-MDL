@@ -2041,10 +2041,10 @@ let dl_layers dl ~box ~path layers =
     `Root layers
 
 let template_delta =
-  `PosShape (`Vec (`Int 0, `Int 0), `ShapeRectangle (`Vec (`Int 1, `Int 1), `Color 1, `MaskModel `Full))
+  `PosShape (`Vec (`Int 0, `Int 0), `ShapeRectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `MaskModel `Full))
 let data_delta =
-  let g = Grid.make 1 1 1 in
-  `PosShape (`Vec (`Int 0, `Int 0), `Grid (g, `Rectangle (`Vec (`Int 1, `Int 1), `Color 1, `Grid (g, `Model `Full))))
+  let g = Grid.make 1 1 Grid.blue in
+  `PosShape (`Vec (`Int 0, `Int 0), `Grid (g, `Rectangle (`Vec (`Int 1, `Int 1), `Color Grid.blue, `Grid (g, `Model `Full))))
 let dl_delta dl ~box ~path nb_delta object_delta =
   Mdl.Code.universal_int_star nb_delta -. 1.
   +. float nb_delta
@@ -2571,7 +2571,7 @@ let close_any
   gen_seq sym_seq
        
 let close_grid sym_seq bgcolor g =
-  let| g' = close_any (Grid.Transf.layers ~bgcolor) grid_sym sym_seq g in
+  let| g' = close_any (Grid.Transf.layers bgcolor) grid_sym sym_seq g in
   Result.Ok g'
 let close_grid, reset_close_grid =
   Common.memoize3 ~size:101 close_grid
@@ -2756,7 +2756,8 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast1_result res1
        (function
         | `Grid g ->
-           let| g'= Grid.Transf.strip g in
+           let| bgcolor = Grid.majority_color Grid.transparent g in
+           let| g'= Grid.Transf.strip bgcolor g Grid.black in
            Result.Ok (`Grid g')
         | _ -> Result.Error (Invalid_expr e))
   | `Corner (e1,e2) ->
@@ -2910,7 +2911,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast_list_result lres1
        (fun lt1 ->
          let lg1 = List.map (function `Grid g1 -> g1 | _ -> assert false) lt1 in
-         let| g = Grid.Transf.layers lg1 in
+         let| g = Grid.Transf.layers Grid.transparent lg1 in
          Result.Ok (`Grid g))
   | `Area e1 ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -2985,7 +2986,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      let| res1 = apply_expr ~lookup p e1 in
      broadcast1_result res1
        (function
-        | `Grid g -> Result.Ok (`Grid (Grid.Mask.from_grid g))
+        | `Grid g -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g)) (* TODO: improve *)
         | _ -> Result.Error (Invalid_expr e))
   | `GridOfMask (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -2993,7 +2994,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast2_result (res1,res2)
        (function
         | `Grid m, `Color c ->
-           Result.Ok (`Grid (Grid.Mask.to_grid m c))
+           Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
         | _ -> Result.Error (Invalid_expr e))
   | `TranslationOnto (e1,e2) ->
      let| res1 = apply_expr ~lookup p e1 in
@@ -3173,7 +3174,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast1_result res1
        (function
         | `Grid g ->
-           let| c = Grid.majority_color ~except_black:true g in
+           let| c = Grid.majority_color Grid.black g in
            Result.Ok (`Color c)
         | _ -> Result.Error (Invalid_expr e))
   | `ColorCount e1 ->
@@ -3181,7 +3182,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : template 
      broadcast1_result res1
        (function
         | `Grid g ->
-           let n = Grid.color_count g in
+           let n = Grid.color_count Grid.black g in
            Result.Ok (`Int n)
         | _ -> Result.Error (Invalid_expr e))
   | `Coloring (e1,e2) ->
@@ -3319,14 +3320,14 @@ let mask_model (size : data) (mm : Mask_model.t) : Grid.t result =
 let shape_point (color : data) : Grid.t result =
   match color with
   | `Color c ->
-     let g = Grid.make 1 1 Grid.no_color in
+     let g = Grid.make 1 1 Grid.transparent in
      let| () = draw_shape_point g 0 0 c in
      Result.Ok g
   | _ -> assert false
 let shape_rectangle (size : data) (color : data) (mask : data) : Grid.t result =
   match size, color, mask with
   | `Vec (`Int h, `Int w), `Color c, `Grid (m, _) ->
-     let g = Grid.make h w Grid.no_color in
+     let g = Grid.make h w Grid.transparent in
      let| () = draw_shape_rectangle g 0 0 h w c m in
      Result.Ok g
   | _ -> assert false
@@ -3349,7 +3350,7 @@ let grid_tiling (dgrid : data) (dsize : data) : Grid.t result =
 
 
 let default_pos = `Vec (`Int 0, `Int 0)
-let default_shape_color = `Color Grid.no_color
+let default_shape_color = `Color Grid.transparent
 let default_grid_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
 let default_grid_size = `Vec (`Int 10, `Int 10)
@@ -3523,7 +3524,7 @@ let generate_template ?(p = `Root) (t : template) : data result =
   let| data, _, _ = gen box0 in
   Result.Ok data
 
-let undefined_grid = Grid.make 1 1 Grid.no_color
+let undefined_grid = Grid.make 1 1 Grid.transparent
 let grid_of_data_as_template (d : data) : Grid.t = (* for visualization of data *)
   let t = template_of_data ~mode:`Pattern d in
   match generate_template t with
@@ -4816,7 +4817,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& mode = [`TradeOff; `Strict] in
-         let bgcolor = 0 in
+         let bgcolor = Grid.transparent in
          push (role1, `PeriodicFactor (mode, `ConstColor bgcolor, e1))
       | `Grid ->
          let& mode = [`TradeOff; `Total; `Strict] in
@@ -4981,7 +4982,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
          (match role2 with
           | `Mask | `Shape | `Layer ->
              let& mode = [`TradeOff; `Strict] in
-             let bgcolor = `ConstColor 1 in
+             let bgcolor = `ConstColor Grid.transparent in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
           | `Grid ->
              let& mode = [`TradeOff; `Total; `Strict] in
@@ -5008,7 +5009,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       match role1 with
       | `Mask | `Shape | `Layer ->
          let& sym_seq = all_symmetry_close in
-         push (role1, `CloseSym (sym_seq, `ConstColor Grid.black, e1)) (* bgcolor does not matter for masks *)
+         push (role1, `CloseSym (sym_seq, `ConstColor Grid.transparent, e1))
       | _ -> () in
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
