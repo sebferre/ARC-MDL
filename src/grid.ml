@@ -125,6 +125,22 @@ let fold_pixels (f : 'a -> int -> int -> color -> 'a) (acc : 'a) grid : 'a =
   done;
   !res [@@inline]
 
+let fold2_pixels (f : 'a -> int -> int -> color -> color -> 'a) (acc : 'a) g1 g2 : 'a =
+  if g2.height <> g1.height || g2.width <> g1.width
+  then raise Invalid_dim
+  else
+    let mat1 = g1.matrix in
+    let mat2 = g2.matrix in
+    let res = ref acc in
+    for i = 0 to g1.height - 1 do
+      for j = 0 to g1.width - 1 do
+        let c1 = mat1.{i,j} in
+        let c2 = mat2.{i,j} in
+        res := f !res i j c1 c2
+      done
+    done;
+    !res [@@inline]
+
 let map_pixels (f : color -> color) g =
   let g' = copy g in
   for i = 0 to g.height - 1 do
@@ -198,11 +214,28 @@ let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
   done;
   !res
 
+let color_area (bgcolor : color) (g : t) : int = (* number of colored cells, excluding bgcolor *)
+  let res = ref 0 in
+  for c = black to last_color do
+    if c <> bgcolor
+    then res := !res + g.color_count.(c)
+  done;
+  !res
+  
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
     (fun c -> grid.color_count.(c))
     colors
 
+let color_freq_desc (grid : t) : (int * color) list =
+  let res = ref [] in
+  for c = black to last_color do
+    let n = grid.color_count.(c) in
+    if n > 0 then res := (n,c) :: !res
+  done;
+  List.sort Stdlib.compare !res
+
+  
 (* pretty-printing in terminal *)
 
 let rec xp_grids (print : Xprint.t) grids =
