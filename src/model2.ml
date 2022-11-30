@@ -462,7 +462,7 @@ type data =
   | `Grid of Grid.t
              * [ `None
                | `Background of data * data * data ilist * delta (* size, color, layers (top first), delta *)
-               | `Tiling of data * data (* grid, size *)
+               | `Tiling of data * data (* part grid, total size *)
                | `Point of data (* color *)
                | `Rectangle of data * data * data (* size, color, mask *)
                | `Model of Mask_model.t
@@ -617,10 +617,24 @@ let box0 =
   { box_height = Grid.max_size;
     box_width = Grid.max_size }
 
-let box_of_size : data -> box = function
-  | `Vec (`Int box_height, `Int box_width) -> {box_height; box_width}
-  | _ -> assert false
-  
+let box_of_size ~box size : box =
+  let box_height =
+    match size with
+    | `Vec (`Int i, _) -> i
+    | _ -> box.box_height in
+  let box_width =
+    match size with
+    | `Vec (_, `Int j) -> j
+    | _ -> box.box_width in
+  { box_height; box_width }
+
+let box_of_data (d : data) : box = (* QUICK *)
+  let box_height, box_width =
+    match d with
+    | `Grid (g, _) -> Grid.dims g
+    | _ -> assert false in
+  { box_height; box_width }
+
 (* stringifiers and pretty-printing *)
 
 let string_of_dim : dim -> string = function
@@ -713,8 +727,8 @@ let xp_background xp print size color layers delta =
   if delta <> [] then (
     print#string "\n  + "; print#int (List.length delta); print#string " delta pixels")
 let xp_tiling xp print grid size =
-  print#string "tiling by "; xp print size;
-  print#string "\nof "; xp print grid
+  print#string "tiling to size "; xp print size;
+  print#string "\nof grid "; xp print grid
 
 let rec xp_data (print : Xprint.t) : data -> unit = function
   | `Bool b -> xp_bool print b
@@ -1543,13 +1557,6 @@ let dl_grid : Grid.t -> dl = (* too efficient a coding for being useful *)
   +. dl_int_size ~bound:Grid.max_size w
   +. float h *. float w *. dl_color Grid.blue (* or any color *) 
   
-let box_of_data (d : data) : box = (* QUICK *)
-  let box_height, box_width =
-    match d with
-    | `Grid (g, _) -> Grid.dims g
-    | _ -> assert false in
-  { box_height; box_width }
-
 (* functions for computing the DL of paths, used as references
    - the coding takes into account the context of use (kind and role)
    - the coding takes into account the similarity between the reference path and the context path
@@ -2028,25 +2035,19 @@ let dl_delta dl ~box ~path nb_delta object_delta =
   Mdl.Code.universal_int_star nb_delta -. 1.
   +. float nb_delta
      *. dl ~box ~path:(path ++ `Layer `Root) object_delta (* all delta points treated alike *)
+
 let dl_Grid_Background dl ~box ~path size color layers nb_delta object_delta =
-  let box_height =
-    match size with
-    | `Vec (`Int i, _) -> i
-    | _ -> box.box_height in
-  let box_width =
-    match size with
-    | `Vec (_, `Int j) -> j
-    | _ -> box.box_width in
-  let box_grid = { box_height; box_width } in
+  let box_grid = box_of_size ~box size in
   Mdl.Code.usage 0.8
   +. dl ~box ~path:(path ++ `Size) size
   +. dl ~box ~path:(path ++ `Color) color
   +. dl_layers dl ~box:box_grid ~path layers
   +. dl_delta dl ~box:box_grid ~path nb_delta object_delta
 let dl_Grid_Tiling dl ~box ~path grid size =
+  let box_grid = box_of_size ~box size in
   Mdl.Code.usage 0.2
-  +. dl ~box ~path:(path ++ `Grid) grid
-  +. dl ~box ~path:(path ++ `Size) size (* TODO: adapt box ? *)
+  +. dl ~box:box_grid ~path:(path ++ `Grid) grid
+  +. dl ~box ~path:(path ++ `Size) size
 
 let dl_Grid dl object_delta ~box ~path g =
   match path_role path with
@@ -3316,8 +3317,10 @@ let grid_background (size : data) (color : data) (layers : data ilist) : Grid.t 
   | _ -> assert false
 let grid_tiling (dgrid : data) (dsize : data) : Grid.t result =
   match dgrid, dsize with
-  | `Grid (g,_), `Vec (`Int k, `Int l) ->
-     Grid.Transf.tile k l g
+  | `Grid (g1,_), `Vec (`Int h, `Int w) ->
+     let h1, w1 = Grid.dims g1 in
+     let k, l = h / h1, w / w1 in
+     Grid.Transf.tile k l g1
   | _ -> assert false
 
 
@@ -3417,7 +3420,7 @@ let rec generator_template (p : revpath) (t : template) : generator =
        Generator (fun box ->
            let| dsize, stop_size, next_size = gen_size box in
            let| dcolor, stop_color, next_color = gen_color box in
-           let| dmask, stop_mask, next_mask = gen_mask (box_of_size dsize) in
+           let| dmask, stop_mask, next_mask = gen_mask (box_of_size ~box dsize) in
            let| g = shape_rectangle dsize dcolor dmask in
            Result.Ok
              (`Grid (g,
@@ -3446,7 +3449,7 @@ let rec generator_template (p : revpath) (t : template) : generator =
          let| dlayers =
            map_ilist_result
              (fun lp (Generator gen_layer) ->
-               let| dlayer, _, _ = gen_layer (box_of_size dsize) in
+               let| dlayer, _, _ = gen_layer (box_of_size ~box dsize) in
                Result.Ok dlayer)
              `Root ilist_gen_layers in
          let| g = grid_background dsize dcolor dlayers in
@@ -4011,10 +4014,9 @@ let rec parseur_grid t p : (Grid.t, data, parse_state_base) parseur = (* QUICK, 
                let h, w = Grid.dims g in
                if h mod p1 = 0 && w mod p2 = 0
                then (
-                 let k, l = h / p1, w / p2 in
                  let* (g1 : Grid.t) = Myseq.from_result (Grid.Transf.crop g 0 0 p1 p2) in
                  let* dgrid, state, _, _ = parse_grid g1 state in
-                 let* dsize, state, _, _ = parse_size (k,l) state in
+                 let* dsize, state, _, _ = parse_size (h,w) state in
                  let data = `Grid (g, `Tiling (dgrid, dsize)) in
                  Myseq.return (data, state, true, parseur_empty) )
                else Myseq.empty
