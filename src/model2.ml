@@ -155,9 +155,9 @@ let max_dim_list : dim list -> dim = function
   | x::r -> List.fold_left max x r
                 
 type kind =
-  Int | Bool | Color | Mask | Vec | Shape | Object | Layer | Grid
+  Int | Bool | Color | Mask | Vec | Shape | Layer | Grid
 let all_kinds : kind list =
-  [ Int;  Bool;  Color;  Mask;  Vec;  Shape;  Object; Layer;  Grid ]
+  [ Int;  Bool;  Color;  Mask;  Vec;  Shape; Layer;  Grid ]
 
 module KindMap =
   struct
@@ -167,7 +167,7 @@ module KindMap =
       [| int; bool; color; mask; vec; shape; object_; layer; grid |]
 
     let init (f : kind -> 'a) : 'a t =
-      [| f Int; f Bool; f Color; f Mask; f Vec; f Shape; f Object; f Layer; f Grid |]
+      [| f Int; f Bool; f Color; f Mask; f Vec; f Shape; f Layer; f Grid |]
 
     let find (k : kind) (map : 'a t) : 'a =
       map.((Obj.magic k : int)) [@@inline]
@@ -194,7 +194,6 @@ type role = (* same information as kind + contextual information *)
   | `Mask
   | `Vec of role_vec
   | `Shape
-  | `Object
   | `Layer
   | `Grid ]
 and role_vec =
@@ -211,7 +210,6 @@ let kind_of_role : role -> kind = function
   | `Mask -> Mask
   | `Vec _ -> Vec
   | `Shape -> Shape
-  | `Object -> Object
   | `Layer -> Layer
   | `Grid -> Grid
 
@@ -228,7 +226,6 @@ type role_poly = (* polymorphic extension of role *)
   | `Mask
   | `Vec of role_vec_poly
   | `Shape
-  | `Object
   | `Layer
   | `Grid ]
 and role_vec_poly =
@@ -245,7 +242,6 @@ let role_poly_matches (role_x : role_poly) (role : role) : bool =
     | `Mask, `Mask -> true
     | `Vec vec_x, `Vec vec -> aux_vec vec_x vec
     | `Shape, `Shape -> true
-    | `Object, `Object -> true
     | `Layer, `Layer -> true
     | `Grid, `Grid -> true
     | _ -> false
@@ -507,25 +503,25 @@ type 'a expr_func =
   | `LogNot of 'a (* on Mask *)
   | `Stack of 'a list (* on Grids *)
   | `Area of 'a (* on Shape *)
-  | `Left of 'a (* on Object *)
-  | `Right of 'a (* on Object *)
-  | `Center of 'a (* on Object *)
-  | `Top of 'a (* on Object *)
-  | `Bottom of 'a (* on Object *)
-  | `Middle of 'a (* on Object *)
+  | `Left of 'a (* on Layer *)
+  | `Right of 'a (* on Layer *)
+  | `Center of 'a (* on Layer *)
+  | `Top of 'a (* on Layer *)
+  | `Bottom of 'a (* on Layer *)
+  | `Middle of 'a (* on Layer *)
   | `ProjI of 'a (* on Vec *)
   | `ProjJ of 'a (* on Vec *)
   | `MaskOfGrid of 'a (* Grid -> Mask TODO: specify bgcolor *)
   | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
   | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
   | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
-  | `PeriodicFactor of Grid.Transf.periodicity_mode * 'a * 'a (* on Color, Mask/Shape/Object/Grid as T -> T *)
-  | `FillResizeAlike of Grid.Transf.periodicity_mode * 'a * 'a * 'a (* on Color, Vec, Mask/Shape/Object/Grid as T -> T *)
+  | `PeriodicFactor of Grid.Transf.periodicity_mode * 'a * 'a (* on Color, Mask/Shape/Layer/Grid as T -> T *)
+  | `FillResizeAlike of Grid.Transf.periodicity_mode * 'a * 'a * 'a (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
   | `Compose of 'a * 'a * 'a (* Color, Mask/Shape/Grid as T, T -> T *)
-  | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Object; role of the argument as computation depends on it *)
-  | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Object *)
+  | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Layer; role of the argument as computation depends on it *)
+  | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Layer *)
   (* sym list list = matrix to be filled with symmetries of some mask *)
-  | `CloseSym of symmetry list * 'a * 'a (* Color, Mask/Shape/Object/Grid as T -> T *)
+  | `CloseSym of symmetry list * 'a * 'a (* Color, Mask/Shape/Layer/Grid as T -> T *)
   (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
   | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
   | `MajorityColor of 'a (* Grid -> Color *)
@@ -648,7 +644,6 @@ let string_of_kind : kind -> string = function
   | Mask -> "mask"
   | Vec -> "vector"
   | Shape -> "shape"
-  | Object -> "object"
   | Layer -> "layer"
   | Grid -> "grid"
 
@@ -659,7 +654,6 @@ let rec xp_role (print : Xprint.t) = function
   | `Mask -> print#string "mask"
   | `Vec rv -> print#string "vec/"; xp_role_vec print rv
   | `Shape -> print#string "shape"
-  | `Object -> print#string "object"
   | `Layer -> print#string "layer"
   | `Grid -> print#string "grid"
 and xp_role_vec print = function
@@ -1586,7 +1580,6 @@ let rec dl_path_role (role : role) (p : revpath) : dl =
   | `Mask -> dl_path_mask p
   | `Vec rvec -> dl_path_vec rvec p
   | `Shape -> dl_path_shape p
-  | `Object -> dl_path_layer p
   | `Layer -> dl_path_layer p
   | `Grid -> dl_path_grid p
 and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
@@ -3334,8 +3327,7 @@ let default_mask_raw = result_force (mask_model default_shape_size `Full)
 let default_mask = `Grid (default_mask_raw, `Model `Full)
 let default_shape_raw = result_force (shape_rectangle default_shape_size default_shape_color default_mask)
 let default_shape = `Grid (default_shape_raw, `Rectangle (default_shape_size, default_shape_color, default_mask))
-let default_object = `PosShape (default_pos, default_shape)
-let default_layer = default_object
+let default_layer = `PosShape (default_pos, default_shape)
 let default_grid_raw = result_force (grid_background default_grid_size default_grid_color `Nil) (* Grid.make 10 10 Grid.black *)
 let default_grid = `Grid (default_grid_raw, `Background (default_grid_size, default_grid_color, `Nil, []))
 let default_data_of_path (p : revpath) : data =
@@ -3353,7 +3345,6 @@ let default_data_of_path (p : revpath) : data =
   | `Vec (`Size `Shape) -> default_shape_size
   | `Vec `Move -> default_move
   | `Shape -> default_shape
-  | `Object -> default_object
   | `Layer -> default_layer
   | `Grid -> default_grid
 
