@@ -155,19 +155,19 @@ let max_dim_list : dim list -> dim = function
   | x::r -> List.fold_left max x r
                 
 type kind =
-  Int | Bool | Color | Mask | Vec | Shape | Layer | Grid
+  Int | Bool | Color | Vec | Layer | Grid
 let all_kinds : kind list =
-  [ Int;  Bool;  Color;  Mask;  Vec;  Shape; Layer;  Grid ]
+  [ Int;  Bool;  Color;  Vec;  Layer;  Grid ]
 
 module KindMap =
   struct
     type 'a t = 'a array (* indices over kinds *)
 
-    let make ~int ~bool ~color ~mask ~vec ~shape ~object_ ~layer ~grid : 'a t =
-      [| int; bool; color; mask; vec; shape; object_; layer; grid |]
+    let make ~int ~bool ~color ~vec ~layer ~grid : 'a t =
+      [| int; bool; color; vec; layer; grid |]
 
     let init (f : kind -> 'a) : 'a t =
-      [| f Int; f Bool; f Color; f Mask; f Vec; f Shape; f Layer; f Grid |]
+      [| f Int; f Bool; f Color; f Vec; f Layer; f Grid |]
 
     let find (k : kind) (map : 'a t) : 'a =
       map.((Obj.magic k : int)) [@@inline]
@@ -190,60 +190,54 @@ let ( .&() ) map k = KindMap.find k map [@@inline]
 type role = (* same information as kind + contextual information *)
   [ `IntCoord of [`I | `J] * role_vec
   | `IntCard (* cardinal, result of a count, in general strictly positive *)
-  | `Color of role_frame
-  | `Mask
+  | `Color of role_grid
   | `Vec of role_vec
-  | `Shape
   | `Layer
-  | `Grid ]
+  | `Grid of role_grid ]
 and role_vec =
-  [ `Pos (* coordinates in grid, range [0,size-1] *)
-  | `Size of role_frame (* strictly positive, unbounded *)
+  [ `Pos (* coordinates in frame, range [0,size-1] *)
+  | `Size of role_grid (* strictly positive, unbounded *) (* TODO: consider removing role_grid arg *)
   | `Move ] (* translation (pos delta), can be negative *)
-and role_frame =
-  [ `Shape | `Grid ]
+and role_grid =
+  [ `Mask (* transparent-black grid, implicit size *)
+  | `Shape (* transparent-monocolor grid *)
+  | `Frame ] (* multicolor grid, no transparent *)
 
 let kind_of_role : role -> kind = function
   | `IntCoord _ -> Int
   | `IntCard -> Int
   | `Color _ -> Color
-  | `Mask -> Mask
   | `Vec _ -> Vec
-  | `Shape -> Shape
   | `Layer -> Layer
-  | `Grid -> Grid
+  | `Grid _ -> Grid
 
 let role_can_be_sequence = function
-  | `Int (_, `Size `Grid)
-    | `Vec (`Size `Grid)
-    | `Color `Grid -> false (* grid attributes are singletons *)
+  | `Int (_, `Size (`Grid `Frame))
+    | `Vec (`Size (`Grid `Frame))
+    | `Color (`Grid `Frame) -> false (* grid attributes are singletons *)
   | _ -> true (* layer attributes can be sequences *)
            
 type role_poly = (* polymorphic extension of role *)
   [ `IntCoord of [`I | `J | `X] * role_vec_poly
   | `IntCard
-  | `Color of role_frame_poly
-  | `Mask
+  | `Color of role_grid_poly
   | `Vec of role_vec_poly
-  | `Shape
   | `Layer
-  | `Grid ]
+  | `Grid of role_grid_poly ]
 and role_vec_poly =
-  [ `Pos | `Size of role_frame_poly | `Move | `X ]
-and role_frame_poly =
-  [ `Shape | `Grid | `X ]
+  [ `Pos | `Size of role_grid_poly | `Move | `X ]
+and role_grid_poly =
+  [ `Mask | `Shape | `Frame | `X ]
 
 let role_poly_matches (role_x : role_poly) (role : role) : bool =
   let rec aux_role r_x r =
     match r_x, r with
     | `IntCoord (_,vec_x), `IntCoord (_,vec) -> aux_vec vec_x vec
     | `IntCard, `IntCard -> true
-    | `Color fr_x, `Color fr -> true
-    | `Mask, `Mask -> true
+    | `Color gr_x, `Color gr -> aux_grid gr_x gr (* TEST *)
     | `Vec vec_x, `Vec vec -> aux_vec vec_x vec
-    | `Shape, `Shape -> true
     | `Layer, `Layer -> true
-    | `Grid, `Grid -> true
+    | `Grid gr_x, `Grid gr -> aux_grid gr_x gr
     | _ -> false
   and aux_vec vec_x vec =
     match vec_x, vec with
@@ -251,6 +245,13 @@ let role_poly_matches (role_x : role_poly) (role : role) : bool =
     | `Pos, `Pos -> true
     | `Size fr_x, `Size fr -> true
     | `Move, `Move -> true
+    | _ -> false
+  and aux_grid grid_x grid =
+    match grid_x, grid with
+    | `X, _ -> true
+    | `Mask, `Mask -> true
+    | `Shape, _ -> true
+    | `Frame, `Frame -> true
     | _ -> false
   in
   aux_role role_x role
@@ -641,28 +642,27 @@ let string_of_kind : kind -> string = function
   | Bool -> "bool"
   | Int -> "int"
   | Color -> "color"
-  | Mask -> "mask"
   | Vec -> "vector"
-  | Shape -> "shape"
   | Layer -> "layer"
   | Grid -> "grid"
 
-let rec xp_role (print : Xprint.t) = function
-  | `Int (`I, rv) -> print#string "i/"; xp_role_vec print rv
-  | `Int (`J, rv) -> print#string "j/"; xp_role_vec print rv
-  | `Color rf -> print_string "color/"; xp_role_frame print rf
-  | `Mask -> print#string "mask"
+let rec xp_role (print : Xprint.t) : role -> unit = function
+  | `IntCoord (`I, rv) -> print#string "i/"; xp_role_vec print rv
+  | `IntCoord (`J, rv) -> print#string "j/"; xp_role_vec print rv
+  | `IntCard -> print#string "card"
+  | `Color rg -> print_string "color/"; xp_role_grid print rg
   | `Vec rv -> print#string "vec/"; xp_role_vec print rv
-  | `Shape -> print#string "shape"
   | `Layer -> print#string "layer"
-  | `Grid -> print#string "grid"
+  | `Grid rg -> print#string "grid/"; xp_role_grid print rg
 and xp_role_vec print = function
   | `Pos -> print#string "pos"
-  | `Size rf -> print#string "size/"; xp_role_frame print rf
+  | `Size rg -> print#string "size/"; xp_role_grid print rg
   | `Move -> print#string "move"
-and xp_role_frame print = function
+and xp_role_grid print = function
+  | `Mask -> print#string "mask"
   | `Shape -> print#string "shape"
-  | `Grid -> print#string "grid"
+  | `Frame -> print#string "frame"
+let string_of_role : role -> string = Xprint.to_string xp_role
            
 let xp_field (print : Xprint.t) : field -> unit = function
   | `I -> print#string "i"
@@ -1027,9 +1027,9 @@ let rec path_kind (p : revpath) : kind =
      (match f with
       | (`I | `J) -> Int
       | `Color -> Color
-      | `Mask -> Mask
+      | `Mask -> Grid
       | (`Pos | `Size) -> Vec
-      | `Shape -> Shape
+      | `Shape -> Grid
       | `Layer _ -> Layer
       | `Grid -> Grid)
   | `Item (_,p1) -> path_kind p1
@@ -1039,15 +1039,15 @@ let rec path_kind (p : revpath) : kind =
 
 let rec path_role (p : revpath) : role =
   match p with
-  | `Root -> `Grid
+  | `Root -> `Grid `Frame
   | `Field ((`I | `J as f), p1) -> `IntCoord (f, path_role_vec p1)
-  | `Field (`Color, p1) -> `Color (path_role_frame p1)
-  | `Field (`Mask, _) -> `Mask
+  | `Field (`Color, p1) -> `Color (path_role_grid p1)
+  | `Field (`Mask, _) -> `Grid `Mask
   | `Field (`Pos, _) -> `Vec `Pos
-  | `Field (`Size, p1) -> `Vec (`Size (path_role_frame p1))
-  | `Field (`Shape, _) -> `Shape
+  | `Field (`Size, p1) -> `Vec (`Size (path_role_grid p1))
+  | `Field (`Shape, _) -> `Grid `Shape
   | `Field (`Layer _, _) -> `Layer
-  | `Field (`Grid, _) -> `Grid
+  | `Field (`Grid, _) -> `Grid `Frame
   | `Item (_, p1) -> path_role p1
   | `AnyItem p1 -> path_role p1
   | `Arg (i, None, p1) -> path_role p1
@@ -1055,20 +1055,20 @@ let rec path_role (p : revpath) : role =
 and path_role_vec : revpath -> role_vec = function
   | `Root -> assert false
   | `Field (`Pos, _) -> `Pos
-  | `Field (`Size, p1) -> `Size (path_role_frame p1)
+  | `Field (`Size, p1) -> `Size (path_role_grid p1)
   | `Item (i, p1) -> path_role_vec p1
   | `AnyItem p1 -> path_role_vec p1
   | `Arg (i, None, p1) -> path_role_vec p1
   | p ->
      pp_path p; print_newline ();
      assert false
-and path_role_frame : revpath -> role_frame = function
-  | `Root -> `Grid
+and path_role_grid : revpath -> role_grid = function
+  | `Root -> `Frame
   | `Field (`Shape, _) -> `Shape
-  | `Field (`Grid, _) -> `Grid
-  | `Item (i, p1) -> path_role_frame p1
-  | `AnyItem p1 -> path_role_frame p1
-  | `Arg (i, None, p1) -> path_role_frame p1
+  | `Field (`Grid, _) -> `Frame
+  | `Item (i, p1) -> path_role_grid p1
+  | `AnyItem p1 -> path_role_grid p1
+  | `Arg (i, None, p1) -> path_role_grid p1
   | p -> pp_path p; print_newline (); assert false
 
 let find_ilist (lp : ilist_revpath) (l : 'a ilist) : 'a option = (* QUICK *)
@@ -1275,7 +1275,7 @@ let rec root_template_of_data ~(in_output : bool) (role : role) (d : data) : (te
   | `PosShape _ -> [`PosShape (u_vec_cst, u_cst), false]
   | `Grid (g, `None) ->
      (match role with
-      | `Mask -> [`Grid g, false]
+      | `Grid `Mask -> [`Grid g, false]
       | _ -> []) (* no literal grids in models, except masks *)
   | `Grid (m, `Model mm) -> [`MaskModel mm, false; `Grid m, false]
   | `Grid (_, `Point _) -> [`ShapePoint u_cst, false]
@@ -1577,11 +1577,9 @@ let rec dl_path_role (role : role) (p : revpath) : dl =
   | `IntCoord (rij,rvec) -> dl_path_int rij rvec  p
   | `IntCard -> dl_path_card p
   | `Color _ -> dl_path_color p
-  | `Mask -> dl_path_mask p
   | `Vec rvec -> dl_path_vec rvec p
-  | `Shape -> dl_path_shape p
   | `Layer -> dl_path_layer p
-  | `Grid -> dl_path_grid p
+  | `Grid rg -> dl_path_grid rg p
 and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
   | `Root -> 0.
   | `Field ((`I | `J as ij), p1) ->
@@ -1592,7 +1590,7 @@ and dl_path_int (rij : [`I|`J]) (rvec : role_vec) = function
      +. dl_path_int rij rvec p1
   | `AnyItem p1 ->
      dl_path_int rij rvec p1
-  | _ -> assert false
+  | p -> pp_path p; print_newline (); assert false
 and dl_path_card = function
   | `Root -> 0.
   | `Item (i,p1) ->
@@ -1600,26 +1598,16 @@ and dl_path_card = function
      +. dl_path_card p1
   | `AnyItem p1 ->
      dl_path_card p1
-  | _ -> assert false
+  | p -> pp_path p; print_newline (); assert false
 and dl_path_color = function
   | `Root -> 0.
   | `Field (`Color, p1) ->
-     dl_path_shape p1
+     dl_path_grid `Shape p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_color p1
   | `AnyItem p1 -> dl_path_color p1
-  | _ -> assert false
-and dl_path_mask = function
-  | `Root -> 0.
-  | `Field (`Mask, p1) ->
-     dl_path_shape p1
-  | `Item (i,p1) ->
-     Mdl.Code.universal_int_star i
-     +. dl_path_mask p1
-  | `AnyItem p1 ->
-     dl_path_mask p1
-  | _ -> assert false
+  | p -> pp_path p; print_newline (); assert false
 and dl_path_vec (rvec : role_vec) = function
   | `Root -> 0.
   | `Field ((`Pos|`Size as f), p1) ->
@@ -1631,42 +1619,50 @@ and dl_path_vec (rvec : role_vec) = function
      dl_choice
      +. ( match f with
           | `Pos -> dl_path_layer p1
-          | `Size -> dl_path_shape p1 )
+          | `Size -> dl_path_grid `Shape p1 )
   | `Item (i, p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_vec rvec p1
   | `AnyItem p1 ->
      dl_path_vec rvec p1
-  | _ -> assert false
-and dl_path_shape = function
-  | `Root -> 0.
-  | `Field (`Shape, p1) ->
-     dl_path_layer p1
-  | `Field (`Grid, p1) ->
-     dl_path_grid p1 (* TODO: should encode choice between shape and grid *)
-  | `Item (i,p1) ->
-     Mdl.Code.universal_int_star i
-     +. dl_path_shape p1
-  | `AnyItem p1 ->
-     dl_path_shape p1
-  | p -> assert false
+  | p -> pp_path p; print_newline (); assert false
 and dl_path_layer = function
   | `Root -> 0.
   | `Field (`Layer lp, p1) ->
      Mdl.Code.universal_int_star (dl_ilist_path_length lp)
      +. dl_ilist_path lp
-     +. dl_path_grid p1
+     +. dl_path_grid `Frame p1
   | `Item (i,p1) ->
      Mdl.Code.universal_int_star i
      +. dl_path_layer p1
   | `AnyItem p1 ->
      dl_path_layer p1
-  | _ -> assert false
-and dl_path_grid = function
+  | p -> pp_path p; print_newline (); assert false
+and dl_path_grid (rg : role_grid) = function
   | `Root -> 0.
-  | `Field (`Grid, p1) ->
-     dl_path_grid p1
-  | _ -> assert false
+  | `Field ((`Mask | `Shape | `Grid as f), p1) ->
+     (match rg with (* expecting... *)
+      | `Mask ->
+         (match f with
+          | `Mask -> dl_path_grid `Shape p1
+          | `Shape -> infinity
+          | `Grid -> infinity)
+      | `Shape ->
+         (match f with
+          | `Mask -> Mdl.Code.usage 0.1 +. dl_path_grid `Shape p1
+          | `Shape -> 0. (* 0.8 *) +. dl_path_layer p1
+          | `Grid -> Mdl.Code.usage 0.1 +. dl_path_grid `Frame p1)
+      | `Frame ->
+         (match f with
+          | `Mask -> infinity
+          | `Shape -> Mdl.Code.usage 0.5 +. dl_path_layer p1
+          | `Grid -> Mdl.Code.usage 0.5 +. dl_path_grid `Frame p1))
+  | `Item (i,p1) ->
+     Mdl.Code.universal_int_star i
+     +. dl_path_grid rg p1
+  | `AnyItem p1 ->
+     dl_path_grid rg p1
+  | p -> pp_path p; print_newline (); assert false
 and dl_ilist_path lp = (* assuming lp length known *)
   let rec aux = function
     | `Root -> 0, 0
@@ -1682,6 +1678,7 @@ let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl 
   let dl =
     let common_prefix, ctx_branch, p_branch =
       path_factorize ctx_path p in
+    (*Printf.printf "dl_path: in ctx %s : %s, path branch %s\n" (string_of_path ctx_path) (string_of_role ctx_role) (string_of_path p_branch);*)
     Mdl.Code.universal_int_star (dl_path_length ctx_branch)
     +. Mdl.Code.universal_int_star (dl_path_length p_branch)
     +. dl_path_role ctx_role p_branch in
@@ -1711,14 +1708,6 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
     ~color:(uniform_among [
                 `ConstColor Grid.black;
                 `MajorityColor `X ])
-    ~mask:(uniform_among [
-               `MaskOfGrid `X;
-               `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
-               `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
-               `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
-               `LogAndNot (`X,`X); `LogNot `X ])
     ~vec:(uniform_among [
               `ProjI `X; `ProjJ `X; `Size `X;
               `ConstVec (0,0);
@@ -1729,26 +1718,21 @@ let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding R
               `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
               `TranslationOnto (`X,`X);
               `TranslationSym (`FlipHeight,`X,`X) ])
-    ~shape:(uniform_among [
-                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-                `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X);  `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
-                `ApplySym (`FlipHeight, `X, `Shape);
-                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
-                `Coloring (`X,`X) ])
-    ~object_:(uniform_among [ ])
     ~layer:(uniform_among [
                 `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X);
                 `ApplySym (`FlipHeight, `X, `Layer);
                 `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
                 `Coloring (`X,`X) ])
     ~grid:(uniform_among [
-               `GridOfMask (`X,`X);
-               `SwapColors (`X,`X,`X);
+               `SwapColors (`X,`X,`X); `Coloring (`X,`X);
                `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
                `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
-               `ApplySym (`FlipHeight, `X, `Mask);
-               `UnfoldSym ([], `X); `CloseSym ([], `X, `X) (* `Stack [`X; `X] *) ])
+               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X);
+               `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
+               `ApplySym (`FlipHeight, `X, `Grid `Shape);
+               `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
+               `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
+               `LogAndNot (`X,`X); `LogNot `X ])
   
 let code_ref = Mdl.Code.usage 0.6
 let code_func = Mdl.Code.usage 0.4
@@ -1805,7 +1789,7 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
      +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
   | `Size e1 ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,Some `Grid,path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1,Some (`Grid `Shape),path)) e1
   | `Crop (e1,e2) ->
      code_func
      +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
@@ -1860,7 +1844,7 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
      +. Mdl.sum le1
           (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
   | `Area e1 ->
-     code_func +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Shape, path)) e1
+     code_func +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
   | `Left e1 | `Right e1 | `Center e1
     | `Top e1 | `Bottom e1 | `Middle e1 ->
      code_func
@@ -1870,10 +1854,10 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
      +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
   | `MaskOfGrid e1 ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
   | `GridOfMask (e1,e2) ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Mask, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Mask), path)) e1
      +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
   | `TranslationOnto (e1,e2) ->
      code_func
@@ -1887,17 +1871,17 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
   | `PeriodicFactor (mode,e1,e2) ->
      code_func
      +. dl_periodicity_mode mode
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
      +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
   | `FillResizeAlike (mode,e1,e2,e3) ->
      code_func
      +. dl_periodicity_mode mode
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Vec (`Size `Grid)), path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Vec (`Size `Shape)), path)) e2
      +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
   | `Compose (e1,e2,e3) ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
      +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
      +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
   | `ApplySym (sym,e1,role_e1) ->
@@ -1911,7 +1895,7 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
   | `CloseSym (sym_seq,e1,e2) ->
      code_func
      +. Mdl.Code.uniform nb_symmetry_close (* encoding sym_seq *)
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Frame), path)) e1
      +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e2
   | `TranslationSym (sym,e1,e2) ->
      code_func
@@ -1920,10 +1904,10 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
      +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
   | `MajorityColor e1 ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Frame), path)) e1
   | `ColorCount e1 ->
      code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Grid, path)) e1
+     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
   | `Coloring (e1,e2) ->
      code_func
      +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
@@ -1931,8 +1915,8 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
   | `SwapColors (e1,e2,e3) ->
      code_func
      +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Grid), path)) e2
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some (`Color `Grid), path)) e3
+     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Frame), path)) e2
+     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some (`Color `Frame), path)) e3
 and dl_periodicity_mode = function
   | `Total -> Mdl.Code.usage 0.25
   | `Strict -> Mdl.Code.usage 0.25
@@ -1961,10 +1945,7 @@ let code_template_by_kind : code_template KindMap.t =
     ~int:code_template0
     ~bool:code_template0
     ~color:code_template0
-    ~mask:code_template0
     ~vec:code_template0
-    ~shape:code_template0
-    ~object_:code_template0
     ~layer:code_template0
     ~grid:code_template0
 
@@ -1983,7 +1964,7 @@ let dl_Int ~box ~path n =
 
 let dl_Color ~box ~path c =
   match path_role path with
-  | `Color `Grid -> dl_background_color c
+  | `Color `Frame -> dl_background_color c
   | `Color `Shape -> dl_shape_color c
   | _ -> assert false
 
@@ -2044,23 +2025,25 @@ let dl_Grid_Tiling dl ~box ~path grid size =
 
 let dl_Grid dl object_delta ~box ~path g =
   match path_role path with
-  | `Mask ->
-     dl_Mask ~box ~path g
-  | `Shape ->
-     let h, w = Grid.dims g in
-     let c = raise TODO in
-     let m = raise TODO in
-     dl_Shape_Rectangle dl ~box ~path
-       (`Vec (`Int h, `Int w))
-       (`Color c)
-       (`Grid m)
-  | `Grid ->
-     let h, w = Grid.dims g in
-     dl_Grid_Background dl ~box ~path
-       (`Vec (`Int h, `Int w))
-       (`Color Grid.black)
-       `Nil
-       (h * w) object_delta
+  | `Grid rg ->
+     (match rg with
+      | `Mask ->
+         dl_Mask ~box ~path g
+      | `Shape ->
+         let h, w = Grid.dims g in
+         let c = raise TODO in
+         let m = raise TODO in
+         dl_Shape_Rectangle dl ~box ~path
+           (`Vec (`Int h, `Int w))
+           (`Color c)
+           (`Grid m)
+      | `Frame ->
+         let h, w = Grid.dims g in
+         dl_Grid_Background dl ~box ~path
+           (`Vec (`Int h, `Int w))
+           (`Color Grid.black)
+           `Nil
+           (h * w) object_delta)
   | _ -> assert false 
 
   
@@ -3319,34 +3302,35 @@ let grid_tiling (dgrid : data) (dsize : data) : Grid.t result =
 
 let default_pos = `Vec (`Int 0, `Int 0)
 let default_shape_color = `Color Grid.transparent
-let default_grid_color = `Color Grid.black
+let default_frame_color = `Color Grid.black
 let default_shape_size = `Vec (`Int 2, `Int 2)
-let default_grid_size = `Vec (`Int 10, `Int 10)
+let default_frame_size = `Vec (`Int 10, `Int 10)
 let default_move = `Vec (`Int 0, `Int 0)
 let default_mask_raw = result_force (mask_model default_shape_size `Full)
 let default_mask = `Grid (default_mask_raw, `Model `Full)
 let default_shape_raw = result_force (shape_rectangle default_shape_size default_shape_color default_mask)
 let default_shape = `Grid (default_shape_raw, `Rectangle (default_shape_size, default_shape_color, default_mask))
 let default_layer = `PosShape (default_pos, default_shape)
-let default_grid_raw = result_force (grid_background default_grid_size default_grid_color `Nil) (* Grid.make 10 10 Grid.black *)
-let default_grid = `Grid (default_grid_raw, `Background (default_grid_size, default_grid_color, `Nil, []))
+let default_frame_raw = result_force (grid_background default_frame_size default_frame_color `Nil) (* Grid.make 10 10 Grid.black *)
+let default_frame = `Grid (default_frame_raw, `Background (default_frame_size, default_frame_color, `Nil, []))
 let default_data_of_path (p : revpath) : data =
   match path_role p with
   | `IntCoord (_, `Pos) -> `Int 0
-  | `IntCoord (_, `Size `Grid) -> `Int 10
-  | `IntCoord (_, `Size `Shape) -> `Int 2
+  | `IntCoord (_, `Size `Frame) -> `Int 10
+  | `IntCoord (_, `Size (`Shape | `Mask)) -> `Int 2
   | `IntCoord (_, `Move) -> `Int 0
   | `IntCard -> `Int 2
-  | `Color `Grid -> default_grid_color
+  | `Color `Frame -> default_frame_color
   | `Color `Shape -> default_shape_color
-  | `Mask -> default_mask
+  | `Color `Mask -> assert false
   | `Vec `Pos -> default_pos
-  | `Vec (`Size `Grid) -> default_grid_size
-  | `Vec (`Size `Shape) -> default_shape_size
+  | `Vec (`Size `Frame) -> default_frame_size
+  | `Vec (`Size (`Mask | `Shape)) -> default_shape_size
   | `Vec `Move -> default_move
-  | `Shape -> default_shape
   | `Layer -> default_layer
-  | `Grid -> default_grid
+  | `Grid `Mask -> default_mask
+  | `Grid `Shape -> default_shape
+  | `Grid `Frame -> default_frame
 
                     
 (* data generation from template *)
@@ -4555,8 +4539,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
         | `IntCoord _ -> in_output
         | `IntCard -> in_output
         | `Color _ -> true
-        | `Mask -> true
         | `Vec _ -> in_output
+        | `Grid `Mask -> true
         | _ -> false in
       if valid_role then
         match t0 with
@@ -4762,7 +4746,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
     (* unary operators *)
     let _ = (* area(_) *)
       match role1 with
-      | `Shape -> push (`IntCoord (`X, `Size `X), `Area e1)
+      | `Grid _ -> push (`IntCoord (`X, `Size `X), `Area e1)
       | _ -> () in
     let _ = (* right(_) *)
       match role1 with
@@ -4788,27 +4772,27 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | _ -> () in
     let _ = (* MajorityColor on grids *)
       match role1 with
-      | `Grid -> push (`Color `Shape, `MajorityColor e1)
+      | `Grid `Frame -> push (`Color `Shape, `MajorityColor e1)
       | _ -> () in
     let _ = (* ColorCount on grids *)
       match role1 with
-      | `Grid -> push (`IntCard, `ColorCount e1)
+      | `Grid `Frame -> push (`IntCard, `ColorCount e1)
       | _ -> () in
     let _ = (* Size on grids *)
       match role1 with
-      | `Grid -> push (`Vec (`Size `X), `Size e1)
+      | `Grid _ -> push (`Vec (`Size `X), `Size e1)
       | _ -> () in
     let _ = (* Strip on grids *)
       match role1 with
-      | `Grid -> push (`Grid, `Strip e1)
+      | `Grid `Frame -> push (`Grid `Frame, `Strip e1)
       | _ -> () in
     let _ = (* PeriodicFactor *)
       match role1 with
-      | `Mask | `Shape | `Layer ->
+      | `Grid (`Mask | `Shape) | `Layer ->
          let& mode = [`TradeOff; `Strict] in
          let bgcolor = Grid.transparent in
          push (role1, `PeriodicFactor (mode, `ConstColor bgcolor, e1))
-      | `Grid ->
+      | `Grid `Frame ->
          let& mode = [`TradeOff; `Total; `Strict] in
          let& bgcolor = [`ConstColor Grid.black; `MajorityColor e1] in
          push (role1, `PeriodicFactor (mode,bgcolor,e1))
@@ -4862,14 +4846,14 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
         | _ -> () in
       let _ = (* translationSym(_,_,_) *)
         match role1, role2 with
-        | `Layer, (`Layer|`Grid) when e1 <> e2 ->
+        | `Layer, (`Layer | `Grid `Frame) when e1 <> e2 ->
            let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                        `Rotate180; `Rotate90; `Rotate270] in
            push (`Vec `Move, `TranslationSym (sym,e1,e2))
         | _ -> () in
       let _ = (* Crop on grids *)
         match role1, role2 with
-        | `Grid, `Layer -> push (`Grid, `Crop (e1,e2))
+        | `Grid `Frame, `Layer -> push (`Grid `Frame, `Crop (e1,e2))
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
@@ -4906,7 +4890,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | `IntCoord (_,rvec) | `Vec rvec when rvec <> `Move ->
          push (role1, `ScaleUp (e1,e2));
          push (role1, `ScaleDown (e1,e2))
-      | `Mask | `Shape | `Grid ->
+      | `Grid _ ->
          push (role1, `ScaleUp (e1,e2));
          push (role1, `ScaleDown (e1,e2))
       | _ -> () in
@@ -4917,9 +4901,10 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
-      | (`Mask | `Shape | `Layer | `Grid as role1) ->
+      | (`Layer | `Grid _ as role1) ->
+         let role : role = match role1 with `Layer -> `Layer | `Grid _ -> `Grid `Shape | _ -> assert false in (* TODO: remove this role arg from ApplySym *)
          let& sym = all_symmetry in
-         push (role1, `ApplySym (sym, e1, role1))
+         push (role1, `ApplySym (sym, e1, role))
       | _ -> () in
     let& (role2,e2) = exprs_1 in
       (* binary operators *)
@@ -4928,13 +4913,13 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
         | (`IntCoord (_,rvec) | `Vec rvec), `IntCard when rvec <> `Move ->
            push (role1, `ScaleUp (e1,e2));
            push (role1, `ScaleDown (e1,e2))
-        | (`Mask | `Shape | `Grid), `IntCard ->
+        | (`Grid _), `IntCard ->
            push (role1, `ScaleUp (e1,e2));
            push (role1, `ScaleDown (e1,e2))
         | _ -> () in
       let _ = (* Coloring *)
         match role1, role2 with
-        | (`Shape | `Layer), `Color _ ->
+        | (`Grid `Shape | `Layer), `Color _ ->
            push (role1, `Coloring (e1, e2))
         | _ -> () in
       let _ = (* _ + _ *)
@@ -4958,7 +4943,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
     let& (role1,e1) = exprs_2 in
     let _ = (* Tiling *)
       match role1 with
-      | (`Vec (`X | `Size _) | `Mask | `Shape | `Grid) ->
+      | (`Vec (`X | `Size _) | `Grid _) ->
          let& k = [1;2;3] in
          let& l = [1;2;3] in
          if k>1 || l>1 then
@@ -4969,11 +4954,11 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | `Vec (`X | `Size _) ->
          let& (role2,e2) = exprs_0 in (* no expression for the mask-grid *)
          (match role2 with
-          | `Mask | `Shape | `Layer ->
+          | `Grid (`Mask | `Shape) | `Layer ->
              let& mode = [`TradeOff; `Strict] in
              let bgcolor = `ConstColor Grid.transparent in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
-          | `Grid ->
+          | `Grid `Frame ->
              let& mode = [`TradeOff; `Total; `Strict] in
              let& bgcolor = [`ConstColor Grid.black; `MajorityColor e2] in
              push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
@@ -4981,28 +4966,28 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | _ -> () in
     let _ = (* Compose(c,e1,e1) *)
       match role1 with
-      | `Mask | `Shape ->
+      | `Grid (`Mask | `Shape) ->
          push (role1, `Compose (`ConstColor 1, e1, e1))
-      | `Grid ->
+      | `Grid `Frame ->
          push (role1, `Compose (`MajorityColor e1, e1, e1));
          let& c = Grid.all_colors in
          push (role1, `Compose (`ConstColor c, e1, e1))
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
-      | `Mask | `Shape | `Layer | `Grid ->
+      | `Layer | `Grid _ ->
          let& sym_matrix = all_symmetry_unfold in
          push (role1, `UnfoldSym (sym_matrix, e1))
       | _ -> () in
     let _ = (* CloseSym on masks *)
       match role1 with
-      | `Mask | `Shape | `Layer ->
+      | `Grid (`Mask | `Shape) | `Layer ->
          let& sym_seq = all_symmetry_close in
          push (role1, `CloseSym (sym_seq, `ConstColor Grid.transparent, e1))
       | _ -> () in
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
-      | `Grid ->
+      | `Grid `Frame ->
          let& c1 = Grid.all_colors in
          push (role1, `SwapColors (e1, `ConstColor c1, `MajorityColor e1));
          let& c2 = Grid.all_colors in
@@ -5012,39 +4997,39 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | _ -> () in
     let _ = (* not _ *)
       match role1 with
-      | `Mask -> push (`Mask, `LogNot e1)
+      | `Grid `Mask -> push (`Grid `Mask, `LogNot e1)
       | _ -> () in
     let& (role2,e2) = exprs_2 in
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
-        | (`Mask | `Shape | `Grid), `Vec (`X | `Size _) ->
+        | `Grid _, `Vec (`X | `Size _) ->
            push (role1, `ScaleTo (e1,e2))
         | _ -> () in
       let _ = (* CloseSym on grids *)
         match role1, role2 with
-        | `Grid, `Color _ ->
+        | `Grid `Frame, `Color _ ->
            let& sym_seq = all_symmetry_close in
            push (role1, `CloseSym (sym_seq, e2, e1))
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogAnd (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogAnd (e1,e2))
         | _ -> () in
       let _ = (* _ or _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogOr (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogOr (e1,e2))
         | _ -> () in
       let _ = (* _ xor _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 < e2 -> push (`Mask, `LogXOr (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogXOr (e1,e2))
         | _ -> () in
       let _ = (* _ and not _ *)
         match role1, role2 with
-        | `Mask, `Mask when e1 <> e2 -> push (`Mask, `LogAndNot (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 <> e2 -> push (`Grid `Mask, `LogAndNot (e1,e2))
         | _ -> () in
       let _ = (* Stack *)
         match role1, role2 with
-        | `Grid, `Grid when e1 <> e2 -> push (`Grid, `Stack [e1; e2])
+        | `Grid r1, `Grid r2 when r1 = r2 && e1 <> e2 -> push (`Grid r1, `Stack [e1; e2])
         | _ -> () in
       () in
   ()
@@ -5086,7 +5071,14 @@ let shape_refinements ~(env_sig : signature) (t : template) : grid_refinement My
            let objs = [`PosShape (u_vec_cst, `ShapeRectangle (u_vec_cst, u_cst, u_cst))] in (* TEST *)
            aux_layers ~objs p `Root layers in
          let ss =
-           let ps_shape = signature_of_kind env_sig Shape in
+           let ps_grid = signature_of_kind env_sig Grid in
+           let ps_shape =
+             List.filter
+               (fun p ->
+                 match path_role p with
+                 | `Grid `Shape -> true
+                 | _ -> false)
+               ps_grid in
            Myseq.concat
              (List.map
                 (fun p_shape ->
