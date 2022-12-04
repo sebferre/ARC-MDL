@@ -552,8 +552,28 @@ let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : rectangle lis
 let rectangles, reset_rectangles =
   Common.memoize3 ~size:103 rectangles
 
+type t =
+  | Point of Grid.t * point (* ctx grid, point data *)
+  | Rectangle of Grid.t * rectangle (* ctx grid, rectangle data *)
+
+let position : t -> int * int = function
+  | Point (_,(i,j,c)) -> (i,j)
+  | Rectangle (_,rect) -> (rect.offset_i, rect.offset_j)
+
+let segment_as_grid : t -> Grid.t = function
+  | Point (g, (i,j,c)) -> Grid.make 1 1 c
+  | Rectangle (g, rect) -> rectangle_as_grid g rect
+               
+let segments (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
+  List.map (fun r -> Rectangle (g,r)) (rectangles g bmp parts)
+  @ List.map (fun p -> Point (g,p)) (points g bmp parts)
+let segments, reset_segments =
+  Common.memoize3 ~size:103 segments
+  
 let reset_memoized_functions () =
   reset_segment_by_color ();
   reset_points ();
   (*  reset_rectangles_of_part ();*)
-  reset_rectangles ()
+  reset_rectangles ();
+  reset_segments ()
+
