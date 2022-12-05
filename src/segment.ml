@@ -263,6 +263,41 @@ let segment_by_color, reset_segment_by_color =
 
 (* locating shapes *)
 
+type rectangle = { height: int; width: int;
+		   color: Grid.color;
+                   mask : Grid.t;
+		   mask_models : Mask_model.t list; (* mask models, relative to rectangle box *)
+		   delta : Grid.pixel list;
+                   nb_explained_pixels : int }
+
+type pattern =
+  [ `None
+  | `Point of Grid.color
+  | `Rectangle of rectangle ]
+
+type t = { bmp_cover : Bitmap.t;
+           pos : int * int;
+           shape : Grid.t; (* the subgrid *)
+           pattern : pattern }
+
+let segment_as_grid (g : Grid.t) (seg : t) : Grid.t =
+  (* to show a segment in the context of its encompassing grid *)
+  let offset_i, offset_j = seg.pos in
+  let res = Grid.make g.height g.width Grid.transparent in
+  Grid.iter_pixels
+    (fun delta_i delta_j c ->
+      if c = Grid.transparent then ()
+      else
+        let i, j = offset_i + delta_i, offset_j + delta_j in
+        Grid.set_pixel res i j c)
+    seg.shape;
+  res
+  
+let pp_segments (label : string) (g : Grid.t) (ss : t list) =
+  print_endline label;
+  Grid.pp_grids (g :: List.map (segment_as_grid g) ss)		   
+  
+
 let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing frequency order *)
   let area = g.height * g.width in
   let l = ref [] in
@@ -284,23 +319,11 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
   else l @ [Grid.black] (* ensure black is considered as a background color *)
 
   
-type point = Grid.pixel
-
-let point_as_grid (g : Grid.t) (p : point) : Grid.t =
-  let gp = Grid.make g.height g.width Grid.transparent in
-  let i, j, c = p in
-  Grid.set_pixel gp i j c;
-  gp
-
-let pp_points g ps =
-  print_endline "POINTS:";
-  Grid.pp_grids (g :: List.map (point_as_grid g) ps)
-
-let points_of_part ?(acc : point list = []) bmp (part : part) : point list =
+let points_of_part ?(acc : Grid.pixel list = []) bmp (part : part) : Grid.pixel list =
   (* bmp gives the part of the grid that remains to be covered *)
   if part.mini = part.maxi && part.minj = part.maxj
      && Bitmap.mem part.mini part.minj bmp
-  then (part.mini, part.minj, part.color)::acc
+  then (part.mini, part.minj, part.color) :: acc
   else
     if part.nb_pixels <= 5
        && (part.maxi - part.mini + 1 <= 3)
@@ -309,83 +332,41 @@ let points_of_part ?(acc : point list = []) bmp (part : part) : point list =
       Bitmap.fold
         (fun acc i j ->
           if Bitmap.mem i j bmp
-          then (i, j, part.color)::acc
+          then (i, j, part.color) :: acc
           else acc)
         acc part.pixels
     else acc
 
-let points (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : point list =
+let points (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
   Common.prof "Grid.points" (fun () ->
+  let height, width = Grid.dims g in
   parts
   |> List.fold_left
        (fun res part -> points_of_part ~acc:res bmp part)
        []
-  |> List.sort_uniq (fun (i1,j1,c1 as p1) (i2,j2,c2 as p2) ->
-         Stdlib.compare p1 p2))
+  |> List.sort_uniq (fun p1 p2 ->
+         Stdlib.compare p1 p2)
+  |> List.map (fun (i,j,c) ->
+         { bmp_cover = Bitmap.singleton height width i j;
+           pos = (i, j);
+           shape = Grid.make 1 1 c;
+           pattern = `Point c }))
 let points, reset_points =
   Common.memoize3 ~size:103 points
 
-type rectangle = { height: int; width: int;
-		   offset_i: int; offset_j: int;
-		   color: Grid.color;
-		   new_cover : Bitmap.t; (* new covered pixels *)
-                   mask : Grid.t;
-		   mask_models : Mask_model.t list; (* mask models, relative to rectangle box *)
-		   delta : Grid.pixel list;
-                   nb_explained_pixels : int }
 
-let rectangle_as_grid (g : Grid.t) (r : rectangle) : Grid.t =
-  let gr = Grid.make g.height g.width Grid.transparent in
-  for i = r.offset_i to r.offset_i + r.height - 1 do
-    for j = r.offset_j to r.offset_j + r.width - 1 do
-      if Grid.Mask.mem (i - r.offset_i) (j - r.offset_j) r.mask then
-	(*match List.find_opt (fun (i',j',c') -> i=i' && j=j') r.delta with
-	| Some (_,_,c) -> set_pixel gr i j c
-	| None ->*) Grid.set_pixel gr i j r.color
-    done
-  done;
-  gr
-		   
-let pp_rectangles (g : Grid.t) (rs : rectangle list) =
-  print_endline "RECTANGLES:";
-  Grid.pp_grids (g :: List.map (rectangle_as_grid g) rs)
-
+let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
+  assert ((rect.height, rect.width) = Grid.dims rect.mask);
+  let res = Grid.make rect.height rect.width Grid.transparent in
+  Grid.Mask.iter
+    (fun i j ->
+      if Bitmap.mem (offset_i+i) (offset_j+j) bmp
+      then Grid.set_pixel res i j rect.color
+      else Grid.set_pixel res i j Grid.undefined)
+    rect.mask;
+  res
   
-(*let models_of_bmp_part (visible_bmp : Bitmap.t) (p : part) : Mask_model.t list =
-  let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
-  let m = ref (Bitmap.empty height width) in (* bmp over the part box *)
-  let full = ref true in
-  let border = ref true in
-  let even_cb = ref true in
-  let odd_cb = ref true in
-  let plus_cross = ref true in
-  let times_cross = ref (height = width) in
-  for absi = p.mini to p.maxi do
-    let i = absi - p.mini in
-    for absj = p.minj to p.maxj do (* reuse below Boolean expressions from 'Mask_model.mem' *)
-      let j = absj - p.minj in
-      let hidden = not (Bitmap.mem absi absj visible_bmp) in
-      let pixel_on = Bitmap.mem absi absj p.pixels in
-      if pixel_on then m := Bitmap.add i j !m;
-      full := !full && (hidden || pixel_on = true);
-      border := !border && (hidden || pixel_on = (i=0 || j=0 || i=height-1 || j=width-1));
-      even_cb := !even_cb && (hidden || pixel_on = ((i+j) mod 2 = 0));
-      odd_cb := !odd_cb && (hidden || pixel_on = ((i+j) mod 2 = 1));
-      plus_cross := !plus_cross && (hidden || pixel_on = ((i=height/2 || i=(height-1)/2) || (j=width/2 || j=(width-1)/2)));
-      times_cross := !times_cross && (hidden || pixel_on = (i=j || (height-1-i) = j))
-    done
-  done;
-  let res = [] in
-  let res = if !full then `Full (height=2 && width>=2 || width=2 && height>=2)::res else res in
-  let res = if !border then `Border::res else res in
-  let res = if !even_cb then `EvenCheckboard::res else res in
-  let res = if !odd_cb then `OddCheckboard::res else res in
-  let res = if !plus_cross then `PlusCross::res else res in
-  let res = if !times_cross then `TimesCross::res else res in
-  let res = if res = [] then `Mask !m::res else res in
-  res*)
-  
-let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : part) : rectangle list =
+let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : part) : (Bitmap.t * int * int * rectangle) list =
   let height, width = p.maxi-p.mini+1, p.maxj-p.minj+1 in
   let delta = ref [] in
   let nb_delta = ref 0 in
@@ -403,23 +384,24 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
   let res = (* adding full rectangle with delta *)
     if !nb_delta < height * width - !nb_delta
     then
-      let new_cover =
+      let bmp_cover =
         List.fold_left
           (fun bmp (i,j,c) -> Bitmap.add i j bmp)
           p.pixels !delta in
-      { height; width;
-        offset_i = p.mini; offset_j = p.minj;
-        color = p.color;
-        new_cover;
-        mask = Grid.Mask.full height width;
-        mask_models =
-          (`Full ::
-             if (height = 2 && width >= 2 || width = 2 && height >= 2)
-             then [`Border]
-             else []);
-	delta = (!delta);
-        nb_explained_pixels
-      } :: res
+      let elt =
+        (bmp_cover, p.mini, p.minj,
+         { height; width;
+           color = p.color;
+           mask = Grid.Mask.full height width;
+           mask_models =
+             (`Full ::
+                if (height = 2 && width >= 2 || width = 2 && height >= 2)
+                then [`Border]
+                else []);
+	   delta = (!delta);
+           nb_explained_pixels
+        }) in
+      elt :: res
     else res in
   let res = (* adding rectangle with specific mask model, without delta *)
     if not multipart && !delta <> [] (* && !valid_area >= 1 * area / 2 *)
@@ -428,26 +410,20 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
         Mask_model.from_box_in_bmp ~visible_bmp:bmp
           ~mini:p.mini ~maxi:p.maxi ~minj:p.minj ~maxj:p.maxj
           p.pixels in
-      { height; width;
-        offset_i = p.mini; offset_j = p.minj;
-        color = p.color;
-        new_cover = p.pixels;
-        mask;
-        mask_models;
-        delta = [];
-        nb_explained_pixels
-      } :: res
+      let elt =
+        (p.pixels, p.mini, p.minj,
+         { height; width;
+           color = p.color;
+           mask;
+           mask_models;
+           delta = [];
+           nb_explained_pixels
+        }) in
+      elt :: res
     else res in
   res
-(*let rectangles_of_part, reset_rectangles_of_part =
-  let f, reset =
-    Common.memoize ~size:103
-      (fun (multipart,g,bmp,p) ->
-        rectangles_of_part ~multipart g bmp p) in
-  let f = fun ~multipart g bmp p -> f (multipart,g,bmp,p) in
-  f, reset*)
 
-let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : rectangle list =
+let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
   Common.prof "Grid.rectangles" (fun () ->
   let h_sets =
     (* grouping same-color parts spanning same rows *)
@@ -515,7 +491,7 @@ let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : rectangle lis
                offset_i = 0;
                offset_j = 0;
                color = c;
-               new_cover = pixels;
+               bmp_cover = pixels;
                mask_models = Mask_model.from_box_in_bmp ~visible_bmp:bmp
                                ~mini:0 ~maxi:(g.height-1) ~minj:0 ~maxj:(g.width-1)
                                pixels;
@@ -543,37 +519,24 @@ let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : rectangle lis
   let res =
     res
     |> List.sort
-         (fun rect1 rect2 ->
+         (fun (_,i1,j1,rect1) (_,i2,j2,rect2) ->
            Stdlib.compare (* decreasing nb_explained_pixels *)
-             (- rect1.nb_explained_pixels, rect1)
-             (- rect2.nb_explained_pixels, rect2))
+             (- rect1.nb_explained_pixels, i1, j1, rect1)
+             (- rect2.nb_explained_pixels, i2, j2, rect2))
   in
-  res)
+  res
+  |> List.map
+       (fun (bmp_cover,i,j,rect) ->
+         let shape = shape_of_rectangle bmp i j rect in
+         { bmp_cover;
+           pos = (i,j);
+           shape;
+           pattern = `Rectangle rect }))
 let rectangles, reset_rectangles =
   Common.memoize3 ~size:103 rectangles
 
-type t =
-  | Point of Grid.t * point (* ctx grid, point data *)
-  | Rectangle of Grid.t * rectangle (* ctx grid, rectangle data *)
 
-let position : t -> int * int = function
-  | Point (_,(i,j,c)) -> (i,j)
-  | Rectangle (_,rect) -> (rect.offset_i, rect.offset_j)
-
-let segment_as_grid : t -> Grid.t = function
-  | Point (g, (i,j,c)) -> Grid.make 1 1 c
-  | Rectangle (g, rect) -> rectangle_as_grid g rect
-               
-let segments (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
-  List.map (fun r -> Rectangle (g,r)) (rectangles g bmp parts)
-  @ List.map (fun p -> Point (g,p)) (points g bmp parts)
-let segments, reset_segments =
-  Common.memoize3 ~size:103 segments
-  
 let reset_memoized_functions () =
   reset_segment_by_color ();
   reset_points ();
-  (*  reset_rectangles_of_part ();*)
-  reset_rectangles ();
-  reset_segments ()
-
+  reset_rectangles ()

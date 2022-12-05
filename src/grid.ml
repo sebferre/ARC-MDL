@@ -17,8 +17,8 @@ let cyan = 8
 let brown = 9	       
 
 (* special colors *)
-let undefined = -1 (* for use in special algos *)
-let transparent = 10 (* for non-covered parts *)
+let transparent = 10 (* for non-covered parts, no color *)
+let undefined = 11 (* for use in special algos, hidden parts, any color *)
 
 let nb_color = 10
 let last_color = 9
@@ -38,6 +38,7 @@ let name_of_color : color -> string =
   | 8 -> "cyan"
   | 9 -> "brown"
   | 10 -> "transparent"
+  | 11 -> "undefined"
   | c -> "col" ^ string_of_int c
 
 
@@ -57,7 +58,7 @@ let max_size = 30
            
 let make height width col =
   let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+1) 0 in 
+  let color_count = Array.make (nb_color+2) 0 in 
   Array2.fill matrix col;
   color_count.(col) <- height * width;
   { height; width; matrix; color_count }
@@ -71,7 +72,7 @@ let copy (g : t) =
 
 let init height width (f : int -> int -> color) =
   let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+1) 0 in 
+  let color_count = Array.make (nb_color+2) 0 in 
   for i = 0 to height-1 do
     for j = 0 to width-1 do
       let c = f i j in
@@ -286,7 +287,8 @@ and xp_color print c =
     | 8 -> [white; on_cyan], "8 "
     | 9 -> [green; on_red], "9#"
     | 10 -> [on_white], "  "
-    | _ -> invalid_arg "Invalid color code" in
+    | 11 -> [on_white], "XX"
+    | _ -> invalid_arg ("Invalid color code: " ^ string_of_int c) in
   print#style_string style str
 
 let pp_grids grids = Xprint.to_stdout xp_grids grids

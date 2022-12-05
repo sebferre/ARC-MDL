@@ -553,8 +553,8 @@ let checker_segmentation : checker =
 	       let points = Segment.points g full_bmp parts in
 	       let rects = Segment.rectangles g full_bmp parts in
 	       Segment.pp_parts g parts;
-	       Segment.pp_points g points;
-	       Segment.pp_rectangles g rects;
+	       Segment.pp_segments "POINTS:" g points;
+	       Segment.pp_segments "RECTANGLES:" g rects;
 	       print_newline ()))
 	(task.train @ task.test)
     method summarize_tasks = ()
