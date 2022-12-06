@@ -273,7 +273,8 @@ type rectangle = { height: int; width: int;
 type pattern =
   [ `None
   | `Point of Grid.color
-  | `Rectangle of rectangle ]
+  | `Rectangle of rectangle
+  | `MaskModels of Mask_model.t list ]
 
 type t = { bmp_cover : Bitmap.t;
            pos : int * int;

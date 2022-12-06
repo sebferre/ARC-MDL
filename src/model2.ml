@@ -3491,7 +3491,7 @@ let write_grid ~(env : data) (t : template) : (Grid.t, exn) Result.t = Common.pr
 
 (* parsing grids with templates *)
 
-class parse_state_base ?(quota_diff : int = 0) ?(diff = []) () =
+class parse_state ?(quota_diff : int = 0) ?(diff = []) () =
 object
   val quota_diff : int = quota_diff (* nb of allowed additional diffs *)
   val diff : diff = diff (* paths to data that differ from template patterns *)
@@ -3505,10 +3505,8 @@ object
        diff = path::diff >}
 end
 
-class parse_state_layers (state : #parse_state_base) (g : Grid.t) (bc : Grid.color) =
-object (self)
-  inherit parse_state_base ~quota_diff:state#quota_diff ~diff:state#diff ()
-
+class parse_state_layers (g : Grid.t) (bc : Grid.color) =
+object (self : 'self)
   val grid : Grid.t = g (* the grid to parse *)
   val bmp : Bitmap.t = Bitmap.full g.height g.width (* remaining part of the grid to be explained *)
   val parts : Segment.part list = (* remaining parts that can be used *)
@@ -3544,7 +3542,7 @@ object (self)
     | `Rectangle rect -> self#minus_shape_gen rect.color rect.delta seg.bmp_cover
     | _ -> Some self
                
-  method delta_base : delta * parse_state_base =
+  method delta : delta =
     let new_delta = ref delta in
     Bitmap.iter
       (fun i j ->
@@ -3552,7 +3550,7 @@ object (self)
 	if c <> bc then
 	  new_delta := (i,j,c)::!new_delta)
       bmp;
-    !new_delta, (self :> parse_state_base)
+    !new_delta
 end
 
 
@@ -3683,7 +3681,7 @@ let rec parseur_template
   | patt -> parseur_patt patt
 
 
-let parseur_bool t p : (bool,data,#parse_state_base) parseur = (* QUICK *)
+let parseur_bool t p : (bool,data,parse_state) parseur = (* QUICK *)
   parseur_template
     ~parseur_patt:(function
       | `Bool b0 ->
@@ -3697,7 +3695,7 @@ let parseur_bool t p : (bool,data,#parse_state_base) parseur = (* QUICK *)
       parseur_rec (fun b state -> Myseq.return (`Bool b, state)))
     t p
 
-let parseur_int t p : (int,data,#parse_state_base) parseur = (* QUICK *)
+let parseur_int t p : (int,data,parse_state) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun i state -> Myseq.return (`Int i, state)))
@@ -3711,7 +3709,7 @@ let parseur_int t p : (int,data,#parse_state_base) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
 
-let parseur_color t p : (Grid.color,data,#parse_state_base) parseur = (* QUICK *)
+let parseur_color t p : (Grid.color,data,parse_state) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun c state -> Myseq.return (`Color c, state)))
@@ -3725,7 +3723,7 @@ let parseur_color t p : (Grid.color,data,#parse_state_base) parseur = (* QUICK *
       | _ -> parseur_empty)
     t p
   
-let parseur_vec t p : (int * int, data, #parse_state_base) parseur = (* QUICK *)
+let parseur_vec t p : (int * int, data, parse_state) parseur = (* QUICK *)
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec (fun (vi,vj) state ->
@@ -3742,37 +3740,37 @@ let parseur_vec t p : (int * int, data, #parse_state_base) parseur = (* QUICK *)
       | _ -> parseur_empty)
     t p
 
-let rec parseur_object t p : (Segment.t Myseq.t (* points *) * Segment.t Myseq.t (* rects *), data, parse_state_layers) parseur =
+let rec parseur_object t p : (Segment.t Myseq.t (* points *) * Segment.t Myseq.t (* rects *), data, parse_state * parse_state_layers) parseur =
   parseur_template
     ~parseur_any:(fun () ->
       parseur_rec2
         (parseur_vec `Any (p ++ `Pos))
-        (parseur_shape `Any (p ++ `Shape))
-        (fun parse_pos parse_shape (points,rects) state ->
+        (parseur_grid `Any (p ++ `Shape))
+        (fun parse_pos parse_shape (points,rects) (state,state_layers) ->
           let* (seg : Segment.t) = Myseq.concat [rects; points] in
-          let* state = Myseq.from_option (state#check_segment seg) in
+          let* state_layers = Myseq.from_option (state_layers#check_segment seg) in
           let* dshape, state, stop_shape, next_shape = parse_shape (seg.shape, seg.pattern) state in
           let* dpos, state, stop_pos, next_pos = parse_pos seg.pos state in
-          let* state = Myseq.from_option (state#minus_segment seg) in
+          let* state_layers = Myseq.from_option (state_layers#minus_segment seg) in
           let data = `PosShape (dpos, dshape) in
-          Myseq.return (data, state, stop_pos, stop_shape, next_pos, next_shape)))
+          Myseq.return (data, (state,state_layers), stop_pos, stop_shape, next_pos, next_shape)))
     ~parseur_patt:(function
       | `PosShape (pos,shape) ->
          parseur_rec2
            (parseur_vec pos (p ++ `Pos))
-           (parseur_shape shape (p ++ `Shape))
-           (fun parse_pos parse_shape (points,rects) state ->
+           (parseur_grid shape (p ++ `Shape))
+           (fun parse_pos parse_shape (points,rects) (state,state_layers) ->
              let* (seg : Segment.t) =
                match shape with
                | `ShapePoint _ -> points
                | `ShapeRectangle _ -> rects
                | _ -> Myseq.concat [rects; points] in
-             let* state = Myseq.from_option (state#check_segment seg) in
+             let* state_layers = Myseq.from_option (state_layers#check_segment seg) in
              let* dshape, state, stop_shape, next_shape = parse_shape (seg.shape, seg.pattern) state in
              let* dpos, state, stop_pos, next_pos = parse_pos seg.pos state in
-             let* state = Myseq.from_option (state#minus_segment seg) in
+             let* state_layers = Myseq.from_option (state_layers#minus_segment seg) in
              let data = `PosShape (dpos, dshape) in
-             Myseq.return (data, state, stop_pos, stop_shape, next_pos, next_shape))
+             Myseq.return (data, (state,state_layers), stop_pos, stop_shape, next_pos, next_shape))
       | _ -> parseur_empty)
     t p
 
@@ -3797,73 +3795,49 @@ let parseur_layer (shape : template) (p : revpath) : (unit,data) parseur =
     List.rev rev_items, state in
   Myseq.return (`Seq items, state))
    *)
-and parseur_layer (t : template) (p : revpath) : (unit,data,parse_state_layers) parseur =
+and parseur_layer (t : template) (p : revpath) : (unit,data,parse_state * parse_state_layers) parseur =
   let Parseur parse_objects = parseur_collect ~max_depth:!max_seq_length (parseur_object t p) in
-  Parseur (fun () state ->
-      let points = Myseq.memoize (Myseq.from_list (Segment.points state#grid state#bmp state#parts)) in
-      let rects = Myseq.memoize (Myseq.from_list (Segment.rectangles state#grid state#bmp state#parts)) in
-      let* ld, state, _, _ = parse_objects (points,rects) state in
+  Parseur (fun () (state,state_layers as states) ->
+      let points = Myseq.memoize (Myseq.from_list (Segment.points state_layers#grid state_layers#bmp state_layers#parts)) in
+      let rects = Myseq.memoize (Myseq.from_list (Segment.rectangles state_layers#grid state_layers#bmp state_layers#parts)) in
+      let* ld, states, _, _ = parse_objects (points,rects) states in
       match ld with
       | [] -> Myseq.empty (* not allowing empty sequences *)
-      | [d] when not !seq -> Myseq.return (d, state, true, parseur_empty)
-      | _ -> Myseq.return (`Seq ld, state, true, parseur_empty))
+      | [d] when not !seq -> Myseq.return (d, states, true, parseur_empty)
+      | _ -> Myseq.return (`Seq ld, states, true, parseur_empty))
   
-and parseur_layers layers p : (unit, data ilist, parse_state_layers) parseur =
+and parseur_layers layers p : (unit, data ilist, parse_state * parse_state_layers) parseur =
   let rev_layer_parses =
     fold_ilist
       (fun revl lp layer ->
         let Parseur parse = parseur_layer layer (p ++ `Layer lp) in
         let simple_parse =
-          fun state ->
-          let* d, state, _stop, _next = parse () state in 
-          Myseq.return (d,state) in
+          fun states ->
+          let* d, states, _stop, _next = parse () states in 
+          Myseq.return (d,states) in
         simple_parse::revl)
       [] `Root layers in
   let gen = Myseq.product_dependent_fair
               ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations, incompatible with use of parseur_collect *)
               (List.rev rev_layer_parses) in
-  Parseur (fun () state ->
+  Parseur (fun () states ->
   Myseq.prof "Model2.parse_layers/seq" (
-      let* ld, state = gen state in
+      let* ld, states = gen states in
       let l, dlayers = fill_ilist_with_list layers ld in
       assert (l = []);
-      Myseq.return (dlayers, state, true, parseur_empty)))
+      Myseq.return (dlayers, states, true, parseur_empty)))
   
-and parseur_mask t p : (Grid.t * Mask_model.t list, data, #parse_state_base) parseur = (* QUICK *)
+and parseur_grid t p : (Grid.t * Segment.pattern, data, parse_state) parseur = (* QUICK, runtime in Myseq *)
   parseur_template
     ~parseur_any:(fun () ->
-      parseur_rec (fun (m,mms) state ->
-          if mms = []
-          then Myseq.return (`Grid (m, `None), state)
-          else
-            let* mm = Myseq.from_list mms in
-            Myseq.return (`Grid (m, `Model mm), state)))
-    ~parseur_patt:(function
-      | `Grid m0 ->
-         parseur_rec (fun (m,mms) state ->
-             if Grid.same m m0 then
-               Myseq.return (`Grid (m0, `None), state)
-             else if not state#quota_diff_is_null then
-               Myseq.return (`Grid (m, `None), state#add_diff p)
-             else Myseq.empty)
-      | `MaskModel mm0 ->
-         parseur_rec (fun (m,mms) state ->
-             if List.mem mm0 mms then
-               Myseq.return (`Grid (m, `Model mm0), state)
-             else if not state#quota_diff_is_null then
-               Myseq.return (`Grid (m, `None), state#add_diff p)
-             else Myseq.empty)
-      | _ -> parseur_empty)
-    t p
-
-and parseur_shape t p : (Grid.t * Segment.pattern, data (* object *), #parse_state_base) parseur =
-  parseur_template
-    ~parseur_any:(fun () ->
-      parseur_rec (fun (shape,seg_patt) state ->
+      parseur_rec (fun (g,seg_patt) state ->
           match seg_patt with
+          | `MaskModels mms when mms <> [] ->
+             let* mm = Myseq.from_list mms in
+             Myseq.return (`Grid (g, `Model mm), state)
           | `Rectangle rect ->
              let open Grid in
-             let m, mms = rect.Segment.mask, rect.Segment.mask_models in
+             let m, mms = rect.Segment.mask, rect.mask_models in
              let* patt =
                if mms = []
                then Myseq.return `None
@@ -3881,17 +3855,18 @@ and parseur_shape t p : (Grid.t * Segment.pattern, data (* object *), #parse_sta
              let* g = Myseq.from_result (shape_point dcolor) in
              let data = `Grid (g, `Point dcolor) in
              Myseq.return (data, state)
-          | `None -> raise TODO))
-    ~parseur_patt:(function
-      | `Grid g0 ->
-         parseur_rec (fun (shape,seg_patt) state ->
-             let open Segment in
-             match seg_patt with
-             | `Rectangle rect ->
-                if (rect.height,rect.width) <> Grid.dims g0 then Myseq.empty
-                else
-                  (match Grid.color_freq_desc g0 with
-                   | [(_,c0)] -> (* has single color, except for transparent *)
+          | _ ->
+             Myseq.return (`Grid (g,`None), state)))
+    ~parseur_patt:
+    (function
+     | `Grid g0 ->
+        parseur_rec (fun (g,seg_patt) state ->
+            match seg_patt with
+            | `Rectangle rect ->
+               if (rect.Segment.height,rect.width) <> Grid.dims g0 then Myseq.empty
+               else
+                 (match Grid.color_freq_desc g0 with
+                  | [(_,c0)] -> (* has single color, except for transparent *)
                      if rect.color <> c0 then Myseq.empty
                      else
                        let m0 = Grid.Mask.from_grid_color c0 g0 in
@@ -3902,53 +3877,55 @@ and parseur_shape t p : (Grid.t * Segment.pattern, data (* object *), #parse_sta
                            true m0 rect.mask in
                        if not ok then Myseq.empty
                        else Myseq.return (`Grid (g0, `None), state)
-                   | _ -> Myseq.empty)
-             | _ -> Myseq.empty)
-      | `ShapePoint color ->
-         parseur_rec1
-           (parseur_color color (p ++ `Color))
-           (fun parse_color (shape,seg_patt) state ->
-             match seg_patt with
-             | `Point c ->
-                let* dcolor, state, stop_color, next_color = parse_color c state in
-                let* g = Myseq.from_result (shape_point dcolor) in
-                let data = `Grid (g, `Point dcolor) in
-                Myseq.return (data, state, stop_color, next_color)
-             | _ -> Myseq.empty) (* not a point *)
-      | `ShapeRectangle (size,color,mask) ->
-         parseur_rec3
-           (parseur_vec size (p ++ `Size))
-           (parseur_color color (p ++ `Color))
-           (parseur_mask mask (p ++ `Mask))
-           (fun parse_size parse_color parse_mask (shape,seg_patt) state ->
-             let open Segment in
-             match seg_patt with
-             | `Rectangle rect ->
-                let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
-                let* dcolor, state, stop_color, next_color = parse_color rect.color state in
-                let* dmask, state, stop_mask, next_mask = parse_mask (rect.mask,rect.mask_models) state in
-                let* g = Myseq.from_result (shape_rectangle dsize dcolor dmask) in
-                let data = `Grid (g, `Rectangle (dsize,dcolor,dmask)) in
-                Myseq.return (data, state,
-                              stop_size, stop_color, stop_mask,
-                              next_size, next_color, next_mask)
-             | _ -> Myseq.empty)
-      | _ -> parseur_empty)
-    t p
+                  | _ -> Myseq.empty)
+            | _ ->
+               if Grid.same g g0 then Myseq.return (`Grid (g0, `None), state)
+               else if not state#quota_diff_is_null then
+                 Myseq.return (`Grid (g, `None), state#add_diff p)
+               else Myseq.empty)
 
-and parseur_grid t p : (Grid.t, data, parse_state_base) parseur = (* QUICK, runtime in Myseq *)
-  parseur_template
-    ~parseur_any:(fun () ->
-      Parseur (fun (g : Grid.t) state ->
-          Myseq.return (`Grid (g,`None), state, true, parseur_empty)))
-    ~parseur_patt:
-    (function
-     | `Grid g0 ->
-        parseur_rec (fun g state ->
-            if Grid.diff g0 g = None then Myseq.return (`Grid (g, `None), state)
-            else if not state#quota_diff_is_null then
-              Myseq.return (`Grid (g, `None), state#add_diff p)
-            else Myseq.empty)
+     | `MaskModel mm0 ->
+        parseur_rec (fun (m,seg_patt) state ->
+            match seg_patt with
+            | `MaskModels mms ->
+               if List.mem mm0 mms then
+                 Myseq.return (`Grid (m, `Model mm0), state)
+               else if not state#quota_diff_is_null then
+                 Myseq.return (`Grid (m, `None), state#add_diff p)
+               else Myseq.empty
+            | _ -> Myseq.empty)
+
+     | `ShapePoint color ->
+        parseur_rec1
+          (parseur_color color (p ++ `Color))
+          (fun parse_color (shape,seg_patt) state ->
+            match seg_patt with
+            | `Point c ->
+               let* dcolor, state, stop_color, next_color = parse_color c state in
+               let* g = Myseq.from_result (shape_point dcolor) in
+               let data = `Grid (g, `Point dcolor) in
+               Myseq.return (data, state, stop_color, next_color)
+            | _ -> Myseq.empty) (* not a point *)
+
+     | `ShapeRectangle (size,color,mask) ->
+        parseur_rec3
+          (parseur_vec size (p ++ `Size))
+          (parseur_color color (p ++ `Color))
+          (parseur_grid mask (p ++ `Mask))
+          (fun parse_size parse_color parse_mask (shape,seg_patt) state ->
+            let open Segment in
+            match seg_patt with
+            | `Rectangle rect ->
+               let* dsize, state, stop_size, next_size = parse_size (rect.height,rect.width) state in
+               let* dcolor, state, stop_color, next_color = parse_color rect.color state in
+               let* dmask, state, stop_mask, next_mask = parse_mask (rect.mask, `MaskModels rect.mask_models) state in
+               let* g = Myseq.from_result (shape_rectangle dsize dcolor dmask) in
+               let data = `Grid (g, `Rectangle (dsize,dcolor,dmask)) in
+               Myseq.return (data, state,
+                             stop_size, stop_color, stop_mask,
+                             next_size, next_color, next_mask)
+            | _ -> Myseq.empty)
+       
      | `GridBackground (size,color,layers) ->
         let Parseur parse_size = parseur_vec size (p ++ `Size) in
         let Parseur parse_color = parseur_color color (p ++ `Color) in
@@ -3962,31 +3939,33 @@ and parseur_grid t p : (Grid.t, data, parse_state_base) parseur = (* QUICK, runt
           let* dcolor, state, _, _ = parse_color bc state in
           Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
-        Parseur (fun (g : Grid.t) state -> Myseq.prof "Model2.parse_grid_background/seq" (
+        Parseur (fun (g,_) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           let* dsize, state, _, _ = parse_size (g.height,g.width) state in
           let* (bc,dcolor), state, _, _ = parse_bg_color g state in
-          let state_layers = new parse_state_layers state g bc in
-          let* dlayers, state_layers, _, _ = parse_layers () state_layers in
-          let delta, state = state_layers#delta_base in
+          let state_layers = new parse_state_layers g bc in
+          let* dlayers, (state,state_layers), _, _ = parse_layers () (state,state_layers) in
+          let delta = state_layers#delta in
           let data = `Grid (g, `Background (dsize,dcolor,dlayers,delta)) in
 	  (* adding mask pixels with other color than background to delta *)
 	  Myseq.return (data, state, true, parseur_empty)))
+
      | `GridTiling (grid,size) ->
         let Parseur parse_grid = parseur_grid grid (p ++ `Grid) in
         let Parseur parse_size = parseur_vec size (p ++ `Size) in
-        Parseur (fun (g : Grid.t) state ->
+        Parseur (fun (g,_) state ->
             match Grid.Transf.find_periodicity `Strict Grid.black g with
             | Some Grid.(Period2 ((I,p1), (J,p2), k2_ar)) ->
                let h, w = Grid.dims g in
                if h mod p1 = 0 && w mod p2 = 0
                then (
                  let* (g1 : Grid.t) = Myseq.from_result (Grid.Transf.crop g 0 0 p1 p2) in
-                 let* dgrid, state, _, _ = parse_grid g1 state in
+                 let* dgrid, state, _, _ = parse_grid (g1,`None) state in
                  let* dsize, state, _, _ = parse_size (h,w) state in
                  let data = `Grid (g, `Tiling (dgrid, dsize)) in
                  Myseq.return (data, state, true, parseur_empty) )
                else Myseq.empty
             | _ -> Myseq.empty)
+
      | _ -> parseur_empty)
     t p
 
@@ -4055,8 +4034,8 @@ let read_grid
   let Parseur parse_grid = parseur_grid t path0 in
   let parses =
     let* quota_diff = Myseq.range 0 quota_diff in (* for increasing diff quota *)
-    let state = new parse_state_base ~quota_diff () in
-    let* data, state, stop, _next = parse_grid g state in (* parse with this quota *)
+    let state = new parse_state ~quota_diff () in
+    let* data, state, stop, _next = parse_grid (g,`None) state in (* parse with this quota *)
     assert stop;
     let* () = Myseq.from_bool state#quota_diff_is_null in (* check quota fully used to avoid redundancy *)
     let box = box_of_data data in
