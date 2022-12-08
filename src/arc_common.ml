@@ -85,6 +85,13 @@ let rec option_list_bind (lx : 'a list) (f : 'a -> 'b option) : 'b list option =
         | None -> None
         | Some ly1 -> Some (y::ly1)
 
+let rec list_set_nth (l : 'a list) (i : int) (x : 'a) : 'a list =
+  match i, l with
+  | 0, [] -> [x]
+  | 0, _::r -> x::r
+  | _, [] -> []
+  | _, y::r -> y::list_set_nth r (i-1) x
+                    
 (* dummy versions for the JS code *)
 
 module JS = (* for profiling visually, used for the JS version *)
