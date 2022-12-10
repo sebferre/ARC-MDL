@@ -432,9 +432,9 @@ let task_model =
     {input_pattern =
        `GridBackground (u_any, `Color Grid.black,
                     `Insert (`Nil,
-                             `PosShape (u_any, `ShapeRectangle (u_any,u_any,u_any)),
+                             `PosShape (u_any, `ShapeMonocolor (u_any,u_any)),
                              `Insert (`Nil,
-                                      `PosShape (u_any, `ShapeRectangle (u_any,u_any,u_any)),
+                                      `PosShape (u_any, `ShapeMonocolor (u_any,u_any)),
                                       `Nil)));
      output_template =
        `GridBackground (`Ref (`Field (`Size,`Root)), `Ref (`Field (`Color, `Root)),
@@ -447,15 +447,15 @@ let task_model =
     {input_pattern =
        `GridBackground (u_any, `Color Grid.black,
                     `Insert (`Nil,
-                             `PosShape (u_any, `ShapeRectangle (u_any,u_any,u_any)),
+                             `PosShape (u_any, `ShapeMonocolor (u_any,u_any)),
                              `Nil));
      output_template =
-       `GridBackground (`Ref (`Field (`Size, `Field (`Layer `Root, `Root))),
-                    `Ref (`Field (`Color, `Field (`Layer (`Right `Root), `Root))),
-                    `Insert (`Nil,
-                             `PosShape (`Vec (`Int 0, `Int 0),
-                                        `Ref (`Field (`Shape, `Field (`Layer `Root, `Root)))),
-                             `Nil))}; 
+       `GridBackground (`Ref (`Field (`Size, `Field (`Mask, `Field (`Shape, `Field (`Layer `Root, `Root))))),
+                        `Ref (`Field (`Color, `Field (`Shape, `Field (`Layer (`Right `Root), `Root)))),
+                        `Insert (`Nil,
+                                 `PosShape (`Vec (`Int 0, `Int 0),
+                                            `Ref (`Field (`Shape, `Field (`Layer `Root, `Root)))),
+                                 `Nil))}; 
   ]
   
 (* === main === *)
