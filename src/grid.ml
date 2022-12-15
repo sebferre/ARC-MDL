@@ -194,6 +194,26 @@ let for_all_pixels f grid =
   done;
   !res [@@inline]
 
+let for_all2_pixels f grid1 grid2 =
+  if grid2.height <> grid1.height || grid2.width <> grid1.width
+  then raise Invalid_dim
+  else
+    let h, w = grid1.height, grid1.width in
+    let mat1 = grid1.matrix in
+    let mat2 = grid2.matrix in
+    let res = ref true in
+    let i = ref 0 in
+    let j = ref 0 in
+    while !res && !i < h do
+      j := 0;
+      while !res && !j < w do
+        res := !res && f !i !j mat1.{!i,!j} mat2.{!i,!j};
+        incr j
+      done;
+      incr i
+    done;
+    !res [@@inline]
+
 let majority_color (bgcolor : color) (g : t) : color result = (* not counting bgcolor *)
   let res = ref undefined in
   let nb_max = ref 0 in
@@ -235,6 +255,14 @@ let color_freq_desc (grid : t) : (int * color) list =
     if n > 0 then res := (n,c) :: !res
   done;
   List.sort Stdlib.compare !res
+
+let fill_undefined (g : t) (c : color) : t =
+  map_pixels
+    (fun c0 ->
+      if c0 = undefined
+      then c
+      else c0)
+    g
 
   
 (* pretty-printing in terminal *)
@@ -286,7 +314,7 @@ and xp_color print c =
     | 7 -> [red; on_yellow], "7#"
     | 8 -> [white; on_cyan], "8 "
     | 9 -> [green; on_red], "9#"
-    | 10 -> [on_white], "  "
+    | 10 -> [on_white], ". "
     | 11 -> [on_white], "XX"
     | _ -> invalid_arg ("Invalid color code: " ^ string_of_int c) in
   print#style_string style str
@@ -297,8 +325,15 @@ let pp_color c = Xprint.to_stdout xp_color c
 
 (* comparing grids *)
 
-let same (g1 : t) (g2 : t) : bool = (g1 = g2)
-  
+let same (g1 : t) (g2 : t) : bool = (g1.matrix = g2.matrix)
+
+let compatible (g1 : t) (g2 : t) : bool = (* QUICK *)
+  dims g1 = dims g2
+  && for_all2_pixels
+       (fun i j c1 c2 ->
+         c1 = c2 || c1 = undefined || c2 = undefined)
+       g1 g2
+                                  
 type diff =
   | Grid_size_mismatch of { src_height: int; src_width: int;
 			    tgt_height: int; tgt_width: int }

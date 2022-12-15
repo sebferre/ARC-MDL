@@ -91,7 +91,15 @@ let rec list_set_nth (l : 'a list) (i : int) (x : 'a) : 'a list =
   | 0, _::r -> x::r
   | _, [] -> []
   | _, y::r -> y::list_set_nth r (i-1) x
-                    
+
+let rec list_take n = function
+  | [] -> []
+  | x::r ->
+     if n <= 0
+     then []
+     else x :: list_take (n-1) r
+              
+             
 (* dummy versions for the JS code *)
 
 module JS = (* for profiling visually, used for the JS version *)

@@ -273,8 +273,7 @@ type rectangle = { height: int; width: int;
 type pattern =
   [ `None
   | `Point of Grid.color
-  | `Rectangle of rectangle
-  | `MaskModels of Mask_model.t list ]
+  | `Rectangle of rectangle ]
 
 type t = { bmp_cover : Bitmap.t;
            pos : int * int;
@@ -317,7 +316,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
     | [] -> [] in
   if List.mem Grid.black l
   then l
-  else l @ [Grid.black] (* ensure black is considered as a background color *)
+  else l @ [Grid.black] (* ensure black is considered as a prefered background color *)
 
   
 let points_of_part ?(acc : Grid.pixel list = []) bmp (part : part) : Grid.pixel list =

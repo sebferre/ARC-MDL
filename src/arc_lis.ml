@@ -3,6 +3,8 @@ open Js_of_ocaml
 
 let _ = Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
 
+let max_nb_descr_per_example = 1
+      
 exception TODO
 
 let ( let| ) res f = Result.bind res f [@@inline]
@@ -239,7 +241,7 @@ let html_grid_pair html_i html_o =
 type col = ColExample | ColDescr | ColPred
 type cell =
   | Example of Grid.t * Grid.t
-  | Descr of Model2.grid_read * Model2.grid_read
+  | Descr of (Model2.grid_read * Model2.grid_read) list
   | Pred of Grid.t * (Model2.grid_data * Grid.t) list (* expected grid, all preds *)
   | Error of string
                                     
@@ -248,7 +250,10 @@ let html_of_cell : cell -> Html.t = function
      html_grid_pair
        (html_of_grid gi)
        (html_of_grid go)
-  | Descr (ri,ro) ->
+  | Descr [] -> "No valid description"
+  | Descr l_rio ->
+     String.concat "<br/>"
+       (List.map (fun (ri,ro) ->
      let (_, {data=d_i}, dli : Model2.grid_read) = ri in
      let (_, {data=d_o}, dlo : Model2.grid_read) = ro in
      html_grid_pair
@@ -256,7 +261,8 @@ let html_of_cell : cell -> Html.t = function
        (html_of_grid_from_data d_o)
      ^ Printf.sprintf "<br/>DL = %.3f = %.3f i + %.3f o" (dli +. dlo) dli dlo
      ^ Html.pre ("IN " ^ Model2.string_of_data d_i)
-     ^ Html.pre ("OUT " ^ Model2.string_of_data d_o)
+     ^ Html.pre ("OUT " ^ Model2.string_of_data d_o))
+       l_rio)
   | Pred (expected_go, l_gdi_go) ->
      String.concat ""
        (List.map
@@ -320,9 +326,11 @@ let render_place place k =
           (fun pair reads l_bindings ->
             let ({input=gi; output=go} : Task.pair) = pair in
             let descr =
-              match reads with
-              | (in_r,out_r,dl)::_ -> Descr (in_r,out_r) (* using only first read *)
-              | [] -> Error "No valid description" in
+              Descr (* TEST: add option to control how many *)
+                (reads
+                 |> Arc_common.list_take max_nb_descr_per_example
+                 |> List.map
+                      (fun (in_r,out_r,dl) -> (in_r,out_r))) in
             let pred = get_pred ~test:false ext.model gi go in
             let row =
               [ ColExample, Example (gi,go);
