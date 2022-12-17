@@ -578,11 +578,11 @@ type template =
   | `Color of Grid.color
   | `MaskModel of Mask_model.t
   | `Vec of template * template (* i, j *)
+  | `PosShape of template * template (* layer: pos, shape *)
   | `Grid of Grid.t
   | `MaskPoint (* mask: *)
   | `MaskRectangle of template * template (* mask: size, mask_model *)
   | `ShapeMonocolor of template * template (* shape: mask, color *)
-  | `PosShape of template * template (* layer: pos, shape *)
   | `GridBackground of template * template * template ilist (* size, color, layers (top first) -> grid, the grid component is only used in data to get access to the full grid *)
   | `GridTiling of template * template (* T: T, size with T in mask, shape, grid *)
   | expr (* an expression that evaluates into a template *)
@@ -1857,21 +1857,22 @@ let dl_Grid dl object_delta ~box ~path g =
      (match rg with
       | `Mask ->
          dl_mask ~encode_size:true ~box g
-      | `Shape -> raise TODO
-(*         let h, w = Grid.dims g in
-         let c = raise TODO in
-         let m = raise TODO in
-         dl_Shape_Rectangle dl ~box ~path
-           (`Vec (`Int h, `Int w))
-           (`Color c)
-           (`Grid m) *)
-      | `Frame ->
+      | `Shape ->
+         let path = `Root in
          let h, w = Grid.dims g in
-         dl_Grid_Background dl ~box ~path
-           (`Vec (`Int h, `Int w))
-           (`Color Grid.black)
-           `Nil
-           (h * w) object_delta)
+         let size = `Vec (`Int h, `Int w) in
+         dl ~box ~path:(path ++ `Size) size
+         +. dl_delta dl ~box:(box_of_size ~box size) ~path
+              (Grid.color_area Grid.transparent g) object_delta
+      | `Frame ->
+         let path = `Root in
+         let h, w = Grid.dims g in
+         let size = `Vec (`Int h, `Int w) in
+         let color = `Color Grid.black in
+         dl ~box ~path:(path ++ `Size) size
+         +. dl ~box ~path:(path ++ `Color) color
+         +. dl_delta dl ~box:(box_of_size ~box size) ~path
+              (h * w) object_delta)
   | _ -> assert false 
 
   
@@ -2973,7 +2974,7 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : data resu
                 let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
                 let patt' =
                   match patt with
-                  | `Point | `Rectangle _ -> patt
+                  | `Point | `Rectangle _ -> `Monocolor (`Grid (m, patt), new_col)
                   | `Monocolor (mask, _) -> `Monocolor (mask, new_col)
                   | _ -> `None in
                 Result.Ok (`Grid (g',patt'))
@@ -3742,7 +3743,7 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
                let* g = Myseq.from_result (shape_monocolor dmask dcolor) in
                let dshape = `Grid (g, `Monocolor (dmask, dcolor)) in
                if rg = `Shape then Myseq.return (dshape, state)
-               else raise TODO
+               else assert false (* TODO: point as frame *)
           | `Rectangle rect ->
              let m, mms = rect.Segment.mask, rect.mask_models in
              let dsize = `Vec (`Int rect.height, `Int rect.width) in
@@ -3760,7 +3761,7 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
                let* g = Myseq.from_result (shape_monocolor dmask dcolor) in
                let dshape = `Grid (g, `Monocolor (dmask, dcolor)) in
                if rg = `Shape then Myseq.return (dshape, state)
-               else raise TODO
+               else assert false (* TODO: rectangle as frame *)
           | `None ->
              Myseq.return (`Grid (g,`None), state)))
     ~parseur_patt:
@@ -4448,52 +4449,59 @@ let apply_grid_refinement (r : grid_refinement) (t : template) : template option
      raise exn (* does not seem to occur any more *)
 
 
-let rec root_template_of_data ~(in_output : bool) (p : revpath) (role : role) (d : data) : (template * data * bool (* partial *)) list = (* QUICK *)
-  (* find patterns in data, and return both pattern template, and data according to this pattern *)
+let rec root_template_of_data ~(in_output : bool) (p : revpath) (role : role) (t0 : template) (d : data) : (template * data * bool (* partial *)) list = (* QUICK *)
+  (* find patterns in data [d] to refine template [t0], and return both pattern template, and data according to this pattern *)
   (* TODO: take path/role into account *)
-  match d with
-  | `Bool _ -> []
-  | `Int i as d ->
+  let add_parse_grid res t' p x = Common.prof "Model2.root_template_of_data/add_parse_grid" (fun () ->
+    let parseur = parseur_grid t' p in
+    match parsing_once parseur x with
+    | Some d' -> (t',d',false)::res
+    | None -> res)
+  in
+  match t0, d with
+  | `Any, `Bool b -> [`Bool b, d, false]
+  | `Any, `Int i ->
      if in_output && i >= 1 && i <= 3
-     then [(d :> template), d, false]
+     then [`Int i, d, false]
      else [] (* position- and size-invariance of inputs *)
-  | `Color _ as d ->
-     [(d :> template), d, false] (* colors can be seen as patterns *)
-  | `MaskModel _  as d ->
-     [(d :> template), d, false] (* mask models can be seen as patterns *)
-  | `Vec _ -> [`Vec (u_cst, u_cst), d, false]
-  | `PosShape _ -> [`PosShape (u_vec_cst, u_cst), d, false]
-  | `Grid (g, patt) ->
+  | `Any, `Color c -> [`Color c, d, false] (* colors can be seen as patterns *)
+  | `Any, `MaskModel mm -> [`MaskModel mm, d, false] (* mask models can be seen as patterns *)
+  | `Any, `Vec _ -> [`Vec (u_cst, u_cst), d, false]
+  | `Any, `PosShape _ -> [`PosShape (u_vec_cst, u_cst), d, false]
+  | _, `Grid (g, patt) ->
      let res = [] in
-     let res =
+     let res = (* explicit grid *)
        match role with
        | `Grid `Mask -> (`Grid g, d, false)::res
        | _ -> res in (* no literal grids in models, except masks *)
-     let res =
-       match patt with
-       (* when pattern provided by parsing, consider inserting it into the template *)
-       | `Point -> (`MaskPoint, d, false)::res
-       | `Rectangle _ -> (`MaskRectangle (u_vec_cst,u_cst), d, false)::res
-       | `Monocolor _ -> (`ShapeMonocolor (u_cst, u_cst), d, false)::res
-       | _ -> (* otherwise, look for a pattern right into the grid *)
-          let rg, cand_patts =
-            match role with
-            | `Grid `Frame -> `Frame, [`GridTiling (u_cst,u_vec_cst); u_background]
-            | `Grid rg -> rg, [`GridTiling (u_cst,u_cst)]
-            | _ -> assert false in
-          let$ res, t' = res, cand_patts in
-          let Parseur parse = parseur_grid t' p in
-          (match Myseq.hd_opt (parse (g, rg, `None) (new parse_state ())) with
-          | Some (d',state',_,_) ->
-             (t',d',false)::res
-          | None -> res) in
+     let res = (* MaskPoint *)
+       match role, t0, patt with
+       | `Grid `Mask, `Any, `Point -> (`MaskPoint, d, false)::res
+       | _ -> res in
+     let res = (* MaskRectangle *)
+       match role, t0, patt with
+       | `Grid `Mask, `Any, `Rectangle _ -> (`MaskRectangle (u_vec_cst,u_cst), d, false)::res
+       | _ -> res in
+     let res = (* ShapeMonocolor *)
+       match role, t0, patt with
+       | `Grid `Shape, `Any, `Monocolor _ -> (`ShapeMonocolor (u_cst,u_cst), d, false)::res
+       | _ -> res in
+     let res = (* GridBackground *)
+       match role, t0, patt with
+       | `Grid `Frame, `Any, _ -> add_parse_grid res u_background p (g,`Frame,`None)
+       | _ -> res in
+     let res = (* GridTiling *)
+       match role, t0, patt with
+       | `Grid rg, (`Any | `MaskRectangle _ | `ShapeMonocolor _ | `GridBackground _), _ ->
+          add_parse_grid res (`GridTiling (u_cst,u_vec_cst)) p (g,rg,`None)
+       | _ -> res in
      res
-  | `Seq [] -> []
-  | `Seq (item::items) ->
+  | `Any, `Seq [] -> []
+  | `Any, `Seq (item::items) ->
      let n, common_patterns =
        List.fold_left
          (fun (n,ltdk) item ->
-           let item_patterns = root_template_of_data ~in_output p role item in
+           let item_patterns = root_template_of_data ~in_output p role `Any item in
            n+1,
            List.filter_map
              (fun (t,d,k) ->
@@ -4502,7 +4510,7 @@ let rec root_template_of_data ~(in_output : bool) (p : revpath) (role : role) (d
                else None)
              ltdk)
          (1,
-          root_template_of_data ~in_output p role item
+          root_template_of_data ~in_output p role `Any item
           |> List.map (fun (t,d,_) -> t, d, 1))
          items in
      common_patterns
@@ -4510,6 +4518,7 @@ let rec root_template_of_data ~(in_output : bool) (p : revpath) (role : role) (d
             if float k /. float n >= !def_match_threshold
             then Some (t, d, (k<n))
             else None)
+  | _ -> []
 
 (* for testing specific expression and path in defs_refinements *)
 let test_on = false
@@ -4604,12 +4613,6 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
   let defs = Common.prof "Model2.defs_refinements/first/by_path" (fun () ->
     let$ defs, (p,role,t0,dl_t0) = defs, u_vars in (* for each definable path *)
     (* validity conditions, and associated information, for each kind of definition *)
-    let valid_Constr =
-      match t0 with
-      | `Any
-        | `Vec (`Any, `Any) (* including Vec because present initially *)
-        | `MaskRectangle (_, `Any) -> true
-      | _ -> false in
     let valid_Cst_t =
       match t0 with
       | `Seq (item0::_) | `Prefix (_, item0::_) -> Some (`Cst item0)
@@ -4649,12 +4652,8 @@ let rec defs_refinements ~(env_sig : signature) (t : template) (grss : grid_read
       | None -> tmap
       | Some d ->
          let tmap = (* Constr *)
-           if valid_Constr then
-             let$ tmap, (t', d', partial) = tmap, root_template_of_data ~in_output p role d in
-             if t' <> t0 (* a different pattern *)
-             then add_template t' (box,dl0,d,d',partial) tmap
-             else tmap
-           else tmap in
+           let$ tmap, (t', d', partial) = tmap, root_template_of_data ~in_output p role t0 d in
+           add_template t' (box,dl0,d,d',partial) tmap in
          let tmap = (* Cst *)
            match valid_Cst_t with
            | Some t ->
@@ -4885,10 +4884,10 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       match role1 with
       | `Grid `Frame -> push (`IntCard, `ColorCount e1)
       | _ -> () in
-    let _ = (* Size on grids *)
+(*    let _ = (* Size on grids *)
       match role1 with
       | `Grid _ -> push (`Vec (`Size `X), `Size e1)
-      | _ -> () in
+      | _ -> () in  not useful, field Size enough *)
     let _ = (* Strip on grids *)
       match role1 with
       | `Grid `Frame -> push (`Grid `Frame, `Strip e1)
