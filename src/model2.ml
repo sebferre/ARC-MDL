@@ -3831,23 +3831,25 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
      | `GridBackground (size,color,layers) ->
         let Parseur parse_size = parseur_vec size (p ++ `Size) in
         let Parseur parse_color = parseur_color color (p ++ `Color) in
-        let seq_background_colors =
-          match color with
-          | `Color bc -> (fun g -> Myseq.return bc)
-          | `Any -> (fun g -> Myseq.from_list (Segment.background_colors g))
-          | _ -> assert false in
-        let parse_bg_color g state =
-          let* bc = seq_background_colors g in
-          let* dcolor, state, _, _ = parse_color bc state in
-          Myseq.return ((bc,dcolor),state,true,parseur_empty) in          
         let Parseur parse_layers = parseur_layers layers p in
+        let get_background_colors =
+          match color with
+          | `Color bc -> (fun g -> [bc])
+          | `Any -> (fun g -> Segment.background_colors g)
+          | _ -> assert false in
         Parseur (fun (g,rg,_) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           assert (rg = `Frame);
           let* dsize, state, _, _ = parse_size (g.height,g.width) state in
-          let* (bc,dcolor), state, _, _ = parse_bg_color g state in
-          let state_layers = new parse_state_layers g bc in
-          let* dlayers, (state,state_layers), _, _ = parse_layers () (state,state_layers) in
-          let delta = state_layers#delta in
+          let* dcolor, dlayers, delta, state =
+            Myseq.interleave
+              (List.map
+                 (fun bc ->
+                   let* dcolor, state, _, _ = parse_color bc state in
+                   let state_layers = new parse_state_layers g bc in
+                   let* dlayers, (state,state_layers), _, _ = parse_layers () (state,state_layers) in
+                   let delta = state_layers#delta in
+                   Myseq.return (dcolor, dlayers, delta, state))
+                 (get_background_colors g)) in
           let data = `Grid (g, `Background (dsize,dcolor,dlayers,delta)) in
 	  (* adding mask pixels with other color than background to delta *)
 	  Myseq.return (data, state, true, parseur_empty)))
