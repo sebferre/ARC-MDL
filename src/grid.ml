@@ -478,12 +478,20 @@ module Transf =
       Common.memoize3 ~size:101 scale_down
 
     let scale_to (new_h : int) (new_w : int) (g : t) : t result =
-      let h, w = dims g in
-      if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
-        scale_up (new_h / h) (new_w / w) g
-      else if new_h > 0 && new_w > 0 && new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
-        scale_down (h / new_h) (w / new_w) g
-      else Result.Error (Undefined_result "Grid.Trans.scale_to: invalid scaling vector")
+      if new_h > 0 && new_w > 0
+      then
+        let h, w = dims g in
+        if new_h >= h && new_w >= w && new_h mod h = 0 && new_w mod w = 0 then
+          scale_up (new_h / h) (new_w / w) g
+        else if new_h <= h && new_w <= w && h mod new_h = 0 && w mod new_w = 0 then
+          scale_down (h / new_h) (w / new_w) g
+        else
+          match color_freq_desc g with
+          | [(n,c)] when n = h * w -> (* full mask model *)
+             Result. Ok (make new_h new_w c)
+          | _ -> Result.Error (Undefined_result "Grid.Transf.scale_to: invalid scaling factor")
+      else
+        Result.Error (Undefined_result "Grid.Transf.scale_to: negative scaling vector")
     let scale_to, reset_scale_to =
       Common.memoize3 ~size:101 scale_to
       
