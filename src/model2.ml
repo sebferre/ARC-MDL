@@ -2149,7 +2149,7 @@ let encoder_template ?(path : revpath = `Root) (t : template) : box:box -> data 
 let dl_parse_rank (rank : int) : dl =
   (* penalty DL for parse rank, starting at 0 *)
   Mdl.Code.universal_int_star rank -. 1.
-  
+
   
 let dl_diff ~(box : box) (t : template) (diff : diff) (data : data) : dl = (* QUICK *)
   if diff = []
@@ -3353,17 +3353,19 @@ end
 
 let parse_state0 = new parse_state ()
 
-class parse_state_layers (g : Grid.t) (bc : Grid.color) =
+class parse_state_layers (grid0 : Grid.t) (bc0 : Grid.color) =
 object (self : 'self)
-  val grid : Grid.t = g (* the grid to parse *)
-  val bmp : Bitmap.t = Bitmap.full g.height g.width (* remaining part of the grid to be explained *)
+  val grid : Grid.t = grid0 (* the grid to parse *)
+  val bc : Grid.color = bc0 (* the background color *)
+  val bmp : Bitmap.t = Bitmap.full grid0.height grid0.width (* remaining part of the grid to be explained *)
   val parts : Segment.part list = (* remaining parts that can be used *)
     List.filter
-      (fun (p : Segment.part) -> p.color <> bc)
-      (Segment.segment_by_color g)
+      (fun (p : Segment.part) -> p.color <> bc0)
+      (Segment.segment_by_color grid0)
   val delta : delta = delta0 (* pixels that are not explained by the template *)
 
   method grid = grid
+  method bc = bc
   method bmp = bmp
   method parts = parts
 
@@ -3388,7 +3390,7 @@ object (self : 'self)
     match seg.pattern with
     | `Point c -> self#minus_shape_gen c [] seg.bmp_cover
     | `Rectangle rect -> self#minus_shape_gen rect.color rect.delta seg.bmp_cover
-    | _ -> Some self
+    | `None -> Some self (* TODO: ... *)
                
   method delta : delta =
     let new_delta = ref delta in
@@ -3709,22 +3711,24 @@ and parseur_layer (t : template) (p : revpath) : (unit,data,parse_state * parse_
       | _ -> Myseq.return (`Seq ld, states, true, parseur_empty))
   
 and parseur_layers layers p : (unit, data ilist, parse_state * parse_state_layers) parseur =
-  let rev_layer_parses =
-    fold_ilist
-      (fun revl lp layer ->
-        let Parseur parse = parseur_layer layer (p ++ `Layer lp) in
-        let simple_parse =
-          fun states ->
-          let* d, states, _stop, _next = parse () states in 
-          Myseq.return (d,states) in
-        simple_parse::revl)
-      [] `Root layers in
-  let gen = Myseq.product_dependent_fair
-              ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations, incompatible with use of parseur_collect *)
-              (List.rev rev_layer_parses) in
+  let layer_parses =
+    List.rev
+      (fold_ilist
+         (fun revl lp layer ->
+           let Parseur parse = parseur_layer layer (p ++ `Layer lp) in
+           let simple_parse =
+             fun states ->
+             let* d, states, _stop, _next = parse () states in
+             Myseq.return (d,states) in
+           simple_parse::revl)
+         [] `Root layers) in
   Parseur (fun () states ->
   Myseq.prof "Model2.parse_layers/seq" (
-      let* ld, states = gen states in
+      let* ld, states =
+        Myseq.product_dependent_fair
+          ~max_relaxation_level:(!max_relaxation_level_parse_layers) (* TODO: pb when nesting fair iterations, incompatible with use of parseur_collect *)
+          layer_parses
+          states in
       let l, dlayers = fill_ilist_with_list layers ld in
       assert (l = []);
       Myseq.return (dlayers, states, true, parseur_empty)))
@@ -3769,7 +3773,7 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
      | `Grid g0 ->
         parseur_rec (fun (g,rg,seg_patt) state ->
             if Grid.compatible g g0 then Myseq.return (`Grid (g0, `None), state)
-            else if not state#quota_diff_is_null then
+            else if not state#quota_diff_is_null then (* TODO: what if undefined cells in g? *)
               Myseq.return (`Grid (g, `None), state#add_diff p)
             else Myseq.empty)
 
@@ -3839,17 +3843,18 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
           | _ -> assert false in
         Parseur (fun (g,rg,_) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           assert (rg = `Frame);
+          let background_colors = get_background_colors g in
           let* dsize, state, _, _ = parse_size (g.height,g.width) state in
-          let* dcolor, dlayers, delta, state =
+          let* bc, dcolor, dlayers, delta, state, state_layers =
             Myseq.interleave
               (List.map
                  (fun bc ->
-                   let* dcolor, state, _, _ = parse_color bc state in
                    let state_layers = new parse_state_layers g bc in
+                   let* dcolor, state, _, _ = parse_color bc state in
                    let* dlayers, (state,state_layers), _, _ = parse_layers () (state,state_layers) in
                    let delta = state_layers#delta in
-                   Myseq.return (dcolor, dlayers, delta, state))
-                 (get_background_colors g)) in
+                   Myseq.return (bc, dcolor, dlayers, delta, state, state_layers))
+                 background_colors) in
           let data = `Grid (g, `Background (dsize,dcolor,dlayers,delta)) in
 	  (* adding mask pixels with other color than background to delta *)
 	  Myseq.return (data, state, true, parseur_empty)))
