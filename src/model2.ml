@@ -3114,7 +3114,9 @@ let mask_point : Grid.t =
 let mask_rectangle (size : data) (mm : data) : Grid.t result =
   match size, mm with
   | `Vec (`Int h, `Int w), `MaskModel mm ->
-     Result.Ok (Mask_model.to_mask ~height:h ~width:w mm)
+     if h > 0 && w > 0
+     then Result.Ok (Mask_model.to_mask ~height:h ~width:w mm)
+     else Result.Error (Invalid_argument "Model2.mask_rectangle: negative or null mask size")
   | _ -> assert false
 
 let shape_monocolor (mask : data) (color : data) : Grid.t result =
@@ -3139,10 +3141,13 @@ let grid_background (size : data) (color : data) (layers : data ilist) : Grid.t 
 let grid_tiling (dgrid : data) (dsize : data) : Grid.t result =
   match dgrid, dsize with
   | `Grid (g1,_), `Vec (`Int h, `Int w) ->
-     let h1, w1 = Grid.dims g1 in
-     let k, l = (h-1) / h1 + 1, (w-1) / w1 + 1 in
-     let| g = Grid.Transf.tile k l g1 in
-     Grid.Transf.crop g 0 0 h w
+     if h > 0 && w > 0
+     then
+       let h1, w1 = Grid.dims g1 in
+       let k, l = (h-1) / h1 + 1, (w-1) / w1 + 1 in
+       let| g = Grid.Transf.tile k l g1 in
+       Grid.Transf.crop g 0 0 h w
+     else Result.Error (Invalid_argument "grid_tiling: negative or null grid size")
   | _ -> assert false
 
 
