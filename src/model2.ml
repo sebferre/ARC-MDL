@@ -5112,6 +5112,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
          if c1 > c2 (* symmetric operation *)
          then push (role1, `SwapColors (e1, `ConstColor c1, `ConstColor c2))
          else ()
+      (* TODO: on shapes, transparent -> color *)
       | _ -> () in
     let _ = (* not _ *)
       match role1 with

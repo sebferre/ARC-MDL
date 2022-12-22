@@ -7,9 +7,9 @@ module Model = Model2
              
 let training = ref true (* should be set to false on evaluation set *)
 let start_rank = ref max_int
-let timeout_build = ref 30
+let timeout_build = ref 60
 let timeout_prune = ref 10
-let timeout_predict = ref 3
+let timeout_predict = ref 10
 let verbose = ref 1
 let grid_viz = ref false
 let pause = ref 0.
@@ -261,6 +261,7 @@ let sferre_dir = arc_dir ^ "sferre/"
 let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
 
 let solved_train_names =
+  (* 91 tasks, *)
   (* 90 tasks, 3.3s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=100000 *)
   (* 85 tasks, 1.8s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=50000 *)
   (* 79 tasks, 1.4s/task for timeout=30+10s, max_nb_parses=64, max_refs=20, max_exprs=10000 *)
@@ -313,6 +314,7 @@ let solved_train_names =
     "80af3007.json"; (* NEW strip grid; scale down /3; compose with itself *)
     "8be77c9e.json"; (* NEW unfold by flipHeight downward *)
     "8f2ea7aa.json"; (* NEW strip grid, then self compose *)
+    "91714a58.json"; (* NEW: rectangle, filter out noise *)
     "9172f3a0.json"; (* NEW scale up grid by 3 *)
     "952a094c.json"; (* border with points inside, points moving outsite border on opposite corner, runtime=2.2s *)
     "963e52fc.json"; (* NEW resize alike horizontally *)
