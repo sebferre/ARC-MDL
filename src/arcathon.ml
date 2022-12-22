@@ -2,10 +2,14 @@
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
-let timeout_build = 120
-let timeout_prune = 20
-let timeout_predict = 10
+let timeout_build = 240
+let timeout_prune = 30
+let timeout_predict = 30
 
+let _ = (* configuration *)
+  Model2.max_expressions := 200000;
+  Model2.max_refinements := 40
+                    
 let tasks_path = root_path ^ "evaluation/"
 let solution_path = root_path ^ "solution/solution_madil.json"
 
