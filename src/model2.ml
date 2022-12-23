@@ -149,10 +149,6 @@ end
 type dim = Item | Sequence (* Item has dim=0, Sequence has dim=1 *)
 (* internal repr must be consistent with (max Item Sequence = Sequence) *)
 
-let max_dim_list : dim list -> dim = function
-  | [] -> failwith "Model2.max_dim_list: empty list"
-  | x::r -> List.fold_left max x r
-                
 type kind =
   Int | Bool | Color | MaskModel | Vec | Layer | Grid
 let all_kinds : kind list =
@@ -399,6 +395,33 @@ let broadcast_list (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b) : 'b seq
     let lr = aux ts in
     `Seq lr
   else f ts
+let broadcast_array (ts : 'a seq array) (f : (* non-seq *) 'a array -> 'b) : 'b seq =
+  let rec aux (ts : 'a seq array) =
+    let some = ref true in
+    let heads = Array.copy ts in
+    let tails = Array.copy ts in
+    Array.iteri
+      (fun i t ->
+        if !some then
+          match t with
+          | `Seq [] -> some := false
+          | `Seq (head0::tail0) ->
+             heads.(i) <- head0;
+             tails.(i) <- `Seq tail0;
+          | _ -> ())
+      ts;
+    if !some
+    then
+      let r = f heads in
+      let rs = aux tails in
+      r::rs
+    else []
+  in
+  if Array.exists (function `Seq _ -> true | _ -> false) ts
+  then
+    let lr = aux ts in
+    `Seq lr
+  else f ts
 
 let broadcast1_result (t : 'a seq) (f : 'a -> 'b result) : 'b seq result =
   match t with
@@ -450,6 +473,33 @@ let broadcast_list_result (ts : 'a seq list) (f : (* non-seq *) 'a list -> 'b re
     let| lr = aux ts in
     Result.Ok (`Seq lr)
   else f ts
+let broadcast_array_result (ts : 'a seq array) (f : (* non-seq *) 'a array -> 'b result) : 'b seq result =
+  let rec aux (ts : 'a seq array) =
+    let some = ref true in
+    let heads = Array.copy ts in
+    let tails = Array.copy ts in
+    Array.iteri
+      (fun i t ->
+        if !some then
+          match t with
+          | `Seq [] -> some := false
+          | `Seq (head0::tail0) ->
+             heads.(i) <- head0;
+             tails.(i) <- `Seq tail0;
+          | _ -> ())
+      ts;
+    if !some
+    then
+      let| r = f heads in
+      let| rs = aux tails in
+      Result.Ok (r::rs)
+    else Result.Ok []
+  in
+  if Array.exists (function `Seq _ -> true | _ -> false) ts
+  then
+    let| lr = aux ts in
+    Result.Ok (`Seq lr)
+  else f ts
 
 type delta = Grid.pixel list (* pixels not explained by a template *)
 let delta0 = []
@@ -477,70 +527,70 @@ let _ = (data0 :> data seq) (* data is an instance of data seq *)
       
 type var = revpath
 
-type 'a expr_func =
-  [ `ConstInt of int (* Int *)
-  | `ConstVec of int * int (* Vec *)
-  | `ConstColor of Grid.color (* Color *)
-  | `Plus of 'a * 'a (* on Int, Vec *)
-  | `Minus of 'a * 'a (* on Int, Vec *)
-  | `IncrInt of 'a * int (* on Int *)
-  | `DecrInt of 'a * int (* in Int *)
-  | `IncrVec of 'a * int * int (* on Vec *)
-  | `DecrVec of 'a * int * int (* in Vec *)
-  | `Modulo of 'a * 'a (* on Int *)
-  | `ScaleUp of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
-  | `ScaleDown of 'a * 'a (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
-  | `ScaleTo of 'a * 'a (* Mask, Grid, Vec -> Mask *)
-  | `Size of 'a (* Grid -> Vec *)
-  | `Crop of 'a * 'a (* Grid, Rectangle -> Grid *)
-  | `Strip of 'a (* on Grid *)
-  | `Corner of 'a * 'a (* on Vec *)
-  | `Min of 'a list (* on Int, Vec *)
-  | `Max of 'a list (* on Int, Vec *)
-  | `Average of 'a list (* on Int, Vec *)
-  | `Span of 'a * 'a (* on Vec *)
-  | `Norm of 'a (* Vec -> Int *)
-  | `Diag1 of 'a * int (* Vec -> Int *)
-  | `Diag2 of 'a * int (* Vec -> Int *)
-  | `LogAnd of 'a * 'a (* on Mask *)
-  | `LogOr of 'a * 'a (* on Mask *)
-  | `LogXOr of 'a * 'a (* on Mask *)
-  | `LogAndNot of 'a * 'a (* on Mask *)
-  | `LogNot of 'a (* on Mask *)
-  | `Stack of 'a list (* on Grids *)
-  | `Area of 'a (* on Shape *)
-  | `Left of 'a (* on Layer *)
-  | `Right of 'a (* on Layer *)
-  | `Center of 'a (* on Layer *)
-  | `Top of 'a (* on Layer *)
-  | `Bottom of 'a (* on Layer *)
-  | `Middle of 'a (* on Layer *)
-  | `ProjI of 'a (* on Vec *)
-  | `ProjJ of 'a (* on Vec *)
-  | `MaskOfGrid of 'a (* Grid -> Mask TODO: specify bgcolor *)
-  | `GridOfMask of 'a * 'a (* Mask, Color -> Grid *)
-  | `TranslationOnto of 'a * 'a (* Obj, Obj -> Vec *)
-  | `Tiling of 'a * int * int (* on Vec/Mask/Shape *)
-  | `PeriodicFactor of Grid.Transf.periodicity_mode * 'a * 'a (* on Color, Mask/Shape/Layer/Grid as T -> T *)
-  | `FillResizeAlike of Grid.Transf.periodicity_mode * 'a * 'a * 'a (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
-  | `Compose of 'a * 'a * 'a (* Color, Mask/Shape/Grid as T, T -> T *)
-  | `ApplySym of symmetry * 'a * role (* on Vec, Mask, Shape, Layer; role of the argument as computation depends on it *)
-  | `UnfoldSym of symmetry list list * 'a (* on Mask, Shape, Layer *)
+type func =
+  [ `ConstInt_0 of int (* Int *)
+  | `ConstVec_0 of int * int (* Vec *)
+  | `ConstColor_0 of Grid.color (* Color *)
+  | `Plus_2 (* on Int, Vec *)
+  | `Minus_2 (* on Int, Vec *)
+  | `IncrInt_1 of int (* on Int *)
+  | `DecrInt_1 of int (* in Int *)
+  | `IncrVec_1 of int * int (* on Vec *)
+  | `DecrVec_1 of int * int (* in Vec *)
+  | `Modulo_2 (* on Int *)
+  | `ScaleUp_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
+  | `ScaleDown_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
+  | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
+  | `Size_1 (* Grid -> Vec *)
+  | `Crop_2 (* Grid, Rectangle -> Grid *)
+  | `Strip_1 (* on Grid *)
+  | `Corner_2 (* on Vec *)
+  | `Min_n (* on Int, Vec *)
+  | `Max_n (* on Int, Vec *)
+  | `Average_n (* on Int, Vec *)
+  | `Span_2 (* on Vec *)
+  | `Norm_1 (* Vec -> Int *)
+  | `Diag1_1 of int (* Vec -> Int *)
+  | `Diag2_1 of int (* Vec -> Int *)
+  | `LogAnd_2 (* on Mask *)
+  | `LogOr_2 (* on Mask *)
+  | `LogXOr_2 (* on Mask *)
+  | `LogAndNot_2 (* on Mask *)
+  | `LogNot_1 (* on Mask *)
+  | `Stack_n (* on Grids *)
+  | `Area_1 (* on Shape *)
+  | `Left_1 (* on Layer *)
+  | `Right_1 (* on Layer *)
+  | `Center_1 (* on Layer *)
+  | `Top_1 (* on Layer *)
+  | `Bottom_1 (* on Layer *)
+  | `Middle_1 (* on Layer *)
+  | `ProjI_1 (* on Vec *)
+  | `ProjJ_1 (* on Vec *)
+  | `MaskOfGrid_1 (* Grid -> Mask TODO: specify bgcolor *)
+  | `GridOfMask_2 (* Mask, Color -> Grid *)
+  | `TranslationOnto_2 (* Obj, Obj -> Vec *)
+  | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
+  | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
+  | `FillResizeAlike_3 of Grid.Transf.periodicity_mode (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
+  | `Compose_3 (* Color, Mask/Shape/Grid as T, T -> T *)
+  | `ApplySym_1 of symmetry * role (* on Vec, Mask, Shape, Layer; role of the argument as computation depends on it *)
+  | `UnfoldSym_1 of symmetry list list (* on Mask, Shape, Layer *)
   (* sym list list = matrix to be filled with symmetries of some mask *)
-  | `CloseSym of symmetry list * 'a * 'a (* Color, Mask/Shape/Layer/Grid as T -> T *)
+  | `CloseSym_2 of symmetry list (* Color, Mask/Shape/Layer/Grid as T -> T *)
   (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
-  | `TranslationSym of symmetry * 'a * 'a (* Obj, Obj/Grid -> Vec *)
-  | `MajorityColor of 'a (* Grid -> Color *)
-  | `ColorCount of 'a (* Grid -> Int *)
-  | `Coloring of 'a * 'a (* Shape/Obj, Color -> Shape/Obj *)
-  | `SwapColors of 'a * 'a * 'a (* Grid, Color, Color -> Grid *)
+  | `TranslationSym_2 of symmetry (* Obj, Obj/Grid -> Vec *)
+  | `MajorityColor_1 (* Grid -> Color *)
+  | `ColorCount_1 (* Grid -> Int *)
+  | `Coloring_2 (* Shape/Obj, Color -> Shape/Obj *)
+  | `SwapColors_3 (* Grid, Color, Color -> Grid *)
   ]
 and symmetry = [
   | `Id
   | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
   | `Rotate180 | `Rotate90 | `Rotate270 ]
 
-type expr = [ `Ref of revpath | expr expr_func ]
+type expr = [ `Ref of revpath | `Apply of func * expr array ]
              
 let all_symmetry = [
     `Id;
@@ -768,10 +818,23 @@ let xp_var (print : Xprint.t) : var -> unit =
   fun p -> xp_path print p
 let string_of_var = Xprint.to_string xp_var
 
-let xp_apply (func : string) (xp : Xprint.t -> 'a -> unit) (print : Xprint.t) (args : 'a list) : unit =
+let xp_infix (op : string) xp_arg print args =
+  match args with
+  | [|a;b|] -> xp_arg print a; print#string op; xp_arg print b
+  | _ -> assert false
+                  
+let xp_apply (func : string) ?(arity : int option) xp_arg print args =
+  assert
+    (match arity with
+     | None -> true
+     | Some n ->
+        let n_args = Array.length args in 
+        let ok =  (n_args = n) in
+        if not ok then Printf.printf "Invalid arity on function %s: arity %d expected but %d arguments received\n" func n n_args;
+        ok);
   print#string func;
   print#string "(";
-  Xprint.sep_list ", " xp print args;
+  Xprint.sep_list ", " xp_arg print (Array.to_list args);
   print#string ")"
 
 let xp_apply_poly (func : string) print (xp_args : (Xprint.t -> unit) list) : unit =
@@ -786,69 +849,67 @@ let xp_apply_poly (func : string) print (xp_args : (Xprint.t -> unit) list) : un
         xps); 
   print#string ")"
 
-let rec xp_expr (print : Xprint.t) : expr -> unit = function
-  | `Ref p -> xp_path print p
-  | `ConstInt k -> print#string "'"; print#int k
-  | `ConstVec (k,l) -> xp_apply_poly "'" print
-                         [(fun print -> print#int k);
-                          (fun print -> print#int l)]
-  | `ConstColor c -> xp_color print c
-  | `Plus (a,b) -> Xprint.infix " + " xp_expr print (a, b)
-  | `Minus (a,b) -> Xprint.infix " - " xp_expr print (a, b)
-  | `IncrInt (a,k) -> xp_expr print a; print#string " + "; print#int k
-  | `DecrInt (a,k) -> xp_expr print a; print#string " - "; print#int k
-  | `IncrVec (a,k,l) -> xp_expr print a; print#string " + ("; print#int k; print#string ", "; print#int l; print#string ")"
-  | `DecrVec (a,k,l) -> xp_expr print a; print#string " - ("; print#int k; print#string ", "; print#int l; print#string ")"
-  | `Modulo (a,b) -> Xprint.infix " % " xp_expr print (a, b)
-  | `ScaleUp (a,b) -> xp_expr print a; print#string " * "; xp_expr print b
-  | `ScaleDown (a,b) -> xp_expr print a; print#string " / "; xp_expr print b
-  | `ScaleTo (a,b) -> xp_apply "scaleTo" xp_expr print [a;b]
-  | `Size a -> xp_apply "size" xp_expr print [a]
-  | `Crop (a,b) -> xp_apply "crop" xp_expr print [a;b]
-  | `Strip a -> xp_apply "strip" xp_expr print [a]
-  | `Corner (a,b) -> xp_apply "corner" xp_expr print [a;b]
-  | `Min la -> xp_apply "min" xp_expr print la
-  | `Max la -> xp_apply "max" xp_expr print la
-  | `Average la -> xp_apply "average" xp_expr print la
-  | `Span (a,b) -> xp_apply "span" xp_expr print [a;b]
-  | `Norm a -> Xprint.bracket ("|","|") xp_expr print a
-  | `Diag1 (a,k) -> xp_apply_poly "diag1" print
-                      [(fun print -> xp_expr print a);
-                       (fun print -> print#int k)]
-  | `Diag2 (a,k) -> xp_apply_poly "diag2" print
-                      [(fun print -> xp_expr print a);
-                       (fun print -> print#int k)]
-  | `LogAnd (a,b) -> Xprint.infix " and " xp_expr print (a, b)
-  | `LogOr (a,b) -> Xprint.infix " or " xp_expr print (a, b)
-  | `LogXOr (a,b) -> Xprint.infix " xor " xp_expr print (a, b)
-  | `LogAndNot (a,b) -> Xprint.infix " and not " xp_expr print (a, b)
-  | `LogNot (a) -> print#string "not "; xp_expr print a
-  | `Stack la -> xp_apply "stack" xp_expr print la
-  | `Area a -> xp_apply "area" xp_expr print [a]
-  | `Left a -> xp_apply "left" xp_expr print [a]
-  | `Right a -> xp_apply "right" xp_expr print [a]
-  | `Center a -> xp_apply "center" xp_expr print [a]
-  | `Top a -> xp_apply "top" xp_expr print [a]
-  | `Bottom a -> xp_apply "bottom" xp_expr print [a]
-  | `Middle a -> xp_apply "middle" xp_expr print [a]
-  | `ProjI a -> xp_apply "projI" xp_expr print [a]
-  | `ProjJ a -> xp_apply "projJ" xp_expr print [a]
-  | `MaskOfGrid a -> xp_apply "mask" xp_expr print [a]
-  | `GridOfMask (a,b) -> xp_apply "grid" xp_expr print [a;b]
-  | `TranslationOnto (a,b) -> xp_apply "translationOnto" xp_expr print [a;b]
-  | `Tiling (a,k,l) -> xp_apply_poly "tiling" print
-                         [(fun print -> xp_expr print a);
-                          (fun print -> print#int k);
-                          (fun print -> print#int l)]
-  | `PeriodicFactor (mode,a,b) ->
-     xp_apply ("periodicFactor" ^ suffix_periodicity_mode mode) xp_expr print [a;b]
-  | `FillResizeAlike (mode,a,b,c) ->
-     xp_apply ("fillResizeAlike" ^ suffix_periodicity_mode mode) xp_expr print [a;b;c]
-  | `Compose (a,b,c) -> xp_apply "compose" xp_expr print [a;b;c]
-  | `ApplySym (sym,a,_) -> xp_apply_poly "applySym" print
-                           [(fun print -> xp_symmetry print sym);
-                            (fun print -> xp_expr print a)]
-  | `UnfoldSym (sym_array,a) ->
+let rec xp_func xp_arg print func args =
+  match func, args with
+  | `ConstInt_0 k, [||] -> print#string "'"; xp_int print k
+  | `ConstVec_0 (k,l), [||] -> print#string "'"; xp_vec xp_int print k l
+  | `ConstColor_0 c, [||] -> print#string "'"; xp_color print c
+  | `Plus_2, _ -> xp_infix " + " xp_arg print args
+  | `Minus_2, _ -> xp_infix " - " xp_arg print args
+  | `IncrInt_1 k, [|a|] -> xp_arg print a; print#string " + "; xp_int print k
+  | `DecrInt_1 k, [|a|] -> xp_arg print a; print#string " - "; xp_int print k
+  | `IncrVec_1 (k,l), [|a|] -> xp_arg print a; print#string " + "; xp_vec xp_int print k l
+  | `DecrVec_1 (k,l), [|a|] -> xp_arg print a; print#string " - "; xp_vec xp_int print k l
+  | `Modulo_2, _ -> xp_infix " % " xp_arg print args
+  | `ScaleUp_2, _ -> xp_infix " * " xp_arg print args
+  | `ScaleDown_2, _ -> xp_infix " / " xp_arg print args
+  | `ScaleTo_2, _ -> xp_apply "scaleTo" ~arity:2 xp_arg print args
+  | `Size_1, _ -> xp_apply "size" ~arity:1 xp_arg print args
+  | `Crop_2, _ -> xp_apply "crop" ~arity:2 xp_arg print args
+  | `Strip_1, _ -> xp_apply "strip" ~arity:1 xp_arg print args
+  | `Corner_2, _ -> xp_apply "corner" ~arity:2 xp_arg print args
+  | `Min_n, _ -> xp_apply "min" xp_arg print args
+  | `Max_n, _ -> xp_apply "max" xp_arg print args
+  | `Average_n, _ -> xp_apply "average" xp_arg print args
+  | `Span_2, _ -> xp_apply "span" ~arity:2 xp_arg print args
+  | `Norm_1, [|a|] -> Xprint.bracket ("|","|") xp_arg print a
+  | `Diag1_1 k, [|a|] -> xp_apply_poly "diag1" print
+                           [(fun print -> xp_arg print a);
+                            (fun print -> xp_int print k)]
+  | `Diag2_1 k, [|a|] -> xp_apply_poly "diag2" print
+                           [(fun print -> xp_arg print a);
+                            (fun print -> xp_int print k)]
+  | `LogAnd_2, _ -> xp_infix " and " xp_arg print args
+  | `LogOr_2, _ -> xp_infix " or " xp_arg print args
+  | `LogXOr_2, _ -> xp_infix " xor " xp_arg print args
+  | `LogAndNot_2, _ -> xp_infix " and not " xp_arg print args
+  | `LogNot_1, [|a|] -> print#string "not "; xp_arg print a
+  | `Stack_n, _ -> xp_apply "stack" xp_arg print args
+  | `Area_1, _ -> xp_apply "area" ~arity:1 xp_arg print args
+  | `Left_1, _ -> xp_apply "left" ~arity:1 xp_arg print args
+  | `Right_1, _ -> xp_apply "right" ~arity:1 xp_arg print args
+  | `Center_1, _ -> xp_apply "center" ~arity:1 xp_arg print args
+  | `Top_1, _ -> xp_apply "top" ~arity:1 xp_arg print args
+  | `Bottom_1, _ -> xp_apply "bottom" ~arity:1 xp_arg print args
+  | `Middle_1, _ -> xp_apply "middle" ~arity:1 xp_arg print args
+  | `ProjI_1, _ -> xp_apply "projI" ~arity:1 xp_arg print args
+  | `ProjJ_1, _ -> xp_apply "projJ" ~arity:1 xp_arg print args
+  | `MaskOfGrid_1, _ -> xp_apply "mask" ~arity:1 xp_arg print args
+  | `GridOfMask_2, _ -> xp_apply "grid" ~arity:2 xp_arg print args
+  | `TranslationOnto_2, _ -> xp_apply "translationOnto" ~arity:2 xp_arg print args
+  | `Tiling_1 (k,l), [|a|] -> xp_apply_poly "tiling" print
+                                [(fun print -> xp_arg print a);
+                                 (fun print -> xp_int print k);
+                                 (fun print -> xp_int print l)]
+  | `PeriodicFactor_2 mode, _ ->
+     xp_apply ("periodicFactor" ^ suffix_periodicity_mode mode) ~arity:2 xp_arg print args
+  | `FillResizeAlike_3 mode, _ ->
+     xp_apply ("fillResizeAlike" ^ suffix_periodicity_mode mode) ~arity:3 xp_arg print args
+  | `Compose_3, _ -> xp_apply "compose" ~arity:3 xp_arg print args
+  | `ApplySym_1 (sym,_), [|a|] -> xp_apply_poly "applySym" print
+                                    [(fun print -> xp_symmetry print sym);
+                                     (fun print -> xp_arg print a)]
+  | `UnfoldSym_1 sym_array, [|a|] ->
      xp_apply_poly "unfoldSym" print
        [(fun print ->
            List.iter
@@ -859,23 +920,25 @@ let rec xp_expr (print : Xprint.t) : expr -> unit = function
                  sym_row;
                print#string "]")
              sym_array);
-        (fun print -> xp_expr print a)]
-  | `CloseSym (sym_seq,a,b) ->
+        (fun print -> xp_arg print a)]
+  | `CloseSym_2 sym_seq, [|a;b|] ->
      xp_apply_poly "closeSym" print
        [(fun print ->
            List.iter
              (fun sym -> xp_symmetry print sym; print#string "; ")
              sym_seq);
-        (fun print -> xp_expr print a);
-        (fun print -> xp_expr print b)]
-  | `TranslationSym (sym,a,b) -> xp_apply_poly "translationSym" print
-                                   [(fun print -> xp_symmetry print sym);
-                                    (fun print -> xp_expr print a);
-                                    (fun print -> xp_expr print b)]
-  | `MajorityColor a -> xp_apply "majorityColor" xp_expr print [a]
-  | `ColorCount a -> xp_apply "colorCount" xp_expr print [a]
-  | `Coloring (a,b) -> xp_apply "coloring" xp_expr print [a;b]
-  | `SwapColors (a,b,c) -> xp_apply "swapColor" xp_expr print [a;b;c]
+        (fun print -> xp_arg print a);
+        (fun print -> xp_arg print b)]
+  | `TranslationSym_2 sym, [|a;b|] ->
+     xp_apply_poly "translationSym" print
+       [(fun print -> xp_symmetry print sym);
+        (fun print -> xp_arg print a);
+        (fun print -> xp_arg print b)]
+  | `MajorityColor_1, _ -> xp_apply "majorityColor" ~arity:1 xp_arg print args
+  | `ColorCount_1, _ -> xp_apply "colorCount" ~arity:1 xp_arg print args
+  | `Coloring_2, _ -> xp_apply "coloring" ~arity:2 xp_arg print args
+  | `SwapColors_3, _ -> xp_apply "swapColor" ~arity:3 xp_arg print args
+  | _ -> assert false (* incompatible arity *)
 and xp_symmetry print : symmetry -> unit = function
   | `Id -> print#string "id"
   | `FlipHeight -> print#string "flipHeight"
@@ -889,7 +952,13 @@ and suffix_periodicity_mode = function
   | `Total -> "_total"
   | `Strict -> "_strict"
   | `TradeOff -> ""
-                  
+
+
+let rec xp_expr (print : Xprint.t) : expr -> unit = function
+  | `Ref p -> xp_path print p
+  | `Apply (func,args) -> xp_func xp_expr print func args
+
+               
 let string_of_expr = Xprint.to_string xp_expr
                    
 let rec xp_template (print : Xprint.t) : template -> unit = function
@@ -965,61 +1034,8 @@ let rec path_dim (p : revpath) : dim =
 let rec expr_dim (e : expr) : dim =
   match e with
   | `Ref p -> path_dim p
-  | `ConstInt _ -> Item
-  | `ConstVec _ -> Item
-  | `ConstColor _ -> Item
-  | `Plus (a,b) -> max (expr_dim a) (expr_dim b) (* broadcasting *)
-  | `Minus (a,b) -> max (expr_dim a) (expr_dim b)
-  | `IncrInt (a,k) -> expr_dim a
-  | `DecrInt (a,k) -> expr_dim a
-  | `IncrVec (a,k,l) -> expr_dim a
-  | `DecrVec (a,k,l) -> expr_dim a
-  | `Modulo (a,b) -> max (expr_dim a) (expr_dim b)
-  | `ScaleUp (a,b) -> max (expr_dim a) (expr_dim b)
-  | `ScaleDown (a,b) -> max (expr_dim a) (expr_dim b)
-  | `ScaleTo (a,b) -> max (expr_dim a) (expr_dim b)
-  | `Size a -> expr_dim a
-  | `Crop (a,b) -> max (expr_dim a) (expr_dim b)
-  | `Strip a -> expr_dim a
-  | `Corner (a,b) -> max (expr_dim a) (expr_dim b)
-  | `Min l -> max_dim_list (List.map expr_dim l)
-  | `Max l -> max_dim_list (List.map expr_dim l)
-  | `Average l -> max_dim_list (List.map expr_dim l)
-  | `Span (a,b) -> max (expr_dim a) (expr_dim b)
-  | `Norm a -> expr_dim a
-  | `Diag1 (a,k) -> expr_dim a
-  | `Diag2 (a,k) -> expr_dim a
-  | `LogAnd (a,b) -> max (expr_dim a) (expr_dim b)
-  | `LogOr (a,b) -> max (expr_dim a) (expr_dim b)
-  | `LogXOr (a,b) -> max (expr_dim a) (expr_dim b)
-  | `LogAndNot (a,b) -> max (expr_dim a) (expr_dim b)
-  | `LogNot a -> expr_dim a
-  | `Stack l -> max_dim_list (List.map expr_dim l)
-  | `Area a -> expr_dim a
-  | `Left a -> expr_dim a
-  | `Right a -> expr_dim a
-  | `Center a -> expr_dim a
-  | `Top a -> expr_dim a
-  | `Bottom a -> expr_dim a
-  | `Middle a -> expr_dim a
-  | `ProjI a -> expr_dim a
-  | `ProjJ a -> expr_dim a
-  | `MaskOfGrid a -> expr_dim a
-  | `GridOfMask (a,b) -> max (expr_dim a) (expr_dim b)
-  | `TranslationOnto (a,b) -> max (expr_dim a) (expr_dim b)
-  | `Tiling (a,k,l) -> expr_dim a
-  | `PeriodicFactor (_,a,b) -> max (expr_dim a) (expr_dim b)
-  | `FillResizeAlike (_,a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
-  | `Compose (a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
-  | `ApplySym (sym,a,r) -> expr_dim a
-  | `UnfoldSym (sym_arr,a) -> expr_dim a
-  | `CloseSym (sym_seq,a,b) -> max (expr_dim a) (expr_dim b)
-  | `TranslationSym (sym,a,b) -> max (expr_dim a) (expr_dim b)
-  | `MajorityColor a -> expr_dim a
-  | `ColorCount a -> expr_dim a
-  | `Coloring (a,b) -> max (expr_dim a) (expr_dim b)
-  | `SwapColors (a,b,c) -> max (expr_dim a) (max (expr_dim b) (expr_dim c))
-    
+  | `Apply (func,args) -> Array.fold_left (fun res arg -> max res (expr_dim arg)) Item args
+                        
 let rec template_dim : template -> dim = function
   | `Any -> Item
   | `Bool _ | `Int _ | `Color _ | `MaskModel _ | `Grid _ -> Item
@@ -1509,52 +1525,154 @@ let rec dl_path ~(env_sig : signature) ~(ctx_path : revpath) (p : revpath) : dl 
     dl;*)
   dl
           
+let dl_periodicity_mode = function
+  | `Total -> Mdl.Code.usage 0.25
+  | `Strict -> Mdl.Code.usage 0.25
+  | `TradeOff -> Mdl.Code.usage 0.5
+
+let dl_func (func : func) (arity : int) : dl * role option array =
+  match func with
+  | `ConstInt_0 k ->
+     Mdl.Code.universal_int_star k, [||]
+  | `ConstVec_0 (k,l) ->
+     Mdl.Code.universal_int_star k +. Mdl.Code.universal_int_star l, [||]
+  | `ConstColor_0 c ->
+     dl_color c, [||] (* TODO: background vs shape ? *)
+  | `Plus_2 ->
+     0., [|None; None|] (* TODO: better constraint wrt Pos vs Size *)
+  | `Minus_2 ->
+     0., [|None; None|]
+  | `IncrInt_1 k | `DecrInt_1 k ->
+     Mdl.Code.universal_int_plus k, [|None|]
+  | `IncrVec_1 (k,l) | `DecrVec_1 (k,l) ->
+     Mdl.Code.universal_int_star k +. Mdl.Code.universal_int_star l, [|None|]
+  | `Modulo_2 ->
+     0., [|None; None|]
+  | `ScaleUp_2 ->
+     0., [|None; Some `IntCard|]
+  | `ScaleDown_2 ->
+     0., [|None; Some `IntCard|]
+  | `ScaleTo_2 ->
+     0., [|None; Some (`Vec (`Size `Shape))|]
+  | `Size_1 ->
+     0., [|Some (`Grid `Shape)|]
+  | `Crop_2 ->
+     0., [|None; Some `Layer|]
+  | `Strip_1 ->
+     0., [|None|]
+  | `Corner_2 ->
+     0., [|None; None|]
+  | `Min_n ->
+     Mdl.Code.universal_int_plus arity, Array.make arity None
+  | `Max_n ->
+     Mdl.Code.universal_int_plus arity, Array.make arity None
+  | `Average_n ->
+     Mdl.Code.universal_int_plus arity, Array.make arity None
+  | `Span_2 ->
+     0., [|None; None|]
+  | `Norm_1 ->
+     0., [|Some (`Vec `Pos)|]
+  | `Diag1_1 k ->
+     Mdl.Code.universal_int_plus k, [|Some (`Vec `Pos)|]
+  | `Diag2_1 k ->
+     Mdl.Code.universal_int_plus k, [|Some (`Vec `Pos)|]
+  | `LogAnd_2
+  | `LogOr_2
+  | `LogXOr_2
+  | `LogAndNot_2 ->
+     0., [|None; None|]
+  | `LogNot_1 ->
+     0., [|None|]
+  | `Stack_n ->
+     Mdl.Code.universal_int_plus arity, Array.make arity None
+  | `Area_1 ->
+     0., [|Some (`Grid `Shape)|]
+  | `Left_1
+  | `Right_1
+  | `Center_1
+  | `Top_1
+  | `Bottom_1
+  | `Middle_1 ->
+     0., [|Some `Layer|]
+  | `ProjI_1
+  | `ProjJ_1 ->
+     0., [|None|]
+  | `MaskOfGrid_1 ->
+     0., [|Some (`Grid `Shape)|]
+  | `GridOfMask_2 ->
+     0., [|Some (`Grid `Mask); Some (`Color `Shape)|]
+  | `TranslationOnto_2 ->
+     0., [|Some `Layer; Some `Layer|]
+  | `Tiling_1 (k,l) ->
+     Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l, [|None|]
+  | `PeriodicFactor_2 mode ->
+     dl_periodicity_mode mode, [|Some (`Color `Frame); None|]
+  | `FillResizeAlike_3 mode ->
+     dl_periodicity_mode mode, [|Some (`Color `Frame); Some (`Vec (`Size `Shape)); None|]
+  | `Compose_3 ->
+     0., [|Some (`Color `Frame); None; None|]
+  | `ApplySym_1 (sym,role_e1) -> (* no need to encode role_e1, deducible from model *)
+     Mdl.Code.uniform nb_symmetry (* encoding sym *), [|Some role_e1|]
+  | `UnfoldSym_1 sym_array -> (* includes encoding of sym list list *)
+     Mdl.Code.uniform nb_symmetry_unfold (* encoding the choice of the symmetry matrix *), [|None|]
+  | `CloseSym_2 sym_seq ->
+     Mdl.Code.uniform nb_symmetry_close (* encoding sym_seq *), [|Some (`Color `Frame); None|]
+  | `TranslationSym_2 sym ->
+     Mdl.Code.uniform nb_symmetry (* encoding sym *), [|Some `Layer; Some `Layer (* TODO: can be a Grid too *)|]
+  | `MajorityColor_1 ->
+     0., [|Some (`Grid `Frame)|]
+  | `ColorCount_1 ->
+     0., [|Some (`Grid `Shape)|]
+  | `Coloring_2 ->
+     0., [|None; Some (`Color `Shape)|]
+  | `SwapColors_3 ->
+     0., [|None; Some (`Color `Frame); Some (`Color `Frame)|]
 
 let code_expr_by_kind : Mdl.bits KindMap.t = (* code of expressions, excluding Ref *)
   (* according to a uniform distribution *)
-  let uniform_among (l : [`X] expr_func list) =
+  let uniform_among (l : func list) =
     if l = [] then 0. else Mdl.Code.uniform (List.length l) in
   KindMap.make
     ~int:(uniform_among [
-              `ConstInt 0;
-              `Area `X; `ColorCount `X;
-              (*`Left `X; *) `Right `X; `Center `X;
-              (*`Top `X; *) `Bottom `X; `Middle `X;
-              `Plus (`X,`X); `Minus (`X,`X); (*`Modulo (`X,`X);*)
-              `IncrInt (`X,1); `DecrInt (`X,1);
-              `ScaleUp (`X,`X); `ScaleDown (`X,`X);
-              `Min [`X;`X]; `Max [`X;`X]; `Average [`X;`X]; `Span (`X,`X);
-              (* `Norm `X; `Diag1 (`X,2); `Diag2 (`X,2);*) ])
+              `ConstInt_0 0;
+              `Area_1; `ColorCount_1;
+              (*`Left_1; *) `Right_1; `Center_1;
+              (*`Top_1; *) `Bottom_1; `Middle_1;
+              `Plus_2; `Minus_2; (*`Modulo_2;*)
+              `IncrInt_1 1; `DecrInt_1 1;
+              `ScaleUp_2; `ScaleDown_2;
+              `Min_n; `Max_n; `Average_n; `Span_2;
+              (* `Norm_1; `Diag1_1 2; `Diag2_1 2;*) ])
     ~bool:(uniform_among [])
     ~color:(uniform_among [
-                `ConstColor Grid.black;
-                `MajorityColor `X ])
+                `ConstColor_0 Grid.black;
+                `MajorityColor_1 ])
     ~mask_model:(uniform_among [])
     ~vec:(uniform_among [
-              `ProjI `X; `ProjJ `X; `Size `X;
-              `ConstVec (0,0);
-              `Plus (`X,`X); `Minus (`X,`X);
-              `IncrVec (`X,1,1); `DecrVec (`X,1,1);
-              `ScaleUp (`X,`X); `ScaleDown (`X,`X);
-              `Tiling (`X,1,1);
-              `Corner (`X,`X); `Min [`X; `X]; `Max [`X;`X];`Average [`X;`X]; `Span (`X,`X);
-              `TranslationOnto (`X,`X);
-              `TranslationSym (`FlipHeight,`X,`X) ])
+              `ProjI_1; `ProjJ_1; `Size_1;
+              `ConstVec_0 (0,0);
+              `Plus_2; `Minus_2;
+              `IncrVec_1 (1,1); `DecrVec_1 (1,1);
+              `ScaleUp_2; `ScaleDown_2;
+              `Tiling_1 (1,1);
+              `Corner_2; `Min_n; `Max_n;`Average_n; `Span_2;
+              `TranslationOnto_2;
+              `TranslationSym_2 `FlipHeight ])
     ~layer:(uniform_among [
-                `PeriodicFactor (`TradeOff,`X,`X); `FillResizeAlike (`TradeOff,`X,`X,`X);
-                `ApplySym (`FlipHeight, `X, `Layer);
-                `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
-                `Coloring (`X,`X) ])
+                `PeriodicFactor_2 `TradeOff; `FillResizeAlike_3 `TradeOff;
+                `ApplySym_1 (`FlipHeight, `Layer);
+                `UnfoldSym_1 []; `CloseSym_2 [];
+                `Coloring_2 ])
     ~grid:(uniform_among [
-               `SwapColors (`X,`X,`X); `Coloring (`X,`X);
-               `ScaleUp (`X,`X); `ScaleDown (`X,`X); `ScaleTo (`X,`X);
-               `Crop (`X,`X); `Strip `X;
-               `Tiling (`X,1,1); `PeriodicFactor (`TradeOff,`X,`X);
-               `FillResizeAlike (`TradeOff,`X,`X,`X); `Compose (`X,`X,`X);
-               `ApplySym (`FlipHeight, `X, `Grid `Shape);
-               `UnfoldSym ([], `X); `CloseSym ([], `X, `X);
-               `LogAnd (`X,`X); `LogOr (`X,`X); `LogXOr (`X,`X);
-               `LogAndNot (`X,`X); `LogNot `X ])
+               `SwapColors_3; `Coloring_2;
+               `ScaleUp_2; `ScaleDown_2; `ScaleTo_2;
+               `Crop_2; `Strip_1;
+               `Tiling_1 (1,1); `PeriodicFactor_2 `TradeOff;
+               `FillResizeAlike_3 `TradeOff; `Compose_3;
+               `ApplySym_1 (`FlipHeight, `Grid `Shape);
+               `UnfoldSym_1 []; `CloseSym_2 [];
+               `LogAnd_2; `LogOr_2; `LogXOr_2;
+               `LogAndNot_2; `LogNot_1 ])
   
 let code_ref = Mdl.Code.usage 0.6
 let code_func = Mdl.Code.usage 0.4
@@ -1566,183 +1684,22 @@ let rec dl_expr ~env_sig ~(box : box) ~(path : revpath) (e : expr) : dl = (* for
   | `Ref p ->
      code_ref
      +. dl_path ~env_sig ~ctx_path:path p
-  | `ConstInt k ->
+  | `Apply (func,args) ->
+     let dl_func, arg_roles = dl_func func (Array.length args) in
+     let dl_args =
+       let n = Array.length args in
+       assert (Array.length arg_roles = n);
+       let res = ref 0. in
+       for i = 0 to n - 1 do
+         let rank = i+1 in
+         let arg_role = arg_roles.(i) in
+         let arg = args.(i) in
+         res := !res +. dl_expr ~env_sig ~box ~path:(`Arg (rank, arg_role, path)) arg
+       done;
+       !res in
      code_func
-     +. Mdl.Code.universal_int_star k
-  | `ConstVec (k,l) ->
-     code_func
-     +. Mdl.Code.universal_int_star k
-     +. Mdl.Code.universal_int_star l
-  | `ConstColor c ->
-     code_func
-     +. dl_color c (* TODO: background vs shape ? *)
-  | `Plus (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2 (* TODO: better constraint wrt Pos vs Size *)
-  | `Minus (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
-  | `IncrInt (e1,k) | `DecrInt (e1,k) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. Mdl.Code.universal_int_plus k
-  | `IncrVec (e1,k,l) | `DecrVec (e1,k,l) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. Mdl.Code.universal_int_star k
-     +. Mdl.Code.universal_int_star l
-  | `Modulo (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
-  | `ScaleUp (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `IntCard,path)) e2
-  | `ScaleDown (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `IntCard,path)) e2
-  | `ScaleTo (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some (`Vec (`Size `Shape)),path)) e2
-  | `Size e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,Some (`Grid `Shape),path)) e1
-  | `Crop (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,Some `Layer,path)) e2
-  | `Strip e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-  | `Corner (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
-  | `Min le1 ->
-     code_func
-     +. Mdl.Code.universal_int_plus (List.length le1)
-     +. Mdl.sum le1
-          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
-  | `Max le1 ->
-     code_func
-     +. Mdl.Code.universal_int_plus (List.length le1)
-     +. Mdl.sum le1
-          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
-  | `Average le1 ->
-     code_func
-     +. Mdl.Code.universal_int_plus (List.length le1)
-     +. Mdl.sum le1
-          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
-  | `Span (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
-  | `Norm e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
-  | `Diag1 (e1,k) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
-     +. Mdl.Code.universal_int_plus k
-  | `Diag2 (e1,k) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Vec `Pos), path)) e1
-     +. Mdl.Code.universal_int_plus k
-  | `LogAnd (e1,e2) | `LogOr (e1,e2) | `LogXOr (e1,e2) | `LogAndNot (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2,None,path)) e2
-  | `LogNot e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1
-  | `Stack le1 ->
-     code_func
-     +. Mdl.Code.universal_int_plus (List.length le1)
-     +. Mdl.sum le1
-          (fun e1 -> dl_expr ~env_sig ~box ~path:(`Arg (1,None,path)) e1)
-  | `Area e1 ->
-     code_func +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
-  | `Left e1 | `Right e1 | `Center e1
-    | `Top e1 | `Bottom e1 | `Middle e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Layer, path)) e1
-  | `ProjI e1 | `ProjJ e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
-  | `MaskOfGrid e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
-  | `GridOfMask (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Mask), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
-  | `TranslationOnto (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some `Layer, path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some `Layer, path)) e2
-  | `Tiling (e1,k,l) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
-     +. Mdl.Code.universal_int_plus k
-     +. Mdl.Code.universal_int_plus l
-  | `PeriodicFactor (mode,e1,e2) ->
-     code_func
-     +. dl_periodicity_mode mode
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
-  | `FillResizeAlike (mode,e1,e2,e3) ->
-     code_func
-     +. dl_periodicity_mode mode
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Vec (`Size `Shape)), path)) e2
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
-  | `Compose (e1,e2,e3) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Color `Frame), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e2
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e3
-  | `ApplySym (sym,e1,role_e1) ->
-     code_func (* no need to encode role_e1, deducible from model *)
-     +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some role_e1, path)) e1
-  | `UnfoldSym (sym_array,e1) ->
-     code_func (* includes encoding of sym list list *)
-     +. Mdl.Code.uniform nb_symmetry_unfold (* encoding the choice of the symmetry matrix *)
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, None, path)) e1
-  | `CloseSym (sym_seq,e1,e2) ->
-     code_func
-     +. Mdl.Code.uniform nb_symmetry_close (* encoding sym_seq *)
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Frame), path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, None, path)) e2
-  | `TranslationSym (sym,e1,e2) ->
-     code_func
-     +. Mdl.Code.uniform nb_symmetry (* encoding sym *)
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some `Layer, path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some `Layer, path)) e2 (* TODO: can be a Grid too *)
-  | `MajorityColor e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Frame), path)) e1
-  | `ColorCount e1 ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, Some (`Grid `Shape), path)) e1
-  | `Coloring (e1,e2) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Shape), path)) e2
-  | `SwapColors (e1,e2,e3) ->
-     code_func
-     +. dl_expr ~env_sig ~box ~path:(`Arg (1, None, path)) e1
-     +. dl_expr ~env_sig ~box ~path:(`Arg (2, Some (`Color `Frame), path)) e2
-     +. dl_expr ~env_sig ~box ~path:(`Arg (3, Some (`Color `Frame), path)) e3
-and dl_periodicity_mode = function
-  | `Total -> Mdl.Code.usage 0.25
-  | `Strict -> Mdl.Code.usage 0.25
-  | `TradeOff -> Mdl.Code.usage 0.5
+     +. dl_func
+     +. dl_args
 
 
 let code_patt0 = Mdl.Code.usage 0.2
@@ -2388,438 +2345,335 @@ let rec get_size : data -> (int * int) option =
   | `PosShape (_, shape) -> get_size shape
   | `Grid (g, _) -> Some (g.Grid.height, g.width)
   | _ -> None
-    
-let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : data result = (* QUICK *)
-  (* SHOULD NOT use [p] *)
-  match e with
-  | `Ref p -> lookup (p :> var)
-  | `ConstInt k -> Result.Ok (`Int k)
-  | `ConstVec (k,l) -> Result.Ok (`Vec (`Int k, `Int l))
-  | `ConstColor c -> Result.Ok (`Color c)
-  | `Plus (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Int i1, `Int i2 -> Result.Ok (`Int (i1 + i2))
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1+i2), `Int (j1+j2)))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Minus (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Int i1, `Int i2 -> Result.Ok (`Int (i1-i2))
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1-i2), `Int (j1-j2)))
-        | _ -> Result.Error (Invalid_expr e))
-  | `IncrInt (e1,k) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Int i1 -> Result.Ok (`Int (i1 + k))
-        | _ -> Result.Error (Invalid_expr e))
-  | `DecrInt (e1,k) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Int i1 -> Result.Ok (`Int (i1 - k))
-        | _ -> Result.Error (Invalid_expr e))
-  | `IncrVec (e1,k,l) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 + k), `Int (j1 + l)))
-        | _ -> Result.Error (Invalid_expr e))
-  | `DecrVec (e1,k,l) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Int i1 -> Result.Ok (`Int (i1 - k))
-        | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 - k), `Int (j1 - l)))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Modulo (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
-        | _ -> Result.Error (Invalid_expr e))
-  | `ScaleUp (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         match d2 with
-         | `Int 0 -> Result.Error (Invalid_argument "ScaleUp: k=0") 
-         | `Int k ->
-            assert (k > 0);
-            let rec aux = function
-             | `Int i -> Result.Ok (`Int (i * k))
-             | `Vec (`Int i, `Int j) -> Result.Ok (`Vec (`Int (i * k), `Int (j * k)))
-             | `Grid (g,patt) ->
-                let| g' = Grid.Transf.scale_up k k g in
-                let| patt' =
-                  match patt with
-                  | `Point ->
-                     Result.Ok (`Rectangle (`Vec (`Int k, `Int k), Some (`MaskModel `Full)))
-                  | `Rectangle (size, mm_opt) ->
-                     let| size' = aux size in
-                     let mm_opt' =
-                       match mm_opt with
-                       | Some (`MaskModel `Full) -> Some (`MaskModel `Full)
-                       | _ -> None in
-                     Result.Ok (`Rectangle (size', mm_opt'))
-                  | `Monocolor (mask, col) ->
-                     let| mask' = aux mask in
-                     Result.Ok (`Monocolor (mask',col))
-                  | _ -> Result.Ok `None in                    
-                Result.Ok (`Grid (g',patt'))
-             | _ -> Result.Error (Invalid_expr e) in
-            aux d1
-         | _ -> Result.Error (Invalid_expr e))
-  | `ScaleDown (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         match d2 with
-         | `Int 0 -> Result.Error (Invalid_argument "ScaleDown: k=0") 
-         | `Int k ->
-            assert (k > 0);
-            let rec aux = function
-             | `Int i1 ->
-                let rem = i1 mod k in
-                if rem = 0 || rem = k - 1 (* account for separators *)
-                then Result.Ok (`Int (i1 / k))
-                else Result.Error (Undefined_result "ScaleDown: not an integer")
-             | `Vec (`Int i1, `Int j1) ->
-                let remi, remj = i1 mod k, j1 mod k in
-                if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
-                then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
-                else Result.Error (Undefined_result "ScaleDown: not an integer")
-             | `Grid (g,patt) ->
-                let| g' = Grid.Transf.scale_down k k g in
-                let| patt' =
-                  match patt with
-                  | `Rectangle (size, mm_opt) ->
-                     let| size' = aux size in
-                     let mm_opt' =
-                       match mm_opt with
-                       | Some (`MaskModel `Full) -> Some (`MaskModel `Full)
-                       | _ -> None in
-                     Result.Ok (`Rectangle (size', mm_opt'))
-                  | `Monocolor (mask,col) ->
-                     let| mask' = aux mask in
-                     Result.Ok (`Monocolor (mask',col))
-                  | _ -> Result.Ok `None in
-                Result.Ok (`Grid (g',patt'))
-             | _ -> Result.Error (Invalid_expr e) in
-            aux d1
-         | _ -> Result.Error (Invalid_expr e))
-  | `ScaleTo (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
+
+let eval_func ~lookup (e : expr) (func : func) (vs : data array) : data result =
+  match func, vs with
+  | `ConstInt_0 k, [||] -> Result.Ok (`Int k)
+  | `ConstVec_0 (k,l), [||] -> Result.Ok (`Vec (`Int k, `Int l))
+  | `ConstColor_0 c, [||] -> Result.Ok (`Color c)
+  | `Plus_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Int i1, `Int i2 -> Result.Ok (`Int (i1 + i2))
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1+i2), `Int (j1+j2)))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Minus_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Int i1, `Int i2 -> Result.Ok (`Int (i1-i2))
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) -> Result.Ok (`Vec (`Int (i1-i2), `Int (j1-j2)))
+      | _ -> Result.Error (Invalid_expr e))
+  | `IncrInt_1 k, [|d1|] ->
+     (match d1 with
+      | `Int i1 -> Result.Ok (`Int (i1 + k))
+      | _ -> Result.Error (Invalid_expr e))
+  | `DecrInt_1 k, [|d1|] ->
+     (match d1 with
+      | `Int i1 -> Result.Ok (`Int (i1 - k))
+      | _ -> Result.Error (Invalid_expr e))
+  | `IncrVec_1 (k,l), [|d1|] ->
+     (match d1 with
+      | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 + k), `Int (j1 + l)))
+      | _ -> Result.Error (Invalid_expr e))
+  | `DecrVec_1 (k,l), [|d1|] ->
+     (match d1 with
+      | `Int i1 -> Result.Ok (`Int (i1 - k))
+      | `Vec (`Int i1, `Int j1) -> Result.Ok (`Vec (`Int (i1 - k), `Int (j1 - l)))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Modulo_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
+      | _ -> Result.Error (Invalid_expr e))
+  | `ScaleUp_2, [|d1;d2|] ->
+     ( match d2 with
+       | `Int 0 -> Result.Error (Invalid_argument "ScaleUp: k=0") 
+       | `Int k ->
+          assert (k > 0);
+          let rec aux = function
+            | `Int i -> Result.Ok (`Int (i * k))
+            | `Vec (`Int i, `Int j) -> Result.Ok (`Vec (`Int (i * k), `Int (j * k)))
+            | `Grid (g,patt) ->
+               let| g' = Grid.Transf.scale_up k k g in
+               let| patt' =
+                 match patt with
+                 | `Point ->
+                    Result.Ok (`Rectangle (`Vec (`Int k, `Int k), Some (`MaskModel `Full)))
+                 | `Rectangle (size, mm_opt) ->
+                    let| size' = aux size in
+                    let mm_opt' =
+                      match mm_opt with
+                      | Some (`MaskModel `Full) -> Some (`MaskModel `Full)
+                      | _ -> None in
+                    Result.Ok (`Rectangle (size', mm_opt'))
+                 | `Monocolor (mask, col) ->
+                    let| mask' = aux mask in
+                    Result.Ok (`Monocolor (mask',col))
+                 | _ -> Result.Ok `None in                    
+               Result.Ok (`Grid (g',patt'))
+            | _ -> Result.Error (Invalid_expr e) in
+          aux d1
+       | _ -> Result.Error (Invalid_expr e))
+  | `ScaleDown_2, [|d1;d2|] ->
+     (match d2 with
+      | `Int 0 -> Result.Error (Invalid_argument "ScaleDown: k=0") 
+      | `Int k ->
+         assert (k > 0);
          let rec aux = function
-           | `Grid (g,patt), (`Vec (`Int new_h, `Int new_w) as size') ->
-              let| g' = Grid.Transf.scale_to new_h new_w g in
+           | `Int i1 ->
+              let rem = i1 mod k in
+              if rem = 0 || rem = k - 1 (* account for separators *)
+              then Result.Ok (`Int (i1 / k))
+              else Result.Error (Undefined_result "ScaleDown: not an integer")
+           | `Vec (`Int i1, `Int j1) ->
+              let remi, remj = i1 mod k, j1 mod k in
+              if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
+              then Result.Ok (`Vec (`Int (i1 / k), `Int (j1 / k)))
+              else Result.Error (Undefined_result "ScaleDown: not an integer")
+           | `Grid (g,patt) ->
+              let| g' = Grid.Transf.scale_down k k g in
               let| patt' =
                 match patt with
-                | `Point ->
-                   Result.Ok (`Rectangle (size', Some (`MaskModel `Full)))
-                | `Rectangle (_, mm_opt) ->
+                | `Rectangle (size, mm_opt) ->
+                   let| size' = aux size in
                    let mm_opt' =
                      match mm_opt with
                      | Some (`MaskModel `Full) -> Some (`MaskModel `Full)
                      | _ -> None in
                    Result.Ok (`Rectangle (size', mm_opt'))
                 | `Monocolor (mask,col) ->
-                   let| mask' = aux (mask,size') in
-                   Result.Ok (`Monocolor (mask', col))
-                | _ -> Result.Ok `None in                  
+                   let| mask' = aux mask in
+                   Result.Ok (`Monocolor (mask',col))
+                | _ -> Result.Ok `None in
               Result.Ok (`Grid (g',patt'))
            | _ -> Result.Error (Invalid_expr e) in
-         aux (d1,d2))
-  | `Size e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,_) ->
-           let h, w = Grid.dims g in
-           Result.Ok (`Vec (`Int h, `Int w))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Crop (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Grid (g,_), `PosShape (`Vec (`Int ri, `Int rj), `Grid (shape,_)) ->
-           let| c = Grid.majority_color Grid.transparent shape in
-           if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
-           then
-             let rh, rw = Grid.dims shape in
-             let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
-             let| g' = Grid.Transf.crop g i j h w in
-             Result.Ok (`Grid (g',`None))
-           else Result.Error (Invalid_expr e)
-        | _ -> Result.Error (Invalid_expr e))
-  | `Strip e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,_) ->
-           let| bgcolor = Grid.majority_color Grid.transparent g in
-           let| g'= Grid.Transf.strip bgcolor g Grid.black in
+         aux d1
+      | _ -> Result.Error (Invalid_expr e))
+  | `ScaleTo_2, [|d1;d2|] ->
+     let rec aux = function
+       | `Grid (g,patt), (`Vec (`Int new_h, `Int new_w) as size') ->
+          let| g' = Grid.Transf.scale_to new_h new_w g in
+          let| patt' =
+            match patt with
+            | `Point ->
+               Result.Ok (`Rectangle (size', Some (`MaskModel `Full)))
+            | `Rectangle (_, mm_opt) ->
+               let mm_opt' =
+                 match mm_opt with
+                 | Some (`MaskModel `Full) -> Some (`MaskModel `Full)
+                 | _ -> None in
+               Result.Ok (`Rectangle (size', mm_opt'))
+            | `Monocolor (mask,col) ->
+               let| mask' = aux (mask,size') in
+               Result.Ok (`Monocolor (mask', col))
+            | _ -> Result.Ok `None in                  
+          Result.Ok (`Grid (g',patt'))
+       | _ -> Result.Error (Invalid_expr e) in
+     aux (d1,d2)
+  | `Size_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,_) ->
+         let h, w = Grid.dims g in
+         Result.Ok (`Vec (`Int h, `Int w))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Crop_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Grid (g,_), `PosShape (`Vec (`Int ri, `Int rj), `Grid (shape,_)) ->
+         let| c = Grid.majority_color Grid.transparent shape in
+         if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
+         then
+           let rh, rw = Grid.dims shape in
+           let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
+           let| g' = Grid.Transf.crop g i j h w in
            Result.Ok (`Grid (g',`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Corner (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
-           if i1 <> i2 && j1 <> j2
-           then Result.Ok (`Vec (`Int i1, `Int j2))
-           else Result.Error (Undefined_result "Corner: vectors on same row/column")
-        | _ -> Result.Error (Invalid_expr e))
-  | `Min le1 ->
-     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
-     broadcast_list_result lres1
-       (fun lt1 ->
-         let| is_int, is_vec, mini, minj =
-           lt1
-           |> List.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,mini,minj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
-                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, min i mini, min j minj)
-                  | _ -> Result.Error (Invalid_expr e))
-                (Result.Ok (false, false, max_int, max_int)) in
-         match is_int, is_vec with
-         | true, false -> Result.Ok (`Int mini)
-         | false, true -> Result.Ok (`Vec (`Int mini, `Int minj))
-         | _ -> assert false)
-  | `Max le1 ->
-     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
-     broadcast_list_result lres1
-       (fun lt1 ->
-         let| is_int,is_vec,maxi,maxj =
-           lt1
-           |> List.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,maxi,maxj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
-                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
-                  | _ -> Result.Error (Invalid_expr e))
-                (Result.Ok (false, false, min_int, min_int)) in
-         match is_int, is_vec with
-         | true, false -> Result.Ok (`Int maxi)
-         | false, true -> Result.Ok (`Vec (`Int maxi, `Int maxj))
-         | _ -> assert false)
-  | `Average le1 ->
-     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
-     broadcast_list_result lres1
-       (fun lt1 ->
-         let| is_int,is_vec,n,sumi,sumj =
-           lt1
-           |> List.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,n,sumi,sumj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
-                  | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
-                  | _ -> Result.Error (Invalid_expr e))
-              (Result.Ok (false, false, 0, 0, 0)) in
-         match is_int, is_vec with
-         | true, false ->
-            if sumi mod n = 0
-            then Result.Ok (`Int (sumi / n))
-            else Result.Error (Undefined_result "Average: not an integer")
-         | false, true ->
-            if sumi mod n = 0 && sumj mod n = 0
-            then Result.Ok (`Vec (`Int (sumi / n), `Int (sumj / n)))
-            else Result.Error (Undefined_result "Average: not an integer")
-         | _ -> assert false) (* empty or ill-typed list *)
-  | `Span (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Int i1, `Int i2 ->
-           if i1=i2
-           then Result.Error (Undefined_result "Span: same int")
-           else Result.Ok (`Int (abs (i2-i1) + 1))
-        | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
-           if i1=i2 && j1=j2
-           then Result.Error (Undefined_result "Span: same vector")
-           else Result.Ok (`Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1)))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Norm e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (`Int i, `Int j) -> Result.Ok (`Int (i+j))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Diag1 (e1,k) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i+j) mod k))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Diag2 (e1,k) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i-j) mod k))
-        | _ -> Result.Error (Invalid_expr e))
-  | `LogAnd (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
+         else Result.Error (Invalid_expr e)
+      | _ -> Result.Error (Invalid_expr e))
+  | `Strip_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,_) ->
+         let| bgcolor = Grid.majority_color Grid.transparent g in
+         let| g'= Grid.Transf.strip bgcolor g Grid.black in
+         Result.Ok (`Grid (g',`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Corner_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
+         if i1 <> i2 && j1 <> j2
+         then Result.Ok (`Vec (`Int i1, `Int j2))
+         else Result.Error (Undefined_result "Corner: vectors on same row/column")
+      | _ -> Result.Error (Invalid_expr e))
+  | `Min_n, ds ->
+     let| is_int, is_vec, mini, minj =
+       ds
+       |> Array.fold_left
+            (fun res t ->
+              let| is_int,is_vec,mini,minj = res in
+              match t with
+              | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
+              | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, min i mini, min j minj)
+              | _ -> Result.Error (Invalid_expr e))
+            (Result.Ok (false, false, max_int, max_int)) in
+     (match is_int, is_vec with
+      | true, false -> Result.Ok (`Int mini)
+     | false, true -> Result.Ok (`Vec (`Int mini, `Int minj))
+     | _ -> assert false)
+  | `Max_n, ds ->
+     let| is_int,is_vec,maxi,maxj =
+       ds
+       |> Array.fold_left
+            (fun res t ->
+              let| is_int,is_vec,maxi,maxj = res in
+              match t with
+              | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
+              | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
+              | _ -> Result.Error (Invalid_expr e))
+            (Result.Ok (false, false, min_int, min_int)) in
+     (match is_int, is_vec with
+      | true, false -> Result.Ok (`Int maxi)
+      | false, true -> Result.Ok (`Vec (`Int maxi, `Int maxj))
+      | _ -> assert false)
+  | `Average_n, ds ->
+     let| is_int,is_vec,n,sumi,sumj =
+       ds
+       |> Array.fold_left
+            (fun res t ->
+              let| is_int,is_vec,n,sumi,sumj = res in
+              match t with
+              | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
+              | `Vec (`Int i, `Int j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
+              | _ -> Result.Error (Invalid_expr e))
+            (Result.Ok (false, false, 0, 0, 0)) in
+     (match is_int, is_vec with
+      | true, false ->
+         if sumi mod n = 0
+         then Result.Ok (`Int (sumi / n))
+         else Result.Error (Undefined_result "Average: not an integer")
+      | false, true ->
+         if sumi mod n = 0 && sumj mod n = 0
+         then Result.Ok (`Vec (`Int (sumi / n), `Int (sumj / n)))
+         else Result.Error (Undefined_result "Average: not an integer")
+      | _ -> assert false) (* empty or ill-typed list *)
+  | `Span_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Int i1, `Int i2 ->
+         if i1=i2
+         then Result.Error (Undefined_result "Span: same int")
+         else Result.Ok (`Int (abs (i2-i1) + 1))
+      | `Vec (`Int i1, `Int j1), `Vec (`Int i2, `Int j2) ->
+         if i1=i2 && j1=j2
+         then Result.Error (Undefined_result "Span: same vector")
+         else Result.Ok (`Vec (`Int (abs (i2-i1) + 1), `Int (abs (j2-j1) + 1)))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Norm_1, [|d1|] ->
+     (match d1 with
+      | `Vec (`Int i, `Int j) -> Result.Ok (`Int (i+j))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Diag1_1 k, [|d1|] ->
+     (match d1 with
+      | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i+j) mod k))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Diag2_1 k, [|d1|] ->
+     (match d1 with
+      | `Vec (`Int i, `Int j) -> Result.Ok (`Int ((i-j) mod k))
+      | _ -> Result.Error (Invalid_expr e))
+  | `LogAnd_2, [|d1;d2|] ->
+       (match d1, d2 with
         | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 -> (* TODO: generalize Mask logics to grids transfs *)
            let m = Grid.Mask.inter m1 m2 in
            Result.Ok (`Grid (m,`None))
         | _ -> Result.Error (Invalid_expr e))
-  | `LogOr (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
-           let m = Grid.Mask.union m1 m2 in
-           Result.Ok (`Grid (m,`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `LogXOr (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
-           let m = Grid.Mask.diff_sym m1 m2 in
-           Result.Ok (`Grid (m,`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `LogAndNot (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
-           let m = Grid.Mask.diff m1 m2 in
-           Result.Ok (`Grid (m,`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `LogNot e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (m1,_) ->
-           let m = Grid.Mask.compl m1 in
-           Result.Ok (`Grid (m,`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Stack le1 ->
-     let| lres1 = list_map_result (apply_expr ~lookup p) le1 in
-     broadcast_list_result lres1
-       (fun lt1 ->
-         let lg1 = List.map (function `Grid (g1,_) -> g1 | _ -> assert false) lt1 in
-         let| g = Grid.Transf.layers Grid.transparent lg1 in
-         Result.Ok (`Grid (g,`None)))
-  | `Area e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,patt) ->
-           let bgcolor =
-             match patt with
-             | `Point | `Rectangle _ | `Monocolor _ -> Grid.transparent
-             | `Background (_, `Color bgcolor, _, _) -> bgcolor
-             | _ -> Grid.black in
-           Result.Ok (`Int (Grid.color_area bgcolor g))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Left e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (_, `Int j), _) -> Result.Ok (`Int j)
-        | _ -> Result.Error (Invalid_expr e))
-  | `Right e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (_, `Int j), `Grid (shape,_)) ->
-           let h, w = Grid.dims shape in
-           Result.Ok (`Int (j+w-1))
-        | _ -> Result.Error (Invalid_expr e))
-  | `Center e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (_, `Int j), `Grid (shape,_)) ->
-           let h, w = Grid.dims shape in
-           if w mod 2 = 0
-           then Result.Error (Undefined_result "Center: no center, even width")
-           else Result.Ok (`Int (j + w/2 + 1))
-        | `PosShape _ -> Result.Error (Undefined_result "Center: not a rectangle")
-        | _ -> Result.Error (Invalid_expr e))
-  | `Top e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (`Int i, _), _) -> Result.Ok (`Int i)
-        | _ -> Result.Error (Invalid_expr e))
-  | `Bottom e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (`Int i, _), `Grid (shape,_)) ->
-           let h, w = Grid.dims shape in
-           Result.Ok (`Int (i+h-1))
-        | `PosShape _ -> Result.Error (Undefined_result "Bottom: not a rectangle")
-        | _ -> Result.Error (Invalid_expr e))
-  | `Middle e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `PosShape (`Vec (`Int i, _), `Grid (shape,_)) ->
-           let h, w = Grid.dims shape in
-           if h mod 2 = 0
-           then Result.Error (Undefined_result "Middle: no middle, even height")
-           else Result.Ok (`Int (i + h/2 + 1))
-        | _ -> Result.Error (Invalid_expr e))
-  | `ProjI e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (`Int i, _) -> Result.Ok (`Vec (`Int i, `Int 0))
-        | _ -> Result.Error (Invalid_expr e))
-  | `ProjJ e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Vec (_, `Int j) -> Result.Ok (`Vec (`Int 0, `Int j))
-        | _ -> Result.Error (Invalid_expr e))
-  | `MaskOfGrid e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,_) -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g, `None)) (* TODO: improve *)
-        | _ -> Result.Error (Invalid_expr e))
-  | `GridOfMask (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Grid (m,_), `Color c ->
-           Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c, `None)) (* TODO: improve *)
-        | _ -> Result.Error (Invalid_expr e))
-  | `TranslationOnto (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-    (fun (d1,d2) ->
-      match get_pos d1, get_size d1, get_pos d2, get_size d2 with
+  | `LogOr_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
+         let m = Grid.Mask.union m1 m2 in
+         Result.Ok (`Grid (m,`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `LogXOr_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
+         let m = Grid.Mask.diff_sym m1 m2 in
+         Result.Ok (`Grid (m,`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `LogAndNot_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Grid (m1,_), `Grid (m2,_) when Grid.dims m1 = Grid.dims m2 ->
+         let m = Grid.Mask.diff m1 m2 in
+         Result.Ok (`Grid (m,`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `LogNot_1, [|d1|] ->
+     (match d1 with
+      | `Grid (m1,_) ->
+         let m = Grid.Mask.compl m1 in
+         Result.Ok (`Grid (m,`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Stack_n, ds ->
+     let lg1 = Array.map (function `Grid (g1,_) -> g1 | _ -> assert false) ds in
+     let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
+     Result.Ok (`Grid (g,`None))
+  | `Area_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,patt) ->
+         let bgcolor =
+           match patt with
+           | `Point | `Rectangle _ | `Monocolor _ -> Grid.transparent
+           | `Background (_, `Color bgcolor, _, _) -> bgcolor
+           | _ -> Grid.black in
+         Result.Ok (`Int (Grid.color_area bgcolor g))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Left_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (_, `Int j), _) -> Result.Ok (`Int j)
+      | _ -> Result.Error (Invalid_expr e))
+  | `Right_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (_, `Int j), `Grid (shape,_)) ->
+         let h, w = Grid.dims shape in
+         Result.Ok (`Int (j+w-1))
+      | _ -> Result.Error (Invalid_expr e))
+  | `Center_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (_, `Int j), `Grid (shape,_)) ->
+         let h, w = Grid.dims shape in
+         if w mod 2 = 0
+         then Result.Error (Undefined_result "Center: no center, even width")
+         else Result.Ok (`Int (j + w/2 + 1))
+      | `PosShape _ -> Result.Error (Undefined_result "Center: not a rectangle")
+      | _ -> Result.Error (Invalid_expr e))
+  | `Top_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (`Int i, _), _) -> Result.Ok (`Int i)
+      | _ -> Result.Error (Invalid_expr e))
+  | `Bottom_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (`Int i, _), `Grid (shape,_)) ->
+         let h, w = Grid.dims shape in
+         Result.Ok (`Int (i+h-1))
+      | `PosShape _ -> Result.Error (Undefined_result "Bottom: not a rectangle")
+      | _ -> Result.Error (Invalid_expr e))
+  | `Middle_1, [|d1|] ->
+     (match d1 with
+      | `PosShape (`Vec (`Int i, _), `Grid (shape,_)) ->
+         let h, w = Grid.dims shape in
+         if h mod 2 = 0
+         then Result.Error (Undefined_result "Middle: no middle, even height")
+         else Result.Ok (`Int (i + h/2 + 1))
+      | _ -> Result.Error (Invalid_expr e))
+  | `ProjI_1, [|d1|] ->
+     (match d1 with
+      | `Vec (`Int i, _) -> Result.Ok (`Vec (`Int i, `Int 0))
+      | _ -> Result.Error (Invalid_expr e))
+  | `ProjJ_1, [|d1|] ->
+     (match d1 with
+      | `Vec (_, `Int j) -> Result.Ok (`Vec (`Int 0, `Int j))
+      | _ -> Result.Error (Invalid_expr e))
+  | `MaskOfGrid_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,_) -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g, `None)) (* TODO: improve *)
+      | _ -> Result.Error (Invalid_expr e))
+  | `GridOfMask_2, [|d1;d2|] ->
+     (match d1, d2 with
+      | `Grid (m,_), `Color c ->
+         Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c, `None)) (* TODO: improve *)
+      | _ -> Result.Error (Invalid_expr e))
+  | `TranslationOnto_2, [|d1;d2|] ->
+     (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
       | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
          let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
          let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
@@ -2833,168 +2687,142 @@ let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : data resu
            else 0 in
          Result.Ok (`Vec (`Int ti, `Int tj))
       | _ -> Result.Error (Invalid_expr e))
-  | `Tiling (e1,k,l) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (fun d1 ->
-        let rec aux = function
-          | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
-          | `Grid (g,patt) ->
-             let| g' = Grid.Transf.tile k l g in
-             Result.Ok (`Grid (g', `Tiling (`Grid (g,patt), `Vec (`Int k, `Int l))))
-          | _ -> Result.Error (Invalid_expr e) in
-        aux d1)
-  | `PeriodicFactor (mode,e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | `Color bgcolor, d2 ->
-           let rec aux = function
-            | `Grid (g,_) ->
-               let| g' = Grid.Transf.periodic_factor mode bgcolor g in
-               Result.Ok (`Grid (g',`None))
-            | `PosShape (pos, shape) ->
-               let| shape' = aux shape in
-               Result.Ok (`PosShape (pos, shape'))
-            | _ -> Result.Error (Invalid_expr e) in
-           aux d2
-        | _ -> Result.Error (Invalid_expr e))
-  | `FillResizeAlike (mode,e1,e2,e3) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     let| res3 = apply_expr ~lookup p e3 in
-     broadcast_list_result [res1;res2;res3]
-       (function
-        | [`Color bgcolor; `Vec (`Int h, `Int w); d3] when h > 0 && w > 0 ->
-           let new_size = h, w in
-           let rec aux = function
-            | `Grid (g,_) ->
-               let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size g in
-               Result.Ok (`Grid (g',`None))
-            | `PosShape (pos, shape) ->
-               let| shape' = aux shape in
-               Result.Ok (`PosShape (pos, shape'))
-            | _ -> Result.Error (Invalid_expr e) in
-           aux d3
-        | _ -> Result.Error (Invalid_expr e))
-  | `Compose (e1,e2,e3) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     let| res3 = apply_expr ~lookup p e3 in
-     broadcast_list_result [res1;res2;res3]
-       (function
-        | [`Color c_mask; `Grid (g1,_); `Grid (g2,_)] ->
-           let| g = Grid.Transf.compose c_mask g1 g2 in
-           Result.Ok (`Grid (g,`None))
-        | _ -> Result.Error (Invalid_expr e))
-  | `ApplySym (sym,e1,role_e1) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (apply_symmetry ~lookup sym role_e1 e)
-  | `UnfoldSym (sym_matrix,e1) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (unfold_symmetry sym_matrix e)
-  | `CloseSym (sym_matrix,e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         match d1 with
-         | `Color bgcolor -> close_symmetry sym_matrix bgcolor e d2
-         | _ -> Result.Error (Invalid_expr e))
-  | `TranslationSym (sym,e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (fun (d1,d2) ->
-         match get_pos d1, get_size d1, get_pos d2, get_size d2 with
-         | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
-            let| ti, tj =
-              match sym with
-              | `Id -> Result.Ok (0, 0)
-              | `FlipHeight -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 0)
-              | `FlipWidth -> Result.Ok (0, 2 * (minj2-minj1) + (w2-w1))
-              | `Rotate180 -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1))
-              | `FlipDiag1 ->
-                 if h2 = w2
-                 then
-                   let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
-                   Result.Ok (ti, - ti)
-                 else Result.Error (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
-              | `FlipDiag2 ->
-                 if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
-                 then
-                   let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
-                   Result.Ok (ti, - ti)
-                 else Result.Error (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
-              | `Rotate90 ->
-                 if h2 = w2
-                 then
-                   Result.Ok
-                     ((mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
-                      (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1) (* /2 OK because h2=w2 *)
-                 else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
-              | `Rotate270 ->
-                 if h2 = w2
-                 then
-                   Result.Ok
-                     ((minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
-                      (minj2 - minj1) - (mini2 - mini1)) (* - (h2 - w2) / 2 *)
-                 else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
-            in
-            Result.Ok (`Vec (`Int ti, `Int tj))
-         | _ -> Result.Error (Invalid_expr e))
-  | `MajorityColor e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,_) ->
-           let| c = Grid.majority_color Grid.black g in
-           Result.Ok (`Color c)
-        | _ -> Result.Error (Invalid_expr e))
-  | `ColorCount e1 ->
-     let| res1 = apply_expr ~lookup p e1 in
-     broadcast1_result res1
-       (function
-        | `Grid (g,_) ->
-           let n = Grid.color_count Grid.black g in
-           Result.Ok (`Int n)
-        | _ -> Result.Error (Invalid_expr e))
-  | `Coloring (e1,e2) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     broadcast2_result (res1,res2)
-       (function
-        | d1, (`Color c as new_col) ->
-           let rec aux = function
-             | `Grid (g,patt) ->
-                let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
-                let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
-                let patt' =
-                  match patt with
-                  | `Point | `Rectangle _ -> `Monocolor (`Grid (m, patt), new_col)
-                  | `Monocolor (mask, _) -> `Monocolor (mask, new_col)
-                  | _ -> `None in
-                Result.Ok (`Grid (g',patt'))
-             | `PosShape (pos, shape) ->
-                let| shape = aux shape in
-                Result.Ok (`PosShape (pos, shape))
-             | _ -> Result.Error (Invalid_expr e) in
-           aux d1
-        | _ -> Result.Error (Invalid_expr e))
-  | `SwapColors (e1,e2,e3) ->
-     let| res1 = apply_expr ~lookup p e1 in
-     let| res2 = apply_expr ~lookup p e2 in
-     let| res3 = apply_expr ~lookup p e3 in
-     broadcast_list_result [res1; res2; res3]
-       (function
-        | [`Grid (g,_); `Color c1; `Color c2] ->
-           let| g' = Grid.Transf.swap_colors g c1 c2 in
-           Result.Ok (`Grid (g',`None))
-        | _ -> Result.Error (Invalid_expr e))
+  | `Tiling_1 (k,l), [|d1|] ->
+     let rec aux = function
+       | `Vec (`Int h, `Int w) -> Result.Ok (`Vec (`Int (h*k), `Int (w*l)))
+       | `Grid (g,patt) ->
+          let| g' = Grid.Transf.tile k l g in
+          Result.Ok (`Grid (g', `Tiling (`Grid (g,patt), `Vec (`Int k, `Int l))))
+       | _ -> Result.Error (Invalid_expr e) in
+     aux d1
+  | `PeriodicFactor_2 mode, [|d1;d2|] ->
+     (match d1 with
+      | `Color bgcolor ->
+         let rec aux = function
+           | `Grid (g,_) ->
+              let| g' = Grid.Transf.periodic_factor mode bgcolor g in
+              Result.Ok (`Grid (g',`None))
+           | `PosShape (pos, shape) ->
+              let| shape' = aux shape in
+              Result.Ok (`PosShape (pos, shape'))
+           | _ -> Result.Error (Invalid_expr e) in
+         aux d2
+      | _ -> Result.Error (Invalid_expr e))
+  | `FillResizeAlike_3 mode, [|d1;d2;d3|] ->
+     (match d1, d2 with
+      | `Color bgcolor, `Vec (`Int h, `Int w) when h > 0 && w > 0 ->
+         let new_size = h, w in
+         let rec aux = function
+           | `Grid (g,_) ->
+              let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size g in
+              Result.Ok (`Grid (g',`None))
+           | `PosShape (pos, shape) ->
+              let| shape' = aux shape in
+              Result.Ok (`PosShape (pos, shape'))
+           | _ -> Result.Error (Invalid_expr e) in
+         aux d3
+      | _ -> Result.Error (Invalid_expr e))
+  | `Compose_3, [|d1;d2;d3|] ->
+     (match d1, d2, d3 with
+      | `Color c_mask,  `Grid (g1,_), `Grid (g2,_) ->
+         let| g = Grid.Transf.compose c_mask g1 g2 in
+         Result.Ok (`Grid (g,`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | `ApplySym_1 (sym,role_e1), [|d1|] ->
+     apply_symmetry ~lookup sym role_e1 e d1
+  | `UnfoldSym_1 sym_matrix, [|d1|] ->
+     unfold_symmetry sym_matrix e d1
+  | `CloseSym_2 sym_matrix, [|d1;d2|] ->
+     (match d1 with
+      | `Color bgcolor -> close_symmetry sym_matrix bgcolor e d2
+      | _ -> Result.Error (Invalid_expr e))
+  | `TranslationSym_2 sym, [|d1;d2|] ->
+     (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
+      | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
+         let| ti, tj =
+           match sym with
+           | `Id -> Result.Ok (0, 0)
+           | `FlipHeight -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 0)
+           | `FlipWidth -> Result.Ok (0, 2 * (minj2-minj1) + (w2-w1))
+           | `Rotate180 -> Result.Ok (2 * (mini2-mini1) + (h2-h1), 2 * (minj2-minj1) + (w2-w1))
+           | `FlipDiag1 ->
+              if h2 = w2
+              then
+                let ti = (mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *) in
+                Result.Ok (ti, - ti)
+              else Result.Error (Undefined_result "TranslationSym: FlipDiag1: non-square pivot object")
+           | `FlipDiag2 ->
+              if h2 = w2 && (h2 - h1 + w2 - w1 mod 2 = 0)
+              then
+                let ti = (mini2 - mini1) + (minj2 - minj1) + (h2 - h1 + w2 - w1) / 2 in
+                Result.Ok (ti, - ti)
+              else Result.Error (Undefined_result "TranslationSym: FlipDiag2: non-square pivot object")
+           | `Rotate90 ->
+              if h2 = w2
+              then
+                Result.Ok
+                  ((mini2 - mini1) - (minj2 - minj1) (* + (h2 - w2) / 2 *),
+                   (mini2 - mini1) + (minj2 - minj1) + (h2 + w2) / 2 - h1) (* /2 OK because h2=w2 *)
+              else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+           | `Rotate270 ->
+              if h2 = w2
+              then
+                Result.Ok
+                  ((minj2 - minj1) + (mini2 - mini1) + (h2 + w2) / 2 - w1 (* /2 OK because h2=w2 *),
+                   (minj2 - minj1) - (mini2 - mini1)) (* - (h2 - w2) / 2 *)
+              else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
+         in
+         Result.Ok (`Vec (`Int ti, `Int tj))
+      | _ -> Result.Error (Invalid_expr e))
+  | `MajorityColor_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,_) ->
+         let| c = Grid.majority_color Grid.black g in
+         Result.Ok (`Color c)
+      | _ -> Result.Error (Invalid_expr e))
+  | `ColorCount_1, [|d1|] ->
+     (match d1 with
+      | `Grid (g,_) ->
+         let n = Grid.color_count Grid.black g in
+         Result.Ok (`Int n)
+      | _ -> Result.Error (Invalid_expr e))
+  | `Coloring_2, [|d1;d2|] ->
+     (match d2 with
+      | (`Color c as new_col) ->
+         let rec aux = function
+           | `Grid (g,patt) ->
+              let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
+              let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
+              let patt' =
+                match patt with
+                | `Point | `Rectangle _ -> `Monocolor (`Grid (m, patt), new_col)
+                | `Monocolor (mask, _) -> `Monocolor (mask, new_col)
+                | _ -> `None in
+              Result.Ok (`Grid (g',patt'))
+           | `PosShape (pos, shape) ->
+              let| shape = aux shape in
+              Result.Ok (`PosShape (pos, shape))
+           | _ -> Result.Error (Invalid_expr e) in
+         aux d1
+      | _ -> Result.Error (Invalid_expr e))
+  | `SwapColors_3, [|d1;d2;d3|] ->
+     (match d1, d2, d3 with
+      | `Grid (g,_), `Color c1, `Color c2 ->
+         let| g' = Grid.Transf.swap_colors g c1 c2 in
+         Result.Ok (`Grid (g',`None))
+      | _ -> Result.Error (Invalid_expr e))
+  | _ -> assert false (* invalid argument number for some function *)
 
+       
+let rec apply_expr ~(lookup : apply_lookup) (p : revpath) (e : expr) : data result = (* QUICK *)
+  (* SHOULD NOT use [p] *)
+  match e with
+  | `Ref p ->
+     lookup (p :> var)
+  | `Apply (func,args) ->
+     let| res_args = array_map_result (apply_expr ~lookup p) args in
+     broadcast_array_result res_args
+       (fun vs -> eval_func ~lookup e func vs)
   
 let rec apply_template_gen ~(lookup : apply_lookup) (p : revpath) (t : template) : template result = (* QUICK *)
   (* SHOULD NOT use [p] *)
@@ -4859,42 +4687,42 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
   let _ =
     let _ = (* color constants *)
       let& c = Grid.all_colors in
-      push (`Color `X, `ConstColor c) in
+      push (`Color `X, `Apply (`ConstColor_0 c, [||])) in
     let& (role1,e1) = exprs_0 in
     (* unary operators *)
     let _ = (* area(_) *)
       match role1 with
-      | `Grid _ -> push (`IntCoord (`X, `Size `X), `Area e1)
+      | `Grid _ -> push (`IntCoord (`X, `Size `X), `Apply (`Area_1, [|e1|]))
       | _ -> () in
     let _ = (* right(_) *)
       match role1 with
-      | `Layer -> push (`IntCoord (`J, `Pos), `Right e1)
+      | `Layer -> push (`IntCoord (`J, `Pos), `Apply (`Right_1, [|e1|]))
       | _ -> () in
     let _ = (* center(_) *)
       match role1 with
-      | `Layer -> push (`IntCoord (`J, `Pos), `Center e1)
+      | `Layer -> push (`IntCoord (`J, `Pos), `Apply (`Center_1, [|e1|]))
       | _ -> () in
     let _ = (* bottom(_) *)
       match role1 with
-      | `Layer -> push (`IntCoord (`I, `Pos), `Bottom e1)
+      | `Layer -> push (`IntCoord (`I, `Pos), `Apply (`Bottom_1, [|e1|]))
       | _ -> () in
     let _ = (* middle(_) *)
       match role1 with
-      | `Layer -> push (`IntCoord (`I, `Pos), `Middle e1)
+      | `Layer -> push (`IntCoord (`I, `Pos), `Apply (`Middle_1, [|e1|]))
       | _ -> () in
     let _ = (* ProjI/J *)
       match role1 with
       | `Vec _ ->
-         push (role1, `ProjI e1);
-         push (role1, `ProjJ e1)
+         push (role1, `Apply (`ProjI_1, [|e1|]));
+         push (role1, `Apply (`ProjJ_1, [|e1|]))
       | _ -> () in
     let _ = (* MajorityColor on grids *)
       match role1 with
-      | `Grid `Frame -> push (`Color `Shape, `MajorityColor e1)
+      | `Grid `Frame -> push (`Color `Shape, `Apply (`MajorityColor_1, [|e1|]))
       | _ -> () in
     let _ = (* ColorCount on grids *)
       match role1 with
-      | `Grid `Frame -> push (`IntCard, `ColorCount e1)
+      | `Grid `Frame -> push (`IntCard, `Apply (`ColorCount_1, [|e1|]))
       | _ -> () in
 (*    let _ = (* Size on grids *)
       match role1 with
@@ -4902,76 +4730,77 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
       | _ -> () in  not useful, field Size enough *)
     let _ = (* Strip on grids *)
       match role1 with
-      | `Grid `Frame -> push (`Grid `Frame, `Strip e1)
+      | `Grid `Frame -> push (`Grid `Frame, `Apply (`Strip_1, [|e1|]))
       | _ -> () in
     let _ = (* PeriodicFactor *)
       match role1 with
       | `Grid (`Mask | `Shape) | `Layer ->
          let& mode = [`TradeOff; `Strict] in
          let bgcolor = Grid.transparent in
-         push (role1, `PeriodicFactor (mode, `ConstColor bgcolor, e1))
+         push (role1, `Apply (`PeriodicFactor_2 mode, [|`Apply (`ConstColor_0 bgcolor, [||]); e1|]))
       | `Grid `Frame ->
          let& mode = [`TradeOff; `Total; `Strict] in
-         let& bgcolor = [`ConstColor Grid.black; `MajorityColor e1] in
-         push (role1, `PeriodicFactor (mode,bgcolor,e1))
+         let& bgcolor = [`Apply (`ConstColor_0 Grid.black, [||]);
+                         `Apply (`MajorityColor_1, [|e1|])] in
+         push (role1, `Apply (`PeriodicFactor_2 mode, [|bgcolor; e1|]))
       | _ -> () in
     let& (role2,e2) = exprs_0 in
       (* binary operators *)
       let _ = (* corner(_,_) *)
         match role1, role2 with
         | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           push (role1, `Corner (e1,e2))
+           push (role1, `Apply (`Corner_2, [|e1;e2|]))
         | _ -> () in (* TEST: var/feat *)
       let _ = (* span(_,_) *)
         match role1, role2 with
         | `IntCoord ((`I | `J as ij1), `Pos), `IntCoord ((`I | `J as ij2), `Pos) when ij1=ij2 && e1 < e2 ->
-           push (`IntCoord (ij1, `Pos), `Span (e1,e2))
+           push (`IntCoord (ij1, `Pos), `Apply (`Span_2, [|e1;e2|]))
         | `Vec `Pos, `Vec `Pos when e1 < e2 ->
-           push (`Vec (`Size `X), `Span (e1,e2))
+           push (`Vec (`Size `X), `Apply (`Span_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* min([_;_]) *)
         match role1, role2 with
         | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Min [e1;e2])
+           push (role1, `Apply (`Min_n, [|e1;e2|]))
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Min [e1;e2])
+           push (role1, `Apply (`Min_n, [|e1;e2|]))
         | _ -> () in
       let _ = (* max([_;_]) *)
         match role1, role2 with
         | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Max [e1;e2])
+           push (role1, `Apply (`Max_n, [|e1;e2|]))
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Max [e1;e2])
+           push (role1, `Apply (`Max_n, [|e1;e2|]))
         | _ -> () in
       let _ = (* average([_;_]) *)
         match role1, role2 with
         | `IntCoord xx1, `IntCoord xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Average [e1;e2])
+           push (role1, `Apply (`Average_n, [|e1;e2|]))
         | `Vec xx1, `Vec xx2 when xx1 = xx2 && e1 < e2 ->
-           push (role1, `Average [e1;e2])
+           push (role1, `Apply (`Average_n, [|e1;e2|]))
         | _ -> () in
       let _ = (* translation = pos - pos *)
         match role1, role2 with
         | `IntCoord (ij1, `Pos), `IntCoord (ij2, `Pos) when ij1=ij2 && e1 <> e2 ->
-           push (`IntCoord (ij1, `Move), `Minus (e1,e2))
+           push (`IntCoord (ij1, `Move), `Apply (`Minus_2, [|e1;e2|]))
         | `Vec `Pos, `Vec `Pos when e1 <> e2 ->
-           push (`Vec `Move, `Minus (e1,e2))
+           push (`Vec `Move, `Apply (`Minus_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* translationOnto(_,_) *)
         match role1, role2 with
         | `Layer, `Layer when e1 < e2 ->
-           push (`Vec `Move, `TranslationOnto (e1,e2));
+           push (`Vec `Move, `Apply (`TranslationOnto_2, [|e1;e2|]));
         | _ -> () in
       let _ = (* translationSym(_,_,_) *)
         match role1, role2 with
         | `Layer, (`Layer | `Grid `Frame) when e1 <> e2 ->
            let& sym = [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                        `Rotate180; `Rotate90; `Rotate270] in
-           push (`Vec `Move, `TranslationSym (sym,e1,e2))
+           push (`Vec `Move, `Apply (`TranslationSym_2 sym, [|e1;e2|]))
         | _ -> () in
       let _ = (* Crop on grids *)
         match role1, role2 with
-        | `Grid `Frame, `Layer -> push (`Grid `Frame, `Crop (e1,e2))
+        | `Grid `Frame, `Layer -> push (`Grid `Frame, `Apply (`Crop_2, [|e1;e2|]))
         | _ -> () in
       () in
   let exprs_1 = List.rev !exprs in
@@ -4979,17 +4808,17 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
   let _ = 
     let _ = (* int and vec constants *)
       let& k = [0;1;2;3] in
-      push (`IntCoord (`X, (if k=0 then `Pos else `X)), `ConstInt k);
+      push (`IntCoord (`X, (if k=0 then `Pos else `X)), `Apply (`ConstInt_0 k, [||]));
       let& l = [0;1;2;3] in
-      push (`Vec (if k=0 && l=0 then `Pos else `X), `ConstVec (k,l)) in
+      push (`Vec (if k=0 && l=0 then `Pos else `X), `Apply (`ConstVec_0 (k,l), [||])) in
     let& (role1,e1) = exprs_1 in
     (* unary operators *)
     let _ = (* IncrInt, DecrInt *)
       match role1 with
       | `IntCoord (_,rvec) when rvec <> `Move ->
          let& k = [1;2;3] in
-         push (role1, `IncrInt (e1,k));
-         push (role1, `DecrInt (e1,k))
+         push (role1, `Apply (`IncrInt_1 k, [|e1|]));
+         push (role1, `Apply (`DecrInt_1 k, [|e1|]))
       | _ -> () in
     let _ = (* IncrVec, DecrVec *)
       match role1 with
@@ -4997,62 +4826,62 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
          let& k = [0;1;2;3] in
          let& l = [0;1;2;3] in
          if k+l > 0 then (
-           push (role1, `IncrVec (e1,k,l));
-           push (role1, `DecrVec (e1,k,l))
+           push (role1, `Apply (`IncrVec_1 (k,l), [|e1|]));
+           push (role1, `Apply (`DecrVec_1 (k,l), [|e1|]))
          )
       | _ -> () in
     let _ = (* ScaleUp, ScaleDown by constant *)
       let& n = [2;3] in
-      let e2 = `ConstInt n in
+      let e2 = `Apply (`ConstInt_0 n, [||]) in
       match role1 with
       | `IntCoord (_,rvec) | `Vec rvec when rvec <> `Move ->
-         push (role1, `ScaleUp (e1,e2));
-         push (role1, `ScaleDown (e1,e2))
+         push (role1, `Apply (`ScaleUp_2, [|e1;e2|]));
+         push (role1, `Apply (`ScaleDown_2, [|e1;e2|]))
       | `Grid _ ->
-         push (role1, `ScaleUp (e1,e2));
-         push (role1, `ScaleDown (e1,e2))
+         push (role1, `Apply (`ScaleUp_2, [|e1;e2|]));
+         push (role1, `Apply (`ScaleDown_2, [|e1;e2|]))
       | _ -> () in
     let _ = (* 0 + move -> pos *)
       match role1 with
-      | `IntCoord (ij, `Move) -> push (`IntCoord (ij, `Pos), `Plus (`ConstInt 0, e1))
-      | `Vec `Move -> push (`Vec `Pos, `Plus (`ConstVec (0,0), e1))
+      | `IntCoord (ij, `Move) -> push (`IntCoord (ij, `Pos), `Apply (`Plus_2, [|`Apply (`ConstInt_0 0, [||]); e1|]))
+      | `Vec `Move -> push (`Vec `Pos, `Apply (`Plus_2, [|`Apply (`ConstVec_0 (0,0), [||]); e1|]))
       | _ -> () in
     let _ = (* ApplySym *)
       match role1 with
       | (`Layer | `Grid _ as role1) ->
          let role : role = match role1 with `Layer -> `Layer | `Grid _ -> `Grid `Shape | _ -> assert false in (* TODO: remove this role arg from ApplySym *)
          let& sym = all_symmetry in
-         push (role1, `ApplySym (sym, e1, role))
+         push (role1, `Apply (`ApplySym_1 (sym, role), [|e1|]))
       | _ -> () in
     let& (role2,e2) = exprs_1 in
       (* binary operators *)
       let _ = (* ScaleUp, ScaleDown by IntCard-expression*)
         match role1, role2 with
         | (`IntCoord (_,rvec) | `Vec rvec), `IntCard when rvec <> `Move ->
-           push (role1, `ScaleUp (e1,e2));
-           push (role1, `ScaleDown (e1,e2))
+           push (role1, `Apply (`ScaleUp_2, [|e1;e2|]));
+           push (role1, `Apply (`ScaleDown_2, [|e1;e2|]))
         | (`Grid _), `IntCard ->
-           push (role1, `ScaleUp (e1,e2));
-           push (role1, `ScaleDown (e1,e2))
+           push (role1, `Apply (`ScaleUp_2, [|e1;e2|]));
+           push (role1, `Apply (`ScaleDown_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* Coloring *)
         match role1, role2 with
         | (`Grid `Shape | `Layer), `Color _ ->
-           push (role1, `Coloring (e1, e2))
+           push (role1, `Apply (`Coloring_2, [|e1; e2|]))
         | _ -> () in
       let _ = (* _ + _ *)
         match role1, role2 with
         | `IntCoord (_, xx1), `IntCoord (_, (`X | `Size _ | `Move))
           | `Vec xx1, `Vec (`X | `Size _ | `Move)
              when xx1 <> `Move && (if xx1 = `Pos then e1 <> e2 else e1 < e2) ->
-           push (role1, `Plus (e1,e2)) (* TODO: Abs(e2) if e1:Size and e2:Move *)
+           push (role1, `Apply (`Plus_2, [|e1;e2|])) (* TODO: Abs(e2) if e1:Size and e2:Move *)
         | _ -> () in
       let _ = (* _ - _ *)
         match role1, role2 with (* not generating Moves *)
         | `IntCoord (_, rvec), `IntCoord (_, (`X | `Size _ | `Move)) when rvec <> `Move && e1 <> e2 ->
-           push (role1, `Minus (e1,e2))
+           push (role1, `Apply (`Minus_2, [|e1;e2|]))
         | `Vec rvec, `Vec (`X | `Size _ | `Move) when rvec <> `Move && e1 <> e2 ->
-           push (role1, `Minus (e1,e2))
+           push (role1, `Apply (`Minus_2, [|e1;e2|]))
         | _ -> () in
       () in
   let exprs_2 = List.rev !exprs in
@@ -5065,7 +4894,7 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
          let& k = [1;2;3] in
          let& l = [1;2;3] in
          if k>1 || l>1 then
-           push (role1, `Tiling (e1,k,l))
+           push (role1, `Apply (`Tiling_1 (k,l), [|e1|]))
       | _ -> () in
     let _ = (* FillResizeAlike *)
       match role1 with
@@ -5074,81 +4903,87 @@ and defs_expressions ~env_sig : (role_poly * expr) list =
          (match role2 with
           | `Grid (`Mask | `Shape) | `Layer ->
              let& mode = [`TradeOff; `Strict] in
-             let bgcolor = `ConstColor Grid.transparent in
-             push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
+             let bgcolor = `Apply (`ConstColor_0 Grid.transparent, [||]) in
+             push (role2, `Apply (`FillResizeAlike_3 mode, [|bgcolor;e1;e2|]))
           | `Grid `Frame ->
              let& mode = [`TradeOff; `Total; `Strict] in
-             let& bgcolor = [`ConstColor Grid.black; `MajorityColor e2] in
-             push (role2, `FillResizeAlike (mode,bgcolor,e1,e2))
+             let& bgcolor = [ `Apply (`ConstColor_0 Grid.black, [||]);
+                              `Apply (`MajorityColor_1, [|e2|]) ] in
+             push (role2, `Apply (`FillResizeAlike_3 mode, [|bgcolor;e1;e2|]))
           | _ -> ())
       | _ -> () in
     let _ = (* Compose(c,e1,e1) *)
       match role1 with
       | `Grid (`Mask | `Shape) ->
-         push (role1, `Compose (`ConstColor 1, e1, e1))
+         push (role1, `Apply (`Compose_3, [|`Apply (`ConstColor_0 1, [||]); e1; e1|]))
       | `Grid `Frame ->
-         push (role1, `Compose (`MajorityColor e1, e1, e1));
+         push (role1, `Apply (`Compose_3, [|`Apply (`MajorityColor_1, [|e1|]); e1; e1|]));
          let& c = Grid.all_colors in
-         push (role1, `Compose (`ConstColor c, e1, e1))
+         push (role1, `Apply (`Compose_3, [|`Apply (`ConstColor_0 c, [||]); e1; e1|]))
       | _ -> () in
     let _ = (* UnfoldSym *)
       match role1 with
       | `Layer | `Grid _ ->
          let& sym_matrix = all_symmetry_unfold in
-         push (role1, `UnfoldSym (sym_matrix, e1))
+         push (role1, `Apply (`UnfoldSym_1 sym_matrix, [|e1|]))
       | _ -> () in
     let _ = (* CloseSym on masks *)
       match role1 with
       | `Grid (`Mask | `Shape) | `Layer ->
          let& sym_seq = all_symmetry_close in
-         push (role1, `CloseSym (sym_seq, `ConstColor Grid.transparent, e1))
+         push (role1, `Apply (`CloseSym_2 sym_seq, [|`Apply (`ConstColor_0 Grid.transparent, [||]); e1|]))
       | _ -> () in
     let _ = (* SwapColors(_, c1, c2) *)
       match role1 with
       | `Grid `Frame ->
          let& c1 = Grid.all_colors in
-         push (role1, `SwapColors (e1, `ConstColor c1, `MajorityColor e1));
+         push (role1, `Apply (`SwapColors_3, [|e1; `Apply (`ConstColor_0 c1, [||]); `Apply (`MajorityColor_1, [|e1|])|]));
          let& c2 = Grid.all_colors in
          if c1 > c2 (* symmetric operation *)
-         then push (role1, `SwapColors (e1, `ConstColor c1, `ConstColor c2))
+         then push (role1, `Apply (`SwapColors_3, [|e1; `Apply (`ConstColor_0 c1, [||]); `Apply (`ConstColor_0 c2, [||])|]))
          else ()
       (* TODO: on shapes, transparent -> color *)
       | _ -> () in
     let _ = (* not _ *)
       match role1 with
-      | `Grid `Mask -> push (`Grid `Mask, `LogNot e1)
+      | `Grid `Mask -> push (`Grid `Mask, `Apply (`LogNot_1, [|e1|]))
       | _ -> () in
     let& (role2,e2) = exprs_2 in
       let _ = (* ScaleTo on masks *)
         match role1, role2 with
         | `Grid _, `Vec (`X | `Size _) ->
-           push (role1, `ScaleTo (e1,e2))
+           push (role1, `Apply (`ScaleTo_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* CloseSym on grids *)
         match role1, role2 with
         | `Grid `Frame, `Color _ ->
            let& sym_seq = all_symmetry_close in
-           push (role1, `CloseSym (sym_seq, e2, e1))
+           push (role1, `Apply (`CloseSym_2 sym_seq, [|e2; e1|]))
         | _ -> () in
       let _ = (* _ and _ *)
         match role1, role2 with
-        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogAnd (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 ->
+           push (`Grid `Mask, `Apply (`LogAnd_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* _ or _ *)
         match role1, role2 with
-        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogOr (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 ->
+           push (`Grid `Mask, `Apply (`LogOr_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* _ xor _ *)
         match role1, role2 with
-        | `Grid `Mask, `Grid `Mask when e1 < e2 -> push (`Grid `Mask, `LogXOr (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 < e2 ->
+           push (`Grid `Mask, `Apply (`LogXOr_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* _ and not _ *)
         match role1, role2 with
-        | `Grid `Mask, `Grid `Mask when e1 <> e2 -> push (`Grid `Mask, `LogAndNot (e1,e2))
+        | `Grid `Mask, `Grid `Mask when e1 <> e2 ->
+           push (`Grid `Mask, `Apply (`LogAndNot_2, [|e1;e2|]))
         | _ -> () in
       let _ = (* Stack *)
         match role1, role2 with
-        | `Grid r1, `Grid r2 when r1 = r2 && e1 <> e2 -> push (`Grid r1, `Stack [e1; e2])
+        | `Grid r1, `Grid r2 when r1 = r2 && e1 <> e2 ->
+           push (`Grid r1, `Apply (`Stack_n, [|e1; e2|]))
         | _ -> () in
       () in
   ()

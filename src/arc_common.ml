@@ -50,6 +50,23 @@ let rec list_map_result (f : 'a -> ('b,'c) Result.t) (lx : 'a list) : ('b list, 
      let| ly1 = list_map_result f lx1 in
      Result.Ok (y::ly1)
 
+let array_map_result (f : 'a -> ('b,'c) Result.t) (xs : 'a array) : ('b array, 'c) Result.t =
+  let rec aux xs ys i n =
+    if i < n
+    then
+      let| yi = f xs.(i) in
+      ys.(i) <- yi;
+      aux xs ys (i+1) n
+    else Result.Ok ys
+  in
+  let n = Array.length xs in
+  if n = 0
+  then Result.Ok [||]
+  else
+    let| y0 = f xs.(0) in
+    let ys = Array.make n y0 in
+    aux xs ys 1 n
+
 let rec list_mapi_result (f : int -> 'a -> ('b,'c) Result.t) (i : int) (lx : 'a list) : ('b list, 'c) Result.t =
   match lx with
   | [] -> Result.Ok []
