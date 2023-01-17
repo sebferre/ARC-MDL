@@ -5253,7 +5253,7 @@ let learn_model
              (match res2 with
               | Result.Ok ((gdi2,go2)::_) ->
                  let gi2 = grid_of_data_as_template gdi2.data in
-                 Grid.pp_grids [gi1; go1; gi2; go2]
+                 Grid.pp_grids [gi1; go1; Grid.dummy; gi2; go2]
               | Result.Ok [] -> assert false
               | Result.Error exn ->
                  Grid.pp_grids [gi1; go1];
