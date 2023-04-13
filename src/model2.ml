@@ -2285,7 +2285,9 @@ let unfold_size sym_matrix = function
 let unfold_grid sym_matrix g =
   unfold_any Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym sym_matrix g
 let unfold_grid, reset_unfold_grid =
-  Common.memoize2 ~size:101 unfold_grid                     
+  Memo.memoize2
+    ~equal:(fun (sym,g) (sym',g') -> sym = sym' && g == g')
+    ~size:101 unfold_grid
 
 let rec unfold_symmetry (sym_matrix : symmetry list list) : expr -> data -> data result =
   fun e d ->
@@ -2317,7 +2319,10 @@ let close_grid sym_seq bgcolor g =
   let| g' = close_any (Grid.Transf.layers bgcolor) grid_sym sym_seq g in
   Result.Ok g'
 let close_grid, reset_close_grid =
-  Common.memoize3 ~size:101 close_grid
+  Memo.memoize3
+    ~equal:(fun (sym,bgcolor,g) (sym',bgcolor',g') ->
+      sym = sym' && bgcolor = bgcolor' && g == g')
+    ~size:101 close_grid
 
 let rec close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
   fun e d ->

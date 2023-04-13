@@ -1,5 +1,7 @@
 (* segmenting grids *)
 
+open Arc_common
+
 type part = { mini : int; maxi : int;
 	      minj : int; maxj : int;
 	      color : Grid.color;
@@ -258,7 +260,9 @@ let segment_by_color (g : Grid.t) : part list =
       else part :: split_part part @ res)
     [])
 let segment_by_color, reset_segment_by_color =
-  Common.memoize ~size:203 segment_by_color
+  Memo.memoize
+    ~equal:(==)
+    ~size:203 segment_by_color
   
 
 (* locating shapes *)
@@ -352,7 +356,10 @@ let points (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
            shape = Grid.make 1 1 c;
            pattern = `Point c }))
 let points, reset_points =
-  Common.memoize3 ~size:103 points
+  Memo.memoize3
+    ~equal:(fun (g,bmp,parts) (g',bmp',parts') ->
+      g == g' && bmp = bmp' && parts = parts')
+    ~size:103 points
 
 
 let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
@@ -533,7 +540,10 @@ let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
            shape;
            pattern = `Rectangle rect }))
 let rectangles, reset_rectangles =
-  Common.memoize3 ~size:103 rectangles
+  Memo.memoize3
+    ~equal:(fun (g,bmp,parts) (g',bmp',parts') ->
+      g == g' && bmp = bmp' && parts = parts')
+    ~size:103 rectangles
 
 
 let reset_memoized_functions () =

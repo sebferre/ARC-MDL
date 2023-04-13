@@ -1,4 +1,6 @@
 
+let memoize_size = 101
+
 open Arc_common
 open Bigarray
 
@@ -383,7 +385,9 @@ module Transf =
             g in
         Result.Ok res)
     let swap_colors, reset_swap_colors =
-      Common.memoize3 ~size:101 swap_colors
+      Memo.memoize3
+        ~equal:(fun (g,c1,c2) (g',c1',c2') -> g == g' && c1 = c1' && c2 = c2')
+        ~size:memoize_size swap_colors
     
     (* isometric transformations *)
 
@@ -392,49 +396,63 @@ module Transf =
       init h w
         (fun i j -> get_pixel ~source:"flipHeight" g (h - 1 - i) j)
     let flipHeight, reset_flipHeight =
-      Common.memoize ~size:101 flipHeight
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size flipHeight
                      
     let flipWidth g =
       let h, w = dims g in
       init h w
         (fun i j -> get_pixel ~source:"flipWidth" g i (w - 1 - j))
     let flipWidth, reset_flipWidth =
-      Common.memoize ~size:101 flipWidth
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size flipWidth
 
     let flipDiag1 g =
       let h, w = dims g in
       init w h
         (fun i j -> get_pixel ~source:"flipDiag1" g j i)
     let flipDiag1, reset_flipDiag1 =
-      Common.memoize ~size:101 flipDiag1
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size flipDiag1
 
     let flipDiag2 g =
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"flipDiag2" g (w' - 1 - j) (h' - 1 - i))
     let flipDiag2, reset_flipDiag2 =
-      Common.memoize ~size:101 flipDiag2
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size flipDiag2
 
     let rotate90 g = (* clockwise *)
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"rotate90" g (w' - 1 - j) i)
     let rotate90, reset_rotate90 =
-      Common.memoize ~size:101 rotate90
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size rotate90
       
     let rotate180 g = (* clockwise *)
       let h, w = dims g in
       init h w
         (fun i j -> get_pixel ~source:"rotate280" g (h - 1 - i) (w - 1 - j))
     let rotate180, reset_rotate180 =
-      Common.memoize ~size:101 rotate180
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size rotate180
       
     let rotate270 g = (* clockwise *)
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"rotate270" g j (h' - 1 - i))
     let rotate270, reset_rotate270 =
-      Common.memoize ~size:101 rotate270
+      Memo.memoize
+        ~equal:(fun g g' -> g == g')
+        ~size:memoize_size rotate270
       
     (* scaling *)
       
@@ -455,7 +473,9 @@ module Transf =
           g;
         Result.Ok res)
     let scale_up, reset_scale_up =
-      Common.memoize3 ~size:101 scale_up
+      Memo.memoize3
+        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
+        ~size:memoize_size scale_up
 
     let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
       let h, w = dims g in
@@ -475,7 +495,9 @@ module Transf =
         else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
       else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
     let scale_down, reset_scale_down =
-      Common.memoize3 ~size:101 scale_down
+      Memo.memoize3
+        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
+        ~size:memoize_size scale_down
 
     let scale_to (new_h : int) (new_w : int) (g : t) : t result =
       if new_h > 0 && new_w > 0
@@ -493,7 +515,9 @@ module Transf =
       else
         Result.Error (Undefined_result "Grid.Transf.scale_to: negative scaling vector")
     let scale_to, reset_scale_to =
-      Common.memoize3 ~size:101 scale_to
+      Memo.memoize3
+        ~equal:(fun (h,w,g) (h',w',g') -> h = h' && w = w' && g == g')
+        ~size:memoize_size scale_to
       
     (* resize and factor *)
 
@@ -514,7 +538,9 @@ module Transf =
           g;
         Result.Ok res)
     let tile, reset_tile =
-      Common.memoize3 ~size:101 tile
+      Memo.memoize3
+        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
+        ~size:memoize_size tile
 
 (* deprecated
     let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
@@ -543,7 +569,7 @@ module Transf =
       let w' = match !w_factors with [] -> w | w'::_ -> w' in
       (h', w')
     let factor, reset_factor =
-      Common.memoize ~size:101 factor
+      Common.memoize ~size:memoize_size factor
 
     let resize_alike (new_h : int) (new_w : int) (g : t) : t result = (* change size while preserving the repeating pattern *)
       assert (new_h > 0 && new_w > 0);
@@ -567,7 +593,7 @@ module Transf =
         done;
         Result.Ok res)
     let resize_alike, reset_resize_alike =
-      Common.memoize3 ~size:101 resize_alike
+      Common.memoize3 ~size:memoize_size resize_alike
  *)
       
     type axis = I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
@@ -810,7 +836,9 @@ module Transf =
           res in
       List.map snd res
     let periodicities, reset_periodicities =
-      Common.memoize2 ~size:101 periodicities
+      Memo.memoize2
+        ~equal:(fun (c,g) (c',g') -> c = c && g == g')
+        ~size:memoize_size periodicities
 
 (*    let _ = (* for testing function periodicities on concrete grids *)
       let k_ar = [|1;2;3;4;5|] in
@@ -843,7 +871,9 @@ module Transf =
       | None -> Result.Error (Undefined_result "Grid.Transf.periodic_factor: no adequate periodicity")
       | Some period -> Result.Ok (grid_of_periodicity bgcolor period)
     let periodic_factor, reset_periodic_factor =
-      Common.memoize3 ~size:101 periodic_factor
+      Memo.memoize3
+        ~equal:(fun (mode,bgcolor,g) (mode',bgcolor',g') -> mode = mode' && bgcolor = bgcolor' && g == g')
+        ~size:memoize_size periodic_factor
            
     let fill_and_resize_with_periodicity (bgcolor : color) (new_h, new_w : int * int) (g : t) (period : periodicity) : t =
       assert (new_h > 0 && new_w > 0);
@@ -869,7 +899,10 @@ module Transf =
          let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
          Result.Ok g'
     let fill_and_resize_alike, reset_fill_and_resize_alike =
-      Common.memoize4 ~size:101 fill_and_resize_alike
+      Memo.memoize4
+        ~equal:(fun (mode,bgcolor,new_size,g) (mode',bgcolor',new_size',g') ->
+          mode = mode' && bgcolor = bgcolor' && new_size = new_size' && g == g')
+        ~size:memoize_size fill_and_resize_alike
       
     (* cropping *)
 
@@ -887,7 +920,11 @@ module Transf =
         Result.Ok res
       else Result.Error (Undefined_result "Grid.Transf.crop")
     let crop, reset_crop =
-      let f, reset = Common.memoize ~size:101 (fun (g,i,j,h,w) -> crop g i j h w) in
+      let f, reset =
+        Memo.memoize
+          ~equal:(fun (g,i,j,h,w) (g',i',j',h',w') ->
+            g == g' && i=i' && j=j' && h=h' && w=w')
+          ~size:memoize_size (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
     let strip (bgcolor : color) (g : t) (out_bgcolor : color) : t result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
@@ -909,7 +946,10 @@ module Transf =
         let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
         Result.Ok g'
     let strip, reset_strip =
-      Common.memoize ~size:101 strip
+      Memo.memoize3
+        ~equal:(fun (bgcolor,g,out_bgcolor) (bgcolor',g',out_bgcolor') ->
+          bgcolor = bgcolor' && g == g' && out_bgcolor = out_bgcolor')
+        ~size:memoize_size strip
       
     (* concatenating *)
       
@@ -928,7 +968,9 @@ module Transf =
           g2;
         Result.Ok res)
     let concatHeight, reset_concatHeight =
-      Common.memoize2 ~size:101 concatHeight
+      Memo.memoize2
+        ~equal:(fun (g1,g2) (g1',g2') -> g1 == g1' && g2 == g2')
+        ~size:memoize_size concatHeight
       
     let concatWidth g1 g2 : t result =
       let h1, w1 = dims g1 in
@@ -945,7 +987,9 @@ module Transf =
           g2;
         Result.Ok res)
     let concatWidth, reset_concatWidth =
-      Common.memoize2 ~size:101 concatWidth
+      Memo.memoize2
+        ~equal:(fun (g1,g2) (g1',g2') -> g1 == g1' && g2 == g2')
+        ~size:memoize_size concatWidth
 
     let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
       let| g12 = concatWidth g1 g2 in
@@ -973,7 +1017,9 @@ module Transf =
           g1;
         Result.Ok res)
     let compose, reset_compose =
-      Common.memoize3 ~size:101 compose
+      Memo.memoize3
+        ~equal:(fun (c1,g1,g2) (c1',g1',g2') -> c1 = c1' && g1 == g1' && g2 == g2')
+        ~size:memoize_size compose
 
     (* symmetrization *)
 
@@ -995,7 +1041,10 @@ module Transf =
            Result.Ok res)
          else Result.Error Invalid_dim
     let layers, reset_layers =
-      Common.memoize2 ~size:101 layers
+      Memo.memoize2
+        ~equal:(fun (c,gs) (c',gs') ->
+          c = c' && List.length gs = List.length gs' && List.for_all2 (==) gs gs')
+        ~size:memoize_size layers
       
     let sym_flipHeight_inplace bgcolor g = layers bgcolor [g; flipHeight g]
     let sym_flipWidth_inplace bgcolor g = layers bgcolor [g; flipWidth g]
@@ -1162,7 +1211,9 @@ module Mask =
         g;
       res
     let from_grid_background, reset_from_grid_background =
-      Common.memoize2 ~size:101 from_grid_background
+      Memo.memoize2
+        ~equal:(fun (c,g) (c',g') -> c = c' && g = g')
+        ~size:memoize_size from_grid_background
 
     let from_grid_color (c_mask : color) (g : t) : t =
       (* returns a non-bgcolor mask version of the grid *)
@@ -1175,7 +1226,9 @@ module Mask =
         g;
       res
     let from_grid_color, reset_from_grid_color =
-      Common.memoize2 ~size:101 from_grid_color
+      Memo.memoize2
+        ~equal:(fun (c,g) (c',g') -> c = c' && g = g')
+        ~size:memoize_size from_grid_color
 
     let to_grid (m : t) (bgcolor : color) (c : color) : t =
       (* return a colored grid version of a mask *)
@@ -1187,7 +1240,9 @@ module Mask =
         m;
       res
     let to_grid, reset_to_grid =
-      Common.memoize3 ~size:101 to_grid
+      Memo.memoize3
+        ~equal:(fun (m,bc,c) (m',bc',c') -> m = m' && bc = bc' && c = c')
+        ~size:memoize_size to_grid
 
     let to_string m =
       let h, w = dims m in
