@@ -1163,7 +1163,7 @@ and find_data_field (f : field) (d1 : data) : data option =
   | `Layer lp, `Grid (_, `Background (size,color,layers,_delta)) -> find_ilist lp layers
   | `Grid, `Grid (_, `Tiling (grid,size)) -> Some grid
   | `Size, `Grid (_, `Tiling (grid,size)) -> Some size
-  | `Size, `Grid (g, _) -> Some (`Vec (`Int g.Grid.height, `Int g.Grid.width))
+  | `Size, `Grid (g, _) -> Some (`Vec (`Int g#height, `Int g#width))
   | _, `Seq items ->
      option_list_bind items (find_data_field f)
      |> Option.map (fun lx -> `Seq lx)
@@ -2285,9 +2285,7 @@ let unfold_size sym_matrix = function
 let unfold_grid sym_matrix g =
   unfold_any Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym sym_matrix g
 let unfold_grid, reset_unfold_grid =
-  Memo.memoize2
-    ~equal:(fun (sym,g) (sym',g') -> sym = sym' && g == g')
-    ~size:101 unfold_grid
+  Memo.memoize2 ~size:101 unfold_grid
 
 let rec unfold_symmetry (sym_matrix : symmetry list list) : expr -> data -> data result =
   fun e d ->
@@ -2319,10 +2317,7 @@ let close_grid sym_seq bgcolor g =
   let| g' = close_any (Grid.Transf.layers bgcolor) grid_sym sym_seq g in
   Result.Ok g'
 let close_grid, reset_close_grid =
-  Memo.memoize3
-    ~equal:(fun (sym,bgcolor,g) (sym',bgcolor',g') ->
-      sym = sym' && bgcolor = bgcolor' && g == g')
-    ~size:101 close_grid
+  Memo.memoize3 ~size:101 close_grid
 
 let rec close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
   fun e d ->
@@ -2348,7 +2343,7 @@ let rec get_pos : data -> (int * int) option =
 let rec get_size : data -> (int * int) option =
   function
   | `PosShape (_, shape) -> get_size shape
-  | `Grid (g, _) -> Some (g.Grid.height, g.width)
+  | `Grid (g, _) -> Some (g#height, g#width)
   | _ -> None
 
 let eval_func ~lookup (e : expr) (func : func) (vs : data array) : data result =
@@ -3195,7 +3190,7 @@ class parse_state_layers (grid0 : Grid.t) (bc0 : Grid.color) =
 object (self : 'self)
   val grid : Grid.t = grid0 (* the grid to parse *)
   val bc : Grid.color = bc0 (* the background color *)
-  val bmp : Bitmap.t = Bitmap.full grid0.height grid0.width (* remaining part of the grid to be explained *)
+  val bmp : Bitmap.t = Bitmap.full grid0#height grid0#width (* remaining part of the grid to be explained *)
   val parts : Segment.part list = (* remaining parts that can be used *)
     List.filter
       (fun (p : Segment.part) -> p.color <> bc0)
@@ -3682,7 +3677,7 @@ and parseur_grid t p : (Grid.t * role_grid * Segment.pattern, data, parse_state)
         Parseur (fun (g,rg,_) state -> Myseq.prof "Model2.parse_grid_background/seq" (
           assert (rg = `Frame);
           let background_colors = get_background_colors g in
-          let* dsize, state, _, _ = parse_size (g.height,g.width) state in
+          let* dsize, state, _, _ = parse_size (g#height,g#width) state in
           let* bc, dcolor, dlayers, delta, state, state_layers =
             Myseq.interleave
               (List.map

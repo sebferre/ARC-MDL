@@ -119,7 +119,7 @@ let rec list_take n = function
 
 (* memoization *)
 
-module Memo =
+module Memo = (* appears to be more efficient than Common versions *)
   struct
 let memoize (type k)
       ?(equal : k -> k -> bool = (=))

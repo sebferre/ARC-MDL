@@ -221,10 +221,10 @@ let html_of_suggestion ~input_dico = function
 let html_of_grid (g : Grid.t) =
   let buf = Buffer.create 1000 in
   Buffer.add_string buf "<table class=\"arc-grid\">";
-  for i = 0 to g.height - 1 do
+  for i = 0 to g#height - 1 do
     Buffer.add_string buf "<tr>";
-    for j = 0 to g.width - 1 do
-      Buffer.add_string buf (Printf.sprintf "<td class=\"arc-cell arc-col%d\"></td>" g.matrix.{i,j})
+    for j = 0 to g#width - 1 do
+      Buffer.add_string buf (Printf.sprintf "<td class=\"arc-cell arc-col%d\"></td>" g#matrix.{i,j})
     done;
     Buffer.add_string buf "</tr>"
   done;

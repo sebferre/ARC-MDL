@@ -551,7 +551,7 @@ let checker_segmentation : checker =
 	 |> List.iter
 	      (fun g ->
 	       let parts = Segment.segment_by_color g in
-	       let full_bmp = Bitmap.full g.height g.width in
+	       let full_bmp = Bitmap.full g#height g#width in
 	       let points = Segment.points g full_bmp parts in
 	       let rects = Segment.rectangles g full_bmp parts in
 	       Segment.pp_parts g parts;

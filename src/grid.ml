@@ -46,82 +46,100 @@ let name_of_color : color -> string =
 
 type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 
-type t = { height : int; (* equals Array2.dim1 matrix *)
-	   width : int;  (* equals Array2.dim2 matrix *)
-           color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
-	   matrix : matrix; (* [i,j] -> col *)
-         }
 type pixel = int * int * color (* x, y, col *)
 
 exception Invalid_dim (* height/width are invalid for the operation *)
 exception Invalid_coord of string (* .{i,j} invalid, string describes source *)
                          
 let max_size = 30
-           
-let make height width col =
-  let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+2) 0 in 
-  Array2.fill matrix col;
-  color_count.(col) <- height * width;
-  { height; width; matrix; color_count }
 
-let copy (g : t) =
-  let matrix' = Array2.create Int8_unsigned C_layout g.height g.width in
-  Array2.blit g.matrix matrix';
-  { g with
-    color_count = Array.copy g.color_count;
-    matrix = matrix' }
-
-let init height width (f : int -> int -> color) =
+(* NOTE: use constructor functions below, not [new grid] *)
+class grid height width =
   let matrix = Array2.create Int8_unsigned C_layout height width in
-  let color_count = Array.make (nb_color+2) 0 in 
-  for i = 0 to height-1 do
-    for j = 0 to width-1 do
-      let c = f i j in
-      matrix.{i,j} <- c;
-      color_count.(c) <- color_count.(c) + 1
-    done
-  done;
-  { height; width; matrix; color_count }
-  
+  let color_count = Array.make (nb_color+2) 0 in
+  object
+    val height : int = height (* equals Array2.dim1 matrix *)
+    val width : int = width  (* equals Array2.dim2 matrix *)
+    val color_count : int Array.t = color_count (* col (0..10) -> nb. cells with that color *)
+    val matrix : matrix = matrix (* [i,j] -> col *)
+
+    method fill (col : color) : unit =
+      Array2.fill matrix col;
+      color_count.(col) <- height * width      
+                        
+    method init (f : int -> int -> color) : unit =
+      for i = 0 to height-1 do
+        for j = 0 to width-1 do
+          let c = f i j in
+          matrix.{i,j} <- c;
+          color_count.(c) <- color_count.(c) + 1
+        done
+      done
+                        
+    method copy =
+      let matrix' = Array2.create Int8_unsigned C_layout height width in
+      Array2.blit matrix matrix';
+      {< color_count = Array.copy color_count;
+         matrix = matrix' >}
+
+    method height = height
+    method width = width
+    method color_count = color_count
+    method matrix = matrix
+                        
+  end
+
+type t = grid
+
+(* grid constructors *)
+let make h w c =
+  let g = new grid h w in
+  g#fill c;
+  g
+let init h w f =
+  let g = new grid h w in
+  g#init f;
+  g
+let copy (g : t) : t = g#copy
+               
 let dummy = make 0 0 0
 
 
 let dims (grid : t) : int * int =
-  grid.height, grid.width [@@inline]
+  grid#height, grid#width [@@inline]
 
 let get_pixel ?(source = "unknown") grid i j =
   let h, w = dims grid in
   if i < h && j < w && i >= 0 && j >= 0
-  then grid.matrix.{i,j}
+  then grid#matrix.{i,j}
   else raise (Invalid_coord source) [@@inline]
   
 let set_pixel grid i j c =
   let h, w = dims grid in
   if i < h && j < w && i >= 0 && j >= 0
   then 
-    let c0 = grid.matrix.{i,j} in
+    let c0 = grid#matrix.{i,j} in
     if c <> c0 then (
-      grid.matrix.{i,j} <- c;
+      grid#matrix.{i,j} <- c;
       (* maintaining color count *)
-      grid.color_count.(c0) <- grid.color_count.(c0) - 1;
-      grid.color_count.(c) <- grid.color_count.(c) + 1
+      grid#color_count.(c0) <- grid#color_count.(c0) - 1;
+      grid#color_count.(c) <- grid#color_count.(c) + 1
     )
   else () [@@inline] (* pixels out of bound are ignored *)
 
 let iter_pixels (f : int -> int -> color -> unit) grid =
-  let mat = grid.matrix in
-  for i = 0 to grid.height - 1 do
-    for j = 0 to grid.width - 1 do
+  let mat = grid#matrix in
+  for i = 0 to grid#height - 1 do
+    for j = 0 to grid#width - 1 do
       f i j mat.{i,j}
     done
   done [@@inline]
 
 let fold_pixels (f : 'a -> int -> int -> color -> 'a) (acc : 'a) grid : 'a =
-  let mat = grid.matrix in
+  let mat = grid#matrix in
   let res = ref acc in
-  for i = 0 to grid.height - 1 do
-    for j = 0 to grid.width - 1 do
+  for i = 0 to grid#height - 1 do
+    for j = 0 to grid#width - 1 do
       let c = mat.{i,j} in
       res := f !res i j c
     done
@@ -129,14 +147,14 @@ let fold_pixels (f : 'a -> int -> int -> color -> 'a) (acc : 'a) grid : 'a =
   !res [@@inline]
 
 let fold2_pixels (f : 'a -> int -> int -> color -> color -> 'a) (acc : 'a) g1 g2 : 'a =
-  if g2.height <> g1.height || g2.width <> g1.width
+  if g2#height <> g1#height || g2#width <> g1#width
   then raise Invalid_dim
   else
-    let mat1 = g1.matrix in
-    let mat2 = g2.matrix in
+    let mat1 = g1#matrix in
+    let mat2 = g2#matrix in
     let res = ref acc in
-    for i = 0 to g1.height - 1 do
-      for j = 0 to g1.width - 1 do
+    for i = 0 to g1#height - 1 do
+      for j = 0 to g1#width - 1 do
         let c1 = mat1.{i,j} in
         let c2 = mat2.{i,j} in
         res := f !res i j c1 c2
@@ -146,43 +164,43 @@ let fold2_pixels (f : 'a -> int -> int -> color -> color -> 'a) (acc : 'a) g1 g2
 
 let map_pixels (f : color -> color) g =
   let g' = copy g in
-  for i = 0 to g.height - 1 do
-    for j = 0 to g.width - 1 do
-      let c = g.matrix.{i,j} in
+  for i = 0 to g#height - 1 do
+    for j = 0 to g#width - 1 do
+      let c = g#matrix.{i,j} in
       let c' = f c in
       if c' <> c then (
-        g'.matrix.{i,j} <- c';
+        g'#matrix.{i,j} <- c';
         (* maintaining color count *)
-        g'.color_count.(c) <- g'.color_count.(c) - 1;
-        g'.color_count.(c') <- g'.color_count.(c') + 1
+        g'#color_count.(c) <- g'#color_count.(c) - 1;
+        g'#color_count.(c') <- g'#color_count.(c') + 1
       )
     done
   done;
   g' [@@inline]
 
 let map2_pixels (f : color -> color -> color) g1 g2 =
-  if g2.height <> g1.height || g2.width <> g1.width
+  if g2#height <> g1#height || g2#width <> g1#width
   then raise Invalid_dim
   else
     let g' = copy g1 in
-    for i = 0 to g1.height - 1 do
-      for j = 0 to g1.width - 1 do
-        let c1 = g1.matrix.{i,j} in
-        let c2 = g2.matrix.{i,j} in
+    for i = 0 to g1#height - 1 do
+      for j = 0 to g1#width - 1 do
+        let c1 = g1#matrix.{i,j} in
+        let c2 = g2#matrix.{i,j} in
         let c' = f c1 c2 in
         if c' <> c1 then (
-          g'.matrix.{i,j} <- c';
+          g'#matrix.{i,j} <- c';
           (* maintaining color count *)
-          g'.color_count.(c1) <- g'.color_count.(c1) - 1;
-          g'.color_count.(c') <- g'.color_count.(c') + 1
+          g'#color_count.(c1) <- g'#color_count.(c1) - 1;
+          g'#color_count.(c') <- g'#color_count.(c') + 1
         )
       done
     done;
     g' [@@inline]
 
 let for_all_pixels f grid =
-  let mat = grid.matrix in
-  let h, w = grid.height, grid.width in
+  let mat = grid#matrix in
+  let h, w = grid#height, grid#width in
   let res = ref true in
   let i = ref 0 in
   let j = ref 0 in
@@ -197,12 +215,12 @@ let for_all_pixels f grid =
   !res [@@inline]
 
 let for_all2_pixels f grid1 grid2 =
-  if grid2.height <> grid1.height || grid2.width <> grid1.width
+  if grid2#height <> grid1#height || grid2#width <> grid1#width
   then raise Invalid_dim
   else
-    let h, w = grid1.height, grid1.width in
-    let mat1 = grid1.matrix in
-    let mat2 = grid2.matrix in
+    let h, w = grid1#height, grid1#width in
+    let mat1 = grid1#matrix in
+    let mat2 = grid2#matrix in
     let res = ref true in
     let i = ref 0 in
     let j = ref 0 in
@@ -220,7 +238,7 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
   let res = ref undefined in
   let nb_max = ref 0 in
   for c = black to last_color do
-    let nb = g.color_count.(c) in
+    let nb = g#color_count.(c) in
     if c <> bgcolor && nb > !nb_max then (
       res := c;
       nb_max := nb)
@@ -232,7 +250,7 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
 let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
   let res = ref 0 in
   for c = black to last_color do
-    if c <> bgcolor && grid.color_count.(c) > 0
+    if c <> bgcolor && grid#color_count.(c) > 0
     then incr res
   done;
   !res
@@ -241,19 +259,19 @@ let color_area (bgcolor : color) (g : t) : int = (* number of colored cells, exc
   let res = ref 0 in
   for c = black to last_color do
     if c <> bgcolor
-    then res := !res + g.color_count.(c)
+    then res := !res + g#color_count.(c)
   done;
   !res
   
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
-    (fun c -> grid.color_count.(c))
+    (fun c -> grid#color_count.(c))
     colors
 
 let color_freq_desc (grid : t) : (int * color) list =
   let res = ref [] in
   for c = black to last_color do
-    let n = grid.color_count.(c) in
+    let n = grid#color_count.(c) in
     if n > 0 then res := (n,c) :: !res
   done;
   List.sort Stdlib.compare !res
@@ -273,16 +291,16 @@ let rec xp_grids (print : Xprint.t) grids =
   let grids_per_line = 5 in
   let nb_lines = (List.length grids - 1) / 5 + 1 in
   let max_height =
-    List.fold_left (fun res g -> max res g.height) 0 grids in
+    List.fold_left (fun res g -> max res g#height) 0 grids in
   print#string "\n";
   for k = 0 to nb_lines - 1 do
     for i = 0 to max_height - 1 do
       List.iteri
 	(fun l g ->
 	 if l / grids_per_line = k then (
-	   for j = 0 to g.width - 1 do
-	     if i < g.height
-	     then xp_color print g.matrix.{i,j}
+	   for j = 0 to g#width - 1 do
+	     if i < g#height
+	     then xp_color print g#matrix.{i,j}
 	     else xp_blank print ()
 	   done;
 	   print#string "   "
@@ -294,9 +312,9 @@ let rec xp_grids (print : Xprint.t) grids =
   done
 and xp_grid print grid =
   print#string "\n";
-  for i = 0 to grid.height - 1 do
-    for j = 0 to grid.width - 1 do
-      xp_color print grid.matrix.{i,j}
+  for i = 0 to grid#height - 1 do
+    for j = 0 to grid#width - 1 do
+      xp_color print grid#matrix.{i,j}
     done;
     print#string "\n"
   done
@@ -327,7 +345,7 @@ let pp_color c = Xprint.to_stdout xp_color c
 
 (* comparing grids *)
 
-let same (g1 : t) (g2 : t) : bool = (g1.matrix = g2.matrix)
+let same (g1 : t) (g2 : t) : bool = (g1#matrix = g2#matrix)
 
 let compatible (g1 : t) (g2 : t) : bool = (* QUICK *)
   dims g1 = dims g2
@@ -342,15 +360,15 @@ type diff =
   | Grid_diff_pixels of { height: int; width: int; pixels: pixel list }
 							  
 let diff (source : t) (target : t) : diff option = (* QUICK *)
-  if source.height <> target.height || source.width <> target.width
+  if source#height <> target#height || source#width <> target#width
   then Some (Grid_size_mismatch
-	       { src_height = source.height;
-		 src_width = source.width;
-		 tgt_height = target.height;
-		 tgt_width = target.width })
+	       { src_height = source#height;
+		 src_width = source#width;
+		 tgt_height = target#height;
+		 tgt_width = target#width })
   else
-    let height = source.height in
-    let width = source.width in
+    let height = source#height in
+    let width = source#width in
     let res = ref [] in
     for i = 0 to height - 1 do
       for j = 0 to width - 1 do
@@ -373,7 +391,7 @@ module Transf =
     (* coloring *)
 
     let swap_colors g c1 c2 : t result =
-      if g.color_count.(c1) = 0
+      if g#color_count.(c1) = 0
       then Result.Error (Undefined_result "swap_colors: none of the color present")
       else (
         let res =
@@ -385,9 +403,7 @@ module Transf =
             g in
         Result.Ok res)
     let swap_colors, reset_swap_colors =
-      Memo.memoize3
-        ~equal:(fun (g,c1,c2) (g',c1',c2') -> g == g' && c1 = c1' && c2 = c2')
-        ~size:memoize_size swap_colors
+      Memo.memoize3 ~size:memoize_size swap_colors
     
     (* isometric transformations *)
 
@@ -396,63 +412,49 @@ module Transf =
       init h w
         (fun i j -> get_pixel ~source:"flipHeight" g (h - 1 - i) j)
     let flipHeight, reset_flipHeight =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size flipHeight
+      Memo.memoize ~size:memoize_size flipHeight
                      
     let flipWidth g =
       let h, w = dims g in
       init h w
         (fun i j -> get_pixel ~source:"flipWidth" g i (w - 1 - j))
     let flipWidth, reset_flipWidth =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size flipWidth
+      Memo.memoize ~size:memoize_size flipWidth
 
     let flipDiag1 g =
       let h, w = dims g in
       init w h
         (fun i j -> get_pixel ~source:"flipDiag1" g j i)
     let flipDiag1, reset_flipDiag1 =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size flipDiag1
+      Memo.memoize ~size:memoize_size flipDiag1
 
     let flipDiag2 g =
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"flipDiag2" g (w' - 1 - j) (h' - 1 - i))
     let flipDiag2, reset_flipDiag2 =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size flipDiag2
+      Memo.memoize ~size:memoize_size flipDiag2
 
     let rotate90 g = (* clockwise *)
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"rotate90" g (w' - 1 - j) i)
     let rotate90, reset_rotate90 =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size rotate90
+      Memo.memoize ~size:memoize_size rotate90
       
     let rotate180 g = (* clockwise *)
       let h, w = dims g in
       init h w
         (fun i j -> get_pixel ~source:"rotate280" g (h - 1 - i) (w - 1 - j))
     let rotate180, reset_rotate180 =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size rotate180
+      Memo.memoize ~size:memoize_size rotate180
       
     let rotate270 g = (* clockwise *)
       let w', h' = dims g in
       init h' w'
         (fun i j -> get_pixel ~source:"rotate270" g j (h' - 1 - i))
     let rotate270, reset_rotate270 =
-      Memo.memoize
-        ~equal:(fun g g' -> g == g')
-        ~size:memoize_size rotate270
+      Memo.memoize ~size:memoize_size rotate270
       
     (* scaling *)
       
@@ -473,9 +475,7 @@ module Transf =
           g;
         Result.Ok res)
     let scale_up, reset_scale_up =
-      Memo.memoize3
-        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
-        ~size:memoize_size scale_up
+      Memo.memoize3 ~size:memoize_size scale_up
 
     let scale_down (k : int) (l : int) (g : t) : t result = (* scaling down *)
       let h, w = dims g in
@@ -495,9 +495,7 @@ module Transf =
         else Result.Error (Undefined_result "Grid.Transf.scale_down: grid not regular"))
       else Result.Error (Undefined_result "Grid.Transf.scale_down: dims and factors not congruent")
     let scale_down, reset_scale_down =
-      Memo.memoize3
-        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
-        ~size:memoize_size scale_down
+      Memo.memoize3 ~size:memoize_size scale_down
 
     let scale_to (new_h : int) (new_w : int) (g : t) : t result =
       if new_h > 0 && new_w > 0
@@ -515,9 +513,7 @@ module Transf =
       else
         Result.Error (Undefined_result "Grid.Transf.scale_to: negative scaling vector")
     let scale_to, reset_scale_to =
-      Memo.memoize3
-        ~equal:(fun (h,w,g) (h',w',g') -> h = h' && w = w' && g == g')
-        ~size:memoize_size scale_to
+      Memo.memoize3 ~size:memoize_size scale_to
       
     (* resize and factor *)
 
@@ -538,9 +534,7 @@ module Transf =
           g;
         Result.Ok res)
     let tile, reset_tile =
-      Memo.memoize3
-        ~equal:(fun (k,l,g) (k',l',g') -> k = k' && l = l' && g == g')
-        ~size:memoize_size tile
+      Memo.memoize3 ~size:memoize_size tile
 
 (* deprecated
     let factor (g : t) : int * int = (* finding the smallest h' x w' repeating factor of m *)
@@ -569,7 +563,7 @@ module Transf =
       let w' = match !w_factors with [] -> w | w'::_ -> w' in
       (h', w')
     let factor, reset_factor =
-      Common.memoize ~size:memoize_size factor
+      Memo.memoize ~size:memoize_size factor
 
     let resize_alike (new_h : int) (new_w : int) (g : t) : t result = (* change size while preserving the repeating pattern *)
       assert (new_h > 0 && new_w > 0);
@@ -593,7 +587,7 @@ module Transf =
         done;
         Result.Ok res)
     let resize_alike, reset_resize_alike =
-      Common.memoize3 ~size:memoize_size resize_alike
+      Memo.memoize3 ~size:memoize_size resize_alike
  *)
       
     type axis = I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
@@ -836,9 +830,7 @@ module Transf =
           res in
       List.map snd res
     let periodicities, reset_periodicities =
-      Memo.memoize2
-        ~equal:(fun (c,g) (c',g') -> c = c && g == g')
-        ~size:memoize_size periodicities
+      Memo.memoize2 ~size:memoize_size periodicities
 
 (*    let _ = (* for testing function periodicities on concrete grids *)
       let k_ar = [|1;2;3;4;5|] in
@@ -871,9 +863,7 @@ module Transf =
       | None -> Result.Error (Undefined_result "Grid.Transf.periodic_factor: no adequate periodicity")
       | Some period -> Result.Ok (grid_of_periodicity bgcolor period)
     let periodic_factor, reset_periodic_factor =
-      Memo.memoize3
-        ~equal:(fun (mode,bgcolor,g) (mode',bgcolor',g') -> mode = mode' && bgcolor = bgcolor' && g == g')
-        ~size:memoize_size periodic_factor
+      Memo.memoize3 ~size:memoize_size periodic_factor
            
     let fill_and_resize_with_periodicity (bgcolor : color) (new_h, new_w : int * int) (g : t) (period : periodicity) : t =
       assert (new_h > 0 && new_w > 0);
@@ -899,10 +889,7 @@ module Transf =
          let g' = fill_and_resize_with_periodicity bgcolor new_size g period in
          Result.Ok g'
     let fill_and_resize_alike, reset_fill_and_resize_alike =
-      Memo.memoize4
-        ~equal:(fun (mode,bgcolor,new_size,g) (mode',bgcolor',new_size',g') ->
-          mode = mode' && bgcolor = bgcolor' && new_size = new_size' && g == g')
-        ~size:memoize_size fill_and_resize_alike
+      Memo.memoize4 ~size:memoize_size fill_and_resize_alike
       
     (* cropping *)
 
@@ -921,10 +908,7 @@ module Transf =
       else Result.Error (Undefined_result "Grid.Transf.crop")
     let crop, reset_crop =
       let f, reset =
-        Memo.memoize
-          ~equal:(fun (g,i,j,h,w) (g',i',j',h',w') ->
-            g == g' && i=i' && j=j' && h=h' && w=w')
-          ~size:memoize_size (fun (g,i,j,h,w) -> crop g i j h w) in
+        Memo.memoize ~size:memoize_size (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
     let strip (bgcolor : color) (g : t) (out_bgcolor : color) : t result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
@@ -946,10 +930,7 @@ module Transf =
         let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
         Result.Ok g'
     let strip, reset_strip =
-      Memo.memoize3
-        ~equal:(fun (bgcolor,g,out_bgcolor) (bgcolor',g',out_bgcolor') ->
-          bgcolor = bgcolor' && g == g' && out_bgcolor = out_bgcolor')
-        ~size:memoize_size strip
+      Memo.memoize3 ~size:memoize_size strip
       
     (* concatenating *)
       
@@ -968,9 +949,7 @@ module Transf =
           g2;
         Result.Ok res)
     let concatHeight, reset_concatHeight =
-      Memo.memoize2
-        ~equal:(fun (g1,g2) (g1',g2') -> g1 == g1' && g2 == g2')
-        ~size:memoize_size concatHeight
+      Memo.memoize2 ~size:memoize_size concatHeight
       
     let concatWidth g1 g2 : t result =
       let h1, w1 = dims g1 in
@@ -987,9 +966,7 @@ module Transf =
           g2;
         Result.Ok res)
     let concatWidth, reset_concatWidth =
-      Memo.memoize2
-        ~equal:(fun (g1,g2) (g1',g2') -> g1 == g1' && g2 == g2')
-        ~size:memoize_size concatWidth
+      Memo.memoize2 ~size:memoize_size concatWidth
 
     let concatHeightWidth g1 g2 g3 g4 : t result (* top left, top right, bottom left, bottom right *) =
       let| g12 = concatWidth g1 g2 in
@@ -1017,9 +994,7 @@ module Transf =
           g1;
         Result.Ok res)
     let compose, reset_compose =
-      Memo.memoize3
-        ~equal:(fun (c1,g1,g2) (c1',g1',g2') -> c1 = c1' && g1 == g1' && g2 == g2')
-        ~size:memoize_size compose
+      Memo.memoize3 ~size:memoize_size compose
 
     (* symmetrization *)
 
@@ -1041,33 +1016,30 @@ module Transf =
            Result.Ok res)
          else Result.Error Invalid_dim
     let layers, reset_layers =
-      Memo.memoize2
-        ~equal:(fun (c,gs) (c',gs') ->
-          c = c' && List.length gs = List.length gs' && List.for_all2 (==) gs gs')
-        ~size:memoize_size layers
+      Memo.memoize2 ~size:memoize_size layers
       
     let sym_flipHeight_inplace bgcolor g = layers bgcolor [g; flipHeight g]
     let sym_flipWidth_inplace bgcolor g = layers bgcolor [g; flipWidth g]
     let sym_rotate180_inplace bgcolor g = layers bgcolor [g; rotate180 g]
     let sym_flipHeightWidth_inplace bgcolor g = layers bgcolor [g; flipHeight g; flipWidth g; rotate180 g]
     let sym_flipDiag1_inplace bgcolor g =
-      if g.height <> g.width
+      if g#height <> g#width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag1 g]
     let sym_flipDiag2_inplace bgcolor g =
-      if g.height <> g.width
+      if g#height <> g#width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag2 g]
     let sym_flipDiag1Diag2_inplace bgcolor g =
-      if g.height <> g.width
+      if g#height <> g#width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag1 g; flipDiag2 g; rotate180 g]
     let sym_rotate90_inplace bgcolor g =
-      if g.height <> g.width
+      if g#height <> g#width
       then Result.Error Invalid_dim
       else layers bgcolor [g; rotate90 g; rotate180 g; rotate270 g]
     let sym_full_inplace bgcolor g =
-      if g.height <> g.width
+      if g#height <> g#width
       then Result.Error Invalid_dim
       else (* includes all symmetries *)
         let| g' = layers bgcolor [g; rotate90 g] in
@@ -1093,7 +1065,7 @@ module Transf =
       [ concatHeight g1 g1'; concatHeight g1' g1;
         concatHeight g2 g2'; concatHeight g2' g2 ]
     let sym_rotate90_unfold g =
-      if g.height <> g.width then raise Invalid_dim;
+      if g#height <> g#width then raise Invalid_dim;
       let g90 = rotate90 g in
       let g180 = rotate180 g in
       let g270 = rotate270 g in
@@ -1140,7 +1112,7 @@ module Mask =
     let one = black
     let bool (b : bool) : color = if b then one else zero
     
-    let area m = m.color_count.(one) [@@inline]
+    let area m = m#color_count.(one) [@@inline]
 
     let empty height width = make height width zero
     let full height width = make height width one
@@ -1164,8 +1136,8 @@ module Mask =
         m1
 
     let mem i j m =
-      i >= 0 && i < m.height
-      && j >= 0 && j < m.width
+      i >= 0 && i < m#height
+      && j >= 0 && j < m#width
       && get_pixel m i j = one [@@inline]
     let set m i j =
       set_pixel m i j one
@@ -1211,9 +1183,7 @@ module Mask =
         g;
       res
     let from_grid_background, reset_from_grid_background =
-      Memo.memoize2
-        ~equal:(fun (c,g) (c',g') -> c = c' && g = g')
-        ~size:memoize_size from_grid_background
+      Memo.memoize2 ~size:memoize_size from_grid_background
 
     let from_grid_color (c_mask : color) (g : t) : t =
       (* returns a non-bgcolor mask version of the grid *)
@@ -1226,9 +1196,7 @@ module Mask =
         g;
       res
     let from_grid_color, reset_from_grid_color =
-      Memo.memoize2
-        ~equal:(fun (c,g) (c',g') -> c = c' && g = g')
-        ~size:memoize_size from_grid_color
+      Memo.memoize2 ~size:memoize_size from_grid_color
 
     let to_grid (m : t) (bgcolor : color) (c : color) : t =
       (* return a colored grid version of a mask *)
@@ -1240,9 +1208,7 @@ module Mask =
         m;
       res
     let to_grid, reset_to_grid =
-      Memo.memoize3
-        ~equal:(fun (m,bc,c) (m',bc',c') -> m = m' && bc = bc' && c = c')
-        ~size:memoize_size to_grid
+      Memo.memoize3 ~size:memoize_size to_grid
 
     let to_string m =
       let h, w = dims m in

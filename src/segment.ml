@@ -9,7 +9,7 @@ type part = { mini : int; maxi : int;
 	      pixels : Bitmap.t }
 
 let part_as_grid (g : Grid.t) (p : part) : Grid.t = Common.prof "Grid.part_as_grid" (fun () ->
-  let gp = Grid.make g.height g.width Grid.transparent in
+  let gp = Grid.make g#height g#width Grid.transparent in
   let col = p.color in
   Bitmap.iter
     (fun i j -> Grid.set_pixel gp i j col)
@@ -214,7 +214,7 @@ let split_part (part : part) : part list =
   
 let segment_by_color (g : Grid.t) : part list =
   Common.prof "Grid.segment_by_color" (fun () ->
-  let h, w = g.height, g.width in
+  let h, w = Grid.dims g in
   let hw = h * w in    
   let fm : (int * int, part) Find_merge.hashtbl =
     new Find_merge.hashtbl
@@ -225,7 +225,7 @@ let segment_by_color (g : Grid.t) : part list =
                   nb_pixels = 0 }
       ~merge_val:merge_parts_2
   in
-  let mat = g.matrix in
+  let mat = g#matrix in
   (* setting initial val of each pixel *)
   for i = 0 to h-1 do
     for j = 0 to w-1 do
@@ -260,9 +260,7 @@ let segment_by_color (g : Grid.t) : part list =
       else part :: split_part part @ res)
     [])
 let segment_by_color, reset_segment_by_color =
-  Memo.memoize
-    ~equal:(==)
-    ~size:203 segment_by_color
+  Memo.memoize ~size:203 segment_by_color
   
 
 (* locating shapes *)
@@ -287,7 +285,7 @@ type t = { bmp_cover : Bitmap.t;
 let segment_as_grid (g : Grid.t) (seg : t) : Grid.t =
   (* to show a segment in the context of its encompassing grid *)
   let offset_i, offset_j = seg.pos in
-  let res = Grid.make g.height g.width Grid.transparent in
+  let res = Grid.make g#height g#width Grid.transparent in
   Grid.iter_pixels
     (fun delta_i delta_j c ->
       if c = Grid.transparent then ()
@@ -303,10 +301,10 @@ let pp_segments (label : string) (g : Grid.t) (ss : t list) =
   
 
 let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing frequency order *)
-  let area = g.height * g.width in
+  let area = g#height * g#width in
   let l = ref [] in
   for c = Grid.black to Grid.last_color do
-    let n = g.color_count.(c) in
+    let n = g#color_count.(c) in
     if n > 0 then l := (c,n)::!l (* keeping only occurring colors *)
   done;
   let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
@@ -356,10 +354,7 @@ let points (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
            shape = Grid.make 1 1 c;
            pattern = `Point c }))
 let points, reset_points =
-  Memo.memoize3
-    ~equal:(fun (g,bmp,parts) (g',bmp',parts') ->
-      g == g' && bmp = bmp' && parts = parts')
-    ~size:103 points
+  Memo.memoize3 ~size:103 points
 
 
 let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
@@ -382,7 +377,7 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
     for j = p.minj to p.maxj do
       if Bitmap.mem i j bmp && not (Bitmap.mem i j p.pixels)
       then (
-        delta := (i, j, g.matrix.{i,j}) :: !delta;
+        delta := (i, j, g#matrix.{i,j}) :: !delta;
         incr nb_delta
       )
     done
@@ -540,10 +535,7 @@ let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
            shape;
            pattern = `Rectangle rect }))
 let rectangles, reset_rectangles =
-  Memo.memoize3
-    ~equal:(fun (g,bmp,parts) (g',bmp',parts') ->
-      g == g' && bmp = bmp' && parts = parts')
-    ~size:103 rectangles
+  Memo.memoize3 ~size:103 rectangles
 
 
 let reset_memoized_functions () =

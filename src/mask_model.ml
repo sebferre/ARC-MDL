@@ -43,9 +43,7 @@ let matches (m : Grid.t) (mm : t) : bool =
     (fun i j c -> (c = Grid.Mask.one) = mem ~height:h ~width:w i j mm)
     m
 let matches, reset_matches =
-  Memo.memoize2
-    ~equal:(fun (m,mm) (m',mm') -> m == m' && mm = mm')
-    ~size:103 matches
+  Memo.memoize2 ~size:memoize_size matches
                  
 let to_mask ~height ~width (mm : t) : Grid.t =
   let res = Grid.Mask.empty height width in
@@ -94,45 +92,31 @@ let symmetry (f : Grid.t -> Grid.t) : t -> t result = function
        
 let flipHeight = symmetry Grid.Transf.flipHeight
 let flipHeight, reset_flipHeight =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size flipHeight
+  Memo.memoize ~size:memoize_size flipHeight
   
 let flipWidth = symmetry Grid.Transf.flipWidth
 let flipWidth, reset_flipWidth =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size flipWidth
+  Memo.memoize ~size:memoize_size flipWidth
   
 let flipDiag1 = symmetry Grid.Transf.flipDiag1
 let flipDiag1, reset_flipDiag1 =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size flipDiag1
+  Memo.memoize ~size:memoize_size flipDiag1
   
 let flipDiag2 = symmetry Grid.Transf.flipDiag2
 let flipDiag2, reset_flipDiag2 =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size flipDiag2
+  Memo.memoize ~size:memoize_size flipDiag2
   
 let rotate180 = symmetry Grid.Transf.rotate180
 let rotate180, reset_rotate180 =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size rotate180
+  Memo.memoize ~size:memoize_size rotate180
   
 let rotate90 = symmetry Grid.Transf.rotate90
 let rotate90, reset_rotate90 =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size rotate90
+  Memo.memoize ~size:memoize_size rotate90
     
 let rotate270 = symmetry Grid.Transf.rotate270
 let rotate270, reset_rotate270 =
-  Memo.memoize
-    ~equal:(==)
-    ~size:memoize_size rotate270
+  Memo.memoize ~size:memoize_size rotate270
   
       
 let reset_memoized_functions () =
