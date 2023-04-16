@@ -2887,11 +2887,10 @@ let apply_template ~(env : data) (t : template) : template result =
 (* from data to grid and other concrete values *)
 
 let draw_shape_grid (g : Grid.t) (offset_i : int) (offset_j : int) (g1 : Grid.t) =
-  Grid.iter_pixels
+  g1#iter_pixels
     (fun i1 j1 c1 ->
       if c1 <> Grid.transparent
-      then Grid.set_pixel g (offset_i + i1) (offset_j + j1) c1)
-    g1;
+      then g#set_pixel (offset_i + i1) (offset_j + j1) c1);
   Result.Ok ()
   
 let draw_shape_monocolor (g : Grid.t) (mini : int) (minj : int) (m : Grid.t) (c : int) =
@@ -2903,7 +2902,7 @@ let draw_shape_monocolor (g : Grid.t) (mini : int) (minj : int) (m : Grid.t) (c 
     for i = mini to maxi do
       for j = minj to maxj do
 	if Grid.Mask.mem (i-mini) (j-minj) m
-	then Grid.set_pixel g i j c
+	then g#set_pixel i j c
       done;
     done;
     Result.Ok ())
@@ -2943,7 +2942,7 @@ let mask_rectangle (size : data) (mm : data) : Grid.t result =
   match size, mm with
   | `Vec (`Int h, `Int w), `MaskModel mm ->
      if h > 0 && w > 0
-     then Result.Ok (Mask_model.to_mask ~height:h ~width:w mm)
+     then Result.Ok (Mask_model.to_mask h w mm)
      else Result.Error (Invalid_argument "Model2.mask_rectangle: negative or null mask size")
   | _ -> assert false
 

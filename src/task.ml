@@ -32,7 +32,7 @@ and grid_of_json : Yojson.Safe.t -> Grid.t = function
 	   List.iteri
 	     (fun j ->
 	      function
-	      | `Int col -> Grid.set_pixel grid i j col
+	      | `Int col -> grid#set_pixel i j col
 	      | _ -> invalid_arg "Invalid JSON grid color")
 	     cells
 	| _ -> invalid_arg "Invalid JSON grid row")

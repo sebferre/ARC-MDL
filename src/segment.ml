@@ -12,9 +12,11 @@ let part_as_grid (g : Grid.t) (p : part) : Grid.t = Common.prof "Grid.part_as_gr
   let gp = Grid.make g#height g#width Grid.transparent in
   let col = p.color in
   Bitmap.iter
-    (fun i j -> Grid.set_pixel gp i j col)
+    (fun i j -> gp#set_pixel i j col)
     p.pixels;
   gp)
+let part_as_grid, reset_part_as_grid =
+  Memo.memoize2 ~size:103 part_as_grid
 
 let pp_parts (g : Grid.t) (ps : part list) : unit =
   print_endline "PARTS:";
@@ -260,7 +262,7 @@ let segment_by_color (g : Grid.t) : part list =
       else part :: split_part part @ res)
     [])
 let segment_by_color, reset_segment_by_color =
-  Memo.memoize ~size:203 segment_by_color
+  Memo.memoize ~size:103 segment_by_color
   
 
 (* locating shapes *)
@@ -286,14 +288,15 @@ let segment_as_grid (g : Grid.t) (seg : t) : Grid.t =
   (* to show a segment in the context of its encompassing grid *)
   let offset_i, offset_j = seg.pos in
   let res = Grid.make g#height g#width Grid.transparent in
-  Grid.iter_pixels
+  seg.shape#iter_pixels
     (fun delta_i delta_j c ->
       if c = Grid.transparent then ()
       else
         let i, j = offset_i + delta_i, offset_j + delta_j in
-        Grid.set_pixel res i j c)
-    seg.shape;
+        res#set_pixel i j c);
   res
+let segment_as_grid, reset_segment_as_grid =
+  Memo.memoize2 ~size:103 segment_as_grid
   
 let pp_segments (label : string) (g : Grid.t) (ss : t list) =
   print_endline label;
@@ -363,8 +366,8 @@ let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
   Grid.Mask.iter
     (fun i j ->
       if Bitmap.mem (offset_i+i) (offset_j+j) bmp
-      then Grid.set_pixel res i j rect.color
-      else Grid.set_pixel res i j Grid.undefined)
+      then res#set_pixel i j rect.color
+      else res#set_pixel i j Grid.undefined)
     rect.mask;
   res
   
@@ -539,6 +542,8 @@ let rectangles, reset_rectangles =
 
 
 let reset_memoized_functions () =
+  reset_part_as_grid ();
+  reset_segment_as_grid ();
   reset_segment_by_color ();
   reset_points ();
   reset_rectangles ()

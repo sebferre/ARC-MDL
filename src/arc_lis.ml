@@ -2,6 +2,8 @@
 open Js_of_ocaml
 
 let _ = Common.prof_on := false (* required because primitive unix_times not supported by js_of_ocaml *)
+(* let _ = Model2.max_expressions := 10000 (* because JS too slow for 100000 *) *)
+
 
 let max_nb_descr_per_example = 1
       

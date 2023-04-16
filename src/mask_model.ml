@@ -45,15 +45,11 @@ let matches (m : Grid.t) (mm : t) : bool =
 let matches, reset_matches =
   Memo.memoize2 ~size:memoize_size matches
                  
-let to_mask ~height ~width (mm : t) : Grid.t =
-  let res = Grid.Mask.empty height width in
-  for i = 0 to height - 1 do
-    for j = 0 to width - 1 do
-      if mem ~height ~width i j mm then
-        Grid.Mask.set res i j
-    done
-  done;
-  res
+let to_mask height width (mm : t) : Grid.t =
+  Grid.Mask.init height width
+    (fun i j -> mem ~height ~width i j mm)
+let to_mask, reset_to_mask =
+  Memo.memoize3 ~size:memoize_size to_mask
   
 let from_box_in_bmp ?visible_bmp ~mini ~maxi ~minj ~maxj (bmp : Bitmap.t) : Grid.t * t list =
   let height, width = maxi-mini+1, maxj-minj+1 in
@@ -120,6 +116,7 @@ let rotate270, reset_rotate270 =
   
       
 let reset_memoized_functions () =
+  reset_to_mask ();
   reset_matches ();
   reset_flipHeight ();
   reset_flipWidth ();
