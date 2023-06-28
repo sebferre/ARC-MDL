@@ -251,14 +251,20 @@ let print_learned_model ~init_model ~refine_degree name task : measures =
      ms)
      
 (* === solved/candidate training tasks === *)
-		      
+
+let names_of_dir path =
+  Sys.readdir path
+  |> Array.to_list
+  |> List.filter (fun name -> Filename.check_suffix name ".json")
+  |> List.sort Stdlib.compare
+  
 let arc_dir = "/local/ferre/data/tasks/ARC/data/"
 let train_dir = arc_dir ^ "training/"
-let train_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir train_dir))
+let train_names = names_of_dir train_dir
 let eval_dir = arc_dir ^ "evaluation/"
-let eval_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir eval_dir))
+let eval_names = names_of_dir eval_dir
 let sferre_dir = arc_dir ^ "sferre/"
-let sferre_names = List.sort Stdlib.compare (Array.to_list (Sys.readdir sferre_dir))
+let sferre_names = names_of_dir sferre_dir
 
 let solved_train_names =
   (* 91 tasks, *)
@@ -571,6 +577,7 @@ let _ =
     ["-train", Unit (fun () -> dir := train_dir; training := true; names := train_names), "Use training set of tasks (default)";
      "-eval", Unit (fun () -> dir := eval_dir; training := false; names := eval_names), "Use evaluation set of tasks";
      "-sferre", Unit (fun () -> dir := sferre_dir; training := true; names := sferre_names), "Use sferre's set of tasks";
+     "-dir", String (fun s -> dir := s; training := true; names := names_of_dir s), "Use .json files in given directory path";
      "-all", Unit (fun () -> ()), "Use all tasks in the 
 chosen set (default)";
      "-sample",
@@ -602,5 +609,5 @@ chosen set (default)";
      "-v", Set_int verbose, "Verbose mode";
     ]
     (fun str -> ())
-    "test [-train|-eval] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz [-pause T]] [-v]";
+    "test [-train|-eval|-sferre|-dir <path>] [-all|-sample N|-solved|-tasks ID,ID,...] [-r N] [-learn|-apply|-segment] [-alpha N] [-timeout N] [-viz [-pause T]] [-v]";
   main_tasks !dir !names !checker
