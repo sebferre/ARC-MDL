@@ -1,6 +1,7 @@
 
 let memoize_size = 101
 
+open Madil_common
 open Arc_common
 
 type t =

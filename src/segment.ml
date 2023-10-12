@@ -1,6 +1,7 @@
 (* segmenting grids *)
 
 open Arc_common
+open Bigarray
 
 type part = { mini : int; maxi : int;
 	      minj : int; maxj : int;
@@ -9,10 +10,10 @@ type part = { mini : int; maxi : int;
 	      pixels : Bitmap.t }
 
 let part_as_grid (g : Grid.t) (p : part) : Grid.t = Common.prof "Grid.part_as_grid" (fun () ->
-  let gp = Grid.make g#height g#width Grid.transparent in
+  let gp = Grid.make g.height g.width Grid.transparent in
   let col = p.color in
   Bitmap.iter
-    (fun i j -> gp#set_pixel i j col)
+    (fun i j -> Grid.Do.set_pixel gp i j col)
     p.pixels;
   gp)
 let part_as_grid, reset_part_as_grid =
@@ -227,7 +228,7 @@ let segment_by_color (g : Grid.t) : part list =
                   nb_pixels = 0 }
       ~merge_val:merge_parts_2
   in
-  let mat = g#matrix in
+  let mat = g.matrix in
   (* setting initial val of each pixel *)
   for i = 0 to h-1 do
     for j = 0 to w-1 do
@@ -287,28 +288,29 @@ type t = { bmp_cover : Bitmap.t;
 let segment_as_grid (g : Grid.t) (seg : t) : Grid.t =
   (* to show a segment in the context of its encompassing grid *)
   let offset_i, offset_j = seg.pos in
-  let res = Grid.make g#height g#width Grid.transparent in
-  seg.shape#iter_pixels
+  let res = Grid.make g.height g.width Grid.transparent in
+  Grid.iter_pixels
     (fun delta_i delta_j c ->
       if c = Grid.transparent then ()
       else
         let i, j = offset_i + delta_i, offset_j + delta_j in
-        res#set_pixel i j c);
+        Grid.Do.set_pixel res i j c)
+    seg.shape;
   res
 let segment_as_grid, reset_segment_as_grid =
   Memo.memoize2 ~size:103 segment_as_grid
   
 let pp_segments (label : string) (g : Grid.t) (ss : t list) =
   print_endline label;
-  Grid.pp_grids (g :: List.map (segment_as_grid g) ss)		   
+  Grid.pp_grids (g :: List.map (segment_as_grid g) ss)
   
 
 let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing frequency order *)
-  let area = g#height * g#width in
+  let area = g.height * g.width in
   let l = ref [] in
   for c = Grid.black to Grid.last_color do
-    let n = g#color_count.(c) in
-    if n > 0 then l := (c,n)::!l (* keeping only occurring colors *)
+    let n = g.color_count.(c) in
+    if n > 0 && n < area then l := (c,n)::!l (* keeping only occurring colors, except if single color *)
   done;
   let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
   let l =
@@ -319,10 +321,12 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
        else [c1]
     | (c1,_)::_ -> [c1]
     | [] -> [] in
-  if List.mem Grid.black l
-  then l
-  else l @ [Grid.black] (* ensure black is considered as a prefered background color *)
+  if List.mem Grid.black l then l
+  else if g.color_count.(Grid.black) > 0 then l @ [Grid.black] (* ensure black is considered as a prefered background color *)
+  else l
 
+
+(* points *)
   
 let points_of_part ?(acc : Grid.pixel list = []) bmp (part : part) : Grid.pixel list =
   (* bmp gives the part of the grid that remains to be covered *)
@@ -359,6 +363,8 @@ let points (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
 let points, reset_points =
   Memo.memoize3 ~size:103 points
 
+  
+(* rectangles *)
 
 let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
   assert ((rect.height, rect.width) = Grid.dims rect.mask);
@@ -366,8 +372,8 @@ let shape_of_rectangle bmp offset_i offset_j rect : Grid.t =
   Grid.Mask.iter
     (fun i j ->
       if Bitmap.mem (offset_i+i) (offset_j+j) bmp
-      then res#set_pixel i j rect.color
-      else res#set_pixel i j Grid.undefined)
+      then Grid.Do.set_pixel res i j rect.color
+      else Grid.Do.set_pixel res i j Grid.undefined)
     rect.mask;
   res
   
@@ -380,7 +386,7 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
     for j = p.minj to p.maxj do
       if Bitmap.mem i j bmp && not (Bitmap.mem i j p.pixels)
       then (
-        delta := (i, j, g#matrix.{i,j}) :: !delta;
+        delta := (i, j, g.matrix.{i,j}) :: !delta;
         incr nb_delta
       )
     done
@@ -427,7 +433,7 @@ let rectangles_of_part ~(multipart : bool) (g : Grid.t) (bmp : Bitmap.t) (p : pa
       elt :: res
     else res in
   res
-
+  
 let rectangles (g : Grid.t) (bmp : Bitmap.t) (parts : part list) : t list =
   Common.prof "Grid.rectangles" (fun () ->
   let h_sets =
@@ -541,9 +547,116 @@ let rectangles, reset_rectangles =
   Memo.memoize3 ~size:103 rectangles
 
 
+(* split in subgrids *)
+
+type split = { sepcolor : Grid.color; (* sep color *)
+               nrows : int;
+               ncols : int;
+               subgrids : Grid.t array array; (* subgrids *)
+             }
+
+let pp_split (g : Grid.t) (split : split) : unit =
+  Printf.printf "%d x %d split by " split.nrows split.ncols;
+  Grid.pp_color split.sepcolor;
+  print_newline ();
+  Array.iter
+    (fun row -> Grid.pp_grids ~grids_per_line:30 (Array.to_list row))
+    split.subgrids
+  
+let pp_splits (g : Grid.t) (splits : split list) : unit =
+  print_endline "SPLITS:";
+  List.iter
+    (fun split ->
+      print_newline ();
+      pp_split g split)
+    splits
+  
+let splits (g : Grid.t) : split list =
+  let h, w = Grid.dims g in
+  let mat = g.matrix in
+  let rows_color = Array1.create Int8_unsigned C_layout h in 
+  let cols_color = Array1.create Int8_unsigned C_layout w in
+  let _ = (* defining rows_color *)
+    for i = 0 to h-1 do (* for each row *)
+      let c = ref mat.{i,0} in
+      let j = ref 1 in
+      while !c <> Grid.undefined && !j < w do
+        if mat.{i,!j} <> !c then c := Grid.undefined;
+        incr j
+      done;
+      rows_color.{i} <- !c
+    done in
+  let _ = (* defining cols_color *)
+    for j = 0 to w-1 do (* for each col *)
+      let c = ref mat.{0,j} in
+      let i = ref 1 in
+      while !c <> Grid.undefined && !i < h do
+        if mat.{!i,j} <> !c then c := Grid.undefined;
+        incr i
+      done;
+      cols_color.{j} <- !c
+    done in
+  let color_indices = Array.make Grid.nb_color ([],[]) in (* mapping colors to a list of rows and a list of cols *)
+  let _ = (* defining color_indices *)
+    for i = h-1 downto 0 do
+      let c = rows_color.{i} in
+      if c <> Grid.undefined then (
+        let rows, cols = color_indices.(c) in
+        color_indices.(c) <- (i::rows,cols))
+    done;
+    for j = w-1 downto 0 do
+      let c = cols_color.{j} in
+      if c <> Grid.undefined then (
+        let rows, cols = color_indices.(c) in
+        color_indices.(c) <- (rows,j::cols))
+    done in
+  let res = ref [] in
+  let _ = (* computing the result *)
+    let rec list_poslen_of_indices start end_ = function
+      | [] ->
+         let len = end_ - start in
+         if len = 0 then None
+         else Some ((start, len)::[])
+      | p::lp ->
+         let len = p - start in
+         if len = 0 then None
+         else
+           (match list_poslen_of_indices (p+1) end_ lp with
+            | None -> None
+            | Some res -> Some ((start,len) :: res))
+    in
+    for c = 0 to Grid.nb_color - 1 do
+      let rows, cols = color_indices.(c) in
+      match list_poslen_of_indices 0 h rows, list_poslen_of_indices 0 w cols with
+      | None, _ | _, None -> () (* external borders, and separators with width>1 not handled yet *)
+      | Some l_rows, Some l_cols ->
+         let ar_poslen_rows = Array.of_list l_rows in
+         let ar_poslen_cols = Array.of_list l_cols in
+         let nrows = Array.length ar_poslen_rows in
+         let ncols = Array.length ar_poslen_cols in
+         if nrows > 1 || ncols > 1 then ( (* 1x1 split = no split *)
+           let subgrids =
+             Array.map
+               (fun (i1,h1) ->
+                 Array.map
+                   (fun (j1,w1) ->
+                     match Grid.Transf.crop g i1 j1 h1 w1 with
+                     | Result.Ok g1 -> g1
+                     | Result.Error exn -> assert false)
+                   ar_poslen_cols)
+               ar_poslen_rows in
+           let split = { sepcolor = c; nrows; ncols; subgrids } in
+           res := split :: !res)
+    done in
+  !res
+let splits, reset_splits =
+  Memo.memoize ~size:103 splits
+  
 let reset_memoized_functions () =
   reset_part_as_grid ();
   reset_segment_as_grid ();
   reset_segment_by_color ();
   reset_points ();
-  reset_rectangles ()
+  reset_rectangles ();
+  reset_splits ()
+    

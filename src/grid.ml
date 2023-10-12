@@ -1,6 +1,7 @@
 
 let memoize_size = 101
 
+open Madil_common
 open Arc_common
 open Bigarray
 
@@ -53,6 +54,7 @@ exception Invalid_coord of string (* .{i,j} invalid, string describes source *)
                          
 let max_size = 30
 
+(* REM
 (* NOTE: use constructor functions below, not [new grid] *)
 class grid height width =
   let matrix = Array2.create Int8_unsigned C_layout height width in
@@ -123,56 +125,140 @@ class grid height width =
   end
 
 type t = grid
+ *)
+             
+type t =
+  { height : int; (* equals Array2.dim1 matrix *)
+    width : int; (* equals Array2.dim2 matrix *)
+    color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
+    matrix : matrix (* [i,j] -> col *)
+  }
+
+module Do =
+  struct
+    let alloc (height : int) (width : int) : t =
+      let matrix = Array2.create Int8_unsigned C_layout height width in
+      let color_count = Array.make (nb_color+2) 0 in
+      { height;
+        width;
+        color_count;
+        matrix }
+
+    let fill (g : t) (col : color) : unit =
+      Array2.fill g.matrix col;
+      g.color_count.(col) <- g.height * g.width      
+                        
+    let init (g : t) (f : int -> int -> color) : unit =
+      for i = 0 to g.height-1 do
+        for j = 0 to g.width-1 do
+          let c = f i j in
+          g.matrix.{i,j} <- c;
+          g.color_count.(c) <- g.color_count.(c) + 1
+        done
+      done
+
+    let set_pixel (g : t) i j c = (* use on defined grid *)
+      if i < g.height && j < g.width && i >= 0 && j >= 0
+      then 
+        let c0 = g.matrix.{i,j} in
+        if c <> c0 then (
+          g.matrix.{i,j} <- c;
+          (* maintaining color count *)
+          g.color_count.(c0) <- g.color_count.(c0) - 1;
+          g.color_count.(c) <- g.color_count.(c) + 1
+        ) [@@inline]
+    (* pixels out of bound are ignored *)
+
+    let map_color (g : t) (f : color -> color) =
+      for i = 0 to g.height - 1 do
+        for j = 0 to g.width - 1 do
+          let c = g.matrix.{i,j} in
+          let c' = f c in
+          if c' <> c then (
+            g.matrix.{i,j} <- c';
+            (* maintaining color count *)
+            g.color_count.(c) <- g.color_count.(c) - 1;
+            g.color_count.(c') <- g.color_count.(c') + 1
+          )
+        done
+      done
+
+    let copy (g : t) : t =
+      let matrix' = Array2.create Int8_unsigned C_layout g.height g.width in
+      Array2.blit g.matrix matrix';
+      { g with
+        color_count = Array.copy g.color_count;
+        matrix = matrix' }
+
+  end
+
 
 (* grid constructors *)
        
 let make h w c =
-  let g = new grid h w in
-  g#fill c;
+  let g = Do.alloc h w in
+  Do.fill g c;
   g
 
 let dummy = make 0 0 0
 
 let init h w f =
-  let g = new grid h w in
-  g#init f;
+  let g = Do.alloc h w in
+  Do.init g f;
   g
 
+let iter_pixels (f : int -> int -> color -> unit) (g : t) =
+  for i = 0 to g.height - 1 do
+    for j = 0 to g.width - 1 do
+      f i j g.matrix.{i,j}
+    done
+  done [@@inline]
+                  
 let map_pixels (f : color -> color) g =
-  let g' = g#copy in (* copying because often not many cells changed *)
-  g'#map_color f;
+  let g' = Do.copy g in (* copying because often not many cells changed *)
+  Do.map_color g' f;
   g' [@@inline]
 
 let map2_pixels (f : color -> color -> color) g1 g2 =
-  let h1, w1 = g1#height, g1#width in
-  if g2#height <> h1 || g2#width <> w1
+  let h1, w1 = g1.height, g1.width in
+  if g2.height <> h1 || g2.width <> w1
   then raise Invalid_dim
   else (
-    let g' = new grid h1 w1 in
-    g'#init
+    let g' = Do.alloc h1 w1 in
+    Do.init g'
       (fun i j ->
-        let c1 = g1#matrix.{i,j} in
-        let c2 = g2#matrix.{i,j} in
+        let c1 = g1.matrix.{i,j} in
+        let c2 = g2.matrix.{i,j} in
         f c1 c2);
     g') [@@inline]
 
+let add_grid_at g i j g1 =
+  iter_pixels
+    (fun i1 j1 c1 ->
+      Do.set_pixel g (i+i1) (j+j1) c1)
+    g1
+  
 
 (* accessors and iterators *)
   
 let dims (grid : t) : int * int =
-  grid#height, grid#width [@@inline]
+  grid.height, grid.width [@@inline]
+
+let is_full (grid : t) : bool =
+  grid.color_count.(transparent) = 0
+  && grid.color_count.(undefined) = 0
 
 let get_pixel ?(source = "unknown") grid i j =
   let h, w = dims grid in
   if i < h && j < w && i >= 0 && j >= 0
-  then grid#matrix.{i,j}
+  then grid.matrix.{i,j}
   else raise (Invalid_coord source) [@@inline]
   
 let fold_pixels (f : 'a -> int -> int -> color -> 'a) (acc : 'a) grid : 'a =
-  let mat = grid#matrix in
+  let mat = grid.matrix in
   let res = ref acc in
-  for i = 0 to grid#height - 1 do
-    for j = 0 to grid#width - 1 do
+  for i = 0 to grid.height - 1 do
+    for j = 0 to grid.width - 1 do
       let c = mat.{i,j} in
       res := f !res i j c
     done
@@ -180,14 +266,14 @@ let fold_pixels (f : 'a -> int -> int -> color -> 'a) (acc : 'a) grid : 'a =
   !res [@@inline]
 
 let fold2_pixels (f : 'a -> int -> int -> color -> color -> 'a) (acc : 'a) g1 g2 : 'a =
-  if g2#height <> g1#height || g2#width <> g1#width
+  if g2.height <> g1.height || g2.width <> g1.width
   then raise Invalid_dim
   else
-    let mat1 = g1#matrix in
-    let mat2 = g2#matrix in
+    let mat1 = g1.matrix in
+    let mat2 = g2.matrix in
     let res = ref acc in
-    for i = 0 to g1#height - 1 do
-      for j = 0 to g1#width - 1 do
+    for i = 0 to g1.height - 1 do
+      for j = 0 to g1.width - 1 do
         let c1 = mat1.{i,j} in
         let c2 = mat2.{i,j} in
         res := f !res i j c1 c2
@@ -196,8 +282,8 @@ let fold2_pixels (f : 'a -> int -> int -> color -> color -> 'a) (acc : 'a) g1 g2
     !res [@@inline]
 
 let for_all_pixels f grid =
-  let mat = grid#matrix in
-  let h, w = grid#height, grid#width in
+  let mat = grid.matrix in
+  let h, w = grid.height, grid.width in
   let res = ref true in
   let i = ref 0 in
   let j = ref 0 in
@@ -212,12 +298,12 @@ let for_all_pixels f grid =
   !res [@@inline]
 
 let for_all2_pixels f grid1 grid2 =
-  if grid2#height <> grid1#height || grid2#width <> grid1#width
+  if grid2.height <> grid1.height || grid2.width <> grid1.width
   then raise Invalid_dim
   else
-    let h, w = grid1#height, grid1#width in
-    let mat1 = grid1#matrix in
-    let mat2 = grid2#matrix in
+    let h, w = grid1.height, grid1.width in
+    let mat1 = grid1.matrix in
+    let mat2 = grid2.matrix in
     let res = ref true in
     let i = ref 0 in
     let j = ref 0 in
@@ -235,7 +321,7 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
   let res = ref undefined in
   let nb_max = ref 0 in
   for c = black to last_color do
-    let nb = g#color_count.(c) in
+    let nb = g.color_count.(c) in
     if c <> bgcolor && nb > !nb_max then (
       res := c;
       nb_max := nb)
@@ -247,7 +333,7 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
 let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
   let res = ref 0 in
   for c = black to last_color do
-    if c <> bgcolor && grid#color_count.(c) > 0
+    if c <> bgcolor && grid.color_count.(c) > 0
     then incr res
   done;
   !res
@@ -256,22 +342,32 @@ let color_area (bgcolor : color) (g : t) : int = (* number of colored cells, exc
   let res = ref 0 in
   for c = black to last_color do
     if c <> bgcolor
-    then res := !res + g#color_count.(c)
+    then res := !res + g.color_count.(c)
   done;
   !res
   
 let color_partition ~(colors : color list) (grid : t) : int list =
   List.map
-    (fun c -> grid#color_count.(c))
+    (fun c -> grid.color_count.(c))
     colors
 
 let color_freq_desc (grid : t) : (int * color) list =
   let res = ref [] in
   for c = black to last_color do
-    let n = grid#color_count.(c) in
+    let n = grid.color_count.(c) in
     if n > 0 then res := (n,c) :: !res
   done;
   List.sort Stdlib.compare !res
+
+let fill_transparent (g : t) (c : color) : t =
+  map_pixels
+    (fun c0 ->
+      if c0 = transparent
+      then c
+      else c0)
+    g
+let fill_transparent, reset_fill_transparent =
+  Memo.memoize2 ~size:memoize_size fill_transparent
 
 let fill_undefined (g : t) (c : color) : t =
   map_pixels
@@ -286,20 +382,31 @@ let fill_undefined, reset_fill_undefined =
   
 (* pretty-printing in terminal *)
 
-let rec xp_grids (print : Xprint.t) grids =
-  let grids_per_line = 5 in
-  let nb_lines = (List.length grids - 1) / 5 + 1 in
+let print_ansi =
+  object
+    inherit Xprint.t
+    method string s = print_string s
+    method style_string style s = ANSITerminal.print_string style s
+    method int i = print_int i
+    method float f = print_float f
+    method float_1 f = Printf.printf "%.1f" f
+    method float_2 f = Printf.printf "%.2f" f
+    method float_3 f = Printf.printf "%.3f" f
+  end
+      
+let rec xp_grids ?(grids_per_line = 5) print grids =
+  let nb_lines = (List.length grids - 1) / grids_per_line + 1 in
   let max_height =
-    List.fold_left (fun res g -> max res g#height) 0 grids in
+    List.fold_left (fun res g -> max res g.height) 0 grids in
   print#string "\n";
   for k = 0 to nb_lines - 1 do
     for i = 0 to max_height - 1 do
       List.iteri
 	(fun l g ->
 	 if l / grids_per_line = k then (
-	   for j = 0 to g#width - 1 do
-	     if i < g#height
-	     then xp_color print g#matrix.{i,j}
+	   for j = 0 to g.width - 1 do
+	     if i < g.height
+	     then xp_color print g.matrix.{i,j}
 	     else xp_blank print ()
 	   done;
 	   print#string "   "
@@ -311,9 +418,9 @@ let rec xp_grids (print : Xprint.t) grids =
   done
 and xp_grid print grid =
   print#string "\n";
-  for i = 0 to grid#height - 1 do
-    for j = 0 to grid#width - 1 do
-      xp_color print grid#matrix.{i,j}
+  for i = 0 to grid.height - 1 do
+    for j = 0 to grid.width - 1 do
+      xp_color print grid.matrix.{i,j}
     done;
     print#string "\n"
   done
@@ -336,15 +443,17 @@ and xp_color print c =
     | 10 -> [on_white], ". "
     | 11 -> [on_white], "XX"
     | _ -> invalid_arg ("Invalid color code: " ^ string_of_int c) in
-  print#style_string style str
+  print_ansi#style_string style str (* a hack here, assuming print is stdout *)
+(* in MADIL, allow subclassing Xprint.t ? *)
 
-let pp_grids grids = Xprint.to_stdout xp_grids grids
+let pp_grids ?grids_per_line grids =
+  Xprint.to_stdout (fun print grids -> xp_grids ?grids_per_line print grids) grids
 let pp_grid grid = Xprint.to_stdout xp_grid grid
 let pp_color c = Xprint.to_stdout xp_color c
 
 (* comparing grids *)
 
-let same (g1 : t) (g2 : t) : bool = (g1#matrix = g2#matrix)
+let same (g1 : t) (g2 : t) : bool = (g1.matrix = g2.matrix)
 
 let compatible (g1 : t) (g2 : t) : bool = (* QUICK *)
   dims g1 = dims g2
@@ -359,15 +468,15 @@ type diff =
   | Grid_diff_pixels of { height: int; width: int; pixels: pixel list }
 							  
 let diff (source : t) (target : t) : diff option = (* QUICK *)
-  if source#height <> target#height || source#width <> target#width
+  if source.height <> target.height || source.width <> target.width
   then Some (Grid_size_mismatch
-	       { src_height = source#height;
-		 src_width = source#width;
-		 tgt_height = target#height;
-		 tgt_width = target#width })
+	       { src_height = source.height;
+		 src_width = source.width;
+		 tgt_height = target.height;
+		 tgt_width = target.width })
   else
-    let height = source#height in
-    let width = source#width in
+    let height = source.height in
+    let width = source.width in
     let res = ref [] in
     for i = 0 to height - 1 do
       for j = 0 to width - 1 do
@@ -381,7 +490,6 @@ let diff (source : t) (target : t) : diff option = (* QUICK *)
     then None
     else Some (Grid_diff_pixels {height; width; pixels=(!res)})
 
-
 (* operations on grids *)
 
 module Transf =
@@ -390,8 +498,8 @@ module Transf =
     (* coloring *)
 
     let swap_colors g c1 c2 : t result =
-      if g#color_count.(c1) = 0
-      then Result.Error (Undefined_result "swap_colors: none of the color present")
+      if g.color_count.(c1) = 0 && g.color_count.(c2) = 0
+      then Result.Ok g (* Result.Error (Undefined_result "swap_colors: none of the color present") *)
       else (
         let res =
           map_pixels
@@ -464,13 +572,14 @@ module Transf =
       then Result.Error (Undefined_result "scale_up: result grid too large or ill-formed")
       else (
         let res = make h' w' black (* or whatever color *) in
-        g#iter_pixels
+        iter_pixels
           (fun i j c ->
             for i' = k*i to k*(i+1)-1 do
               for j' = l*j to l*(j+1)-1 do
-                res#set_pixel i' j' c
+                Do.set_pixel res i' j' c
               done
-            done);
+            done)
+          g;
         Result.Ok res)
     let scale_up, reset_scale_up =
       Memo.memoize3 ~size:memoize_size scale_up
@@ -480,9 +589,10 @@ module Transf =
       if k > 0 && l > 0 && h mod k = 0 && w mod l = 0
       then (
         let ok = ref true in
-        g#iter_pixels
+        iter_pixels
           (fun i j c ->
-            ok := !ok && get_pixel ~source:"scale_down/1" g ((i/k)*k) ((j/l)*l) = c);
+            ok := !ok && get_pixel ~source:"scale_down/1" g ((i/k)*k) ((j/l)*l) = c)
+          g;
         if !ok (* all pixels scaling down to a single pixel have same color *)
         then (
           let res =
@@ -521,13 +631,14 @@ module Transf =
       then Result.Error (Undefined_result "tile: result grid too large")
       else (
         let res = make h' w' black (* or whatever color *) in
-        g#iter_pixels
+        iter_pixels
           (fun i j c ->
             for u = 0 to k-1 do
               for v = 0 to l-1 do
-                res#set_pixel (u*h + i) (v*w + j) c
+                Do.set_pixel res (u*h + i) (v*w + j) c
               done
-            done);
+            done)
+          g;
         Result.Ok res)
     let tile, reset_tile =
       Memo.memoize3 ~size:memoize_size tile
@@ -732,7 +843,7 @@ module Transf =
             (axis1, f_axis1, axis2, f_axis2, ref p2_map))
           all_axis_pairs) in
       (* filtering through one pass of the grid pixels *)
-      g#iter_pixels
+      iter_pixels
         (fun i j c ->
           periods1 :=
             List.filter
@@ -771,7 +882,8 @@ module Transf =
                 if p2_map = [] (* no period for those axis *)
                 then false
                 else (ref_p2_map := p2_map; true))
-              !periods2);
+              !periods2)
+        g;
       (* collecting results *)
       let res =
         List.fold_left
@@ -906,25 +1018,27 @@ module Transf =
         Memo.memoize ~size:memoize_size (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
-    let strip (bgcolor : color) (g : t) (out_bgcolor : color) : t result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
+    let strip (bgcolor : color) (g : t) (out_bgcolor : color) : (int * int * t) result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
       let h, w = dims g in
       let min_i, max_i = ref h, ref (-1) in
       let min_j, max_j = ref w, ref (-1) in
-      g#iter_pixels
+      iter_pixels
         (fun i j c ->
           if c <> bgcolor then (
             min_i := min i !min_i;
             max_i := max i !max_i;
             min_j := min j !min_j;
-            max_j := max j !max_j));
+            max_j := max j !max_j))
+        g;
       if !min_i < 0 (* grid is bgcolor only *)
       then Result.Error (Undefined_result "grid has no contents")
       else
         let| g' = swap_colors g bgcolor out_bgcolor in
         let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
-        Result.Ok g'
+        Result.Ok (!min_i,!min_j,g')
     let strip, reset_strip =
       Memo.memoize3 ~size:memoize_size strip
+
       
     (* concatenating *)
       
@@ -935,10 +1049,12 @@ module Transf =
       else if h1+h2 > max_size then Result.Error (Undefined_result "concatHeight: result grid too large")
       else (
         let res = make (h1+h2) w1 black (* or whatever color *) in
-        g1#iter_pixels
-          (fun i1 j1 c1 -> res#set_pixel i1 j1 c1);
-        g2#iter_pixels
-          (fun i2 j2 c2 -> res#set_pixel (h1+i2) j2 c2);
+        iter_pixels
+          (fun i1 j1 c1 -> Do.set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> Do.set_pixel res (h1+i2) j2 c2)
+          g2;
         Result.Ok res)
     let concatHeight, reset_concatHeight =
       Memo.memoize2 ~size:memoize_size concatHeight
@@ -950,10 +1066,12 @@ module Transf =
       else if w1+w2 > max_size then Result.Error (Undefined_result "concatWidth: result grid too large")
       else (
         let res = make h1 (w1+w2) black (* or whatever color *) in
-        g1#iter_pixels
-          (fun i1 j1 c1 -> res#set_pixel i1 j1 c1);
-        g2#iter_pixels
-          (fun i2 j2 c2 -> res#set_pixel i2 (w1+j2) c2);
+        iter_pixels
+          (fun i1 j1 c1 -> Do.set_pixel res i1 j1 c1)
+          g1;
+        iter_pixels
+          (fun i2 j2 c2 -> Do.set_pixel res i2 (w1+j2) c2)
+          g2;
         Result.Ok res)
     let concatWidth, reset_concatWidth =
       Memo.memoize2 ~size:memoize_size concatWidth
@@ -963,6 +1081,42 @@ module Transf =
       let| g34 = concatWidth g3 g4 in
       concatHeight g12 g34
 
+    let concat_sep sepcolor nrows ncols (lg : t list) : t result =
+      let rec aux_cols sep ncols left_cells lg rev_lw =
+        match ncols, lg with
+        | 0, _ -> Result.Ok (left_cells, lg, List.rev rev_lw)
+        | _, g0::lg1 ->
+           let| new_cells = concatWidth sep g0 in
+           let| left_cells = concatWidth left_cells new_cells in
+           aux_cols sep (ncols-1) left_cells lg1 (g0.width :: rev_lw)
+        | _ -> assert false
+      and aux_rows sep nrows above_rows lg lw0 =
+        match nrows, lg with
+        | 0, [] -> Result.Ok (above_rows, [])
+        | _, g0::lg1 ->
+           let sep = make g0.height 1 sepcolor in
+           let| row0, lg1, lw = aux_cols sep (ncols-1) g0 lg1 [] in
+           if lw = lw0 then
+             let| new_row = concatHeight sep row0 in
+             let| above_rows = concatHeight above_rows new_row in
+             aux_rows sep (nrows-1) above_rows lg1 lw0
+           else Result.Error (Undefined_result "concat_sep: subgrids are misaligned")
+        | _ -> assert false
+      in
+      if nrows > 0 && ncols > 0 && List.length lg = nrows * ncols
+      then
+        match lg with
+        | [] -> assert false
+        | g0::lg1 ->
+           let sep_cols = make g0.height 1 sepcolor in
+           let| row0, lg1, lw0 = aux_cols sep_cols (ncols-1) g0 lg1 [] in
+           let sep_rows = make 1 row0.width sepcolor in
+           let| rows, lg1 = aux_rows sep_rows (nrows-1) row0 lg1 lw0 in
+           assert (lg1 = []);
+           Result.Ok rows
+      else Result.Error (Undefined_result "concat_sep: invalid nrows/ncols")
+
+      
     (* TODO: selecting halves and quarters *)
 
     let compose (c1_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color bgcolor1 *)
@@ -973,13 +1127,15 @@ module Transf =
       then Result.Error (Undefined_result "compose: result grid too large")
       else (
         let res = make h w black (* or whatever color *) in
-        g1#iter_pixels
+        iter_pixels
           (fun i1 j1 c1 ->
             if c1 = c1_mask then
-              g2#iter_pixels
+              iter_pixels
                 (fun i2 j2 c2 ->
                   if c2 <> black then
-                    res#set_pixel (i1*h2+i2) (j1*w2+j2) c2));
+                    Do.set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
+                g2)
+          g1;
         Result.Ok res)
     let compose, reset_compose =
       Memo.memoize3 ~size:memoize_size compose
@@ -996,9 +1152,10 @@ module Transf =
            let res = make h1 w1 bgcolor in
            List.iter
              (fun gi ->
-               gi#iter_pixels
+               iter_pixels
                  (fun i j c ->
-                   if c <> bgcolor then res#set_pixel i j c))
+                   if c <> bgcolor then Do.set_pixel res i j c)
+                 gi)
              gs;
            Result.Ok res)
          else Result.Error Invalid_dim
@@ -1010,23 +1167,23 @@ module Transf =
     let sym_rotate180_inplace bgcolor g = layers bgcolor [g; rotate180 g]
     let sym_flipHeightWidth_inplace bgcolor g = layers bgcolor [g; flipHeight g; flipWidth g; rotate180 g]
     let sym_flipDiag1_inplace bgcolor g =
-      if g#height <> g#width
+      if g.height <> g.width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag1 g]
     let sym_flipDiag2_inplace bgcolor g =
-      if g#height <> g#width
+      if g.height <> g.width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag2 g]
     let sym_flipDiag1Diag2_inplace bgcolor g =
-      if g#height <> g#width
+      if g.height <> g.width
       then Result.Error Invalid_dim
       else layers bgcolor [g; flipDiag1 g; flipDiag2 g; rotate180 g]
     let sym_rotate90_inplace bgcolor g =
-      if g#height <> g#width
+      if g.height <> g.width
       then Result.Error Invalid_dim
       else layers bgcolor [g; rotate90 g; rotate180 g; rotate270 g]
     let sym_full_inplace bgcolor g =
-      if g#height <> g#width
+      if g.height <> g.width
       then Result.Error Invalid_dim
       else (* includes all symmetries *)
         let| g' = layers bgcolor [g; rotate90 g] in
@@ -1052,7 +1209,7 @@ module Transf =
       [ concatHeight g1 g1'; concatHeight g1' g1;
         concatHeight g2 g2'; concatHeight g2' g2 ]
     let sym_rotate90_unfold g =
-      if g#height <> g#width then raise Invalid_dim;
+      if g.height <> g.width then raise Invalid_dim;
       let g90 = rotate90 g in
       let g180 = rotate180 g in
       let g270 = rotate270 g in
@@ -1099,13 +1256,13 @@ module Mask =
     let one = black
     let bool (b : bool) : color = if b then one else zero
     
-    let area m = m#color_count.(one) [@@inline]
+    let area m = m.color_count.(one) [@@inline]
 
     let empty height width = make height width zero
     let full height width = make height width one
     let singleton height width i j =
       let m = make height width zero in
-      m#set_pixel i j one;
+      Do.set_pixel m i j one;
       m
     let init height width pred =
       init height width
@@ -1126,8 +1283,8 @@ module Mask =
         m1
 
     let mem i j m =
-      i >= 0 && i < m#height
-      && j >= 0 && j < m#width
+      i >= 0 && i < m.height
+      && j >= 0 && j < m.width
       && get_pixel m i j = one [@@inline]
 
     let union (m1 : t) (m2 : t) : t =
@@ -1161,13 +1318,14 @@ module Mask =
         acc m
 
     let iter f m =
-      m#iter_pixels
+      iter_pixels
         (fun i j c -> if c = one then f i j)
+        m
 
     let from_bitmap (bmp : Bitmap.t) : t =
       let m = empty (Bitmap.height bmp) (Bitmap.width bmp) in
       Bitmap.iter
-        (fun i j -> m#set_pixel i j one)
+        (fun i j -> Do.set_pixel m i j one)
         bmp;
       m
     let from_bitmap, reset_from_bitmap =
@@ -1177,10 +1335,11 @@ module Mask =
       (* returns a non-bgcolor mask version of the grid *)
       let h, w = dims g in
       let res = empty h w in
-      g#iter_pixels
+      iter_pixels
         (fun i j c ->
           if c <> bgcolor then
-            res#set_pixel i j one);
+            Do.set_pixel res i j one)
+        g;
       res
     let from_grid_background, reset_from_grid_background =
       Memo.memoize2 ~size:memoize_size from_grid_background
@@ -1189,10 +1348,11 @@ module Mask =
       (* returns a non-bgcolor mask version of the grid *)
       let h, w = dims g in
       let res = empty h w in
-      g#iter_pixels
+      iter_pixels
         (fun i j c ->
           if c = c_mask then
-            res#set_pixel i j one);
+            Do.set_pixel res i j one)
+        g;
       res
     let from_grid_color, reset_from_grid_color =
       Memo.memoize2 ~size:memoize_size from_grid_color
@@ -1203,7 +1363,7 @@ module Mask =
       let res = make h w bgcolor in
       iter
         (fun i j ->
-          res#set_pixel i j c)
+          Do.set_pixel res i j c)
         m;
       res
     let to_grid, reset_to_grid =
@@ -1245,3 +1405,4 @@ let reset_memoized_functions () =
   reset_fill_undefined ();
   Transf.reset_memoized_functions ();
   Mask.reset_memoized_functions ()
+    

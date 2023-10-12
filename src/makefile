@@ -1,23 +1,22 @@
 
-OBJ=bintree.cmo common.cmo xprint.cmo iterator.cmo myseq.cmo mdl.cmo find_merge.cmo intmap.cmo
-SRC=arc_xprint.cmo arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo segment.cmo task.cmo model2.cmo
-SRC_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
+OBJ=bintree.cmo common.cmo xprint.cmo iterator.cmo myseq.cmo mymap.cmo mdl.cmo range.cmo find_merge.cmo intmap.cmo madil_common.cmo task.cmo data.cmo expr.cmo model.cmo task_model.cmo refining.cmo learning.cmo madil.cmo batch.cmo
+OBJ_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
+SRC=arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo segment.cmo domain_arc.cmo
 
 # add -g to have backtractes in case of uncaught exceptions
-FLAGS= -g -I ../../lib -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
+FLAGS= -g -I ../../lib -I ../../madil/src -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal
 FLAGS_FABLIS = -g -I ../../fablis/core -I ../../fablis/core/webapp
 #JSOO_FLAGS = --pretty --no-inline --debug-info # for dev
 JSOO_FLAGS = --opt 3 # for prod
 # +zarith_stubs_js/biginteger.js +zarith_stubs_js/runtime.js # JSOO options for using module Z
 
-all: test
+all: batch
 
-test: $(SRC:.cmo=.cmx) test.ml
-	ocamlfind ocamlopt $(FLAGS) -linkpkg -o test $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) test.ml
+batch: $(SRC:.cmo=.cmx) batch_arc.ml
+	ocamlfind ocamlopt $(FLAGS) -linkpkg -o batch $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) batch_arc.ml
 
-lis: $(SRC) arc_lis.ml
-# requires to set profiling off (Common.prof_on := false)
-	ocamlfind ocamlc $(FLAGS) $(FLAGS_FABLIS) -package js_of_ocaml,js_of_ocaml-lwt,js_of_ocaml-ppx -linkpkg -o html/script.byte $(OBJ) $(SRC) $(SRC_FABLIS) arc_lis.ml
+lis: $(SRC) lis_arc.ml
+	ocamlfind ocamlc $(FLAGS) $(FLAGS_FABLIS) -package js_of_ocaml,js_of_ocaml-lwt,js_of_ocaml-ppx -linkpkg -o html/script.byte $(OBJ_FABLIS) $(OBJ) arc_lis.cmo $(SRC) lis_arc.ml
 	js_of_ocaml $(JSOO_FLAGS) html/script.byte
 
 arcathon: $(SRC:.cmo=.cmx) arcathon.ml
