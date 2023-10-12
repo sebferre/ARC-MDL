@@ -1672,9 +1672,9 @@ module MyDomain : Madil.DOMAIN =
                    (VEC tv, f)::res in
                  res
               | _ -> [] in
-            let res = (* Area_1 *)
+            let res = (* Size_1, Area_1 *)
               match t_args with
-              | [|GRID (full,nocolor)|] -> (INT CARD, `Area_1)::res
+              | [|GRID (full,nocolor)|] -> (VEC SIZE, `Size_1)::(INT CARD, `Area_1)::res
               | _ -> res in
             let res = (* ProjI/J_1 *)
               match t_args with
