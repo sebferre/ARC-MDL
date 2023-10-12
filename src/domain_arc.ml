@@ -16,7 +16,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       xp_tuple2 xp_i xp_j ~html print (i,j) 
 
     let xp_color ~html print c =
-      print#string (Grid.name_of_color c)
+      xp_html_elt "span" ~classe:("arc-col" ^ string_of_int c) ~html print
+        (fun () ->
+          print#string (Grid.name_of_color c))
 
     let xp_grid ~html (print : Xprint.t) g =
       if html
@@ -151,17 +153,22 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Point (* MASK *)
 
     let xp_bgcolor xp_color xp_sprite ~html print () =
-      print#string "with background color "; xp_color ~html print ();
-      print#string ", "; xp_sprite ~html print ()
+      print#string "a grid with background color "; xp_color ~html print ();
+      print#string " and with contents"; xp_newline ~html print ();
+      xp_sprite ~html print ()
     let xp_isfull xp_sprite ~html print () =
-      print#string "a full grid "; xp_sprite ~html print ()
+      print#string "a full grid that is";
+      xp_newline ~html print ();
+      xp_sprite ~html print ()
     let xp_crop xp_size xp_pos xp_sprite ~html print () =
-      print#string "in grid of size "; xp_size ~html print ();
-      print#string ", at position "; xp_pos ~html print ();
-      print#string ", "; xp_sprite ~html print ()
+      print#string "a grid of size "; xp_size ~html print ();
+      print#string " that contains at position "; xp_pos ~html print ();
+      xp_newline ~html print ();
+      xp_sprite ~html print ()
     let xp_monocolor xp_color xp_mask ~html print () =
-      print#string "in color "; xp_color ~html print ();
-      print#string ", "; xp_mask ~html print ()
+      print#string "a grid with only color "; xp_color ~html print ();
+      print#string " and with mask"; xp_newline ~html print ();
+      xp_mask ~html print ()
     let xp_empty xp_size ~html print () =
       print#string "an empty mask of size "; xp_size ~html print ()
     let xp_full xp_size ~html print () =
