@@ -246,7 +246,7 @@ let dims (grid : t) : int * int =
 
 let is_full (grid : t) : bool =
   grid.color_count.(transparent) = 0
-  && grid.color_count.(undefined) = 0
+(*  && grid.color_count.(undefined) = 0 *)
 
 let get_pixel ?(source = "unknown") grid i j =
   let h, w = dims grid in
