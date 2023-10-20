@@ -52,7 +52,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Color of Grid.color
       | `Grid of Grid.t
       | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
-      | `List of value list ]
+      | `Seq of value array ]
 
     let rec xp_value ~html (print : Xprint.t) : value -> unit = function
       | `Null -> print#string "null"
@@ -62,7 +62,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Color c -> xp_color ~html print c
       | `Grid g -> xp_grid ~html print g
       | `Obj (i,j,g) -> xp_obj ~html print i j g
-      | `List lv -> xp_list xp_value ~html print lv
+      | `Seq vs -> xp_array xp_value ~html print vs
 
     let value_of_json (* : Yojson.Safe.t -> value *) = function
       | `List (`List row::_ as rows) ->
@@ -755,9 +755,9 @@ module MyDomain : Madil.DOMAIN =
     let make_dobjects dsize dobjs : data =
       let g =
         match Data.value dsize, Data.value dobjs with
-        | `Vec (h,w), `List objs ->
+        | `Vec (h,w), `Seq objs ->
            let g = Grid.make h w Grid.transparent in
-           List.iter
+           Array.iter
              (function
               | `Obj (i,j,g1) -> Grid.add_grid_at g i j g1
               | _ -> assert false)
@@ -804,14 +804,13 @@ module MyDomain : Madil.DOMAIN =
       
     (* evaluation *)
 
-    let value_null = `Null
-    let value_of_bool b = `Bool b
-      
     let bool_of_value : value -> bool result = function
       | `Bool b -> Result.Ok b
       | _ -> Result.Error (Failure "model evaluation: expected Boolean value")
-    let dseq_value (ds : data array) : value =
-      `List (Array.to_list (Array.map Data.value ds))
+
+    let value_of_bool b = `Bool b
+      
+    let value_of_seq (vs : value array) : value = `Seq vs
 
     exception Invalid_expr of string
             
@@ -1485,7 +1484,7 @@ module MyDomain : Madil.DOMAIN =
            let h, w = get_vec dsize in
            let* dobjs = gen_objs (h,w) in
            (*let vobj = Data.value dobj in*)
-           Myseq.return (make_dobjects dsize dobjs)) (* (Data.make_dseq (`List [vobj]) [dobj])))            *)
+           Myseq.return (make_dobjects dsize dobjs))
       | _, Monocolor, [|gen_col; gen_mask|] ->
          (fun (h,w) ->
            let* dcol = gen_col (h,w) in
@@ -1637,18 +1636,6 @@ module MyDomain : Madil.DOMAIN =
                (match input with
                | `Objects (_,_,[]) -> Myseq.return (make_dobjects dsize dobjs, `Null)
                | _ -> Myseq.empty) (* all objects must be used *)
-(*               let* dobjs =
-                 Myseq.product_fair
-                   (List.map
-                      (fun (i,j,g1) ->
-                        let in_pos = `Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                           `IntRange (j, Range.make_closed 0 (w-1))) in
-                        let in_g1 = `GridDims (g1, h-i, w-j) in
-                        let* dobj, _ = parse_obj (`Obj (in_pos,in_g1)) in
-                        Myseq.return dobj)
-                      objs) in
-               let vobjs = List.map Data.value dobjs in
-               Myseq.return (make_dobjects dsize (Data.make_dseq (`List vobjs) dobjs), `Null) *)
           | _ -> assert false)
       | _, Monocolor, [|parse_col; parse_mask|] ->
          (function
