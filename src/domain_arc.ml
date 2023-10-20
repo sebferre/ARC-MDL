@@ -603,7 +603,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              [ `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
-               `Strip_1, [|GRID (false,false)|];
+               (*`Strip_1, [|GRID (false,false)|];*)
                `PeriodicFactor_2 `TradeOff, [|COLOR; k|];
                `Crop_2, [|GRID (true,false); OBJ (false,false)|];
                `ApplySymGrid_1 `Id, [|k|];
@@ -1372,9 +1372,9 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | _ -> assert false (* invalid argument number for some function *)
       in
-      Result.Ok (Ndtree.scalar res)
+      Result.Ok (Ndtree.scalar (Some res))
 
-    let eval_unbound_var x = Result.Ok (Ndtree.scalar `Null)
+    let eval_unbound_var x = Result.Ok (Ndtree.scalar (Some `Null))
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
 
     let rec data_of_value t v =
@@ -1850,10 +1850,10 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID (full,false)|] -> (INT CARD, `ColorCount_1)::res
               | _ -> res in
-            let res = (* Strip_1 *)
+            (*let res = (* Strip_1: covered by pattern Crop *)
               match t_args with
               | [|GRID (full,nocolor)|] -> (GRID (false,nocolor), `Strip_1)::res
-              | _ -> res in
+              | _ -> res in*)
             (* TODO: PeriodicFactor_2, as pattern *)
             let res = (* Corner_2 *)
               match t_args with
@@ -2014,142 +2014,166 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) : data -> (model * varseq * input) list =
+    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data Ndtree.t) : (model * varseq * input Ndtree.t) list =
       match t, c with
       | INT (COORD (axis,tv)), AnyCoord ->
-         (fun data ->
-           let ij = get_int data in
-           let range =
-             match tv with
-             | SIZE -> Range.make_closed 1 Grid.max_size
-             | POS | MOVE -> Range.make_closed 0 Grid.max_size in
-           [(make_coord axis tv ij, varseq, `IntRange (ij,range))])
+         let d0 =
+           match Ndtree.choose data with
+           | Some d0 -> d0
+           | None -> assert false in
+         let ij0 = get_int d0 in
+         let range =
+           match tv with
+           | SIZE -> Range.make_closed 1 Grid.max_size
+           | POS | MOVE -> Range.make_closed 0 Grid.max_size in
+         let input =
+           Ndtree.map
+             (fun d -> `IntRange (get_int d, range))
+             data in
+         [(make_coord axis tv ij0, varseq, input)]
       | COLOR, AnyColor ->
-         (fun data ->
-           let c = get_color data in
-           [(make_color c, varseq, `Color c)])
+         let d0 =
+           match Ndtree.choose data with
+           | Some d0 -> d0
+           | None -> assert false in
+         let c0 = get_color d0 in
+         let input =
+           Ndtree.map
+             (fun d -> `Color (get_color d))
+             data in
+         [(make_color c0, varseq, input)]
       | GRID (full,nocolor), AnyGrid ->
-         (fun data ->
-           let g = get_grid data in
-           let h, w = Grid.dims g in
-           let input = `GridDims (g,h,w) in
-           let refs : (model * varseq * input) list = [] in
-           let refs = (* BgColor *)
-             if full then
-               let xcol, varseq = Refining.new_var varseq in
-               let xg1, varseq = Refining.new_var varseq in
-               (make_bgcolor
-                  (Model.make_def xcol (make_anycolor))
-                  (Model.make_def xg1 (make_anygrid (false,nocolor))),
-                varseq, input)
-               :: refs
-             else refs in
-           let refs = (* IsFull *)
-             if not full then
-               (make_isfull (make_anygrid (true,nocolor)),
-                varseq, input)
-               :: refs
-             else refs in
-           let refs = (* Crop *)
-             if not full then
-               let xsize, varseq = Refining.new_var varseq in
-               let xsize_i, varseq = Refining.new_var varseq in
-               let xsize_j, varseq = Refining.new_var varseq in
-               let xpos, varseq = Refining.new_var varseq in
-               let xpos_i, varseq = Refining.new_var varseq in
-               let xpos_j, varseq = Refining.new_var varseq in
-               let xg1, varseq = Refining.new_var varseq in
-               (make_crop
-                  (Model.make_def xsize
-                     (make_vec SIZE
-                        (Model.make_def xsize_i (make_anycoord I SIZE))
-                        (Model.make_def xsize_j (make_anycoord J SIZE))))
-                  (Model.make_def xpos
-                     (make_vec POS
-                        (Model.make_def xpos_i (make_anycoord I POS))
-                        (Model.make_def xpos_j (make_anycoord J POS))))
-                  (Model.make_def xg1 (make_anygrid (false,nocolor))),
-                varseq, input)
-               :: refs
-             else refs in
-           let refs = (* Objects *)
-             if not full then
-               let xsize, varseq = Refining.new_var varseq in
-               let xsize_i, varseq = Refining.new_var varseq in
-               let xsize_j, varseq = Refining.new_var varseq in
-               let xobj, varseq = Refining.new_var varseq in
-               let xpos, varseq = Refining.new_var varseq in
-               let xpos_i, varseq = Refining.new_var varseq in
-               let xpos_j, varseq = Refining.new_var varseq in
-               let xg1, varseq = Refining.new_var varseq in               
-               (make_objects
-                  (Model.make_def xsize
-                     (make_vec SIZE
-                        (Model.make_def xsize_i (make_anycoord I SIZE))
-                        (Model.make_def xsize_j (make_anycoord J SIZE))))
-                  (Model.make_loop
-                     (Model.make_def xobj
-                        (make_obj (false,nocolor)
-                           (Model.make_def xpos
-                              (make_vec POS
-                                 (Model.make_def xpos_i (make_anycoord I POS))
-                                 (Model.make_def xpos_j (make_anycoord J POS))))
-                           (Model.make_def xg1 (make_anygrid (false,nocolor)))))),
-                varseq, input)
-               :: refs
-             else refs in
-           let refs = (* Monocolor *)
-             if not nocolor then
-               let xcol, varseq = Refining.new_var varseq in
-               let xmask, varseq = Refining.new_var varseq in
-               (make_monocolor
-                  (Model.make_def xcol (make_anycolor))
-                  (Model.make_def xmask (make_anygrid (false,true))),
-                varseq, input)
-               :: refs
-             else refs in
-           let refs = (* Masks *)
-             if nocolor then
-               let msize, varseq_msize =
-                 let xsize, varseq = Refining.new_var varseq in
-                 let xsize_i, varseq = Refining.new_var varseq in
-                 let xsize_j, varseq = Refining.new_var varseq in
-                 Model.make_def xsize
+         let input =
+           Ndtree.map
+             (fun d ->
+               let g = get_grid d in
+               let h, w = Grid.dims g in
+               `GridDims (g,h,w))
+             data in
+         let refs : (model * varseq * input Ndtree.t) list = [] in
+         let refs = (* BgColor *)
+           if full then
+             let xcol, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in
+             (make_bgcolor
+                (Model.make_def xcol (make_anycolor))
+                (Model.make_def xg1 (make_anygrid (false,nocolor))),
+              varseq, input)
+             :: refs
+           else refs in
+         let refs = (* IsFull *)
+           if not full then
+             (make_isfull (make_anygrid (true,nocolor)),
+              varseq, input)
+             :: refs
+           else refs in
+         let refs = (* Crop *)
+           if not full then
+             let xsize, varseq = Refining.new_var varseq in
+             let xsize_i, varseq = Refining.new_var varseq in
+             let xsize_j, varseq = Refining.new_var varseq in
+             let xpos, varseq = Refining.new_var varseq in
+             let xpos_i, varseq = Refining.new_var varseq in
+             let xpos_j, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in
+             (make_crop
+                (Model.make_def xsize
                    (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE))),
-                 varseq in
-               (make_empty msize, varseq_msize, input)
-               :: (make_full msize, varseq_msize, input)
-               :: (make_border msize, varseq_msize, input)
-               :: (make_point, varseq, input)
-               :: refs
-             else refs in
-           refs)
+                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                (Model.make_def xpos
+                   (make_vec POS
+                      (Model.make_def xpos_i (make_anycoord I POS))
+                      (Model.make_def xpos_j (make_anycoord J POS))))
+                (Model.make_def xg1 (make_anygrid (false,nocolor))),
+              varseq, input)
+             :: refs
+           else refs in
+         let refs = (* Objects *)
+           if not full then
+             let xsize, varseq = Refining.new_var varseq in
+             let xsize_i, varseq = Refining.new_var varseq in
+             let xsize_j, varseq = Refining.new_var varseq in
+             let xobj, varseq = Refining.new_var varseq in
+             let xpos, varseq = Refining.new_var varseq in
+             let xpos_i, varseq = Refining.new_var varseq in
+             let xpos_j, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in               
+             (make_objects
+                (Model.make_def xsize
+                   (make_vec SIZE
+                      (Model.make_def xsize_i (make_anycoord I SIZE))
+                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                (Model.make_loop
+                   (Model.make_def xobj
+                      (make_obj (false,nocolor)
+                         (Model.make_def xpos
+                            (make_vec POS
+                               (Model.make_def xpos_i (make_anycoord I POS))
+                               (Model.make_def xpos_j (make_anycoord J POS))))
+                         (Model.make_def xg1 (make_anygrid (false,nocolor)))))),
+              varseq, input)
+             :: refs
+           else refs in
+         let refs = (* Monocolor *)
+           if not nocolor then
+             let xcol, varseq = Refining.new_var varseq in
+             let xmask, varseq = Refining.new_var varseq in
+             (make_monocolor
+                (Model.make_def xcol (make_anycolor))
+                (Model.make_def xmask (make_anygrid (false,true))),
+              varseq, input)
+             :: refs
+           else refs in
+         let refs = (* Masks *)
+           if nocolor then
+             let msize, varseq_msize =
+               let xsize, varseq = Refining.new_var varseq in
+               let xsize_i, varseq = Refining.new_var varseq in
+               let xsize_j, varseq = Refining.new_var varseq in
+               Model.make_def xsize
+                 (make_vec SIZE
+                    (Model.make_def xsize_i (make_anycoord I SIZE))
+                    (Model.make_def xsize_j (make_anycoord J SIZE))),
+               varseq in
+             (make_empty msize, varseq_msize, input)
+             :: (make_full msize, varseq_msize, input)
+             :: (make_border msize, varseq_msize, input)
+             :: (make_point, varseq, input)
+             :: refs
+           else refs in
+         refs
       (* TODO: refine Full and Border as Point is size=1,1 ? *)
-      | _ ->
-         (fun data -> [])
+      | _ -> []
     let refinements_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
 
-    let prunings_pat t c args varseq =
+    let prunings_pat t c args varseq data =
       match t, c with
       | INT (COORD (axis,tv)), Coord ij ->
-         (fun data ->
-           [make_anycoord axis tv, varseq, `IntRange (ij, Range.make_exact ij)])
+         let input =
+           Ndtree.map
+             (fun d -> `IntRange (ij, Range.make_exact ij))
+             data in
+         [make_anycoord axis tv, varseq, input]
       | COLOR, Color c ->
-         (fun data ->
-           [make_anycolor, varseq, `Color c])
-      | _, AnyGrid ->
-         (fun data -> [])
+         let input =
+           Ndtree.map
+             (fun d -> `Color c)
+             data in
+         [make_anycolor, varseq, input]
+      | _, AnyGrid -> []
       | GRID tg, _ ->
-         (fun data ->
-           let g = get_grid data in
-           let h, w = Grid.dims g in
-           [make_anygrid tg, varseq, `GridDims (g,h,w)])
-      | _ ->
-         (fun data -> [])
+         let input =
+           Ndtree.map
+             (fun d ->
+               let g = get_grid d in
+               let h, w = Grid.dims g in
+               `GridDims (g,h,w))
+             data in
+         [make_anygrid tg, varseq, input]
+      | _ -> []
     let prunings_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
