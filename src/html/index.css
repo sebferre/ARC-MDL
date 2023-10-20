@@ -74,6 +74,14 @@ pre.inline {
     padding: 0px 4px 0px 4px;
 }
 
+.data-expr {
+    display: inline-block;
+    border: 1px solid #ccc;
+    border-radius: 2px;
+    background-color: #ffffbb;
+    padding: 0px 4px 0px 4px;
+}
+
 .model-refinement {
     display: inline-block;
     vertical-align: top;

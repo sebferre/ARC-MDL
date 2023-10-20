@@ -807,6 +807,12 @@ module MyDomain : Madil.DOMAIN =
     let value_null = `Null
     let value_of_bool b = `Bool b
       
+    let bool_of_value : value -> bool result = function
+      | `Bool b -> Result.Ok b
+      | _ -> Result.Error (Failure "model evaluation: expected Boolean value")
+    let dseq_value (ds : data array) : value =
+      `List (Array.to_list (Array.map Data.value ds))
+
     exception Invalid_expr of string
             
     module Funct =
@@ -1377,6 +1383,7 @@ module MyDomain : Madil.DOMAIN =
     let eval_unbound_var x = Result.Ok (Ndtree.scalar (Some `Null))
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
 
+(* DEPRECATED
     let rec data_of_value t v =
       let| dc, dargs =
         match t, v with
@@ -1416,12 +1423,8 @@ module MyDomain : Madil.DOMAIN =
            Result.Ok (Obj, [|mpos; mg1|])
         | _ -> Result.Error (Failure "data_of_value: unexpected value") in
       Result.Ok (Model.Pat (t, c, args))
-    let bool_of_value : value -> bool result = function
-      | `Bool b -> Result.Ok b
-      | _ -> Result.Error (Failure "model evaluation: expected Boolean value")
-    let dseq_value (ds : data array) : value =
-      `List (Array.to_list (Array.map Data.value ds))
-
+ *)
+                    
     (* model-based generation *)
       
     let generator_pat t c gen_args =
@@ -1511,6 +1514,23 @@ module MyDomain : Madil.DOMAIN =
       | `Grid g -> `GridDims (g, Grid.max_size, Grid.max_size)
       | _ -> assert false
 
+    let parseur_value v input =
+      let rec aux v input =
+        match v, input with
+        | `Int i0, `IntRange (i,_) -> i = i0, `Null
+        | `Vec (i,j), `Vec (in_i,in_j) ->
+           let ok_i, _ = aux (`Int i) in_i in
+           let ok_j, _ = aux (`Int j) in_j in
+           ok_i && ok_j, `Null
+        | `Color c0, `Color c -> c = c0, `Null
+        | `Grid g0, `GridDims (g,_,_) -> g = g0, `Null
+        | `Obj obj0, `Objects(h,w,obj::objs) -> obj = obj0, `Objects (h,w,objs)
+        | _ -> false, input in
+      let ok, input = aux v input in
+      if ok
+      then Myseq.return (Data.make_dexpr v, input)
+      else Myseq.empty
+        
     let parseur_pat t c parse_args =
       match t, c, parse_args with
       | _, AnyCoord, [||] ->
@@ -1704,6 +1724,7 @@ module MyDomain : Madil.DOMAIN =
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
     let encoding_seq dl_length encs = dl_length +. Array.fold_left (+.) 0. encs
+    let encoding_expr_value v = 0.
     let dl_of_encoding enc = enc
            
     let dl_constr_params t c =
