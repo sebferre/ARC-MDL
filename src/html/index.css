@@ -62,6 +62,14 @@ pre.inline {
     font-size: 125%;
 }
 
+.model-brackets, .data-brackets {
+    display: inline-block;
+    border: 2px dashed #888;
+    border-radius: 2px;
+    padding: 0px 2px;
+    margin: 2px 2px;
+}
+
 .model-var {
     font-style: italic;
     color: red;

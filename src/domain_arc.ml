@@ -1449,9 +1449,10 @@ module MyDomain : Madil.DOMAIN =
          (fun (h,w) -> Myseq.return (make_dcolor c))
       | GRID ((full,nocolor) as tg), AnyGrid, [||] ->
          (fun (h,w) ->
-           let c = if nocolor then Grid.Mask.one else Grid.blue in
-           let g = Grid.make 2 2 c in
-           Myseq.return (make_danygrid g tg (Range.make_closed 1 h) (Range.make_closed 1 w)))
+           let c1 = if nocolor then Grid.Mask.one else Grid.blue in
+           let h1, w1 = min 2 h, min 2 w in
+           let g1 = Grid.make h1 w1 c1 in
+           Myseq.return (make_danygrid g1 tg (Range.make_closed 1 h) (Range.make_closed 1 w)))
       | GRID tg, Grid g, [||] ->
          (fun (h,w) ->
            Myseq.return (make_dgrid g))
@@ -1509,8 +1510,24 @@ module MyDomain : Madil.DOMAIN =
 
     (* model-based parsing *)
            
-    let input_of_value : value -> input = function
-      | `Grid g -> `GridDims (g, Grid.max_size, Grid.max_size)
+    let input_of_value (t : typ) (v : value) : input =
+      match t, v with
+      | _, `Null -> `Null
+      | INT (COORD (axis,tv)), `Int i ->
+         let range =
+           match tv with
+           | SIZE -> Range.make_closed 1 Grid.max_size
+           | POS | MOVE -> Range.make_closed 0 Grid.max_size in
+         `IntRange (i, range)
+      | VEC tv, `Vec (i,j) ->
+         let range =
+           match tv with
+           | SIZE -> Range.make_closed 1 Grid.max_size
+           | POS | MOVE -> Range.make_closed 0 Grid.max_size in
+         `Vec (`IntRange (i,range), `IntRange (j,range)) 
+      | COLOR, `Color c -> `Color c
+      | GRID (full,nocolor), `Grid g -> `GridDims (g, Grid.max_size, Grid.max_size)
+      | OBJ (full,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, [obj])
       | _ -> assert false
 
     let parseur_value v input =
@@ -2022,43 +2039,16 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data Ndtree.t) : (model * varseq * input Ndtree.t) list =
+    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list =
       match t, c with
       | INT (COORD (axis,tv)), AnyCoord ->
-         let d0 =
-           match Ndtree.choose data with
-           | Some d0 -> d0
-           | None -> assert false in
-         let ij0 = get_int d0 in
-         let range =
-           match tv with
-           | SIZE -> Range.make_closed 1 Grid.max_size
-           | POS | MOVE -> Range.make_closed 0 Grid.max_size in
-         let input =
-           Ndtree.map
-             (fun d -> `IntRange (get_int d, range))
-             data in
-         [(make_coord axis tv ij0, varseq, input)]
+         let ij = get_int data in
+         [ make_coord axis tv ij, varseq ]
       | COLOR, AnyColor ->
-         let d0 =
-           match Ndtree.choose data with
-           | Some d0 -> d0
-           | None -> assert false in
-         let c0 = get_color d0 in
-         let input =
-           Ndtree.map
-             (fun d -> `Color (get_color d))
-             data in
-         [(make_color c0, varseq, input)]
+         let c = get_color data in
+         [ make_color c, varseq ]
       | GRID (full,nocolor), AnyGrid ->
-         let input =
-           Ndtree.map
-             (fun d ->
-               let g = get_grid d in
-               let h, w = Grid.dims g in
-               `GridDims (g,h,w))
-             data in
-         let refs : (model * varseq * input Ndtree.t) list = [] in
+         let refs : (model * varseq) list = [] in
          let refs = (* BgColor *)
            if full then
              let xcol, varseq = Refining.new_var varseq in
@@ -2066,13 +2056,13 @@ module MyDomain : Madil.DOMAIN =
              (make_bgcolor
                 (Model.make_def xcol (make_anycolor))
                 (Model.make_def xg1 (make_anygrid (false,nocolor))),
-              varseq, input)
+              varseq)
              :: refs
            else refs in
          let refs = (* IsFull *)
            if not full then
              (make_isfull (make_anygrid (true,nocolor)),
-              varseq, input)
+              varseq)
              :: refs
            else refs in
          let refs = (* Crop *)
@@ -2094,7 +2084,7 @@ module MyDomain : Madil.DOMAIN =
                       (Model.make_def xpos_i (make_anycoord I POS))
                       (Model.make_def xpos_j (make_anycoord J POS))))
                 (Model.make_def xg1 (make_anygrid (false,nocolor))),
-              varseq, input)
+              varseq)
              :: refs
            else refs in
          let refs = (* Objects *)
@@ -2120,7 +2110,7 @@ module MyDomain : Madil.DOMAIN =
                                (Model.make_def xpos_i (make_anycoord I POS))
                                (Model.make_def xpos_j (make_anycoord J POS))))
                          (Model.make_def xg1 (make_anygrid (false,nocolor)))))),
-              varseq, input)
+              varseq)
              :: refs
            else refs in
          let refs = (* Monocolor *)
@@ -2130,7 +2120,7 @@ module MyDomain : Madil.DOMAIN =
              (make_monocolor
                 (Model.make_def xcol (make_anycolor))
                 (Model.make_def xmask (make_anygrid (false,true))),
-              varseq, input)
+              varseq)
              :: refs
            else refs in
          let refs = (* Masks *)
@@ -2144,10 +2134,10 @@ module MyDomain : Madil.DOMAIN =
                     (Model.make_def xsize_i (make_anycoord I SIZE))
                     (Model.make_def xsize_j (make_anycoord J SIZE))),
                varseq in
-             (make_empty msize, varseq_msize, input)
-             :: (make_full msize, varseq_msize, input)
-             :: (make_border msize, varseq_msize, input)
-             :: (make_point, varseq, input)
+             (make_empty msize, varseq_msize)
+             :: (make_full msize, varseq_msize)
+             :: (make_border msize, varseq_msize)
+             :: (make_point, varseq)
              :: refs
            else refs in
          refs
@@ -2160,27 +2150,12 @@ module MyDomain : Madil.DOMAIN =
     let prunings_pat t c args varseq data =
       match t, c with
       | INT (COORD (axis,tv)), Coord ij ->
-         let input =
-           Ndtree.map
-             (fun d -> `IntRange (ij, Range.make_exact ij))
-             data in
-         [make_anycoord axis tv, varseq, input]
+         [ make_anycoord axis tv, varseq ]
       | COLOR, Color c ->
-         let input =
-           Ndtree.map
-             (fun d -> `Color c)
-             data in
-         [make_anycolor, varseq, input]
+         [ make_anycolor, varseq ]
       | _, AnyGrid -> []
       | GRID tg, _ ->
-         let input =
-           Ndtree.map
-             (fun d ->
-               let g = get_grid d in
-               let h, w = Grid.dims g in
-               `GridDims (g,h,w))
-             data in
-         [make_anygrid tg, varseq, input]
+         [ make_anygrid tg, varseq ]
       | _ -> []
     let prunings_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
