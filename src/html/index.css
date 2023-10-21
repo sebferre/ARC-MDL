@@ -70,6 +70,10 @@ pre.inline {
     margin: 2px 2px;
 }
 
+.model-block {
+    margin-left: 50px;
+}
+
 .model-var {
     font-style: italic;
     color: red;
@@ -87,6 +91,18 @@ pre.inline {
     border: 1px solid #ccc;
     border-radius: 2px;
     background-color: #ffffbb;
+    padding: 0px 4px 0px 4px;
+}
+
+.model-alt, .model-seq {
+    display: inline-block;
+}
+
+.model-any {
+    display: inline-block;
+    border: 1px solid #ccc;
+    border-radius: 2px;
+    background-color: #ffaaaa;
     padding: 0px 4px 0px 4px;
 }
 

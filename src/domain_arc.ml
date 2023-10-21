@@ -164,9 +164,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Border (* SIZE : MASK *)
       | Point (* MASK *)
 
+    let xp_any ~html print () =
+      xp_html_elt "span" ~classe:"model-any" ~html print
+        (fun () -> print#string "?")
     let xp_obj xp_pos xp_sprite ~html print () =
-      print#string "an object "; xp_sprite ~html print ();
-      print#string " at position "; xp_pos ~html print ()
+      print#string "at position "; xp_pos ~html print ();
+      print#string ": ";
+      xp_sprite ~html print ()
     let xp_bgcolor xp_color xp_sprite ~html print () =
       print#string "a grid with background color "; xp_color ~html print ();
       print#string " and with contents"; xp_newline ~html print ();
@@ -180,11 +184,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string " that contains at position "; xp_pos ~html print ();
       xp_newline ~html print ();
       xp_sprite ~html print ()
-    let xp_objects xp_size xp_obj ~html print () =
+    let xp_objects xp_size xp_objs ~html print () =
       print#string "a grid of size "; xp_size ~html print ();
-      print#string " that contains ";
+      print#string " that contains objects like";
       xp_newline ~html print ();
-      xp_obj ~html print ()
+      xp_objs ~html print ()
     let xp_monocolor xp_color xp_mask ~html print () =
       print#string "a grid with only color "; xp_color ~html print ();
       print#string " and with mask"; xp_newline ~html print ();
@@ -200,12 +204,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       
     let xp_pat c xp_args ~html print () =
       match c, xp_args with
-      | AnyCoord, [||] -> print#string "?"
+      | AnyCoord, [||] -> xp_any ~html print ()
       | Coord ij, [||] -> print#int ij
       | Vec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | AnyColor, [||] -> print#string "?color"
+      | AnyColor, [||] -> xp_any ~html print ()
       | Color c, [||] -> xp_color ~html print c
-      | AnyGrid, [||] -> print#string "?grid"
+      | AnyGrid, [||] -> xp_any ~html print ()
       | Grid g, [||] -> xp_grid ~html print g
       | Obj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | BgColor, [|xp_color; xp_sprite|] ->
