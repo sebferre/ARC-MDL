@@ -640,7 +640,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     (* model processing *)
       
-    type generator_info = int * int (* container height and width *)
+    type generator_info = int * int * Grid.color (* container height, width, and color *)
                         
     type input =
       [ `Null
@@ -1433,82 +1433,82 @@ module MyDomain : Madil.DOMAIN =
     let generator_pat t c gen_args =
       match t, c, gen_args with
       | INT (COORD (axis,tv)), AnyCoord, [||] ->
-         (fun (h,w) ->
+         (fun (h,w,c) ->
            let bound = match axis with I -> h | J -> w in
            let ij, range =
              match tv with
-             | SIZE -> min 2 bound, Range.make_closed 1 bound
+             | SIZE -> min (max 1 (bound / 3)) bound, Range.make_closed 1 bound
              | POS | MOVE -> 0, Range.make_closed 0 (bound-1) in
            Myseq.return (make_danycoord ij range))
       | _, Coord ij, [||] ->
-         (fun (h,w) -> Myseq.return (make_dcoord ij))
+         (fun (h,w,c) -> Myseq.return (make_dcoord ij))
       | _, Vec, [|gen_i; gen_j|] ->
-         (fun (h,w) ->
-           let* di = gen_i (h,w) in
-           let* dj = gen_j (h,w) in
+         (fun (h,w,c) ->
+           let* di = gen_i (h,w,c) in
+           let* dj = gen_j (h,w,c) in
            Myseq.return (make_dvec di dj))
       | _, AnyColor, [||] ->
-         (fun (h,w) -> Myseq.return (make_danycolor Grid.blue))
-      | _, Color c, [||] ->
-         (fun (h,w) -> Myseq.return (make_dcolor c))
+         (fun (h,w,c) -> Myseq.return (make_danycolor (min (c+1) Grid.last_color)))
+      | _, Color c0, [||] ->
+         (fun (h,w,c) -> Myseq.return (make_dcolor c0))
       | GRID ((full,nocolor) as tg), AnyGrid, [||] ->
-         (fun (h,w) ->
-           let c1 = if nocolor then Grid.Mask.one else Grid.blue in
-           let h1, w1 = min 2 h, min 2 w in
+         (fun (h,w,c) ->
+           let c1 = if nocolor then Grid.Mask.one else min (c+1) Grid.last_color in
+           let h1, w1 = min (max 1 (h/3)) h, min (max 1 (w/3)) w in
            let g1 = Grid.make h1 w1 c1 in
            Myseq.return (make_danygrid g1 tg (Range.make_closed 1 h) (Range.make_closed 1 w)))
       | GRID tg, Grid g, [||] ->
-         (fun (h,w) ->
+         (fun (h,w,c) ->
            Myseq.return (make_dgrid g))
       | _, Obj, [|gen_pos; gen_g1|] ->
-         (fun (h,w) ->
-           let* dg1 = gen_g1 (h,w) in
+         (fun (h,w,c) ->
+           let* dg1 = gen_g1 (h,w,c) in
            let g1 = get_grid dg1 in
            let h1, w1 = Grid.dims g1 in
-           let* dpos = gen_pos (h-h1, w-w1) in
+           let* dpos = gen_pos (h-h1, w-w1, c) in
            Myseq.return (make_dobj dpos dg1))
       | _, BgColor, [|gen_col; gen_g1|] ->
-         (fun (h,w) ->
-           let* dcol = gen_col (h,w) in
-           let* dg1 = gen_g1 (h,w) in
+         (fun (h,w,c) ->
+           let* dcol = gen_col (h,w,c) in
+           let c = get_color dcol in
+           let* dg1 = gen_g1 (h,w,c) in
            Myseq.return (make_dbgcolor dcol dg1))
       | _, IsFull, [|gen_g1|] ->
-         (fun (h,w) ->
-           let* dg1 = gen_g1 (h,w) in
+         (fun (h,w,c) ->
+           let* dg1 = gen_g1 (h,w,c) in
            Myseq.return (make_disfull dg1))
       | _, Crop, [|gen_size; gen_pos; gen_g1|] ->
-         (fun (h0,w0) ->
-           let* dsize = gen_size (h0,w0) in
+         (fun (h0,w0,c0) ->
+           let* dsize = gen_size (h0,w0,c0) in
            let h, w = get_vec dsize in
-           let* dpos = gen_pos (h,w) in
-           let* dg1 = gen_g1 (h,w) in
+           let* dpos = gen_pos (h,w,c0) in
+           let* dg1 = gen_g1 (h,w,c0) in
            Myseq.return (make_dcrop dsize dpos dg1))
       | _, Objects, [|gen_size; gen_objs|] ->
-         (fun (h0,w0) ->
-           let* dsize = gen_size (h0,w0) in
+         (fun (h0,w0,c0) ->
+           let* dsize = gen_size (h0,w0,c0) in
            let h, w = get_vec dsize in
-           let* dobjs = gen_objs (h,w) in
-           (*let vobj = Data.value dobj in*)
+           let* dobjs = gen_objs (h,w,c0) in
            Myseq.return (make_dobjects dsize dobjs))
       | _, Monocolor, [|gen_col; gen_mask|] ->
-         (fun (h,w) ->
-           let* dcol = gen_col (h,w) in
-           let* dmask = gen_mask (h,w) in
+         (fun (h,w,c) ->
+           let* dcol = gen_col (h,w,c) in
+           let* dmask = gen_mask (h,w,c) in
            Myseq.return (make_dmonocolor dcol dmask))
       | _, Empty, [|gen_size|] ->
-         (fun (h,w) ->
-           let* dsize = gen_size (h,w) in
+         (fun (h,w,c) ->
+           let* dsize = gen_size (h,w,c) in
            Myseq.return (make_dempty dsize))
       | _, Full, [|gen_size|] ->
-         (fun (h,w) ->
-           let* dsize = gen_size (h,w) in
+         (fun (h,w,c) ->
+           let* dsize = gen_size (h,w,c) in
            Myseq.return (make_dfull dsize))
       | _, Border, [|gen_size|] ->
-         (fun (h,w) ->
-           let* dsize = gen_size (h,w) in
+         (fun (h,w,c) ->
+           let* dsize = gen_size (h,w,c) in
            Myseq.return (make_dborder dsize))
       | _, Point, [||] ->
-         (fun (h,w) ->
+         (fun (h,w,c) ->
            Myseq.return (make_dpoint))
       | _ -> assert false
 
@@ -2180,7 +2180,7 @@ module MyDomain : Madil.DOMAIN =
           nb_env_vars = 0;
           output_model = Model.make_def xo (make_anygrid (true,false));
           output_varseq = varseq_o } in
-      let info_o = (Grid.max_size, Grid.max_size) in
+      let info_o = (Grid.max_size, Grid.max_size, -1) in
       env0, init_task_model, info_o
 
     let log_reading r m ~status =
