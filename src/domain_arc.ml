@@ -1663,11 +1663,14 @@ module MyDomain : Madil.DOMAIN =
       | _, BgColor, [|parse_col; parse_g1|] ->
          (function
           | `GridDims (g,h0,w0) ->
-             let* bc = Myseq.from_list (Segment.background_colors g) in
-             let* dcol, _ = parse_col (`Color bc) in
-             let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
-             let* dg1, _ = parse_g1 (`GridDims (g1,h0,w0)) in
-             Myseq.return (make_dbgcolor dcol dg1, `Null)
+             if Grid.is_full g
+             then
+               let* bc = Myseq.from_list (Segment.background_colors g) in
+               let* dcol, _ = parse_col (`Color bc) in
+               let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
+               let* dg1, _ = parse_g1 (`GridDims (g1,h0,w0)) in
+               Myseq.return (make_dbgcolor dcol dg1, `Null)
+             else Myseq.empty
           | _ -> assert false)
       | _, IsFull, [|parse_g1|] ->
          (fun input ->
