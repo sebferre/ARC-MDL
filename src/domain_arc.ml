@@ -1884,35 +1884,13 @@ module MyDomain : Madil.DOMAIN =
           ~eval_func
           index 2
           (fun (t_args, v_args_tree) ->
-            let res = (* consts *)
+            let res = [] in
+            let res = (* const colors *)
               match t_args with
               | [| |] ->
-                 let res = (* const colors *)
-                   let$ res, c = [], Grid.all_colors in
-                   (COLOR, `ConstColor_0 c)::res in
-                 let res = (* const ints and vecs *)
-                   let$ res, k = res, [0;1;2;3] in
-                   let f = `ConstInt_0 k in
-                   let res =
-                     let$ res, ti =
-                       res,
-                       (if k = 0
-                        then [CARD;
-                              COORD (I,POS); COORD (J,POS)]
-                        else [CARD;
-                              COORD (I,POS); COORD (J,POS);
-                              COORD (I,SIZE); COORD (J,SIZE);
-                              COORD (I,MOVE); COORD (J,MOVE)]) in
-                     (INT ti, f)::res in
-                   let$ res, l = res, [0;1;2;3] in
-                   let f = `ConstVec_0 (k,l) in
-                   let$ res, tv =
-                     res, (if k=0 && l=0
-                           then [POS]
-                           else [POS; SIZE; MOVE]) in
-                   (VEC tv, f)::res in
-                 res
-              | _ -> [] in
+                 let$ res, c = res, Grid.all_colors in
+                 (COLOR, `ConstColor_0 c)::res
+              | _ -> res in
             let res = (* Size_1, Area_1 *)
               match t_args with
               | [|GRID (full,nocolor)|] ->
@@ -1995,6 +1973,30 @@ module MyDomain : Madil.DOMAIN =
           index 2
           (fun (t_args,v_args_tree) ->
             let res = [] in
+            let res = (* const ints and vecs *)
+              match t_args with
+              | [| |] ->
+                 let$ res, k = res, [0;1;2;3] in
+                 let f = `ConstInt_0 k in
+                 let res =
+                   let$ res, ti =
+                     res,
+                     (if k = 0
+                      then [CARD;
+                            COORD (I,POS); COORD (J,POS)]
+                      else [CARD;
+                            COORD (I,POS); COORD (J,POS);
+                            COORD (I,SIZE); COORD (J,SIZE);
+                            COORD (I,MOVE); COORD (J,MOVE)]) in
+                   (INT ti, f)::res in
+                 let$ res, l = res, [0;1;2;3] in
+                 let f = `ConstVec_0 (k,l) in
+                 let$ res, tv =
+                   res, (if k=0 && l=0
+                         then [POS]
+                         else [POS; SIZE; MOVE]) in
+                 (VEC tv, f)::res
+              | _ -> res in
             let res = (* IncrInt, DecrInt *)
               match t_args with
               | [|INT (COORD (axis,tv)) as t|] when tv <> MOVE ->
