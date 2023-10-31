@@ -114,7 +114,10 @@ pre.inline {
 .compressive {
 }
 .non-compressive {
-    color:darkred;
+    color:darkorange;
+}
+.failed-refinement {
+    color: red;
 }
 
 .pred-correct {

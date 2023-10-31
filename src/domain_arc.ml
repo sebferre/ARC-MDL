@@ -318,7 +318,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     (* functions *)
         
     type func =
-      [ `ConstInt_0 of int (* Int *)
+      [ `Index_1 of int option list (* on any Ndtree *)
+      | `ConstInt_0 of int (* Int *)
       | `ConstVec_0 of int * int (* Vec *)
       | `ConstColor_0 of Grid.color (* Color *)
       | `Plus_2 (* on Int, Vec *)
@@ -414,6 +415,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let rec xp_func : func html_xp =
       fun ~html print f ->
       match f with
+      | `Index_1 is ->
+         print#string "index";
+         xp_list
+           (fun ~html print -> function
+            | None -> print#string ":"
+            | Some i -> print#int i)
+           ~html print is
       | `ConstInt_0 k -> print#string "'"; xp_int ~html print k
       | `ConstVec_0 (k,l) -> print#string "'"; xp_vec xp_int xp_int ~html print k l
       | `ConstColor_0 c -> print#string "'"; xp_color ~html print c
@@ -555,7 +563,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           match k with
           | BOOL -> []
           | INT CARD ->
-             [ `ConstInt_0 0, [||];
+             [ `Index_1 [], [|k|];
+               `ConstInt_0 0, [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `IncrInt_1 1, [|k|];
@@ -567,7 +576,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Average_n, [|k; k|];
              ]
           | INT (COORD (axis,tv)) ->
-             [ `ConstInt_0 0, [||];
+             [ `Index_1 [], [|k|];
+               `ConstInt_0 0, [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `IncrInt_1 1, [|k|];
@@ -580,7 +590,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Average_n, [|k; k|];               
              ]
           | VEC tv ->
-             [ `ConstVec_0 (0,0), [||];
+             [ `Index_1 [], [|k|];
+               `ConstVec_0 (0,0), [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `IncrVec_1 (1,1), [|k|];
@@ -600,11 +611,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Tiling_1 (2,2), [|k|];
              ]
           | COLOR ->
-             [ `ConstColor_0 Grid.black, [||];
+             [ `Index_1 [], [|k|];
+               `ConstColor_0 Grid.black, [||];
                `MajorityColor_1, [|GRID (false,false)|];
              ]
           | GRID (full,nocolor) ->
-             [ `ScaleUp_2, [|k; INT CARD|];
+             [ `Index_1 [], [|k|];
+               `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
                (*`Strip_1, [|GRID (false,false)|];*)
@@ -627,7 +640,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `LogXOr_2, [|k; k|];
              ]
           | OBJ (full,nocolor) ->
-             [ `PeriodicFactor_2 `TradeOff, [|COLOR; k|];
+             [ `Index_1 [], [|k|];
+               `PeriodicFactor_2 `TradeOff, [|COLOR; k|];
                `FillResizeAlike_3 `TradeOff, [|COLOR; VEC SIZE; k|];
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
@@ -968,62 +982,70 @@ module MyDomain : Madil.DOMAIN =
   
       end
 
-    let eval_func (f : func) (args_tree : value Ndtree.t array) : value Ndtree.t result =
+    let compile_scalar_func : func -> (value array -> value result) =
       let e = "" in
-      let| args = array_map_result Ndtree.unscalar args_tree in
-      let| res =
-      match f, args with
-      | `ConstInt_0 k, [||] -> Result.Ok (`Int k)
-      | `ConstVec_0 (k,l), [||] -> Result.Ok (`Vec (k,l))
-      | `ConstColor_0 c, [||] -> Result.Ok (`Color c)
-      | `Plus_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Int i1, `Int i2 -> Result.Ok (`Int (i1 + i2))
-          | `Vec (i1,j1), `Vec (i2,j2) -> Result.Ok (`Vec (i1+i2, j1+j2))
+      function
+      | `Index_1 _ -> assert false (* not a scalar function *)
+      | `ConstInt_0 k ->
+         (function
+          | [||] -> Result.Ok (`Int k)
           | _ -> Result.Error (Invalid_expr e))
-      | `Minus_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Int i1, `Int i2 -> Result.Ok (`Int (i1-i2))
-          | `Vec (i1, j1), `Vec (i2, j2) -> Result.Ok (`Vec (i1-i2, j1-j2))
+      | `ConstVec_0 (k,l) ->
+         (function
+          | [||] -> Result.Ok (`Vec (k,l))
           | _ -> Result.Error (Invalid_expr e))
-      | `IncrInt_1 k, [|d1|] ->
-         (match d1 with
-          | `Int i1 -> Result.Ok (`Int (i1 + k))
+      | `ConstColor_0 c ->
+         (function
+          | [||] -> Result.Ok (`Color c)
           | _ -> Result.Error (Invalid_expr e))
-      | `DecrInt_1 k, [|d1|] ->
-         (match d1 with
-          | `Int i1 -> Result.Ok (`Int (i1 - k))
+      | `Plus_2 ->
+         (function
+          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
+          | [| `Vec (i1,j1); `Vec (i2,j2)|] -> Result.Ok (`Vec (i1+i2, j1+j2))
           | _ -> Result.Error (Invalid_expr e))
-      | `IncrVec_1 (k,l), [|d1|] ->
-         (match d1 with
-          | `Vec (i1, j1) -> Result.Ok (`Vec (i1 + k, j1 + l))
+      | `Minus_2 ->
+         (function
+          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1-i2))
+          | [| `Vec (i1, j1); `Vec (i2, j2)|] -> Result.Ok (`Vec (i1-i2, j1-j2))
           | _ -> Result.Error (Invalid_expr e))
-      | `DecrVec_1 (k,l), [|d1|] ->
-         (match d1 with
-          | `Int i1 -> Result.Ok (`Int (i1 - k))
-          | `Vec (i1, j1) -> Result.Ok (`Vec (i1 - k, j1 - l))
+      | `IncrInt_1 k ->
+        (function
+         | [| `Int i1|] -> Result.Ok (`Int (i1 + k))
+         | _ -> Result.Error (Invalid_expr e))
+      | `DecrInt_1 k ->
+         (function
+          | [| `Int i1|] -> Result.Ok (`Int (i1 - k))
           | _ -> Result.Error (Invalid_expr e))
-      | `Modulo_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Int i1, `Int i2 -> Result.Ok (`Int (i1 mod i2))
+      | `IncrVec_1 (k,l) ->
+         (function
+          | [| `Vec (i1, j1)|] -> Result.Ok (`Vec (i1 + k, j1 + l))
           | _ -> Result.Error (Invalid_expr e))
-      | `ScaleUp_2, [|d1;d2|] ->
-         ( match d2 with
-           | `Int 0 -> Result.Error (Invalid_argument "ScaleUp: k=0") 
-           | `Int k ->
-              assert (k > 0);
-              ( match d1 with
-                | `Int i -> Result.Ok (`Int (i * k))
-                | `Vec (i,j) -> Result.Ok (`Vec (i * k, j * k))
-                | `Grid g ->
-                   let| g' = Grid.Transf.scale_up k k g in
-                   Result.Ok (`Grid g')
-                | _ -> Result.Error (Invalid_expr e))
-           | _ -> Result.Error (Invalid_expr e))
-      | `ScaleDown_2, [|d1;d2|] ->
-         (match d2 with
-          | `Int 0 -> Result.Error (Invalid_argument "ScaleDown: k=0") 
-          | `Int k ->
+      | `DecrVec_1 (k,l) ->
+         (function
+          | [| `Int i1|] -> Result.Ok (`Int (i1 - k))
+          | [| `Vec (i1, j1)|] -> Result.Ok (`Vec (i1 - k, j1 - l))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Modulo_2 ->
+         (function
+          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 mod i2))
+          | _ -> Result.Error (Invalid_expr e))
+      | `ScaleUp_2 ->
+         (function
+          | [| d1; `Int 0|] -> Result.Error (Invalid_argument "ScaleUp: k=0") 
+          | [| d1; `Int k|] ->
+             assert (k > 0);
+             ( match d1 with
+               | `Int i -> Result.Ok (`Int (i * k))
+               | `Vec (i,j) -> Result.Ok (`Vec (i * k, j * k))
+               | `Grid g ->
+                  let| g' = Grid.Transf.scale_up k k g in
+                  Result.Ok (`Grid g')
+               | _ -> Result.Error (Invalid_expr e))
+          | _ -> Result.Error (Invalid_expr e))
+      | `ScaleDown_2 ->
+         (function
+          | [| d1; `Int 0|] -> Result.Error (Invalid_argument "ScaleDown: k=0") 
+          | [| d1; `Int k|] ->
              assert (k > 0);
              (match d1 with
               | `Int i1 ->
@@ -1041,21 +1063,21 @@ module MyDomain : Madil.DOMAIN =
                  Result.Ok (`Grid g')
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
-      | `ScaleTo_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid g, (`Vec (new_h, new_w)) ->
+      | `ScaleTo_2 ->
+         (function
+          | [| `Grid g; (`Vec (new_h, new_w))|] ->
              let| g' = Grid.Transf.scale_to new_h new_w g in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
-      | `Size_1, [|d1|] ->
-         (match d1 with
-          | `Grid g ->
+      | `Size_1 ->
+         (function
+          | [|`Grid g|] ->
              let h, w = Grid.dims g in
              Result.Ok (`Vec (h, w))
           | _ -> Result.Error (Invalid_expr e))
-      | `Crop_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid g, `Obj (ri, rj, shape) ->
+      | `Crop_2 ->
+         (function
+          | [| `Grid g; `Obj (ri, rj, shape)|] ->
              let| c = Grid.majority_color Grid.transparent shape in
              if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
              then
@@ -1065,189 +1087,193 @@ module MyDomain : Madil.DOMAIN =
                Result.Ok (`Grid g')
              else Result.Error (Invalid_expr e)
           | _ -> Result.Error (Invalid_expr e))
-      | `Strip_1, [|d1|] ->
-         (match d1 with
-          | `Grid g ->
+      | `Strip_1 ->
+         (function
+          | [| `Grid g|] ->
              let| bgcolor = Grid.majority_color Grid.transparent g in
              let| _, _, g'= Grid.Transf.strip bgcolor g Grid.black in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
-      | `Corner_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Vec (i1, j1), `Vec (i2, j2) ->
+      | `Corner_2 ->
+         (function
+          | [| `Vec (i1, j1); `Vec (i2, j2)|] ->
              if i1 <> i2 && j1 <> j2
              then Result.Ok (`Vec (i1, j2))
              else Result.Error (Undefined_result "Corner: vectors on same row/column")
           | _ -> Result.Error (Invalid_expr e))
-      | `Min_n, ds ->
-         let| is_int, is_vec, mini, minj =
-           ds
-           |> Array.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,mini,minj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
-                  | `Vec (i, j) -> Result.Ok (is_int, true, min i mini, min j minj)
-                  | _ -> Result.Error (Invalid_expr e))
-                (Result.Ok (false, false, max_int, max_int)) in
-         (match is_int, is_vec with
-          | true, false -> Result.Ok (`Int mini)
-          | false, true -> Result.Ok (`Vec (mini, minj))
-          | _ -> assert false)
-      | `Max_n, ds ->
-         let| is_int,is_vec,maxi,maxj =
-           ds
-           |> Array.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,maxi,maxj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
-                  | `Vec (i, j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
-                  | _ -> Result.Error (Invalid_expr e))
-                (Result.Ok (false, false, min_int, min_int)) in
-         (match is_int, is_vec with
-          | true, false -> Result.Ok (`Int maxi)
-          | false, true -> Result.Ok (`Vec (maxi, maxj))
-          | _ -> assert false)
-      | `Average_n, ds ->
-         let| is_int,is_vec,n,sumi,sumj =
-           ds
-           |> Array.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,n,sumi,sumj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
-                  | `Vec (i, j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
-                  | _ -> Result.Error (Invalid_expr e))
-                (Result.Ok (false, false, 0, 0, 0)) in
-         (match is_int, is_vec with
-          | true, false ->
-             if sumi mod n = 0
-             then Result.Ok (`Int (sumi / n))
-             else Result.Error (Undefined_result "Average: not an integer")
-          | false, true ->
-             if sumi mod n = 0 && sumj mod n = 0
-             then Result.Ok (`Vec (sumi / n, sumj / n))
-             else Result.Error (Undefined_result "Average: not an integer")
-          | _ -> assert false) (* empty or ill-typed list *)
-      | `Span_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Int i1, `Int i2 ->
+      | `Min_n ->
+         (fun ds ->
+           let| is_int, is_vec, mini, minj =
+             ds
+             |> Array.fold_left
+                  (fun res t ->
+                    let| is_int,is_vec,mini,minj = res in
+                    match t with
+                    | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
+                    | `Vec (i, j) -> Result.Ok (is_int, true, min i mini, min j minj)
+                    | _ -> Result.Error (Invalid_expr e))
+                  (Result.Ok (false, false, max_int, max_int)) in
+           (match is_int, is_vec with
+            | true, false -> Result.Ok (`Int mini)
+            | false, true -> Result.Ok (`Vec (mini, minj))
+            | _ -> assert false))
+      | `Max_n ->
+         (fun ds ->
+           let| is_int,is_vec,maxi,maxj =
+             ds
+             |> Array.fold_left
+                  (fun res t ->
+                    let| is_int,is_vec,maxi,maxj = res in
+                    match t with
+                    | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
+                    | `Vec (i, j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
+                    | _ -> Result.Error (Invalid_expr e))
+                  (Result.Ok (false, false, min_int, min_int)) in
+           (match is_int, is_vec with
+            | true, false -> Result.Ok (`Int maxi)
+            | false, true -> Result.Ok (`Vec (maxi, maxj))
+            | _ -> assert false))
+      | `Average_n ->
+         (fun ds ->
+           let| is_int,is_vec,n,sumi,sumj =
+             ds
+             |> Array.fold_left
+                  (fun res t ->
+                    let| is_int,is_vec,n,sumi,sumj = res in
+                    match t with
+                    | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
+                    | `Vec (i, j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
+                    | _ -> Result.Error (Invalid_expr e))
+                  (Result.Ok (false, false, 0, 0, 0)) in
+           (match is_int, is_vec with
+            | true, false ->
+               if sumi mod n = 0
+               then Result.Ok (`Int (sumi / n))
+               else Result.Error (Undefined_result "Average: not an integer")
+            | false, true ->
+               if sumi mod n = 0 && sumj mod n = 0
+               then Result.Ok (`Vec (sumi / n, sumj / n))
+               else Result.Error (Undefined_result "Average: not an integer")
+            | _ -> assert false)) (* empty or ill-typed list *)
+      | `Span_2 ->
+         (function
+          | [| `Int i1; `Int i2|] ->
              if i1=i2
              then Result.Error (Undefined_result "Span: same int")
              else Result.Ok (`Int (abs (i2-i1) + 1))
-          | `Vec (i1, j1), `Vec (i2, j2) ->
+          | [| `Vec (i1, j1); `Vec (i2, j2)|] ->
              if i1=i2 && j1=j2
              then Result.Error (Undefined_result "Span: same vector")
              else Result.Ok (`Vec (abs (i2-i1) + 1, abs (j2-j1) + 1))
           | _ -> Result.Error (Invalid_expr e))
-      | `Norm_1, [|d1|] ->
-         (match d1 with
-          | `Vec (i, j) -> Result.Ok (`Int (i+j))
+      | `Norm_1 ->
+         (function
+          | [| `Vec (i, j)|] -> Result.Ok (`Int (i+j))
           | _ -> Result.Error (Invalid_expr e))
-      | `Diag1_1 k, [|d1|] ->
-         (match d1 with
-          | `Vec (i, j) -> Result.Ok (`Int ((i+j) mod k))
+      | `Diag1_1 k ->
+         (function
+          | [| `Vec (i, j)|] -> Result.Ok (`Int ((i+j) mod k))
           | _ -> Result.Error (Invalid_expr e))
-      | `Diag2_1 k, [|d1|] ->
-         (match d1 with
-          | `Vec (i, j) -> Result.Ok (`Int ((i-j) mod k))
+      | `Diag2_1 k ->
+         (function
+          | [| `Vec (i, j)|] -> Result.Ok (`Int ((i-j) mod k))
           | _ -> Result.Error (Invalid_expr e))
-      | `LogAnd_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 -> (* TODO: generalize Mask logics to grids transfs *)
+      | `LogAnd_2 ->
+         (function
+          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 -> (* TODO: generalize Mask logics to grids transfs *)
              let m = Grid.Mask.inter m1 m2 in
              Result.Ok (`Grid m)
           | _ -> Result.Error (Invalid_expr e))
-      | `LogOr_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
+      | `LogOr_2 ->
+         (function
+          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
              let m = Grid.Mask.union m1 m2 in
              Result.Ok (`Grid m)
           | _ -> Result.Error (Invalid_expr e))
-      | `LogXOr_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
+      | `LogXOr_2 ->
+         (function
+          | [|`Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
              let m = Grid.Mask.diff_sym m1 m2 in
              Result.Ok (`Grid m)
           | _ -> Result.Error (Invalid_expr e))
-      | `LogAndNot_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid m1, `Grid m2 when Grid.dims m1 = Grid.dims m2 ->
+      | `LogAndNot_2 ->
+         (function
+          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
              let m = Grid.Mask.diff m1 m2 in
              Result.Ok (`Grid m)
           | _ -> Result.Error (Invalid_expr e))
-      | `LogNot_1, [|d1|] ->
-         (match d1 with
-          | `Grid m1 ->
+      | `LogNot_1 ->
+         (function
+          | [| `Grid m1|] ->
              let m = Grid.Mask.compl m1 in
              Result.Ok (`Grid m)
           | _ -> Result.Error (Invalid_expr e))
-      | `Stack_n, ds ->
-         let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) ds in
-         let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
-         Result.Ok (`Grid g)
-      | `Area_1, [|d1|] ->
-         (match d1 with
-          | `Grid g ->
+      | `Stack_n ->
+         (fun ds ->
+           let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) ds in
+           let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
+           Result.Ok (`Grid g))
+      | `Area_1 ->
+         (function
+          | [| `Grid g|] ->
              Result.Ok (`Int (Grid.color_area Grid.transparent g))
           | _ -> Result.Error (Invalid_expr e))
-      | `Left_1, [|d1|] ->
-         (match d1 with
-          | `Obj (_, j, _) -> Result.Ok (`Int j)
+      | `Left_1 ->
+         (function
+          | [| `Obj (_, j, _)|] -> Result.Ok (`Int j)
           | _ -> Result.Error (Invalid_expr e))
-      | `Right_1, [|d1|] ->
-         (match d1 with
-          | `Obj (_, j, shape) ->
+      | `Right_1 ->
+         (function
+          | [| `Obj (_, j, shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (j+w-1))
           | _ -> Result.Error (Invalid_expr e))
-      | `Center_1, [|d1|] ->
-         (match d1 with
-          | `Obj (_, j, shape) ->
+      | `Center_1 ->
+         (function
+          | [| `Obj (_, j, shape)|] ->
              let h, w = Grid.dims shape in
              if w mod 2 = 0
              then Result.Error (Undefined_result "Center: no center, even width")
              else Result.Ok (`Int (j + w/2 + 1))
           | _ -> Result.Error (Invalid_expr e))
-      | `Top_1, [|d1|] ->
-         (match d1 with
-          | `Obj (i, _, _) -> Result.Ok (`Int i)
+      | `Top_1 ->
+         (function
+          | [| `Obj (i, _, _)|] -> Result.Ok (`Int i)
           | _ -> Result.Error (Invalid_expr e))
-      | `Bottom_1, [|d1|] ->
-         (match d1 with
-          | `Obj (i, _, shape) ->
+      | `Bottom_1 ->
+         (function
+          | [| `Obj (i, _, shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (i+h-1))
           | _ -> Result.Error (Invalid_expr e))
-      | `Middle_1, [|d1|] ->
-         (match d1 with
-          | `Obj (i, _, shape) ->
+      | `Middle_1 ->
+         (function
+          | [| `Obj (i, _, shape)|] ->
              let h, w = Grid.dims shape in
              if h mod 2 = 0
              then Result.Error (Undefined_result "Middle: no middle, even height")
              else Result.Ok (`Int (i + h/2 + 1))
           | _ -> Result.Error (Invalid_expr e))
-      | `ProjI_1, [|d1|] ->
-         (match d1 with
-          | `Vec (i, _) -> Result.Ok (`Vec (i, 0))
+      | `ProjI_1 ->
+         (function
+          | [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
           | _ -> Result.Error (Invalid_expr e))
-      | `ProjJ_1, [|d1|] ->
-         (match d1 with
-          | `Vec (_, j) -> Result.Ok (`Vec (0, j))
+      | `ProjJ_1 ->
+         (function
+          | [| `Vec (_, j)|] -> Result.Ok (`Vec (0, j))
           | _ -> Result.Error (Invalid_expr e))
-      | `MaskOfGrid_1, [|d1|] ->
-         (match d1 with
-          | `Grid g -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g)) (* TODO: improve *)
+      | `MaskOfGrid_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g)) (* TODO: improve *)
           | _ -> Result.Error (Invalid_expr e))
-      | `GridOfMask_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Grid m, `Color c ->
+      | `GridOfMask_2 ->
+         (function
+          | [| `Grid m; `Color c|] ->
              Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
           | _ -> Result.Error (Invalid_expr e))
-      | `TranslationOnto_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Obj (mini1,minj1,g1), `Obj (mini2,minj2,g2) ->
+      | `TranslationOnto_2 ->
+         (function
+          | [| `Obj (mini1,minj1,g1); `Obj (mini2,minj2,g2)|] ->
              let h1, w1 = Grid.dims g1 in
              let h2, w2 = Grid.dims g2 in
              let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
@@ -1262,16 +1288,16 @@ module MyDomain : Madil.DOMAIN =
                else 0 in
              Result.Ok (`Vec (ti, tj))
           | _ -> Result.Error (Invalid_expr e))
-      | `Tiling_1 (k,l), [|d1|] ->
-         (match d1 with
-          | `Vec (h, w) -> Result.Ok (`Vec (h*k, w*l))
-          | `Grid g ->
+      | `Tiling_1 (k,l) ->
+         (function
+          | [| `Vec (h, w)|] -> Result.Ok (`Vec (h*k, w*l))
+          | [| `Grid g|] ->
              let| g' = Grid.Transf.tile k l g in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
-      | `PeriodicFactor_2 mode, [|d1;d2|] ->
-         (match d1 with
-          | `Color bgcolor ->
+      | `PeriodicFactor_2 mode ->
+         (function
+          | [| `Color bgcolor; d2|] ->
              (match d2 with
               | `Grid g ->
                  let| g' = Grid.Transf.periodic_factor mode bgcolor g in
@@ -1281,9 +1307,9 @@ module MyDomain : Madil.DOMAIN =
                  Result.Ok (`Obj (i, j, shape'))
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
-      | `FillResizeAlike_3 mode, [|d1;d2;d3|] ->
-         (match d1, d2 with
-          | `Color bgcolor, `Vec (h, w) when h > 0 && w > 0 ->
+      | `FillResizeAlike_3 mode ->
+         (function
+          | [| `Color bgcolor; `Vec (h, w); d3|] when h > 0 && w > 0 ->
              let new_size = h, w in
              (match d3 with
               | `Grid g ->
@@ -1294,23 +1320,31 @@ module MyDomain : Madil.DOMAIN =
                  Result.Ok (`Obj (i, j, shape'))
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
-      | `SelfCompose_2, [|d1;d2|] ->
-         (match d1, d2 with
-          | `Color c_mask,  `Grid g1 ->
+      | `SelfCompose_2 ->
+         (function
+          | [| `Color c_mask; `Grid g1|] ->
              let| g = Grid.Transf.compose c_mask g1 g1 in
              Result.Ok (`Grid g)
           | _ -> Result.Error (Invalid_expr e))
-      | `ApplySymVec_1 (sym,tv), [|d1|] ->
-         Funct.apply_symmetry_vec sym tv e d1
-      | `ApplySymGrid_1 sym, [|d1|] ->
-         Funct.apply_symmetry_grid sym e d1
-      | `UnfoldSym_1 sym_matrix, [|d1|] ->
-         Funct.unfold_symmetry sym_matrix e d1
-      | `CloseSym_2 sym_matrix, [|d1;d2|] ->
-         (match d1 with
-          | `Color bgcolor -> Funct.close_symmetry sym_matrix bgcolor e d2
+      | `ApplySymVec_1 (sym,tv) ->
+         (function
+          | [|d1|] -> Funct.apply_symmetry_vec sym tv e d1
           | _ -> Result.Error (Invalid_expr e))
-      | `TranslationSym_2 sym, [|d1;d2|] ->
+      | `ApplySymGrid_1 sym ->
+         (function
+          | [|d1|] -> Funct.apply_symmetry_grid sym e d1
+          | _ -> Result.Error (Invalid_expr e))
+      | `UnfoldSym_1 sym_matrix ->
+         (function
+          | [|d1|] -> Funct.unfold_symmetry sym_matrix e d1
+          | _ -> Result.Error (Invalid_expr e))
+      | `CloseSym_2 sym_matrix ->
+         (function
+          | [| `Color bgcolor; d2|] -> Funct.close_symmetry sym_matrix bgcolor e d2
+          | _ -> Result.Error (Invalid_expr e))
+      | `TranslationSym_2 sym ->
+         (function
+          | [|d1;d2|] ->
          (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
           | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
              let| ti, tj =
@@ -1348,21 +1382,22 @@ module MyDomain : Madil.DOMAIN =
              in
              Result.Ok (`Vec (ti, tj))
           | _ -> Result.Error (Invalid_expr e))
-      | `MajorityColor_1, [|d1|] ->
-         (match d1 with
-          | `Grid g ->
+          | _ -> Result.Error (Invalid_expr e))
+      | `MajorityColor_1 ->
+         (function
+          | [| `Grid g|] ->
              let| c = Grid.majority_color Grid.black g in
              Result.Ok (`Color c)
           | _ -> Result.Error (Invalid_expr e))
-      | `ColorCount_1, [|d1|] ->
-         (match d1 with
-          | `Grid g ->
+      | `ColorCount_1 ->
+         (function
+          | [| `Grid g|] ->
              let n = Grid.color_count Grid.black g in
              Result.Ok (`Int n)
           | _ -> Result.Error (Invalid_expr e))
-      | `Coloring_2, [|d1;d2|] ->
-         (match d2 with
-          | `Color c ->
+      | `Coloring_2 ->
+         (function
+          | [| d1; `Color c|] ->
              (match d1 with
               | `Grid g ->
                  let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
@@ -1373,15 +1408,26 @@ module MyDomain : Madil.DOMAIN =
                  Result.Ok (`PosShape (pos, shape)) *)
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
-      | `SwapColors_3, [|d1;d2;d3|] ->
-         (match d1, d2, d3 with
-          | `Grid g, `Color c1, `Color c2 ->
+      | `SwapColors_3 ->
+         (function
+          | [| `Grid g; `Color c1; `Color c2|] ->
              let| g' = Grid.Transf.swap_colors g c1 c2 in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
-      | _ -> assert false (* invalid argument number for some function *)
-      in
-      Result.Ok (Ndtree.scalar (Some res))
+
+    let eval_func (f : func) (args_tree : value Ndtree.t array) : value Ndtree.t result = (* QUICK *)
+      let e = "" in
+      match f, args_tree with
+      | `Index_1 is, [|v1|] ->
+         (match Ndtree.index v1 is with
+          | Some v -> Result.Ok v
+          | None -> Result.Error (Invalid_expr e))
+      | _ ->
+         let scalar_f = compile_scalar_func f in
+         Ndtree.broadcast_result scalar_f args_tree
+         (*let| args = array_map_result Ndtree.unscalar args_tree in
+         let| res = scalar_f args in
+         Result.Ok (Ndtree.scalar (Some res))*)
 
     let eval_unbound_var x = Result.Ok (Ndtree.scalar (Some `Null))
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
@@ -1759,13 +1805,23 @@ module MyDomain : Madil.DOMAIN =
       | _, Point -> 0.
       | _ -> assert false
 
-
+           
     let dl_periodicity_mode : Grid.Transf.periodicity_mode -> dl = function
       | `Total -> Mdl.Code.usage 0.25
       | `Strict -> Mdl.Code.usage 0.25
       | `TradeOff -> Mdl.Code.usage 0.5
            
     let dl_func_params : func -> dl = function
+      | `Index_1 is ->
+         assert (is <> []);
+         Mdl.Code.universal_int_plus (List.length is)
+         +. Mdl.sum is
+              (function
+               | None -> Mdl.Code.usage 0.25
+               | Some i -> Mdl.Code.usage 0.75
+                           +. (if i >= 0
+                               then Mdl.Code.usage 0.75 +. Mdl.Code.universal_int_star i
+                               else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
       | `ConstInt_0 i -> Mdl.Code.universal_int_star i (* TODO: depends on typ_vec *)
       | `ConstVec_0 (i,j) -> Mdl.Code.universal_int_star i +. Mdl.Code.universal_int_star j (* TODO: depdends on typ_vec *)
       | `ConstColor_0 c -> Mdl.Code.uniform Grid.nb_color
@@ -1856,7 +1912,12 @@ module MyDomain : Madil.DOMAIN =
               | _ -> [] in
             let res = (* Size_1, Area_1 *)
               match t_args with
-              | [|GRID (full,nocolor)|] -> (VEC SIZE, `Size_1)::(INT CARD, `Area_1)::res
+              | [|GRID (full,nocolor)|] ->
+                 (VEC SIZE, `Size_1)
+                 ::(INT CARD, `Area_1)
+                 ::(INT (COORD (I, SIZE)), `Area_1)
+                 ::(INT (COORD (J, SIZE)), `Area_1)
+                 ::res
               | _ -> res in
             let res = (* Right, Center, Bottom, Middle *)
               match t_args with
@@ -1920,10 +1981,10 @@ module MyDomain : Madil.DOMAIN =
                     `Rotate180; `Rotate90; `Rotate270] in
                  (VEC MOVE, `TranslationSym_2 sym)::res
               | _ -> res in
-            let res = (* Crop *)
+            (*let res = (* Crop *)
               match t_args with
               | [|GRID tg1; OBJ _|] -> (GRID tg1, `Crop_2)::res
-              | _ -> res in
+              | _ -> res in*)
             res) in
       let index = (* LEVEL 2 *)
         Expr.index_apply_functions
@@ -2019,10 +2080,10 @@ module MyDomain : Madil.DOMAIN =
                  let$ res, sym_seq = res, all_symmetry_close in
                  (t2, `CloseSym_2 sym_seq)::res
               | _ -> res in
-            let res = (* SwapColors *)
+            (*let res = (* SwapColors *)
               match t_args with
               | [|GRID (_,_) as t1; COLOR; COLOR|] -> (t1, `SwapColors_3)::res
-              | _ -> res in
+              | _ -> res in*)
             let res = (* LogNot *)
               match t_args with
               | [|GRID (false,true) as t1|] -> (t1, `LogNot_1)::res
@@ -2039,6 +2100,29 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             (* Stack *)
             res) in
+      let index = (* LEVEL 4 - ndtree indexes *)
+        Expr.index_apply_functions
+          ~eval_func
+          index 1
+          (fun (t_args, v_args_tree) ->
+            match t_args, v_args_tree with
+            | [|t1|], [|v1|] ->
+               let ndim = Ndtree.ndim v1 in
+               let res = [] in
+               let res =
+                 if ndim >= 1
+                 then
+                   let$ res, i = res, [0; -1] in
+                   (t1, `Index_1 [Some i])::res
+                 else res in
+               let res =
+                 if ndim >= 2
+                 then
+                   let$ res, j = res, [0; -1] in
+                   (t1, `Index_1 [None; Some j])::res
+                 else res in
+               res
+            | _ -> []) in
       index
 
     (* refining *)
