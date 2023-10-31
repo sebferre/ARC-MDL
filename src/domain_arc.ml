@@ -2257,13 +2257,13 @@ module MyDomain : Madil.DOMAIN =
       let open Task_model in
       let env0 = make_dcolor Grid.black in (* dummy *)
       let init_task_model =
-        let xi, varseq_i = Refining.new_var varseq0 in
-        let xo, varseq_o = Refining.new_var varseq0 in
-        { input_model = Model.make_def xi (make_anygrid (true,false));
-          input_varseq = varseq_i;
+        let varseq = varseq0 in
+        let xi, varseq = Refining.new_var varseq in
+        let xo, varseq = Refining.new_var varseq in
+        { varseq;
+          input_model = Model.make_def xi (make_anygrid (true,false));
           nb_env_vars = 0;
-          output_model = Model.make_def xo (make_anygrid (true,false));
-          output_varseq = varseq_o } in
+          output_model = Model.make_def xo (make_anygrid (true,false)) } in
       let info_o = (Grid.max_size, Grid.max_size, -1) in
       env0, init_task_model, info_o
 
