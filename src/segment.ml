@@ -310,7 +310,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
   let l = ref [] in
   for c = Grid.black to Grid.last_color do
     let n = g.color_count.(c) in
-    if n > 0 && n < area then l := (c,n)::!l (* keeping only occurring colors, except if single color *)
+    if n > 0 && n <= area then l := (c,n)::!l (* keeping only occurring colors (allowing full area for empty grid) *)
   done;
   let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
   let l =
@@ -319,9 +319,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
     | (c1,_)::_ -> [c1]
     | [] -> [] in
   if List.mem Grid.black l then l
-  else if g.color_count.(Grid.black) > 0 then l @ [Grid.black] (* ensure black is considered as a prefered background color *)
-  else l
-
+  else l @ [Grid.black] (* ensure black is considered as a prefered background color (even if absent from the grid) *)
 
 (* points *)
   
