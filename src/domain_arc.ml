@@ -1685,13 +1685,13 @@ module MyDomain : Madil.DOMAIN =
              let h, w = Grid.dims g in
              let* dsize, _ = parse_size (`Vec (`IntRange (h, Range.make_closed 1 h0),
                                                `IntRange (w, Range.make_closed 1 w0))) in
-             let* i, j, g1 =
-               Myseq.from_result
-                 (Grid.Transf.strip Grid.transparent g Grid.transparent) in
-             let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                             `IntRange (j, Range.make_closed 0 (w-1)))) in
-             let* dg1, _ = parse_g1 (`GridDims (g1, h-i, w-j)) in
-             Myseq.return (make_dcrop dsize dpos dg1, `Null)
+             (match Objects.segment g with
+              | [(i,j,g1)] ->
+                 let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
+                                                 `IntRange (j, Range.make_closed 0 (w-1)))) in
+                 let* dg1, _ = parse_g1 (`GridDims (g1, h-i, w-j)) in
+                 Myseq.return (make_dcrop dsize dpos dg1, `Null)
+              | _ -> Myseq.empty)
           | _ -> assert false)
       | _, Objects, [|parse_size; parse_objs|] ->
          (function
