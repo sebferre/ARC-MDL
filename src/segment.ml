@@ -315,10 +315,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
   let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
   let l =
     match l with (* keep only significant colors, and at most 2 *)
-    | (c1,n1)::(c2,n2)::_ ->
-       if n2 >= area / 4
-       then [c1; c2]
-       else [c1]
+    | (c1,n1)::(c2,n2)::_ -> [c1;c2]
     | (c1,_)::_ -> [c1]
     | [] -> [] in
   if List.mem Grid.black l then l
