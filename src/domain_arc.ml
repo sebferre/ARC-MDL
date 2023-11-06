@@ -2,6 +2,8 @@
 open Madil_common
 open Arc_common
 
+let () = Printexc.record_backtrace true
+   
 module Basic_types (* : Madil.BASIC_TYPES *) =
   struct
 
@@ -1708,6 +1710,7 @@ module MyDomain : Madil.DOMAIN =
                  match seg with
                  | `Default -> Objects.segment g
                  | `SameColor -> Objects.segment_same_color g in
+               let* () = Myseq.from_bool (List.length objs <= 9) in
                let* dobjs, input = parse_objs (`Objects (h,w,objs)) in
                (match input with
                | `Objects (_,_,[]) -> Myseq.return (make_dobjects seg dsize dobjs, `Null)
