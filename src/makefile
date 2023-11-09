@@ -15,6 +15,9 @@ all: batch
 batch: $(SRC:.cmo=.cmx) batch_arc.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o batch $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) batch_arc.ml
 
+batchc: $(SRC) batch_arc.ml
+	ocamlfind ocamlc $(FLAGS) -linkpkg -o batch $(OBJ) $(SRC) batch_arc.ml
+
 lis: $(SRC) lis_arc.ml
 	ocamlfind ocamlc $(FLAGS) $(FLAGS_FABLIS) -package js_of_ocaml,js_of_ocaml-lwt,js_of_ocaml-ppx -linkpkg -o html/script.byte $(OBJ_FABLIS) $(OBJ) arc_lis.cmo $(SRC) lis_arc.ml
 	js_of_ocaml $(JSOO_FLAGS) html/script.byte

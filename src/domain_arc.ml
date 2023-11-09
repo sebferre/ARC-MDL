@@ -313,15 +313,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
         
     type func =
       [ `Index_1 of int option list (* on any Ndtree *)
-      | `ConstInt_0 of int (* Int *)
-      | `ConstVec_0 of int * int (* Vec *)
-      | `ConstColor_0 of Grid.color (* Color *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
-      | `IncrInt_1 of int (* on Int *)
-      | `DecrInt_1 of int (* in Int *)
-      | `IncrVec_1 of int * int (* on Vec *)
-      | `DecrVec_1 of int * int (* in Vec *)
       | `Modulo_2 (* on Int *)
       | `ScaleUp_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
       | `ScaleDown_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
@@ -416,15 +409,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
             | None -> print#string ":"
             | Some i -> print#int i)
            ~html print is
-      | `ConstInt_0 k -> print#string "'"; xp_int ~html print k
-      | `ConstVec_0 (k,l) -> print#string "'"; xp_vec xp_int xp_int ~html print k l
-      | `ConstColor_0 c -> print#string "'"; xp_color ~html print c
       | `Plus_2 -> print#string "+"
       | `Minus_2 -> print#string "-"
-      | `IncrInt_1 k -> print#string "+"; xp_int ~html print k
-      | `DecrInt_1 k -> print#string "-"; xp_int ~html print k
-      | `IncrVec_1 (k,l) -> print#string "+"; xp_vec xp_int xp_int ~html print k l
-      | `DecrVec_1 (k,l) -> print#string "-"; xp_vec xp_int xp_int ~html print k l
       | `Modulo_2 -> print#string "%"
       | `ScaleUp_2 -> print#string "*"
       | `ScaleDown_2 -> print#string "/"
@@ -555,11 +541,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | BOOL -> []
           | INT CARD ->
              [ `Index_1 [], [|k|];
-               `ConstInt_0 0, [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
-               `IncrInt_1 1, [|k|];
-               `DecrInt_1 1, [|k|];
                `Area_1, [|GRID (false,false)|];
                `ColorCount_1, [|GRID (false,false)|];
                `Min_n, [|k; k|];
@@ -568,11 +551,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | INT (COORD (axis,tv)) ->
              [ `Index_1 [], [|k|];
-               `ConstInt_0 0, [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
-               `IncrInt_1 1, [|k|];
-               `DecrInt_1 1, [|k|];
                `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `Span_2, [|k; k|]; (* only on same axis POS *)
@@ -582,11 +562,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | VEC tv ->
              [ `Index_1 [], [|k|];
-               `ConstVec_0 (0,0), [||];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
-               `IncrVec_1 (1,1), [|k|];
-               `DecrVec_1 (1,1), [|k|];
                `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `ProjI_1, [|k|];
@@ -603,7 +580,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | COLOR ->
              [ `Index_1 [], [|k|];
-               `ConstColor_0 Grid.black, [||];
                `MajorityColor_1, [|GRID (false,false)|];
              ]
           | GRID (full,nocolor) ->
@@ -637,8 +613,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
                `CloseSym_2 [], [|COLOR; k|] ]
-        method expr_opt = function
-          | k -> Some k
+        method expr_opt k =
+          let const_ok =
+            match k with
+            | INT _ | VEC _ | COLOR | GRID _ -> true
+            | _ -> false in
+          Some (k, const_ok)
         method alt_opt = function
           | _ -> false (* LATER *)
       end
@@ -968,18 +948,6 @@ module MyDomain : Madil.DOMAIN =
       let e = "" in
       function
       | `Index_1 _ -> assert false (* not a scalar function *)
-      | `ConstInt_0 k ->
-         (function
-          | [||] -> Result.Ok (`Int k)
-          | _ -> Result.Error (Invalid_expr e))
-      | `ConstVec_0 (k,l) ->
-         (function
-          | [||] -> Result.Ok (`Vec (k,l))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ConstColor_0 c ->
-         (function
-          | [||] -> Result.Ok (`Color c)
-          | _ -> Result.Error (Invalid_expr e))
       | `Plus_2 ->
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
@@ -989,23 +957,6 @@ module MyDomain : Madil.DOMAIN =
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1-i2))
           | [| `Vec (i1, j1); `Vec (i2, j2)|] -> Result.Ok (`Vec (i1-i2, j1-j2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `IncrInt_1 k ->
-        (function
-         | [| `Int i1|] -> Result.Ok (`Int (i1 + k))
-         | _ -> Result.Error (Invalid_expr e))
-      | `DecrInt_1 k ->
-         (function
-          | [| `Int i1|] -> Result.Ok (`Int (i1 - k))
-          | _ -> Result.Error (Invalid_expr e))
-      | `IncrVec_1 (k,l) ->
-         (function
-          | [| `Vec (i1, j1)|] -> Result.Ok (`Vec (i1 + k, j1 + l))
-          | _ -> Result.Error (Invalid_expr e))
-      | `DecrVec_1 (k,l) ->
-         (function
-          | [| `Int i1|] -> Result.Ok (`Int (i1 - k))
-          | [| `Vec (i1, j1)|] -> Result.Ok (`Vec (i1 - k, j1 - l))
           | _ -> Result.Error (Invalid_expr e))
       | `Modulo_2 ->
          (function
@@ -1407,55 +1358,10 @@ module MyDomain : Madil.DOMAIN =
       | _ ->
          let scalar_f = compile_scalar_func f in
          Ndtree.broadcast_result scalar_f args_tree
-         (*let| args = array_map_result Ndtree.unscalar args_tree in
-         let| res = scalar_f args in
-         Result.Ok (Ndtree.scalar (Some res))*)
 
     let eval_unbound_var x = Result.Ok (Ndtree.scalar (Some `Null))
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
 
-(* DEPRECATED
-    let rec data_of_value t v =
-      let| dc, dargs =
-        match t, v with
-        | INT (COORD (axis,tv)), `Int i ->
-           Result.Ok (DCoord i, [||])
-        | VEC tv, `Vec (i,j) ->
-           let| di = data_of_value (INT (COORD (I,tv))) (`Int i) in
-           let| dj = data_of_value (INT (COORD (J,tv))) (`Int j) in
-           Result.Ok (DVec, [|di; dj|])
-        | COLOR, `Color c ->
-           Result.Ok (DColor c, [||])
-        | GRID tg, `Grid g ->
-           Result.Ok (DGrid g, [||])
-        | OBJ tg, `Obj (i,j,g1) ->
-           let| dpos = data_of_value (VEC POS) (`Vec (i,j))  in
-           let| dg1 = data_of_value (GRID tg) (`Grid g1) in
-           Result.Ok (DObj, [|dpos; dg1|])
-        (* TODO: list values *)
-        | _ -> Result.Error (Failure "data_of_value: unexpected value") in
-      Result.Ok (Data.D (v, DPat (dc, dargs)))
-    let rec model_of_value t v =
-      let| c, args =
-        match t, v with
-        | INT (COORD (axis,tv)), `Int i ->
-           Result.Ok (Coord i, [||])
-        | VEC tv, `Vec (i,j) ->
-           let| mi = model_of_value (INT (COORD (I,tv))) (`Int i) in
-           let| mj = model_of_value (INT (COORD (J,tv))) (`Int j) in
-           Result.Ok (Vec, [|mi; mj|])
-        | COLOR, `Color c ->
-           Result.Ok (Color c, [||])
-        | GRID tg, `Grid g ->
-           Result.Ok (Grid g, [||])
-        | OBJ tg, `Obj (i,j,g1) ->
-           let| mpos = model_of_value (VEC POS) (`Vec (i,j)) in
-           let| mg1 = model_of_value (GRID tg) (`Grid g1) in
-           Result.Ok (Obj, [|mpos; mg1|])
-        | _ -> Result.Error (Failure "data_of_value: unexpected value") in
-      Result.Ok (Model.Pat (t, c, args))
- *)
-                    
     (* model-based generation *)
       
     let generator_pat t c gen_args =
@@ -1735,7 +1641,7 @@ module MyDomain : Madil.DOMAIN =
     let encoding_expr_value v = 0.
     let dl_of_encoding enc = enc
            
-    let dl_value t v =
+    let rec dl_value t v =
       match t, v with
       | _, `Null -> assert false
       | BOOL, `Bool b -> 1.
@@ -1744,15 +1650,18 @@ module MyDomain : Madil.DOMAIN =
       | INT (COORD (axis,tv)), `Int ij ->
          assert (ij >= 0 && ij <= Grid.max_size);
          Range.dl ij (Range.make_closed 0 Grid.max_size)
-      | _, `Vec (i,j) ->
-         Mdl.Code.universal_int_star i
-         +. Mdl.Code.universal_int_star j (* TODO: depdends on typ_vec *)
+      | VEC tv, `Vec (i,j) ->
+         dl_value (INT (COORD (I,tv))) (`Int i)
+         +. dl_value (INT (COORD (J,tv))) (`Int j)
       | _, `Color c ->
          Mdl.Code.uniform Grid.nb_color
       | GRID tg, `Grid g ->
          let rmax = Range.make_closed 1 Grid.max_size in
          dl_grid g tg rmax rmax
-      | _, `Obj _ -> assert false
+      | _, `Obj (i,j,g) ->
+         dl_value (INT (COORD (I, POS))) (`Int i)
+         +. dl_value (INT (COORD (J, POS))) (`Int j)
+         +. dl_value (GRID (false,false)) (`Grid g)
       | _, `Seq _ -> assert false
       | _ -> assert false
 
@@ -1798,15 +1707,8 @@ module MyDomain : Madil.DOMAIN =
                            +. (if i >= 0
                                then Mdl.Code.usage 0.75 +. Mdl.Code.universal_int_star i
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
-      | `ConstInt_0 i -> Mdl.Code.universal_int_star i (* TODO: depends on typ_vec *)
-      | `ConstVec_0 (i,j) -> Mdl.Code.universal_int_star i +. Mdl.Code.universal_int_star j (* TODO: depdends on typ_vec *)
-      | `ConstColor_0 c -> Mdl.Code.uniform Grid.nb_color
       | `Plus_2 -> 0.
       | `Minus_2 -> 0.
-      | `IncrInt_1 k -> Mdl.Code.universal_int_star k
-      | `DecrInt_1 k -> Mdl.Code.universal_int_star k
-      | `IncrVec_1 (k,l) -> Mdl.Code.universal_int_star k +. Mdl.Code.universal_int_star l
-      | `DecrVec_1 (k,l) -> Mdl.Code.universal_int_star k +. Mdl.Code.universal_int_star l
       | `Modulo_2 -> 0.
       | `ScaleUp_2 -> 0.
       | `ScaleDown_2 -> 0.
@@ -1848,11 +1750,11 @@ module MyDomain : Madil.DOMAIN =
     let make_index (bindings : bindings) : expr_index =
       let index = Expr.Index.empty in
       let index = Expr.index_add_bindings index bindings in
-      let index = (* LEVEL 4 - ndtree indexes *)
+      let index = (* LEVEL 0 - ndtree indexes *)
         Expr.index_apply_functions
           ~eval_func
           index 1
-          (fun (t_args, v_args_tree, es_args) ->
+          (fun (t_args, v_args_tree) ->
             match t_args, v_args_tree with
             | [|t1|], [|v1|] ->
                let ndim = Ndtree.ndim v1 in
@@ -1861,13 +1763,13 @@ module MyDomain : Madil.DOMAIN =
                  if ndim >= 1
                  then
                    let$ res, i = res, [0; 1; 2; -1] in
-                   (t1, `Index_1 [Some i], es_args)::res
+                   (t1, `Index_1 [Some i], `Default)::res
                  else res in
                let res =
                  if ndim >= 2
                  then
                    let$ res, j = res, [0; 1; 2; -1] in
-                   (t1, `Index_1 [None; Some j], es_args)::res
+                   (t1, `Index_1 [None; Some j], `Default)::res
                  else res in
                res
             | _ -> []) in
@@ -1875,43 +1777,37 @@ module MyDomain : Madil.DOMAIN =
         Expr.index_apply_functions
           ~eval_func
           index 1 (* TEST *)
-          (fun (t_args, v_args_tree, es_args) ->
+          (fun (t_args, v_args_tree) ->
             let res = [] in
-            let res = (* const colors *)
-              match t_args with
-              | [| |] ->
-                 let$ res, c = res, Grid.all_colors in
-                 (COLOR, `ConstColor_0 c, es_args)::res
-              | _ -> res in
             let res = (* Size_1, Area_1 *)
               match t_args with
               | [|GRID (full,nocolor)|] ->
-                 (VEC SIZE, `Size_1, es_args)
-                 ::(INT CARD, `Area_1, es_args)
-                 ::(INT (COORD (I, SIZE)), `Area_1, es_args)
-                 ::(INT (COORD (J, SIZE)), `Area_1, es_args)
+                 (VEC SIZE, `Size_1, `Default)
+                 ::(INT CARD, `Area_1, `Default)
+                 ::(INT (COORD (I, SIZE)), `Area_1, `Default)
+                 ::(INT (COORD (J, SIZE)), `Area_1, `Default)
                  ::res
               | _ -> res in
             let res = (* Right, Center, Bottom, Middle *)
               match t_args with
               | [|OBJ tg|] ->
-                 (INT (COORD (J,POS)), `Right_1, es_args)
-                 ::(INT (COORD (J,POS)), `Center_1, es_args)
-                 ::(INT (COORD (I,POS)), `Bottom_1, es_args)
-                 ::(INT (COORD (I,POS)), `Middle_1, es_args)
+                 (INT (COORD (J,POS)), `Right_1, `Default)
+                 ::(INT (COORD (J,POS)), `Center_1, `Default)
+                 ::(INT (COORD (I,POS)), `Bottom_1, `Default)
+                 ::(INT (COORD (I,POS)), `Middle_1, `Default)
                  ::res
               | _ -> res in
             let res = (* ProjI/J_1 *)
               match t_args with
-              | [|VEC tv|] -> (VEC tv, `ProjI_1, es_args)::(VEC tv, `ProjJ_1, es_args)::res
+              | [|VEC tv|] -> (VEC tv, `ProjI_1, `Default)::(VEC tv, `ProjJ_1, `Default)::res
               | _ -> res in
             let res = (* MajorityColor_1 *)
               match t_args with
-              | [|GRID (full,false)|] -> (COLOR, `MajorityColor_1, es_args)::res
+              | [|GRID (full,false)|] -> (COLOR, `MajorityColor_1, `Default)::res
               | _ -> res in
             let res = (* ColorCount_1 *)
               match t_args with
-              | [|GRID (full,false)|] -> (INT CARD, `ColorCount_1, es_args)::res
+              | [|GRID (full,false)|] -> (INT CARD, `ColorCount_1, `Default)::res
               | _ -> res in
             (*let res = (* Strip_1: covered by pattern Crop *)
               match t_args with
@@ -1920,13 +1816,13 @@ module MyDomain : Madil.DOMAIN =
             (* TODO: PeriodicFactor_2, as pattern *)
             let res = (* Corner_2 *)
               match t_args with
-              | [|VEC POS; VEC POS|] -> (VEC POS, `Corner_2, es_args)::res
+              | [|VEC POS; VEC POS|] -> (VEC POS, `Corner_2, `Default)::res
               | _ -> res in
             let res = (* Span_2 *)
               match t_args with
               | [|INT (COORD (axis1,POS)); INT (COORD (axis2,POS))|] when axis1=axis2 ->
-                 (INT (COORD (axis1,POS)), `Span_2, es_args)::res
-              | [|VEC POS; VEC POS|] -> (VEC POS, `Span_2, es_args)::res
+                 (INT (COORD (axis1,POS)), `Span_2, `Default)::res
+              | [|VEC POS; VEC POS|] -> (VEC POS, `Span_2, `Default)::res
               | _ -> res in
             (*let res = (* Min, Max, Average *) TODO: as vectorized op
               match t_args with
@@ -1938,12 +1834,12 @@ module MyDomain : Madil.DOMAIN =
             let res = (* translation = pos - pos *)
               match t_args with
               | [|INT (COORD (axis1,POS)); INT (COORD (axis2,POS))|] when axis1=axis2 ->
-                 (INT (COORD (axis1,MOVE)), `Minus_2, es_args)::res
-              | [|VEC POS; VEC POS|] -> (VEC POS, `Minus_2, es_args)::res
+                 (INT (COORD (axis1,MOVE)), `Minus_2, `Default)::res
+              | [|VEC POS; VEC POS|] -> (VEC POS, `Minus_2, `Default)::res
               | _ -> res in
             let res = (* TranslationOnto *)
               match t_args with
-              | [|OBJ _; OBJ _|] -> (VEC MOVE, `TranslationOnto_2, es_args)::res
+              | [|OBJ _; OBJ _|] -> (VEC MOVE, `TranslationOnto_2, `Default)::res
               | _ -> res in
             let res = (* TranslationSym *)
               match t_args with
@@ -1952,7 +1848,7 @@ module MyDomain : Madil.DOMAIN =
                    res,
                    [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
                     `Rotate180; `Rotate90; `Rotate270] in
-                 (VEC MOVE, `TranslationSym_2 sym, es_args)::res
+                 (VEC MOVE, `TranslationSym_2 sym, `Default)::res
               | _ -> res in
             (*let res = (* Crop *)
               match t_args with
@@ -1963,85 +1859,64 @@ module MyDomain : Madil.DOMAIN =
         Expr.index_apply_functions
           ~eval_func
           index 1 (* TEST *)
-          (fun (t_args,v_args_tree,es_args) ->
+          (fun (t_args,v_args_tree) ->
             let res = [] in
-            let res = (* const ints and vecs *)
-              match t_args with
-              | [| |] ->
-                 let$ res, k = res, [0;1;2;3] in
-                 let f = `ConstInt_0 k in
-                 let res =
-                   let$ res, ti =
-                     res,
-                     (if k = 0
-                      then [CARD;
-                            COORD (I,POS); COORD (J,POS)]
-                      else [CARD;
-                            COORD (I,POS); COORD (J,POS);
-                            COORD (I,SIZE); COORD (J,SIZE);
-                            COORD (I,MOVE); COORD (J,MOVE)]) in
-                   (INT ti, f, es_args)::res in
-                 let$ res, l = res, [0;1;2;3] in
-                 let f = `ConstVec_0 (k,l) in
-                 let$ res, tv =
-                   res, (if k=0 && l=0
-                         then [POS]
-                         else [POS; SIZE; MOVE]) in
-                 (VEC tv, f, es_args)::res
-              | _ -> res in
-            let res = (* IncrInt, DecrInt *)
-              match t_args with
-              | [|INT (COORD (axis,tv)) as t|] when tv <> MOVE ->
-                 let$ res, k = res, [1;2;3] in
-                 (t, `IncrInt_1 k, es_args) :: (t, `DecrInt_1 k, es_args) :: res
-              | _ -> res in
-            let res = (* IncrVec, DecrVec *)
-              match t_args with
-              | [|VEC tv as t|] when tv <> MOVE ->
-                 let$ res, k = res, [0;1;2;3] in
-                 let$ res, l = res, [0;1;2;3] in
-                 (t, `IncrVec_1 (k,l), es_args) :: (t, `DecrVec_1 (k,l), es_args) :: res
-              | _ -> res in
             let res = (* ScaleUp, ScaleDown *)
               match t_args with
-              | [|(INT _ | VEC _ | GRID _ as t1); INT CARD|] ->
-                 (* TODO: pb, constants not in previous level. Move to LEVEL 3? *)
-                 (match Ndtree.unscalar v_args_tree.(1) with (* TODO: generalize, or avoid? *)
-                  | Result.Ok (`Int k) when k>=2 && k<=3 ->
-                     (t1, `ScaleUp_2, es_args)::(t1, `ScaleDown_2, es_args)::res
-                  | _ -> res)
+              | [|(INT _ | VEC _ | GRID _ as t1)|] ->
+                 let$ res, k = res, [1;2;3] in
+                 let args_spec = `Custom [|`Pos 0; `Val (INT CARD, `Int k)|] in
+                 (t1, `ScaleUp_2, args_spec)::(t1, `ScaleDown_2, args_spec)::res
               | _ -> res in
             (* MOVE as POS ? *)
             let res = (* ApplySymGrid *)
               match t_args with
               | [|GRID _ as t1|] ->
                  let$ res, sym = res, all_symmetry in
-                 (t1, `ApplySymGrid_1 sym, es_args)::res
+                 (t1, `ApplySymGrid_1 sym, `Default)::res
               | _ -> res in
             let res = (* Coloring *)
               match t_args with
-              | [|GRID _ as t1; COLOR|] -> (t1, `Coloring_2, es_args)::res
+              | [|GRID _ as t1; COLOR|] -> (t1, `Coloring_2, `Default)::res
               | _ -> res in
             let res = (* Plus *)
               match t_args with
+              | [|INT (COORD (_,tv1)) as t1|] when tv1 <> MOVE ->
+                 let$ res, i2 = res, [1;2;3] in
+                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Int i2)|] in
+                 (t1, `Plus_2, args_spec)::res
               | [|INT (COORD (_,tv1)) as t1; INT (COORD (_,(SIZE|MOVE)))|] when tv1 <> MOVE ->
-                 (t1, `Plus_2, es_args)::res
+                 (t1, `Plus_2, `Default)::res
+              | [|VEC tv1 as t1|] when tv1 <> MOVE ->
+                 let$ res, i2 = res, [0;1;2;3] in
+                 let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
+                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Vec (i2,j2))|] in
+                 (t1, `Plus_2, args_spec)::res
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
-                 (t1, `Plus_2, es_args)::res
+                 (t1, `Plus_2, `Default)::res
               | _ -> res in
             let res = (* Minus *)
               match t_args with
+              | [|INT (COORD (_,tv1)) as t1|] when tv1 <> MOVE ->
+                 let$ res, i2 = res, [1;2;3] in
+                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Int i2)|] in
+                 (t1, `Minus_2, args_spec)::res
               | [|INT (COORD (_,tv1)) as t1; INT (COORD (_, (SIZE|MOVE)))|] when tv1 <> MOVE ->
-                 (t1, `Minus_2, es_args)::res
+                 (t1, `Minus_2, `Default)::res
+              | [|VEC tv1 as t1|] when tv1 <> MOVE ->
+                 let$ res, i2 = res, [0;1;2;3] in
+                 let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
+                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Vec (i2,j2))|] in
+                 (t1, `Minus_2, args_spec)::res
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
-                 (t1, `Minus_2, es_args)::res
+                 (t1, `Minus_2, `Default)::res
               | _ -> res in
             res) in
       let index = (* LEVEL 3 *)
         Expr.index_apply_functions
           ~eval_func
           index 1 (* TEST *)
-          (fun (t_args,v_args_tree,es_args) ->
+          (fun (t_args,v_args_tree) ->
             let res = [] in
             let res = (* Tiling *)
               match t_args with
@@ -2049,33 +1924,40 @@ module MyDomain : Madil.DOMAIN =
                  let$ res, k = res, [1;2;3] in
                  let$ res, l = res, [1;2;3] in
                  if k>1 || l>1
-                 then (t1, `Tiling_1 (k,l), es_args)::res
+                 then (t1, `Tiling_1 (k,l), `Default)::res
                  else res
               | _ -> res in
             let res = (* FillResizeAlike *)
               match t_args with
-              | [|COLOR; VEC SIZE; GRID (full,_) as t3|] ->
+              | [|VEC SIZE; GRID (full,_) as t3|] ->
+                 let$ res, bgcolor = res, [Grid.black; Grid.transparent] in
+                 let args_spec = `Custom [|`Val (COLOR, `Color bgcolor); `Pos 0; `Pos 1|] in
                  let$ res, mode =
                    res, (if full
                          then [`TradeOff; `Total; `Strict]
                          else [`TradeOff; `Strict]) in
-                 (t3, `FillResizeAlike_3 mode, es_args)::res
+                 (t3, `FillResizeAlike_3 mode, args_spec)::res
               | _ -> res in
             let res = (* SelfCompose *)
               match t_args with
-              | [|COLOR; GRID _ as t2|] -> (t2, `SelfCompose_2, es_args)::res
+              | [|GRID _ as t2|] ->
+                 let$ res, color = res, Grid.all_colors in
+                 let args_spec = `Custom [|`Val (COLOR, `Color color); `Pos 0|] in
+                 (t2, `SelfCompose_2, args_spec)::res
               | _ -> res in
             let res = (* UnfoldSym *)
               match t_args with
               | [|GRID _ as t1|] ->
                  let$ res, sym_matrix = res, all_symmetry_unfold in
-                 (t1, `UnfoldSym_1 sym_matrix, es_args)::res
+                 (t1, `UnfoldSym_1 sym_matrix, `Default)::res
               | _ -> res in
             let res = (* CloseSym *)
               match t_args with
-              | [|COLOR; GRID (full,_) as t2|] when not full ->
+              | [|GRID (full,_) as t2|] when not full ->
+                 let$ res, bgcolor = res, [Grid.black; Grid.transparent] in
+                 let args_spec = `Custom [|`Val (COLOR, `Color bgcolor); `Pos 0|] in
                  let$ res, sym_seq = res, all_symmetry_close in
-                 (t2, `CloseSym_2 sym_seq, es_args)::res
+                 (t2, `CloseSym_2 sym_seq, args_spec)::res
               | _ -> res in
             (*let res = (* SwapColors *)
               match t_args with
@@ -2083,17 +1965,17 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in*)
             let res = (* LogNot *)
               match t_args with
-              | [|GRID (false,true) as t1|] -> (t1, `LogNot_1, es_args)::res
+              | [|GRID (false,true) as t1|] -> (t1, `LogNot_1, `Default)::res
               | _ -> res in
             let res = (* And, Or, XOr, AndNOt *)
               match t_args with
               | [|GRID (false,true) as t1; t2|] when t2=t1 ->
                  let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
-                 (t1,f,es_args)::res
+                 (t1,f, `Default)::res
               | _ -> res in
             let res = (* ScaleTo *)
               match t_args with
-              | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, es_args)::res
+              | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, `Default)::res
               | _ -> res in
             (* Stack *)
             res) in
@@ -2225,12 +2107,22 @@ module MyDomain : Madil.DOMAIN =
       match t, v with
       | INT (COORD (axis,tv)), `Int i ->
          [ make_anycoord axis tv, varseq ]
+      | VEC tv, `Vec (i,j) ->
+         let x, varseq = Refining.new_var varseq in
+         let y, varseq = Refining.new_var varseq in
+         [ make_vec tv
+             (Model.make_def x (make_anycoord I tv))
+             (Model.make_def y (make_anycoord J tv)), varseq ]
       | COLOR, `Color c ->
          [ make_anycolor, varseq ]
       | GRID tg, `Grid g ->
          [ make_anygrid tg, varseq ]
-      | _ -> []      
-    let prunings_pat t c args varseq data = []
+      | _ -> assert false
+    let prunings_pat t c args varseq data =
+      match t, c with
+      | GRID _, AnyGrid -> []
+      | GRID tg, _ -> [ make_anygrid tg, varseq ]
+      | _ -> []
     let prunings_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
