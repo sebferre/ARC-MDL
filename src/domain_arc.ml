@@ -92,7 +92,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BOOL
       | INT of typ_int
       | VEC of typ_vec
-      | COLOR
+      | COLOR of typ_color
       | GRID of typ_grid
       | OBJ of typ_grid
     (* list of values have the type of their elts *)
@@ -106,6 +106,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | POS
       | SIZE
       | MOVE
+    and typ_color =
+      | C_BG (* background color *)
+      | C_OBJ (* object color *)
     and typ_grid =
       bool (* full = no transparent cell *)
       * bool (* no-color, i.e. black and transparent *)
@@ -120,7 +123,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BOOL -> print#string "BOOL"
       | INT ti -> xp_typ_int ~html print ti
       | VEC tv -> xp_typ_vec ~html print tv
-      | COLOR -> print#string "COLOR"
+      | COLOR tc -> print#string "COLOR"; xp_typ_color ~html print tc
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
     and xp_typ_int ~html print = function
@@ -132,6 +135,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | POS -> print#string "POS"
       | SIZE -> print#string "SIZE"
       | MOVE -> print#string "MOVE"
+    and xp_typ_color ~html print = function
+      | C_BG -> print#string "_BG"
+      | C_OBJ -> print#string "_OBJ"
     and xp_typ_grid ~html print (full,nocolor) =
       print#string (if full then "GRID"
                     else if nocolor then "MASK"
@@ -269,7 +275,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     type dconstr = (* make sure data from constant models can be identified as so *)
       | DAnyCoord of int * Range.t (* COORD in some range *)
       | DVec (* COORD, COORD : VEC *)
-      | DAnyColor of Grid.color (* COLOR *)
+      | DAnyColor of Grid.color * typ_color (* COLOR *)
       | DAnyGrid of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) (* GRID of some type and with some size ranges *)
       | DObj (* SIZE, SPRITE : OBJ *)
       | DBgColor (* COLOR, SPRITE : GRID *)
@@ -286,7 +292,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       match dc, xp_args with
       | DAnyCoord (ij,_), [||] -> print#int ij
       | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | DAnyColor c, [||] -> xp_color ~html print c
+      | DAnyColor (c,_), [||] -> xp_color ~html print c
       | DAnyGrid (g,_,_,_), [||] -> xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | DBgColor, [|xp_color; xp_sprite|] ->
@@ -515,7 +521,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              None,
              [ Vec, [|INT (COORD (I, tv)), 0;
                       INT (COORD (J, tv)), 0|] ]
-          | COLOR ->
+          | COLOR tc ->
              Some AnyColor, [ ]
           | GRID (full,nocolor) ->
              Some AnyGrid,
@@ -524,11 +530,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  if cond
                  then Some c_args
                  else None)
-               [ full, (BgColor, [|COLOR, 0; GRID (false,nocolor), 0|]);
+               [ full, (BgColor, [|COLOR C_BG, 0; GRID (false,nocolor), 0|]);
                  not full, (IsFull, [|GRID (true,nocolor), 0|]);
                  not full, (Crop, [|VEC SIZE, 0; VEC POS, 0; GRID (false,nocolor), 0|]);
                  not full, (Objects `Default, [|VEC SIZE, 0; OBJ (false,nocolor), 1|]);
-                 not nocolor, (Monocolor, [|COLOR, 0; GRID (full,true), 0|]);
+                 not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (full,true), 0|]);
                  not full && nocolor, (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Border, [|VEC SIZE, 0|]);
@@ -578,7 +584,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymVec_1 (`Id,tv), [|k|];
                `Tiling_1 (2,2), [|k|];
              ]
-          | COLOR ->
+          | COLOR tc ->
              [ `Index_1 [], [|k|];
                `MajorityColor_1, [|GRID (false,false)|];
              ]
@@ -588,16 +594,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
                (*`Strip_1, [|GRID (false,false)|];*)
-               `PeriodicFactor_2 `TradeOff, [|COLOR; k|];
+               `PeriodicFactor_2 `TradeOff, [|COLOR C_BG; k|];
                `Crop_2, [|GRID (true,false); OBJ (false,false)|];
                `ApplySymGrid_1 `Id, [|k|];
-               `Coloring_2, [|k; COLOR|];
+               `Coloring_2, [|k; COLOR C_OBJ|];
                `Tiling_1 (2,2), [|k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR; VEC SIZE; k|];
-               `SelfCompose_2, [|COLOR; k|];
+               `FillResizeAlike_3 `TradeOff, [|COLOR C_BG; VEC SIZE; k|];
+               `SelfCompose_2, [|COLOR C_OBJ; k|];
                `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR; k|];
-               `SwapColors_3, [|k; COLOR; COLOR|];
+               `CloseSym_2 [], [|COLOR C_BG; k|];
+               `SwapColors_3, [|k; COLOR C_OBJ; COLOR C_OBJ|];
                `Stack_n, [|k; k|];
                (* on masks *)
                `LogNot_1, [|k|];
@@ -608,15 +614,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | OBJ (full,nocolor) ->
              [ `Index_1 [], [|k|];
-               `PeriodicFactor_2 `TradeOff, [|COLOR; k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR; VEC SIZE; k|];
+               `PeriodicFactor_2 `TradeOff, [|COLOR C_BG; k|];
+               `FillResizeAlike_3 `TradeOff, [|COLOR C_BG; VEC SIZE; k|];
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR; k|] ]
+               `CloseSym_2 [], [|COLOR C_BG; k|] ]
         method expr_opt k =
           let const_ok =
             match k with
-            | INT _ | VEC _ | COLOR | GRID _ -> true
+            | INT _ | VEC _ | COLOR _ | GRID _ -> true
             | _ -> false in
           Some (k, const_ok)
         method alt_opt = function
@@ -672,7 +678,7 @@ module MyDomain : Madil.DOMAIN =
 
     let make_anycoord axis tv : model = Model.make_pat (INT (COORD (axis,tv))) AnyCoord [||]
     let make_vec tv mi mj : model = Model.make_pat (VEC tv) Vec [|mi;mj|]
-    let make_anycolor : model = Model.make_pat COLOR AnyColor [||]
+    let make_anycolor tc : model = Model.make_pat (COLOR tc) AnyColor [||]
     let make_anygrid tg : model = Model.make_pat (GRID tg) AnyGrid [||]
     let make_obj tg mpos mg1 : model = Model.make_pat (OBJ tg) Obj [|mpos;mg1|]
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (true,false)) BgColor [|mcol; mg1|]
@@ -707,8 +713,8 @@ module MyDomain : Madil.DOMAIN =
     let make_dvec di dj : data =
       let i, j = get_int di, get_int dj in
       Data.make_dpat (`Vec (i,j)) DVec [|di;dj|]
-    let make_danycolor c : data =
-      Data.make_dpat (`Color c) (DAnyColor c) [||]
+    let make_danycolor c tc : data =
+      Data.make_dpat (`Color c) (DAnyColor (c,tc)) [||]
     let make_danygrid g tg rh rw : data =
       Data.make_dpat (`Grid g) (DAnyGrid (g,tg,rh,rw)) [||]
     let make_dobj dpos dg1 : data =
@@ -1379,8 +1385,8 @@ module MyDomain : Madil.DOMAIN =
            let* di = gen_i (h,w,c) in
            let* dj = gen_j (h,w,c) in
            Myseq.return (make_dvec di dj))
-      | _, AnyColor, [||] ->
-         (fun (h,w,c) -> Myseq.return (make_danycolor (min (c+1) Grid.last_color)))
+      | COLOR tc, AnyColor, [||] ->
+         (fun (h,w,c) -> Myseq.return (make_danycolor (min (c+1) Grid.last_color) tc))
       | GRID ((full,nocolor) as tg), AnyGrid, [||] ->
          (fun (h,w,c) ->
            let c1 = if nocolor then Grid.Mask.one else min (c+1) Grid.last_color in
@@ -1456,7 +1462,7 @@ module MyDomain : Madil.DOMAIN =
            | SIZE -> Range.make_closed 1 Grid.max_size
            | POS | MOVE -> Range.make_closed 0 Grid.max_size in
          `Vec (`IntRange (i,range), `IntRange (j,range)) 
-      | COLOR, `Color c -> `Color c
+      | COLOR tc, `Color c -> `Color c
       | GRID (full,nocolor), `Grid g -> `GridDims (g, Grid.max_size, Grid.max_size)
       | OBJ (full,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, [obj])
       | _ -> assert false
@@ -1469,7 +1475,7 @@ module MyDomain : Madil.DOMAIN =
            let ok_i, _ = aux (`Int i) in_i in
            let ok_j, _ = aux (`Int j) in_j in
            ok_i && ok_j, `Null
-        | `Color c0, `Color c -> c = c0, `Null
+        | `Color c0, `Color c -> c = c0 && c <= Grid.last_color, `Null
         | `Grid g0, `GridDims (g,_,_) -> g = g0, `Null
         | `Obj obj0, `Objects(h,w,objs) ->
            if List.mem obj0 objs
@@ -1495,9 +1501,12 @@ module MyDomain : Madil.DOMAIN =
              let* dj, _ = parse_j in_j in
              Myseq.return (make_dvec di dj, `Null)
           | _ -> assert false)
-      | _, AnyColor, [||] ->
+      | COLOR tc, AnyColor, [||] ->
          (function
-          | `Color c -> Myseq.return (make_danycolor c, `Null)
+          | `Color c ->
+             if c <= Grid.last_color
+             then Myseq.return (make_danycolor c tc, `Null)
+             else Myseq.empty
           | _ -> assert false)
       | GRID tg, AnyGrid, [||] ->
          (function
@@ -1609,6 +1618,22 @@ module MyDomain : Madil.DOMAIN =
 
     (* description length *)
 
+    let dl_color (c : Grid.color) (tc : typ_color) : dl =
+      (* Mdl.Code.uniform Grid.nb_color *)
+      match tc with
+      | C_OBJ ->
+         if c = 0 then Mdl.Code.usage 0.091
+         else (* 0.909 for other colors in total *)
+           if c > 0 && c < 10 (* 9 colors *)
+           then Mdl.Code.usage 0.101
+           else invalid_arg ("dl_shape_color: Unexpected color: " ^ Grid.name_of_color c)
+      | C_BG ->
+         if c = 0 then Mdl.Code.usage 0.910
+         else (* 0.090 for other colors in total *)
+           if c > 0 && c < 10 (* 9 colors *)
+           then Mdl.Code.usage 0.010
+           else invalid_arg ("dl_background_color: Unexpected color: " ^ Grid.name_of_color c)
+
     let dl_grid g (full,nocolor) rh rw : dl = (* too efficient a coding for being useful? *)
       let h, w = Grid.dims g in
       let area = h * w in
@@ -1623,7 +1648,7 @@ module MyDomain : Madil.DOMAIN =
       match dc, encs with
       | DAnyCoord (ij,range), [||] -> Range.dl ij range
       | DVec, [|enc_i; enc_j|] ->  enc_i +. enc_j
-      | DAnyColor c, [||] -> Mdl.Code.uniform Grid.nb_color
+      | DAnyColor (c,tc), [||] -> dl_color c tc
       | DAnyGrid (g,tg,rh,rw), [||] -> dl_grid g tg rh rw
       | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
       | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
@@ -1653,8 +1678,7 @@ module MyDomain : Madil.DOMAIN =
       | VEC tv, `Vec (i,j) ->
          dl_value (INT (COORD (I,tv))) (`Int i)
          +. dl_value (INT (COORD (J,tv))) (`Int j)
-      | _, `Color c ->
-         Mdl.Code.uniform Grid.nb_color
+      | COLOR tc, `Color c -> dl_color c tc
       | GRID tg, `Grid g ->
          let rmax = Range.make_closed 1 Grid.max_size in
          dl_grid g tg rmax rmax
@@ -1803,7 +1827,9 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             let res = (* MajorityColor_1 *)
               match t_args with
-              | [|GRID (full,false)|] -> (COLOR, `MajorityColor_1, `Default)::res
+              | [|GRID (full,false)|] ->
+                 let$ res, tc = res, [C_BG; C_OBJ] in
+                 (COLOR tc, `MajorityColor_1, `Default)::res
               | _ -> res in
             let res = (* ColorCount_1 *)
               match t_args with
@@ -1877,7 +1903,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             let res = (* Coloring *)
               match t_args with
-              | [|GRID _ as t1; COLOR|] -> (t1, `Coloring_2, `Default)::res
+              | [|GRID _ as t1; COLOR _|] -> (t1, `Coloring_2, `Default)::res
               | _ -> res in
             let res = (* Plus *)
               match t_args with
@@ -1930,8 +1956,8 @@ module MyDomain : Madil.DOMAIN =
             let res = (* FillResizeAlike *)
               match t_args with
               | [|VEC SIZE; GRID (full,_) as t3|] ->
-                 let$ res, bgcolor = res, [Grid.black; Grid.transparent] in
-                 let args_spec = `Custom [|`Val (COLOR, `Color bgcolor); `Pos 0; `Pos 1|] in
+                 let$ res, bgcolor = res, [Grid.black] in
+                 let args_spec = `Custom [|`Val (COLOR C_BG, `Color bgcolor); `Pos 0; `Pos 1|] in
                  let$ res, mode =
                    res, (if full
                          then [`TradeOff; `Total; `Strict]
@@ -1942,7 +1968,7 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID _ as t2|] ->
                  let$ res, color = res, Grid.all_colors in
-                 let args_spec = `Custom [|`Val (COLOR, `Color color); `Pos 0|] in
+                 let args_spec = `Custom [|`Val (COLOR C_OBJ, `Color color); `Pos 0|] in
                  (t2, `SelfCompose_2, args_spec)::res
               | _ -> res in
             let res = (* UnfoldSym *)
@@ -1954,14 +1980,14 @@ module MyDomain : Madil.DOMAIN =
             let res = (* CloseSym *)
               match t_args with
               | [|GRID (full,_) as t2|] when not full ->
-                 let$ res, bgcolor = res, [Grid.black; Grid.transparent] in
-                 let args_spec = `Custom [|`Val (COLOR, `Color bgcolor); `Pos 0|] in
+                 let$ res, bgcolor = res, [Grid.black] in
+                 let args_spec = `Custom [|`Val (COLOR C_BG, `Color bgcolor); `Pos 0|] in
                  let$ res, sym_seq = res, all_symmetry_close in
                  (t2, `CloseSym_2 sym_seq, args_spec)::res
               | _ -> res in
             (*let res = (* SwapColors *)
               match t_args with
-              | [|GRID (_,_) as t1; COLOR; COLOR|] -> (t1, `SwapColors_3)::res
+              | [|GRID (_,_) as t1; COLOR C_OBJ; COLOR C_OBJ|] -> (t1, `SwapColors_3)::res
               | _ -> res in*)
             let res = (* LogNot *)
               match t_args with
@@ -1988,7 +2014,7 @@ module MyDomain : Madil.DOMAIN =
     let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list =
       match t, c with
       | INT (COORD (axis,tv)), AnyCoord -> []
-      | COLOR, AnyColor -> []
+      | COLOR tc, AnyColor -> []
       | GRID (full,nocolor), AnyGrid ->
          let refs : (model * varseq) list = [] in
          let refs = (* BgColor *)
@@ -1996,7 +2022,7 @@ module MyDomain : Madil.DOMAIN =
              let xcol, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              (make_bgcolor
-                (Model.make_def xcol (make_anycolor))
+                (Model.make_def xcol (make_anycolor C_BG))
                 (Model.make_def xg1 (make_anygrid (false,nocolor))),
               varseq)
              :: refs
@@ -2050,7 +2076,7 @@ module MyDomain : Madil.DOMAIN =
                   let xm1, varseq = Refining.new_var varseq in
                   Model.make_def xg1
                     (make_monocolor
-                       (Model.make_def xcol (make_anycolor))
+                       (Model.make_def xcol (make_anycolor C_OBJ))
                        (Model.make_def xm1 (make_anygrid (false,true)))),
                   varseq in
              (make_objects seg
@@ -2074,7 +2100,7 @@ module MyDomain : Madil.DOMAIN =
              let xcol, varseq = Refining.new_var varseq in
              let xmask, varseq = Refining.new_var varseq in
              (make_monocolor
-                (Model.make_def xcol (make_anycolor))
+                (Model.make_def xcol (make_anycolor C_OBJ))
                 (Model.make_def xmask (make_anygrid (false,true))),
               varseq)
              :: refs
@@ -2113,8 +2139,8 @@ module MyDomain : Madil.DOMAIN =
          [ make_vec tv
              (Model.make_def x (make_anycoord I tv))
              (Model.make_def y (make_anycoord J tv)), varseq ]
-      | COLOR, `Color c ->
-         [ make_anycolor, varseq ]
+      | COLOR tc, `Color c ->
+         [ make_anycolor tc, varseq ]
       | GRID tg, `Grid g ->
          [ make_anygrid tg, varseq ]
       | _ -> assert false
@@ -2133,7 +2159,7 @@ module MyDomain : Madil.DOMAIN =
 
     let get_init_task_model name task =
       let open Task_model in
-      let env0 = make_danycolor Grid.black in (* dummy *)
+      let env0 = make_danycolor Grid.black C_BG in (* dummy *)
       let init_task_model =
         let varseq = varseq0 in
         let xi, varseq = Refining.new_var varseq in
