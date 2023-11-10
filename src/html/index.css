@@ -1,4 +1,14 @@
 
+.arc-bool {
+    background-color: lightblue;
+    padding: 2px;
+}
+
+.arc-int {
+    background-color: lightgreen;
+    padding: 2px;
+}
+
 .arc-col0 {
     background-color: black;
     color: white;

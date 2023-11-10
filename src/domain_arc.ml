@@ -10,9 +10,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     (* generic printers *)
 
     let xp_bool ~html print b =
-      print#string (if b then "true" else "false")
+      xp_html_elt "span" ~classe:"arc-bool" ~html print
+        (fun () -> print#string (if b then "true" else "false"))
                               
-    let xp_int ~html print i = print#int i
+    let xp_int ~html print i =
+      xp_html_elt "span" ~classe:"arc-int" ~html print
+        (fun () -> print#int i)
     
     let xp_vec xp_i xp_j ~html print i j =
       xp_tuple2 xp_i xp_j ~html print (i,j) 
