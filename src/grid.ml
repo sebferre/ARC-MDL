@@ -44,7 +44,13 @@ let name_of_color : color -> string =
   | 11 -> "undefined"
   | c -> "col" ^ string_of_int c
 
+let xp_color ~html print c =
+  xp_html_elt "span" ~classe:("arc-col" ^ string_of_int c) ~html print
+    (fun () ->
+      print#string (name_of_color c))
+let pp_color c = pp xp_color c
 
+               
 type matrix = (int, int8_unsigned_elt, c_layout) Array2.t
 
 type pixel = int * int * color (* x, y, col *)
@@ -394,7 +400,7 @@ let print_ansi =
     method float_3 f = Printf.printf "%.3f" f
   end
       
-let rec xp_grids ?(grids_per_line = 5) print grids =
+let rec xp_grids_txt ?(grids_per_line = 5) print grids =
   let nb_lines = (List.length grids - 1) / grids_per_line + 1 in
   let max_height =
     List.fold_left (fun res g -> max res g.height) 0 grids in
@@ -406,7 +412,7 @@ let rec xp_grids ?(grids_per_line = 5) print grids =
 	 if l / grids_per_line = k then (
 	   for j = 0 to g.width - 1 do
 	     if i < g.height
-	     then xp_color print g.matrix.{i,j}
+	     then xp_grid_color print g.matrix.{i,j}
 	     else xp_blank print ()
 	   done;
 	   print#string "   "
@@ -416,17 +422,17 @@ let rec xp_grids ?(grids_per_line = 5) print grids =
     done;
     print#string "\n"
   done
-and xp_grid print grid =
+and xp_grid_txt print grid =
   print#string "\n";
   for i = 0 to grid.height - 1 do
     for j = 0 to grid.width - 1 do
-      xp_color print grid.matrix.{i,j}
+      xp_grid_color print grid.matrix.{i,j}
     done;
     print#string "\n"
   done
 and xp_blank print () =
   print#string "  "
-and xp_color print c =
+and xp_grid_color print c =
   let open ANSITerminal in
   let style, str =
     match c with
@@ -447,10 +453,27 @@ and xp_color print c =
 (* in MADIL, allow subclassing Xprint.t ? *)
 
 let pp_grids ?grids_per_line grids =
-  Xprint.to_stdout (fun print grids -> xp_grids ?grids_per_line print grids) grids
-let pp_grid grid = Xprint.to_stdout xp_grid grid
-let pp_color c = Xprint.to_stdout xp_color c
+  Xprint.to_stdout (fun print grids -> xp_grids_txt ?grids_per_line print grids) grids
+let pp_grid grid = Xprint.to_stdout xp_grid_txt grid
 
+let xp_grid ~html (print : Xprint.t) g =
+  if html
+  then
+    let h, w = dims g in
+    xp_html_elt "table" ~classe:"arc-grid" ~html print
+      (fun () ->
+        for i = 0 to h - 1 do
+          xp_html_elt "tr" ~html print
+            (fun () ->
+              for j = 0 to w - 1 do
+                let classe = "arc-cell arc-col" ^ string_of_int g.matrix.{i,j} in
+                xp_html_elt "td" ~classe ~html print
+                  (fun () -> ())
+              done)
+        done)
+  else
+    xp_grid_txt print g
+  
 (* comparing grids *)
 
 let same (g1 : t) (g2 : t) : bool = (g1.matrix = g2.matrix)

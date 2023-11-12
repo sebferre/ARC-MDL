@@ -20,31 +20,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let xp_vec xp_i xp_j ~html print i j =
       xp_tuple2 xp_i xp_j ~html print (i,j) 
 
-    let xp_color ~html print c =
-      xp_html_elt "span" ~classe:("arc-col" ^ string_of_int c) ~html print
-        (fun () ->
-          print#string (Grid.name_of_color c))
-
-    let xp_grid ~html (print : Xprint.t) g =
-      if html
-      then
-        let h, w = Grid.dims g in
-        xp_html_elt "table" ~classe:"arc-grid" ~html print
-          (fun () ->
-            for i = 0 to h - 1 do
-              xp_html_elt "tr" ~html print
-                (fun () ->
-                  for j = 0 to w - 1 do
-                    let classe = "arc-cell arc-col" ^ string_of_int g.matrix.{i,j} in
-                    xp_html_elt "td" ~classe ~html print
-                      (fun () -> ())
-                  done)
-            done)
-      else
-        Grid.xp_grid print g
-
     let xp_obj ~html print i j g =
-      print#string "an object "; xp_grid ~html print g;
+      print#string "an object "; Grid.xp_grid ~html print g;
       print#string " at position "; xp_vec xp_int xp_int ~html print i j
       
     (* values *)
@@ -64,8 +41,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Bool b -> xp_bool ~html print b
       | `Int i -> xp_int ~html print i
       | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
-      | `Color c -> xp_color ~html print c
-      | `Grid g -> xp_grid ~html print g
+      | `Color c -> Grid.xp_color ~html print c
+      | `Grid g -> Grid.xp_grid ~html print g
       | `Obj (i,j,g) -> xp_obj ~html print i j g
       | `Seq vs -> xp_array xp_value ~html print vs
 
@@ -295,8 +272,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       match dc, xp_args with
       | DAnyCoord (ij,_), [||] -> print#int ij
       | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | DAnyColor (c,_), [||] -> xp_color ~html print c
-      | DAnyGrid (g,_,_,_), [||] -> xp_grid ~html print g
+      | DAnyColor (c,_), [||] -> Grid.xp_color ~html print c
+      | DAnyGrid (g,_,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | DBgColor, [|xp_color; xp_sprite|] ->
          xp_bgcolor xp_color xp_sprite ~html print ()
