@@ -1,7 +1,7 @@
 
 OBJ=bintree.cmo common.cmo xprint.cmo iterator.cmo myseq.cmo mymap.cmo mdl.cmo range.cmo find_merge.cmo intmap.cmo madil_common.cmo ndtree.cmo task.cmo data.cmo expr.cmo model.cmo task_model.cmo refining.cmo learning.cmo madil.cmo batch.cmo
 OBJ_FABLIS=focus.cmo syntax.cmo lis.cmo jsutils.cmo webapp.cmo html.cmo widget_focus.cmo widget_suggestions.cmo widget_table.cmo widget_commandline.cmo
-SRC=arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo objects.cmo segment.cmo domain_arc.cmo
+SRC=arc_common.cmo bitmap.cmo grid.cmo mask_model.cmo grid_patterns.cmo segment.cmo domain_arc.cmo
 
 # add -g to have backtractes in case of uncaught exceptions
 FLAGS= -g -I ../../lib -I ../../madil/src -package str,num,zarith,yojson,ppx_deriving_yojson,ANSITerminal

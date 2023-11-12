@@ -1553,7 +1553,7 @@ module MyDomain : Madil.DOMAIN =
              let h, w = Grid.dims g in
              let* dsize, _ = parse_size (`Vec (`IntRange (h, Range.make_closed 1 h0),
                                                `IntRange (w, Range.make_closed 1 w0))) in
-             (match Objects.segment g with
+             (match Grid_patterns.segment g with
               | [(i,j,g1)] ->
                  let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                                  `IntRange (j, Range.make_closed 0 (w-1)))) in
@@ -1571,8 +1571,8 @@ module MyDomain : Madil.DOMAIN =
                                                  `IntRange (w, Range.make_closed 1 w0))) in
                let objs =
                  match seg with
-                 | `Default -> Objects.segment g
-                 | `SameColor -> Objects.segment_same_color g in
+                 | `Default -> Grid_patterns.segment g
+                 | `SameColor -> Grid_patterns.segment_same_color g in
                let* () = Myseq.from_bool (List.length objs <= 9) in
                let* dobjs, input = parse_objs (`Objects (h,w,objs)) in
                (match input with
@@ -2210,7 +2210,7 @@ module MyDomain : Madil.DOMAIN =
 
     let reset_memoization () =
       Grid.reset_memoized_functions ();
-      Objects.reset_memoized_functions ();
+      Grid_patterns.reset_memoized_functions ();
       Segment.reset_memoized_functions ();
       Funct.reset_memoized_functions_apply ();
       reset_make_index ()
