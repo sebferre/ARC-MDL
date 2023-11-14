@@ -2,6 +2,8 @@
 open Madil_common
 open Arc_common
 
+module GPat = Grid_patterns
+   
 let () = Printexc.record_backtrace true
    
 module Basic_types (* : Madil.BASIC_TYPES *) =
@@ -32,6 +34,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Int of int
       | `Vec of int * int
       | `Color of Grid.color
+      | `Motif of GPat.motif
       | `Grid of Grid.t
       | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
       | `Seq of value array ]
@@ -42,6 +45,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Int i -> xp_int ~html print i
       | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
       | `Color c -> Grid.xp_color ~html print c
+      | `Motif motif -> GPat.xp_motif ~html print motif
       | `Grid g -> Grid.xp_grid ~html print g
       | `Obj (i,j,g) -> xp_obj ~html print i j g
       | `Seq vs -> xp_array xp_value ~html print vs
@@ -73,6 +77,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | INT of typ_int
       | VEC of typ_vec
       | COLOR of typ_color
+      | MOTIF
       | GRID of typ_grid
       | OBJ of typ_grid
     (* list of values have the type of their elts *)
@@ -87,7 +92,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SIZE
       | MOVE
     and typ_color =
-      | C_BG (* background color *)
+      | C_BG of bool (* full *) (* background color *)
       | C_OBJ (* object color *)
     and typ_grid =
       bool (* full = no transparent cell *)
@@ -104,6 +109,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | INT ti -> xp_typ_int ~html print ti
       | VEC tv -> xp_typ_vec ~html print tv
       | COLOR tc -> print#string "COLOR"; xp_typ_color ~html print tc
+      | MOTIF -> print#string "MOTIF"
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
     and xp_typ_int ~html print = function
@@ -116,7 +122,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SIZE -> print#string "SIZE"
       | MOVE -> print#string "MOVE"
     and xp_typ_color ~html print = function
-      | C_BG -> print#string "_BG"
+      | C_BG full -> print#string "_BG"; if not full then print#string "_TR"
       | C_OBJ -> print#string "_OBJ"
     and xp_typ_grid ~html print (full,nocolor) =
       print#string (if full then "GRID"
@@ -139,6 +145,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | AnyCoord (* COORD *)
       | Vec (* COORD, COORD : VEC *)
       | AnyColor (* COLOR *)
+      | AnyMotif (* MOTIF *)
       | AnyGrid (* GRID *)
       | Obj (* POS, SPRITE : OBJ *)
       | BgColor (* COLOR, SPRITE : GRID *)
@@ -146,6 +153,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Crop (* SIZE, POS, SPRITE : SPRITE *)
       | Objects of segmentation (* SIZE, OBJ+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
+      | Motif (* SIZE, MOTIF, SPRITE (core), SPRITE (noise) *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
       | Border (* SIZE : MASK *)
@@ -185,6 +193,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "a grid with only color "; xp_color ~html print ();
       print#string " and with mask"; xp_newline ~html print ();
       xp_mask ~html print ()
+    let xp_motif xp_size xp_mot xp_core xp_noise ~html print () =
+      print#string "a grid of size "; xp_size ~html print ();
+      print#string " with motif "; xp_mot ~html print ();
+      print#string "  and with core:";
+      xp_newline ~html print ();
+      xp_core ~html print ();
+      print#string "  plus noise:";
+      xp_newline ~html print ();
+      xp_noise ~html print ()
     let xp_empty xp_size ~html print () =
       print#string "an empty mask of size "; xp_size ~html print ()
     let xp_full xp_size ~html print () =
@@ -199,6 +216,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | AnyCoord, [||] -> xp_any ~html print ()
       | Vec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
       | AnyColor, [||] -> xp_any ~html print ()
+      | AnyMotif, [||] -> xp_any ~html print ()
       | AnyGrid, [||] -> xp_any ~html print ()
       | Obj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | BgColor, [|xp_color; xp_sprite|] ->
@@ -211,6 +229,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_objects seg xp_size xp_obj ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
+      | Motif, [|xp_size; xp_mot; xp_core; xp_noise|] ->
+         xp_motif xp_size xp_mot xp_core xp_noise ~html print ()
       | Empty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | Full, [|xp_size|] ->
@@ -227,6 +247,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Vec, 1 -> print#string "j"
       | Vec, _ -> assert false
       | AnyColor, _ -> assert false
+      | AnyMotif, _ -> assert false
       | AnyGrid, _ -> assert false
       | Obj, 0 -> print#string "pos"
       | Obj, 1 -> print#string "sprite"
@@ -245,6 +266,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
       | Monocolor, _ -> assert false
+      | Motif, 0 -> print#string "size"
+      | Motif, 1 -> print#string "motif"
+      | Motif, 2 -> print#string "core"
+      | Motif, 3 -> print#string "noise"
+      | Motif, _ -> assert false
       | Empty, _ -> print#string "size"
       | Full, _ -> print#string "size"
       | Border, _ -> print#string "size"
@@ -256,6 +282,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyCoord of int * Range.t (* COORD in some range *)
       | DVec (* COORD, COORD : VEC *)
       | DAnyColor of Grid.color * typ_color (* COLOR *)
+      | DAnyMotif of GPat.motif (* MOTIF *)
       | DAnyGrid of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) (* GRID of some type and with some size ranges *)
       | DObj (* SIZE, SPRITE : OBJ *)
       | DBgColor (* COLOR, SPRITE : GRID *)
@@ -263,6 +290,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DCrop (* SIZE, POS, SPRITE : SPRITE *)
       | DObjects of segmentation (* SIZE, OBJ+ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
+      | DMotif (* SIZE, MOTIF, SPRITE (core), SPRITE (noise) *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
       | DBorder (* SIZE : MASK *)
@@ -273,6 +301,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyCoord (ij,_), [||] -> print#int ij
       | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
       | DAnyColor (c,_), [||] -> Grid.xp_color ~html print c
+      | DAnyMotif motif, [||] -> GPat.xp_motif ~html print motif
       | DAnyGrid (g,_,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | DBgColor, [|xp_color; xp_sprite|] ->
@@ -285,6 +314,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_objects seg xp_size xp_obj ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
+      | DMotif, [|xp_size; xp_mot; xp_core; xp_noise|] ->
+         xp_motif xp_size xp_mot xp_core xp_noise ~html print ()
       | DEmpty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | DFull, [|xp_size|] ->
@@ -503,6 +534,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                       INT (COORD (J, tv)), 0|] ]
           | COLOR tc ->
              Some AnyColor, [ ]
+          | MOTIF ->
+             Some AnyMotif, [ ]
           | GRID (full,nocolor) ->
              Some AnyGrid,
              List.filter_map
@@ -510,11 +543,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  if cond
                  then Some c_args
                  else None)
-               [ full, (BgColor, [|COLOR C_BG, 0; GRID (false,nocolor), 0|]);
+               [ full, (BgColor, [|COLOR (C_BG full), 0; GRID (false,nocolor), 0|]);
                  not full, (IsFull, [|GRID (true,nocolor), 0|]);
                  not full, (Crop, [|VEC SIZE, 0; VEC POS, 0; GRID (false,nocolor), 0|]);
                  not full, (Objects `Default, [|VEC SIZE, 0; OBJ (false,nocolor), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (full,true), 0|]);
+                 true, (Motif, [|VEC SIZE, 0; MOTIF, 0;
+                                 GRID (full,nocolor), 0; GRID (false,nocolor), 0|]);
                  not full && nocolor, (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Border, [|VEC SIZE, 0|]);
@@ -564,6 +599,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymVec_1 (`Id,tv), [|k|];
                `Tiling_1 (2,2), [|k|];
              ]
+          | MOTIF -> []
           | COLOR tc ->
              [ `Index_1 [], [|k|];
                `MajorityColor_1, [|GRID (false,false)|];
@@ -574,15 +610,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
                (*`Strip_1, [|GRID (false,false)|];*)
-               `PeriodicFactor_2 `TradeOff, [|COLOR C_BG; k|];
+               `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
                `Crop_2, [|GRID (true,false); OBJ (false,false)|];
                `ApplySymGrid_1 `Id, [|k|];
                `Coloring_2, [|k; COLOR C_OBJ|];
                `Tiling_1 (2,2), [|k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR C_BG; VEC SIZE; k|];
+               `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
                `SelfCompose_2, [|COLOR C_OBJ; k|];
                `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR C_BG; k|];
+               `CloseSym_2 [], [|COLOR (C_BG full); k|];
                `SwapColors_3, [|k; COLOR C_OBJ; COLOR C_OBJ|];
                `Stack_n, [|k; k|];
                (* on masks *)
@@ -594,11 +630,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | OBJ (full,nocolor) ->
              [ `Index_1 [], [|k|];
-               `PeriodicFactor_2 `TradeOff, [|COLOR C_BG; k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR C_BG; VEC SIZE; k|];
+               `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
+               `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR C_BG; k|] ]
+               `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
         method expr_opt k =
           let const_ok =
             match k with
@@ -659,6 +695,7 @@ module MyDomain : Madil.DOMAIN =
     let make_anycoord axis tv : model = Model.make_pat (INT (COORD (axis,tv))) AnyCoord [||]
     let make_vec tv mi mj : model = Model.make_pat (VEC tv) Vec [|mi;mj|]
     let make_anycolor tc : model = Model.make_pat (COLOR tc) AnyColor [||]
+    let make_anymotif : model = Model.make_pat MOTIF AnyMotif [||]
     let make_anygrid tg : model = Model.make_pat (GRID tg) AnyGrid [||]
     let make_obj tg mpos mg1 : model = Model.make_pat (OBJ tg) Obj [|mpos;mg1|]
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (true,false)) BgColor [|mcol; mg1|]
@@ -666,6 +703,7 @@ module MyDomain : Madil.DOMAIN =
     let make_crop msize mpos mg1 : model = Model.make_pat (GRID (false,false)) Crop [|msize; mpos; mg1|]
     let make_objects seg msize mobj : model = Model.make_pat (GRID (false,false)) (Objects seg) [|msize; mobj|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (false,false)) Monocolor [|mcol; mmask|]
+    let make_motif tg msize mmotif mcore mnoise : model = Model.make_pat (GRID tg) Motif [|msize; mmotif; mcore; mnoise|]
     let make_empty msize : model = Model.make_pat (GRID (false,true)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (false,true)) Full [|msize|]
     let make_border msize : model = Model.make_pat (GRID (false,true)) Border [|msize|] (* could be said full grid? *)
@@ -695,6 +733,8 @@ module MyDomain : Madil.DOMAIN =
       Data.make_dpat (`Vec (i,j)) DVec [|di;dj|]
     let make_danycolor c tc : data =
       Data.make_dpat (`Color c) (DAnyColor (c,tc)) [||]
+    let make_danymotif m : data =
+      Data.make_dpat (`Motif m) (DAnyMotif m) [||]
     let make_danygrid g tg rh rw : data =
       Data.make_dpat (`Grid g) (DAnyGrid (g,tg,rh,rw)) [||]
     let make_dobj dpos dg1 : data =
@@ -746,6 +786,7 @@ module MyDomain : Madil.DOMAIN =
          pp xp_value (`Color c);
          pp xp_value (`Grid mask);
          assert false
+    (* TODO Motif: make_dmotif *)
     let make_dempty dsize : data =
       let g =
         match Data.value dsize with
@@ -1408,6 +1449,7 @@ module MyDomain : Madil.DOMAIN =
            let* dcol = gen_col (h,w,c) in
            let* dmask = gen_mask (h,w,c) in
            Myseq.return (make_dmonocolor dcol dmask))
+      (* TODO Motif: generation *)
       | _, Empty, [|gen_size|] ->
          (fun (h,w,c) ->
            let* dsize = gen_size (h,w,c) in
@@ -1568,6 +1610,7 @@ module MyDomain : Madil.DOMAIN =
                Myseq.return (make_dmonocolor dcol dmask, `Null)
              else Myseq.empty
           | _ -> assert false)
+      (* TODO Motif: parseur *)
       | _, (Empty | Full | Border as c), [|parse_size|] ->
          let pred_maked h w = function
            | Empty -> (fun i j c -> c <> Grid.Mask.one), make_dempty
@@ -1607,11 +1650,15 @@ module MyDomain : Madil.DOMAIN =
            if c > 0 && c < 10 (* 9 colors *)
            then Mdl.Code.usage 0.101
            else invalid_arg ("dl_shape_color: Unexpected color: " ^ Grid.name_of_color c)
-      | C_BG ->
-         if c = 0 then Mdl.Code.usage 0.910
+      | C_BG full ->
+         let bgcolor, nbcolor =
+           if full
+           then Grid.black, Grid.nb_color - 1
+           else Grid.transparent, Grid.nb_color in
+         if c = bgcolor then Mdl.Code.usage 0.910
          else (* 0.090 for other colors in total *)
-           if c > 0 && c < 10 (* 9 colors *)
-           then Mdl.Code.usage 0.010
+           if c >= Grid.black && c <= Grid.last_color (* nbcolor *)
+           then Mdl.Code.usage (0.090 /. float nbcolor)
            else invalid_arg ("dl_background_color: Unexpected color: " ^ Grid.name_of_color c)
 
     let dl_grid g (full,nocolor) rh rw : dl = (* too efficient a coding for being useful? *)
@@ -1636,6 +1683,7 @@ module MyDomain : Madil.DOMAIN =
       | DCrop, [|enc_size; enc_pos; enc_g1|] -> enc_size +. enc_pos +. enc_g1
       | DObjects seg, [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
+      | DMotif, [|enc_size; enc_motif; enc_core; enc_noise|] -> enc_size +. enc_motif +. enc_core +. enc_noise
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
       | DBorder, [|enc_size|] -> enc_size
@@ -1678,6 +1726,7 @@ module MyDomain : Madil.DOMAIN =
       | _, AnyCoord -> 0.
       | _, Vec -> 0.
       | _, AnyColor -> 0.
+      | _, AnyMotif -> 0.
       | _, AnyGrid -> 0.
       | _, Obj -> 0.
       | _, BgColor -> 0.
@@ -1689,6 +1738,7 @@ module MyDomain : Madil.DOMAIN =
             | `Default -> 0.5
             | `SameColor -> 0.5)
       | _, Monocolor -> 0.
+      | _, Motif -> 0.
       | _, Empty -> 0.
       | _, Full -> 0.
       | _, Border -> 0.
@@ -1752,6 +1802,8 @@ module MyDomain : Madil.DOMAIN =
     (* expression index *)
 
     let make_index (bindings : bindings) : expr_index =
+      let bgcolors full =
+        Grid.black :: if full then [] else [Grid.transparent] in
       let index = Expr.Index.empty in
       let index = Expr.index_add_bindings index bindings in
       let index = (* LEVEL 0 - ndtree indexes *)
@@ -1780,7 +1832,7 @@ module MyDomain : Madil.DOMAIN =
       let index = (* LEVEL 1 *)
         Expr.index_apply_functions
           ~eval_func
-          index 1 (* TEST *)
+          index 2 (* TEST *)
           (fun (t_args, v_args_tree) ->
             let res = [] in
             let res = (* Size_1, Area_1 *)
@@ -1808,7 +1860,7 @@ module MyDomain : Madil.DOMAIN =
             let res = (* MajorityColor_1 *)
               match t_args with
               | [|GRID (full,false)|] ->
-                 let$ res, tc = res, [C_BG; C_OBJ] in
+                 let$ res, tc = res, [C_BG full; C_OBJ] in
                  (COLOR tc, `MajorityColor_1, `Default)::res
               | _ -> res in
             let res = (* ColorCount_1 *)
@@ -1864,7 +1916,7 @@ module MyDomain : Madil.DOMAIN =
       let index = (* LEVEL 2 *)
         Expr.index_apply_functions
           ~eval_func
-          index 1 (* TEST *)
+          index 2 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
             let res = (* ScaleUp, ScaleDown *)
@@ -1936,8 +1988,8 @@ module MyDomain : Madil.DOMAIN =
             let res = (* FillResizeAlike *)
               match t_args with
               | [|VEC SIZE; GRID (full,_) as t3|] ->
-                 let$ res, bgcolor = res, [Grid.black] in
-                 let args_spec = `Custom [|`Val (COLOR C_BG, `Color bgcolor); `Pos 0; `Pos 1|] in
+                 let$ res, bgcolor = res, bgcolors full in
+                 let args_spec = `Custom [|`Val (COLOR (C_BG full), `Color bgcolor); `Pos 0; `Pos 1|] in
                  let$ res, mode =
                    res, (if full
                          then [`TradeOff; `Total; `Strict]
@@ -1960,8 +2012,8 @@ module MyDomain : Madil.DOMAIN =
             let res = (* CloseSym *)
               match t_args with
               | [|GRID (full,_) as t2|] when not full ->
-                 let$ res, bgcolor = res, [Grid.black] in
-                 let args_spec = `Custom [|`Val (COLOR C_BG, `Color bgcolor); `Pos 0|] in
+                 let$ res, bgcolor = res, bgcolors full in
+                 let args_spec = `Custom [|`Val (COLOR (C_BG full), `Color bgcolor); `Pos 0|] in
                  let$ res, sym_seq = res, all_symmetry_close in
                  (t2, `CloseSym_2 sym_seq, args_spec)::res
               | _ -> res in
@@ -2002,7 +2054,7 @@ module MyDomain : Madil.DOMAIN =
              let xcol, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              (make_bgcolor
-                (Model.make_def xcol (make_anycolor C_BG))
+                (Model.make_def xcol (make_anycolor (C_BG true)))
                 (Model.make_def xg1 (make_anygrid (false,nocolor))),
               varseq)
              :: refs
@@ -2085,6 +2137,7 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
+         (* TODO Motif: refinement *)
          let refs = (* Masks *)
            if nocolor then
              let msize, varseq_msize =
@@ -2139,7 +2192,7 @@ module MyDomain : Madil.DOMAIN =
 
     let get_init_task_model name task =
       let open Task_model in
-      let env0 = make_danycolor Grid.black C_BG in (* dummy *)
+      let env0 = make_danycolor Grid.black (C_BG true) in (* dummy *)
       let init_task_model =
         let varseq = varseq0 in
         let xi, varseq = Refining.new_var varseq in

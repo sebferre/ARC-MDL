@@ -2,6 +2,8 @@
 open Arc_common
 open Grid
 
+(* Segmentation into Objects *)
+   
 type part = { mini : int; maxi : int;
 	      minj : int; maxj : int;
 	      nb_pixels : int;
@@ -117,7 +119,32 @@ let segment_same_row_and_color, reset_segment_same_row_and_color = Memo.memoize 
 let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1 = j2 && c1 = c2)
 let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
 
+(* MOTIFS *)
+                                                                       
+type motif =
+  | Scale
+  | Periodic of Grid.Transf.periodicity
+  | FlipH | FlipW | FlipHW
+  | FlipD1 | FlipD2 | FlipD12
+  | Rotate180 | Rotate90
+  | FullSym
+(* TODO: add symmetry axis/center position *)
 
+let xp_motif ~html print = function
+  | Scale -> print#string "scale"
+  | Periodic per -> Grid.Transf.xp_periodicity print per
+  | FlipH -> print#string "flipH"
+  | FlipW -> print#string "flipW"
+  | FlipHW -> print#string "flipHW"
+  | FlipD1 -> print#string "FlipD1"
+  | FlipD2 -> print#string "FlipD2"
+  | FlipD12 -> print#string "FlipD12"
+  | Rotate180 -> print#string "Rotate180"
+  | Rotate90 -> print#string "Rotate90"
+  | FullSym -> print#string "FullSym"
+
+(* Reset of memoized functions *)
+             
 let reset_memoized_functions () =
   reset_segment ();
   reset_segment_same_color ();
