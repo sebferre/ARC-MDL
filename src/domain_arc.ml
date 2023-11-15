@@ -636,11 +636,17 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `UnfoldSym_1 [], [|k|];
                `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
         method expr_opt k =
-          let const_ok =
-            match k with
-            | INT _ | VEC _ | COLOR _ | GRID _ -> true
-            | _ -> false in
-          Some (k, const_ok)
+          match k with (* what type can be used to define k *)
+          | INT CARD -> true, [k]
+          | INT (COORD (axis,tv)) ->
+             let axis_opp = match axis with I -> J | J -> I in
+             true, [k; INT (COORD (axis_opp,tv)); INT CARD]
+          | VEC _ -> true, [k]
+          | COLOR C_OBJ -> true, [k; COLOR (C_BG true)]
+          | COLOR (C_BG true) -> true, [k; COLOR C_OBJ]
+          | COLOR (C_BG false) -> true, [k; COLOR (C_BG true); COLOR C_OBJ]
+          | GRID _ -> true, [k]
+          | _ -> false, [k]
         method alt_opt = function
           | _ -> false (* LATER *)
       end
@@ -1802,6 +1808,7 @@ module MyDomain : Madil.DOMAIN =
     (* expression index *)
 
     let make_index (bindings : bindings) : expr_index =
+      (*pp xp_bindings bindings;*)
       let bgcolors full =
         Grid.black :: if full then [] else [Grid.transparent] in
       let index = Expr.Index.empty in
@@ -1818,13 +1825,13 @@ module MyDomain : Madil.DOMAIN =
                let res =
                  if ndim >= 1
                  then
-                   let$ res, i = res, [0; 1; 2; -1] in
+                   let$ res, i = res, [0; 1; 2; -2; -1] in
                    (t1, `Index_1 [Some i], `Default)::res
                  else res in
                let res =
                  if ndim >= 2
                  then
-                   let$ res, j = res, [0; 1; 2; -1] in
+                   let$ res, j = res, [0; 1; 2; -2; -1] in
                    (t1, `Index_1 [None; Some j], `Default)::res
                  else res in
                res
@@ -2037,6 +2044,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             (* Stack *)
             res) in
+          (*pp xp_expr_index index;*)
       index
     let make_index, reset_make_index =
       Memo.memoize ~size:103 make_index
