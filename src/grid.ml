@@ -241,7 +241,8 @@ let map2_pixels (f : color -> color -> color) g1 g2 =
 let add_grid_at g i j g1 =
   iter_pixels
     (fun i1 j1 c1 ->
-      Do.set_pixel g (i+i1) (j+j1) c1)
+      if c1 <> transparent then
+        Do.set_pixel g (i+i1) (j+j1) c1)
     g1
   
 
