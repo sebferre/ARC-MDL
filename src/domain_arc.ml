@@ -1809,6 +1809,35 @@ module MyDomain : Madil.DOMAIN =
 
     let make_index (bindings : bindings) : expr_index =
       (*pp xp_bindings bindings;*)
+      (*let test level index = (* testing expr index[i]($21) in task a157, $21 is seq of pos of input objects *)
+        match Mymap.find_opt 21 bindings with
+        | None -> ()
+        | Some (t,v_tree) ->
+           print_endline level;
+           assert (t = VEC POS);
+           assert (Ndtree.ndim v_tree = 1);
+           assert (Ndtree.length v_tree = Some 5);
+           [1;2;-2;-1]
+           |> List.iter
+                (fun i ->
+                  print_int i;
+                  match Ndtree.index v_tree [Some i] with
+                  | None -> assert false
+                  | Some vi ->
+                     match Mymap.find_opt (t,vi) index with
+                     | None -> assert false
+                     | Some es ->
+                        let ei = Expr.Apply (t, `Index_1 [Some i], [|Expr.Ref (t,21)|]) in
+                        match Myseq.find_map
+                                (fun e -> if e = ei then Some e else None)
+                                (Expr.Exprset.to_seq es) with
+                        | Some _ -> ()
+                        | None -> assert false
+                        (*if Expr.Exprset.mem ei es
+                        then ()
+                        else assert false*));
+           print_newline ()
+      in*)                          
       let bgcolors full =
         Grid.black :: if full then [] else [Grid.transparent] in
       let index = Expr.Index.empty in
@@ -1836,6 +1865,8 @@ module MyDomain : Madil.DOMAIN =
                  else res in
                res
             | _ -> []) in
+      (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
+      (*test "TEST LEVEL 0" index;*)
       let index = (* LEVEL 1 *)
         Expr.index_apply_functions
           ~eval_func
@@ -1920,6 +1951,8 @@ module MyDomain : Madil.DOMAIN =
               | [|GRID tg1; OBJ _|] -> (GRID tg1, `Crop_2)::res
               | _ -> res in*)
             res) in
+      (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
+      (*test "TEST LEVEL 1" index;*)
       let index = (* LEVEL 2 *)
         Expr.index_apply_functions
           ~eval_func
@@ -1929,7 +1962,7 @@ module MyDomain : Madil.DOMAIN =
             let res = (* ScaleUp, ScaleDown *)
               match t_args with
               | [|(INT _ | VEC _ | GRID _ as t1)|] ->
-                 let$ res, k = res, [1;2;3] in
+                 let$ res, k = res, [2;3] in
                  let args_spec = `Custom [|`Pos 0; `Val (INT CARD, `Int k)|] in
                  (t1, `ScaleUp_2, args_spec)::(t1, `ScaleDown_2, args_spec)::res
               | _ -> res in
@@ -1976,7 +2009,8 @@ module MyDomain : Madil.DOMAIN =
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
               | _ -> res in
-            res) in
+          res) in
+      (*test "TEST LEVEL 2" index;*)
       let index = (* LEVEL 3 *)
         Expr.index_apply_functions
           ~eval_func
@@ -2044,7 +2078,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             (* Stack *)
             res) in
-          (*pp xp_expr_index index;*)
+      (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
       index
     let make_index, reset_make_index =
       Memo.memoize ~size:103 make_index
