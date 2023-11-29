@@ -18,6 +18,45 @@ let ( let$ ) (init,l) f =
 let ( let& ) l f =
   l |> List.iter f [@@inline]
 
+(* lists *)
+
+let rec list_range a b =
+  if a > b then []
+  else a :: list_range (a+1) b
+
+let list_product la lb =
+  List.fold_left
+    (fun res a ->
+      List.fold_left
+        (fun res b ->
+          (a,b)::res)
+        res lb)
+    [] la
+
+let list_best (better_than : 'a -> 'a -> bool) (l : 'a list) : 'a option =
+  let rec aux best = function
+    | [] -> best
+    | x::l ->
+       let best = if better_than x best then x else best in
+       aux best l
+  in
+  match l with
+  | [] -> None
+  | x::l -> Some (aux x l)
+  
+let list_mins (cmp : 'a -> 'a -> int) (l : 'a list) : 'a list =
+  let rec aux min acc = function
+    | [] -> acc
+    | x::l ->
+       let c = cmp x min in
+       if c < 0 then aux x [x] l
+       else if c = 0 then aux min (x::acc) l
+       else aux min acc l
+  in
+  match l with
+  | [] -> []
+  | x::l -> aux x [x] l
+  
 (* memoization *)
 
 module Memo = (* appears to be more efficient than Common versions *)
