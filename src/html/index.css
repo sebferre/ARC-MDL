@@ -9,45 +9,8 @@
     padding: 2px;
 }
 
-.arc-col0 {
-    background-color: black;
-    color: white;
-}
-.arc-col1 {
-    background-color: royalblue;
-    color: white;
-}
-.arc-col2 {
-    background-color: red;
-    color:white;
-}
-.arc-col3 {
-    background-color: limegreen;
-    color: black;
-}
-.arc-col4 {
-    background-color: yellow;
-    color: black;
-}
-.arc-col5 {
-    background-color: lightgrey;
-    color: black;
-}
-.arc-col6 {
-    background-color: magenta;
-    color: white;
-}
-.arc-col7 {
-    background-color: orange;
-    color: black;
-}
-.arc-col8 {
-    background-color: cyan;
-    color: black;
-}
-.arc-col9 {
-    background-color: brown;
-    color:white;
+.arc-grid {
+    display: inline-block;
 }
 
 .arc-grid td {
@@ -56,10 +19,55 @@
     width: 20px;
 }
 
-.arc-grid {
-    display: inline-block;
+td.arc-col0 {
+    background-color: black;
+    color: white;
 }
-
+td.arc-col1 {
+    background-color: royalblue;
+    color: white;
+}
+td.arc-col2 {
+    background-color: red;
+    color:white;
+}
+td.arc-col3 {
+    background-color: limegreen;
+    color: black;
+}
+td.arc-col4 {
+    background-color: yellow;
+    color: black;
+}
+td.arc-col5 {
+    background-color: lightgrey;
+    color: black;
+}
+td.arc-col6 {
+    background-color: magenta;
+    color: white;
+}
+td.arc-col7 {
+    background-color: orange;
+    color: black;
+}
+td.arc-col8 {
+    background-color: cyan;
+    color: black;
+}
+td.arc-col9 {
+    background-color: brown;
+    color:white;
+}
+td.arc-col10 { /* transparent */
+    background-color: white;
+    color: black;
+}
+td.arc-col11 { /* undefined */
+    background-color: white;
+    border-color: white;
+    color: black;
+}
 
 pre.inline {
     display: inline;
