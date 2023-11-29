@@ -1,4 +1,5 @@
 
+open Madil_common
 open Arc_common
 open Grid
 
@@ -120,19 +121,25 @@ let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1
 let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
 
 (* MOTIFS *)
-                                                                       
-type motif =
+
+module Motif =
+  struct
+    
+type t =
   | Scale
-  | Periodic of Grid.Transf.periodicity
+  | Periodic of Grid.Transf.axis * Grid.Transf.axis
   | FlipH | FlipW | FlipHW
   | FlipD1 | FlipD2 | FlipD12
   | Rotate180 | Rotate90
   | FullSym
 (* TODO: add symmetry axis/center position *)
 
-let xp_motif ~html print = function
+let xp ~html print = function
   | Scale -> print#string "scale"
-  | Periodic per -> Grid.Transf.xp_periodicity print per
+  | Periodic (phi,psi) ->
+     print#string "periodic["; Grid.Transf.xp_axis print phi;
+     print#string ","; Grid.Transf.xp_axis print psi;
+     print#string "]"
   | FlipH -> print#string "flipH"
   | FlipW -> print#string "flipW"
   | FlipHW -> print#string "flipHW"
@@ -143,11 +150,364 @@ let xp_motif ~html print = function
   | Rotate90 -> print#string "Rotate90"
   | FullSym -> print#string "FullSym"
 
+let project (mot : t) h w u v : (int -> int -> int * int) =
+  (* project coord (i,j) in (h,w) range to (u,v) range, according to motif *)
+  let h_1, w_1 = h-1, w-1 in
+  match mot with
+  | Scale ->
+     let k, l = h_1 / u + 1, w_1 / v + 1 in
+     (fun i j -> i / k, j / l)
+  | Periodic (phi,psi) ->
+     let eval_phi = Grid.Transf.eval_axis phi in
+     let eval_psi = Grid.Transf.eval_axis psi in
+     (fun i j ->
+       let a, b = eval_phi i j, eval_psi i j in
+       a mod u, b mod v)
+  | FlipH ->
+     (fun i j -> min i (h_1 - i), j)
+  | FlipW ->
+     (fun i j -> i, min j (w_1 - j))
+  | FlipHW ->
+     (fun i j -> min i (h_1 - i), min j (w_1 - j))
+  | FlipD1 ->
+     (fun i j ->
+       let p, m = i + j, i + (w_1 - j) in
+       min p (h_1 + w_1 - p), m)
+  | FlipD2 ->
+     (fun i j ->
+       let p, m = i + j, i + (w_1 - j) in
+       p, min m (h_1 + w_1 - m))
+  | FlipD12 ->
+     (fun i j ->
+       let p, m = i + j, i + (w_1 - j) in
+       min p (h_1 + w_1 - p), min m (h_1 + w_1 - m))
+  | Rotate180 ->
+     (fun i j -> min (i, j) (h_1 - i, w_1 - j))
+  | Rotate90 ->
+     (fun i j ->
+       let a, b =
+         min (i, j)
+           (min (w_1 - j, i)
+              (min (h_1 - i, w_1 - j)
+                 (j, h_1 - i))) in
+       if b >= v
+       then w_1 - b, a 
+       else a, b)
+  | FullSym ->
+     (fun i j ->
+       let i_min = min i (h_1 - i) in
+       let j_min = min j (w_1 - j) in
+       min i_min j_min, max i_min j_min)
+             
+let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (int * int) list =
+  (* range and list of core dimensions (u,v) given a motif and grid dims *)
+  match mot with
+  | Scale ->
+     Range.make_closed 1 h,
+     Range.make_closed 1 w,
+     Common.fold_for
+       (fun u res ->
+         if h mod u = 0 (* congruent vertical scale *)
+         then
+           Common.fold_for
+             (fun v res ->
+               if w mod v = 0 (* congruent horizontal scale *)
+               then
+                 if (u = h && v = w) (* not a proper scale *)
+                 then res
+                 else (u,v)::res
+               else res)
+             1 w res
+         else res)
+       1 h []
+  | Periodic (phi,psi) ->
+     let h', w' = Grid.Transf.bound_axis phi h w, Grid.Transf.bound_axis psi h w in
+     Range.make_closed 1 h',
+     Range.make_closed 1 w',
+     Common.fold_for
+       (fun u res ->
+         Common.fold_for
+           (fun v res ->
+             if (u = h' && v = w') (* not a proper periodic *)
+             then res
+             else (u,v)::res)
+           1 w' res)
+       1 h' []
+  | FlipH ->
+     let u, v = (h+1)/2, w in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u,v]
+  | FlipW ->
+     let u, v = h, (w+1)/2 in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u,v]
+  | FlipHW ->
+     let u, v = (h+1)/2, (w+1)/2 in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u, v]
+  | FlipD1 ->
+     if h = w
+     then
+       let hw' = h+w-1 in (* projected dim, diagonal size *)
+       let u, v = (hw'+1)/2, hw' in (* only half is used *)
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
+  | FlipD2 ->
+     if h = w
+     then
+       let hw' = h+w-1 in
+       let u, v = hw', (hw'+1)/2 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
+  | FlipD12 ->
+     if h = w
+     then
+       let hw' = h+w-1 in
+       let u, v = (hw'+1)/2, (hw'+1)/2 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
+  | Rotate180 ->
+     let u, v = (h+1)/2, w in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u, v]
+  | Rotate90 ->
+     if h = w
+     then
+       let u, v = (h+1)/2, (w+1)/2 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
+  | FullSym ->
+     if h = w
+     then
+       let u, v = (h+1)/2, (w+1)/2 in (* only half is used, diagonal core *)
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
+  
+let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result =
+  Common.prof "Grid_patterns.Motif.make_grid" (fun () ->
+  let u, v = Grid.dims core in
+  let ru, rv, luv = all_coredims_of_motif mot h w in
+  if List.mem (u,v) luv
+  then
+    let proj = project mot h w u v in
+    let g =
+      Grid.init h w
+        (fun i j ->
+          let i', j' = proj i j in
+          if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
+            pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
+            assert false);
+          core.Grid.matrix.{i',j'}) in
+    Result.Ok g
+  else Result.Error (Failure "Grid_patterns.make_grid: incompatible motif and core grid with grid size"))
+(*let make_grid, reset_make_grid = (* TODO: there is a confusing bug, grids get mixed *)
+  Memo.memoize4 ~size:Grid.memoize_size make_grid*)
+
+(* discovering motifs in grids *)
+  
+let candidates =
+  let open Grid.Transf in
+  [ Scale;
+    FlipH; FlipW; FlipHW;
+    FlipD1; FlipD2; FlipD12;
+    Rotate180; Rotate90;
+    FullSym;
+    Periodic (I, J);
+    Periodic (PlusIJ, DiffIJ);
+    Periodic (I, Zero);
+    Periodic (J, Zero);
+    Periodic (PlusIJ, Zero);
+    Periodic (DiffIJ, Zero);
+    Periodic (MaxIJ, Zero);
+    Periodic (MinIJ, Zero) ]
+let nb_candidates = List.length candidates
+
+let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, noise) that [g] agreeds to *)
+  let h, w = Grid.dims g in
+  (* color stats: lists of (color,count) pairs *)
+  let rec add_color c cstats =
+    match cstats with
+    | [] -> [(c,1)]
+    | (c0,n0)::cstats1 ->
+       if c = c0 then (c0,n0+1)::cstats1
+       else
+         match add_color c cstats1 with
+         | (c1,n1)::cstats2 when n1 > n0 ->
+            (c1,n1)::(c0,n0)::cstats2
+         | cstats1 -> (c0,n0)::cstats1
+  in
+  (* initialization *)
+  let motifs =
+    List.fold_left
+      (fun res mot ->
+        let ru, rv, luv = all_coredims_of_motif mot h w in
+        let cores =
+          List.fold_left
+            (fun res2 (u,v) ->
+              let proj = project mot h w u v in
+              let cols = Array.make_matrix u v [] in 
+              (u,v,proj,cols)::res2)
+            [] luv in
+        (mot,ru,rv,cores)::res)
+      [] candidates in
+  (* filtering through one pass of the grid pixels *)
+  Grid.iter_pixels
+    (fun i j c ->
+      List.iter
+        (fun (mot,ru,rv,cores) ->
+          List.iter
+            (fun (u,v,proj,cols) ->
+              let i', j' = proj i j in
+              if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
+                pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
+                assert false); 
+              cols.(i').(j') <- add_color c cols.(i').(j'))              
+            cores)
+        motifs)
+    g;
+  (* collecting results *)
+  let res =
+    List.fold_left
+      (fun res (mot,ru,rv,cores) ->
+        let cores_ok =
+          List.filter_map
+            (fun (u,v,proj,cols) ->
+              let ok = (* all equiv classes have a majority color above threshold *)
+                Array.for_all
+                  (fun row ->
+                    Array.for_all
+                      (fun cstats ->
+                        match cstats with
+                        | [] -> true (* out of scope, diagonal cores *)
+                        | (c1,n1)::cstats1 ->
+                           let n = List.fold_left (fun res (c1,n1) -> res + n1) 0 cstats in
+                           n1 >= (n / 2 + 1)
+                           && not (List.exists (fun (c,n) -> c = Grid.transparent) cstats1))
+                      (* because noise cannot be transparent *)
+                      row)
+                  cols in
+              if ok
+              then
+                let g_core =
+                  Grid.init u v
+                    (fun i' j' ->
+                      match cols.(i').(j') with
+                      | (c,_)::_ -> c
+                      | [] -> Grid.undefined) in (* not satisfactory, maybe undefined? *)
+                let g_without_noise =
+                  match make_grid h w mot g_core with
+                  | Result.Ok g -> g
+                  | Result.Error _ -> assert false in
+                let g_noise =
+                  Grid.map2_pixels
+                    (fun c1 c2 ->
+                      if c1 = c2 then Grid.transparent
+                      else c1)
+                    g g_without_noise in
+                let color_count_core = g_core.Grid.color_count in
+                let color_count_noise = g_noise.Grid.color_count in
+                let different_colors = (* different colors in core and noise, except for transparent *)
+                  Array.for_all2
+                    (fun n1 n2 -> n1=0 || n2=0)
+                    (Array.sub color_count_core 0 Grid.nb_color)
+                    (Array.sub color_count_noise 0 Grid.nb_color) in
+                let nb_color_core = (* nb of core colors *)
+                  Array.fold_left
+                    (fun res n -> if n > 0 then res+1 else res)
+                    0 color_count_core in
+                if different_colors && nb_color_core > 1
+                then
+                  let area_core = Grid.color_area Grid.undefined g_core in
+                  let area_noise = Grid.color_area Grid.transparent g_noise in
+                  Some (area_core+area_noise,g_core,g_noise)
+                else None
+              else None)
+            cores in
+        match list_best
+                (fun (a1,_,_) (a2,_,_) -> a1 < a2)
+                cores_ok with
+        | None -> res
+        | Some (area,g_core,g_noise) ->
+           (area,mot,ru,rv,g_core,g_noise)::res)
+      [] motifs in
+  let res =
+    List.sort
+      (fun (a1,_,_,_,_,_) (a2,_,_,_,_,_) -> Stdlib.compare a1 a2)
+      res in
+  let res =
+    List.map (fun (_,mot,ru,rv,core,noise) -> (mot,ru,rv,core,noise)) res in
+  res
+let from_grid, reset_from_grid =
+  Memo.memoize ~size:Grid.memoize_size from_grid
+
+(*let _ = (* TEST *)
+  let u, v = 1, 1 in
+  let core = Grid.init u v (fun i' j' -> 3 * i' + j') in
+  let h, w, mot =
+    let open Grid.Transf in
+    3*u, 6*v, Scale
+    (* 3*u+1, 5*v+1, Periodic (I,J) *)
+    (* 3*u+1, 5*v+1, Periodic (PlusIJ,DiffIJ) *)
+    (* 2*u, v, FlipH *)
+    (* u, 2*v, FlipW *)
+    (* 2*u-1, 2*v, FlipHW *)
+    (* 2*u, v, Rotate180 *)
+    (* 2*u, 2*v, Rotate90 *)
+    (* 2*u-1, 2*v-1, FullSym *)
+  in
+  let g = make_grid h w mot core in
+  pp Grid.xp_grid g;
+  Grid.Do.set_pixel g 1 0 3;
+  Grid.Do.set_pixel g 1 5 3;
+  pp Grid.xp_grid g;
+  print_endline "MOTIFS";
+  List.iter
+    (fun (mot,core,noise) ->
+      pp_endline xp mot;
+      pp Grid.xp_grid core;
+      pp Grid.xp_grid noise;
+      print_newline ())
+    (from_grid g)*)
+
+  
+  end
+             
 (* Reset of memoized functions *)
              
 let reset_memoized_functions () =
   reset_segment ();
   reset_segment_same_color ();
   reset_segment_same_row_and_color ();
-  reset_segment_same_column_and_color ()
+  reset_segment_same_column_and_color ();
+    (*  Motif.reset_make_grid ();*)
+  Motif.reset_from_grid ()
 
