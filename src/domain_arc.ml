@@ -659,7 +659,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec of input * input
       | `Color of Grid.color
       | `Motif of GPat.Motif.t
-      | `GridDims of Grid.t * int (* height ctx *) * int (* width ctx *)
+      | `GridDims of Grid.t * Range.t (* height range *) * Range.t (* width range *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
       | `Objects of int (* height ctx *) * int (* width ctx *) * (int * int * Grid.t) list (* objects *) ]
 
@@ -1509,7 +1509,7 @@ module MyDomain : Madil.DOMAIN =
          `Vec (`IntRange (i,range), `IntRange (j,range)) 
       | COLOR tc, `Color c -> `Color c
       | MOTIF, `Motif mot -> `Motif mot
-      | GRID (full,nocolor), `Grid g -> `GridDims (g, Grid.max_size, Grid.max_size)
+      | GRID (full,nocolor), `Grid g -> `GridDims (g, Range.make_open 1, Range.make_open 1)
       | OBJ (full,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, [obj])
       | _ -> assert false
 
@@ -1561,8 +1561,8 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
       | GRID tg, AnyGrid, [||] ->
          (function
-          | `GridDims (g,h0,w0) ->
-             Myseq.return (make_danygrid g tg (Range.make_closed 1 h0) (Range.make_closed 1 w0), `Null)
+          | `GridDims (g,rh,rw) ->
+             Myseq.return (make_danygrid g tg rh rw, `Null)
           | _ -> assert false)
       | _, Obj, [|parse_pos; parse_g1|] ->
          (function
@@ -1571,20 +1571,22 @@ module MyDomain : Madil.DOMAIN =
                (Myseq.from_list objs)
                (fun (i,j,g1 as obj) ->
                  let other_objs = List.filter ((<>) obj) objs in
-                 let* dg1, _ = parse_g1 (`GridDims (g1, h-i, w-j)) in
+                 let* dg1, _ = parse_g1 (`GridDims (g1,
+                                                    Range.make_closed 1 (h-i),
+                                                    Range.make_closed 1 (w-j))) in
                  let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                                  `IntRange (j, Range.make_closed 0 (w-1)))) in
                  Myseq.return (make_dobj dpos dg1, `Objects (h,w,other_objs)))
           | _ -> assert false)
       | _, BgColor, [|parse_col; parse_g1|] ->
          (function
-          | `GridDims (g,h0,w0) ->
+          | `GridDims (g,rh,rw) ->
              if Grid.is_full g
              then
                let* bc = Myseq.from_list (Segment.background_colors g) in
                let* dcol, _ = parse_col (`Color bc) in
                let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
-               let* dg1, _ = parse_g1 (`GridDims (g1,h0,w0)) in
+               let* dg1, _ = parse_g1 (`GridDims (g1,rh,rw)) in
                Myseq.return (make_dbgcolor dcol dg1, `Null)
              else Myseq.empty
           | _ -> assert false)
@@ -1597,26 +1599,28 @@ module MyDomain : Madil.DOMAIN =
            else Myseq.empty)
       | _, Crop, [|parse_size; parse_pos; parse_g1|] ->
          (function
-          | `GridDims (g,h0,w0) ->
+          | `GridDims (g,rh,rw) ->
              let h, w = Grid.dims g in
-             let* dsize, _ = parse_size (`Vec (`IntRange (h, Range.make_closed 1 h0),
-                                               `IntRange (w, Range.make_closed 1 w0))) in
+             let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                               `IntRange (w, rw))) in
              (match Grid_patterns.segment g with
               | [(i,j,g1)] ->
                  let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                                  `IntRange (j, Range.make_closed 0 (w-1)))) in
-                 let* dg1, _ = parse_g1 (`GridDims (g1, h-i, w-j)) in
+                 let* dg1, _ = parse_g1 (`GridDims (g1,
+                                                    Range.make_closed 1 (h-i),
+                                                    Range.make_closed 1 (w-j))) in
                  Myseq.return (make_dcrop dsize dpos dg1, `Null)
               | _ -> Myseq.empty)
           | _ -> assert false)
       | _, Objects seg, [|parse_size; parse_objs|] ->
          (function
-          | `GridDims (g,h0,w0) ->
+          | `GridDims (g,rh,rw) ->
              if Grid.is_full g then Myseq.empty
              else              
                let h, w = Grid.dims g in
-               let* dsize, _ = parse_size (`Vec (`IntRange (h, Range.make_closed 1 h0),
-                                                 `IntRange (w, Range.make_closed 1 w0))) in
+               let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                                 `IntRange (w, rw))) in
                let objs =
                  match seg with
                  | `Default -> Grid_patterns.segment g
@@ -1629,26 +1633,23 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
       | _, Monocolor, [|parse_col; parse_mask|] ->
          (function
-          | `GridDims (g,h0,w0) ->
+          | `GridDims (g,rh,rw) ->
              if Grid.color_count Grid.transparent g = 1
              then
                let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
                let* dcol, _ = parse_col (`Color c) in
                let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.Mask.one) in
-               let* dmask, _ = parse_mask (`GridDims (mask,h0,w0)) in
+               let* dmask, _ = parse_mask (`GridDims (mask,rh,rw)) in
                Myseq.return (make_dmonocolor dcol dmask, `Null)
              else Myseq.empty
           | _ -> assert false)
       | _, Motif, [|parse_mot; parse_core; parse_noise|] ->
          (function
-          | `GridDims (g,h0,w0) ->
+          | `GridDims (g,rh,rw) ->
              let* mot, ru, rv, g_core, g_noise = Myseq.from_list (GPat.Motif.from_grid g) in
              let* dmot, _ = parse_mot (`Motif mot) in
-             let* dcore, _ = (* TODO: use ranges in GridDims *)
-               let hcore = match Range.upper ru with Some h -> h | None -> assert false in
-               let wcore = match Range.upper rv with Some w -> w | None -> assert false in
-               parse_core (`GridDims (g_core,hcore,wcore)) in
-             let* dnoise, _ = parse_noise (`GridDims (g_noise,h0,w0)) in
+             let* dcore, _ = parse_core (`GridDims (g_core,ru,rv)) in
+             let* dnoise, _ = parse_noise (`GridDims (g_noise,rh,rw)) in
              let* data = Myseq.from_result (make_dmotif dmot dcore dnoise) in
              Myseq.return (data, `Null)
           | _ -> assert false)            
@@ -1660,19 +1661,19 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false
          in
          (function
-          | `GridDims (mask,h0,w0) ->
+          | `GridDims (mask,rh,rw) ->
              let h, w = Grid.dims mask in
              let pred, maked = pred_maked h w c in
              if Grid.for_all_pixels pred mask
              then
-               let* dsize, _ = parse_size (`Vec (`IntRange (h, Range.make_closed 1 h0),
-                                                 `IntRange (w, Range.make_closed 1 w0))) in
+               let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                                 `IntRange (w, rw))) in
                Myseq.return (maked dsize, `Null)
              else Myseq.empty
           | _ -> assert false)
       | _, Point, [||] ->
          (function
-          | `GridDims (mask,h0,w0) ->
+          | `GridDims (mask,rh,rw) ->
              let h, w = Grid.dims mask in
              if h=1 && w=1 && Grid.Mask.mem 0 0 mask
              then Myseq.return (make_dpoint, `Null)
