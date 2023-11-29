@@ -721,7 +721,7 @@ module Transf =
       Memo.memoize3 ~size:memoize_size resize_alike
  *)
       
-    type axis = I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
+    type axis = Zero | I | J | PlusIJ | DiffIJ | MaxIJ | MinIJ | DivIJ (* avoid TimesIJ whose bound is too high *)
     type period = axis * int (* axis(i,j) mod p: defines p equivalence classes *)
     type periodicity =
       | Period1 of period * (int * int * color) array
@@ -733,6 +733,7 @@ module Transf =
        *)
 
     let xp_axis (print : Xprint.t) = function
+      | Zero -> print#string "0"
       | I -> print#string "i"
       | J -> print#string "j"
       | PlusIJ -> print#string "i+j"
@@ -742,6 +743,7 @@ module Transf =
       | DivIJ -> print#string "max(i,j)/min(i,j)"
       
     let eval_axis : axis -> (int -> int -> int) = function
+      | Zero -> (fun i j -> 0)
       | I -> (fun i j -> i)
       | J -> (fun i j -> j)
       | PlusIJ -> (fun i j -> i+j)
@@ -751,6 +753,7 @@ module Transf =
       | DivIJ -> (fun i j -> (max i j + 1) / (min i j + 1))
 
     let bound_axis : axis -> (int -> int -> int) = function (* max value for axis in hxw grid *)
+      | Zero -> (fun h w -> 1)
       | I -> (fun h w -> h)
       | J -> (fun h w -> w)
       | PlusIJ -> (fun h w -> h+w)
@@ -1139,7 +1142,6 @@ module Transf =
            assert (lg1 = []);
            Result.Ok rows
       else Result.Error (Undefined_result "concat_sep: invalid nrows/ncols")
-
       
     (* TODO: selecting halves and quarters *)
 
