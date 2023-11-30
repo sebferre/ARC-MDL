@@ -438,12 +438,12 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
                 let different_colors = (* different colors in core and noise, except for transparent *)
                   Array.for_all2
                     (fun n1 n2 -> n1=0 || n2=0)
-                    (Array.sub color_count_core 0 Grid.nb_color)
-                    (Array.sub color_count_noise 0 Grid.nb_color) in
+                    (Array.sub color_count_core 0 Grid.nb_color) (* excluding transparent...*)
+                    (Array.sub color_count_noise 0 Grid.nb_color) in (* ...and undefined *)
                 let nb_color_core = (* nb of core colors *)
                   Array.fold_left
                     (fun res n -> if n > 0 then res+1 else res)
-                    0 color_count_core in
+                    0 (Array.sub color_count_core 0 (Grid.nb_color+1)) in (* excluding undefined *)
                 if different_colors && nb_color_core > 1
                 then
                   let area_core = Grid.color_area Grid.undefined g_core in
