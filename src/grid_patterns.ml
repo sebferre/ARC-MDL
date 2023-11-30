@@ -325,9 +325,9 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result =
       Grid.init h w
         (fun i j ->
           let i', j' = proj i j in
-          if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
-            pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
-            assert false);
+          assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
+            (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
+            assert false); *)
           core.Grid.matrix.{i',j'}) in
     Result.Ok g
   else Result.Error (Failure "Grid_patterns.make_grid: incompatible motif and core grid with grid size"))
@@ -344,6 +344,8 @@ let candidates =
     Rotate180; Rotate90;
     FullSym;
     Periodic (I, J);
+    Periodic (I, PlusIJ);
+    Periodic (PlusIJ, J);
     Periodic (PlusIJ, DiffIJ);
     Periodic (I, Zero);
     Periodic (J, Zero);
