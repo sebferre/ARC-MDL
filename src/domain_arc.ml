@@ -527,30 +527,34 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       object
         inherit [typ,constr,func] Model.asd
         method is_default_constr = function
-          | AnyCoord | AnyColor | AnyGrid -> true
           | _ -> false
         method default_and_other_pats = function
+          (* synchronize with is_default_constr *)
           | BOOL -> None, [ ]
           | INT CARD -> None, [ ]
           | INT (COORD _) ->
-             Some AnyCoord, [ ]
+             None,
+             [ AnyCoord, [||] ]
           | VEC tv ->
              None,
              [ Vec, [|INT (COORD (I, tv)), 0;
                       INT (COORD (J, tv)), 0|] ]
           | COLOR tc ->
-             Some AnyColor, [ ]
+             None,
+             [ AnyColor, [||] ]
           | MOTIF ->
-             Some AnyMotif, [ ]
+             None,
+             [ AnyMotif, [||] ]
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
-             Some AnyGrid,
+             None,
              List.filter_map
                (fun (cond,c_args) ->
                  if cond
                  then Some c_args
                  else None)
-               [ full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
+               [ true, (AnyGrid, [||]);
+                 full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  not full, (Crop, [|VEC SIZE, 0; VEC POS, 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (Objects `Default, [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
@@ -667,8 +671,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     (* model processing *)
       
-    type generator_info = int * int * Grid.color (* container height, width, and color *)
-                        
+    type generator_info = unit (* int * int * Grid.color (* container height, width, and color *) *)
+
     type input =
       [ `Null
       | `IntRange of int * Range.t
@@ -1435,7 +1439,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* model-based generation *)
       
-    let generator_pat t c gen_args =
+(*    let generator_pat t c gen_args =
       match t, c, gen_args with
       | INT (COORD (axis,tv)), AnyCoord, [||] ->
          (fun (h,w,c) ->
@@ -1515,6 +1519,110 @@ module MyDomain : Madil.DOMAIN =
            Myseq.return (make_dborder dsize))
       | _, Point, [||] ->
          (fun (h,w,c) ->
+           Myseq.return (make_dpoint))
+      | _ -> assert false *)
+
+    let default_grid (filling, nocolor) (h, w) =
+      match filling, nocolor with
+      | `Full, _ -> Grid.make h w Grid.black
+      | `Sprite, false -> Grid.make h w Grid.blue
+      | `Sprite, true -> Grid.make h w Grid.Mask.one
+      | `Noise, _ -> Grid.make h w Grid.transparent
+    let default_grid, reset_default_grid =
+      Memo.memoize2 ~size:103 default_grid
+
+    let generator_pat t c gen_args = (* systematic version *)
+      match t, c, gen_args with
+      | INT (COORD (axis,tv)), AnyCoord, [||] ->
+         let a, b =
+           match tv with
+           | SIZE -> 1, Grid.max_size
+           | POS | MOVE -> 0, Grid.max_size-1 in
+         let range = Range.make_closed a b in
+         (fun info ->
+           let* ij = Myseq.range a b in
+           Myseq.return (make_danycoord ij range))
+      | _, Vec, [|gen_i; gen_j|] ->
+         (fun info ->
+           let* lij = Myseq.product_fair [gen_i info; gen_j info] in
+           match lij with
+           | [di; dj] -> Myseq.return (make_dvec di dj)
+           | _ -> assert false)
+      | COLOR tc, AnyColor, [||] ->
+         let a, b =
+           match tc with
+           | C_BG true | C_OBJ -> Grid.black, Grid.last_color
+           | C_BG false -> Grid.black, Grid.transparent in
+         (fun info ->
+           let* c = Myseq.range a b in
+           Myseq.return (make_danycolor c tc))
+      | MOTIF, AnyMotif, [||] ->
+         (fun info ->
+           let* mot = Myseq.from_list GPat.Motif.candidates in
+           Myseq.return (make_danymotif mot))
+      | GRID tg, AnyGrid, [||] ->
+         let range = Range.make_closed 1 Grid.max_size in
+         (fun info ->
+           let* lhw = Myseq.product_fair [Myseq.range 1 8; Myseq.range 1 8] in
+           match lhw with
+           | [h; w] ->
+              let g = default_grid tg (h,w) in 
+              Myseq.return (make_danygrid g tg range range)
+           | _ -> assert false)
+      | _, Obj, [|gen_pos; gen_g1|] ->
+         (fun info ->
+           let* lposg1 = Myseq.product_fair [gen_pos info; gen_g1 info] in
+           match lposg1 with
+           | [dpos; dg1] -> Myseq.return (make_dobj dpos dg1)
+           | _ -> assert false)
+      | _, BgColor, [|gen_col; gen_g1|] ->
+         (fun info ->
+           let* lcg1 = Myseq.product_fair [gen_col info; gen_g1 info] in
+           match lcg1 with
+           | [dcol; dg1] -> Myseq.return (make_dbgcolor dcol dg1)
+           | _ -> assert false)
+      | _, IsFull, [|gen_g1|] ->
+         (fun info ->
+           let* dg1 = gen_g1 info in
+           Myseq.return (make_disfull dg1))
+      | _, Crop, [|gen_size; gen_pos; gen_g1|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_size info; gen_pos info; gen_g1 info] in
+           match l with
+           | [dsize; dpos; dg1] -> Myseq.return (make_dcrop dsize dpos dg1)
+           | _ -> assert false)
+      | _, Objects seg, [|gen_size; gen_objs|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_size info; gen_objs info] in
+           match l with
+           | [dsize; dobjs] -> Myseq.return (make_dobjects seg dsize dobjs)
+           | _ -> assert false)
+      | _, Monocolor, [|gen_col; gen_mask|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_col info; gen_mask info] in
+           match l with
+           | [dcol; dmask] -> Myseq.return (make_dmonocolor dcol dmask)
+           | _ -> assert false)
+      | _, Motif, [|gen_mot; gen_core; gen_noise|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_mot info; gen_core info; gen_noise info] in
+           match l with
+           | [dmot; dcore; dnoise] -> Myseq.from_result (make_dmotif dmot dcore dnoise)
+           | _ -> assert false)
+      | _, Empty, [|gen_size|] ->
+         (fun info ->
+           let* dsize = gen_size info in
+           Myseq.return (make_dempty dsize))
+      | _, Full, [|gen_size|] ->
+         (fun info ->
+           let* dsize = gen_size info in
+           Myseq.return (make_dfull dsize))
+      | _, Border, [|gen_size|] ->
+         (fun info ->
+           let* dsize = gen_size info in
+           Myseq.return (make_dborder dsize))
+      | _, Point, [||] ->
+         (fun info ->
            Myseq.return (make_dpoint))
       | _ -> assert false
 
@@ -2336,7 +2444,7 @@ module MyDomain : Madil.DOMAIN =
           input_model = Model.make_def xi (make_anygrid (`Full,false));
           nb_env_vars = 0;
           output_model = Model.make_def xo (make_anygrid (`Full,false)) } in
-      let info_o = (Grid.max_size, Grid.max_size, -1) in
+      let info_o = () (* Grid.max_size, Grid.max_size, -1 *) in
       env0, init_task_model, info_o
 
     let log_reading r m ~status =
@@ -2378,6 +2486,7 @@ module MyDomain : Madil.DOMAIN =
       Grid_patterns.reset_memoized_functions ();
       Segment.reset_memoized_functions ();
       Funct.reset_memoized_functions_apply ();
+      reset_default_grid ();
       reset_make_index ()
   end
 
