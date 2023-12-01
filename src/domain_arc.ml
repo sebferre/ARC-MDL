@@ -339,6 +339,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleDown_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
       | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
       | `Size_1 (* Grid -> Vec *)
+      | `Height_1 (* Grid -> Int *)
+      | `Width_1 (* Grid -> Int *)
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
@@ -435,6 +437,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleDown_2 -> print#string "/"
       | `ScaleTo_2 -> print#string "scaleTo"
       | `Size_1 -> print#string "size"
+      | `Height_1 -> print#string "height"
+      | `Width_1 -> print#string "width"
       | `Crop_2 -> print#string "crop"
       | `Strip_1 -> print#string "strip"
       | `Corner_2 -> print#string "corner"
@@ -574,6 +578,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | INT (COORD (axis,tv)) ->
              [ `Index_1 [], [|k|];
+               `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
+               `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
+               `Area_1, [|GRID (`Sprite,false)|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `ScaleUp_2, [|k; INT CARD|];
@@ -585,6 +592,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | VEC tv ->
              [ `Index_1 [], [|k|];
+               `Size_1, [|GRID (`Sprite,false)|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `ScaleUp_2, [|k; INT CARD|];
@@ -1057,6 +1065,18 @@ module MyDomain : Madil.DOMAIN =
           | [|`Grid g|] ->
              let h, w = Grid.dims g in
              Result.Ok (`Vec (h, w))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Height_1 ->
+         (function
+          | [|`Grid g|] ->
+             let h, _ = Grid.dims g in
+             Result.Ok (`Int h)
+          | _ -> Result.Error (Invalid_expr e))
+      | `Width_1 ->
+         (function
+          | [|`Grid g|] ->
+             let _, w = Grid.dims g in
+             Result.Ok (`Int w)
           | _ -> Result.Error (Invalid_expr e))
       | `Crop_2 ->
          (function
@@ -1826,6 +1846,8 @@ module MyDomain : Madil.DOMAIN =
       | `ScaleDown_2 -> 0.
       | `ScaleTo_2 -> 0.
       | `Size_1 -> 0.
+      | `Height_1 -> 0.
+      | `Width_1 -> 0.
       | `Crop_2 -> 0.
       | `Strip_1 -> 0.
       | `Corner_2 -> 0.
@@ -1925,10 +1947,12 @@ module MyDomain : Madil.DOMAIN =
           index 2 (* TEST *)
           (fun (t_args, v_args_tree) ->
             let res = [] in
-            let res = (* Size_1, Area_1 *)
+            let res = (* Size_1, Height, Width, Area_1 *)
               match t_args with
               | [|GRID (filling,nocolor)|] ->
                  (VEC SIZE, `Size_1, `Default)
+                 ::(INT (COORD (I, SIZE)), `Height_1, `Default)
+                 ::(INT (COORD (J, SIZE)), `Width_1, `Default)
                  ::(INT CARD, `Area_1, `Default)
                  ::(INT (COORD (I, SIZE)), `Area_1, `Default)
                  ::(INT (COORD (J, SIZE)), `Area_1, `Default)
