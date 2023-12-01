@@ -2130,7 +2130,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in*)
             let res = (* CloseSym *)
               match t_args with
-              | [|GRID (filling,_) as t2|] when filling <> `Full ->
+              | [|GRID (filling,_) as t2|] ->
                  let full = (filling = `Full) in
                  let$ res, bgcolor = res, bgcolors full in
                  let args_spec = `Custom [|`Val (COLOR (C_BG full), `Color bgcolor); `Pos 0|] in
