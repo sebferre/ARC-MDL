@@ -2070,7 +2070,7 @@ module MyDomain : Madil.DOMAIN =
           index 1 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
-            let res = (* Tiling *)
+            (*let res = (* Tiling *)
               match t_args with
               | [|(VEC SIZE | GRID _ as t1)|] ->
                  let$ res, k = res, [1;2;3] in
@@ -2078,8 +2078,8 @@ module MyDomain : Madil.DOMAIN =
                  if k>1 || l>1
                  then (t1, `Tiling_1 (k,l), `Default)::res
                  else res
-              | _ -> res in
-            let res = (* FillResizeAlike *)
+              | _ -> res in*)
+            (*let res = (* FillResizeAlike *)
               match t_args with
               | [|VEC SIZE; GRID ((`Full|`Sprite as filling),_) as t3|] ->
                  let full = (filling = `Full) in
@@ -2090,7 +2090,7 @@ module MyDomain : Madil.DOMAIN =
                          then [`TradeOff; `Total; `Strict]
                          else [`TradeOff; `Strict]) in
                  (t3, `FillResizeAlike_3 mode, args_spec)::res
-              | _ -> res in
+              | _ -> res in*)
             let res = (* SelfCompose *)
               match t_args with
               | [|GRID _ as t2|] ->
@@ -2098,12 +2098,12 @@ module MyDomain : Madil.DOMAIN =
                  let args_spec = `Custom [|`Val (COLOR C_OBJ, `Color color); `Pos 0|] in
                  (t2, `SelfCompose_2, args_spec)::res
               | _ -> res in
-            let res = (* UnfoldSym *)
+            (*let res = (* UnfoldSym *)
               match t_args with
               | [|GRID _ as t1|] ->
                  let$ res, sym_matrix = res, all_symmetry_unfold in
                  (t1, `UnfoldSym_1 sym_matrix, `Default)::res
-              | _ -> res in
+              | _ -> res in*)
             let res = (* CloseSym *)
               match t_args with
               | [|GRID (filling,_) as t2|] when filling <> `Full ->
@@ -2127,10 +2127,10 @@ module MyDomain : Madil.DOMAIN =
                  let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
                  (t1,f, `Default)::res
               | _ -> res in
-            let res = (* ScaleTo *)
+            (*let res = (* ScaleTo *)
               match t_args with
               | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, `Default)::res
-              | _ -> res in
+              | _ -> res in*)
             (* Stack *)
             res) in
       (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
@@ -2164,7 +2164,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else refs in
          let refs = (* Crop *)
-           if filling = `Sprite then
+           if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
@@ -2181,7 +2181,7 @@ module MyDomain : Madil.DOMAIN =
                    (make_vec POS
                       (Model.make_def xpos_i (make_anycoord I POS))
                       (Model.make_def xpos_j (make_anycoord J POS))))
-                (Model.make_def xg1 (make_anygrid (`Sprite,nocolor))),
+                (Model.make_def xg1 (make_anygrid (filling,nocolor))),
               varseq)
              :: refs
            else refs in

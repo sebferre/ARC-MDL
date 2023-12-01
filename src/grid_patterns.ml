@@ -396,7 +396,8 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
               (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
                 pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
                 assert false);*)
-              cols.(i').(j') <- add_color c cols.(i').(j'))              
+              if c <> Grid.undefined then
+                cols.(i').(j') <- add_color c cols.(i').(j'))              
             g)
         cores)
     motifs;
