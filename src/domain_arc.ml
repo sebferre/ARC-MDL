@@ -299,12 +299,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DPoint (* MASK *)
 
     let xp_dpat dc xp_args ~html print () =
-      match dc, xp_args with
+      match dc, xp_args with (* TODO: consider printing other params for better introspection *)
       | DAnyCoord (ij,_), [||] -> print#int ij
       | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
       | DAnyColor (c,_), [||] -> Grid.xp_color ~html print c
       | DAnyMotif motif, [||] -> GPat.Motif.xp ~html print motif
-      | DAnyGrid (g,_,_,_), [||] -> Grid.xp_grid ~html print g
+      | DAnyGrid (g,tg,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
       | DBgColor, [|xp_color; xp_sprite|] ->
          xp_bgcolor xp_color xp_sprite ~html print ()
@@ -658,6 +658,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | COLOR (C_BG true) -> true, [k; COLOR C_OBJ]
           | COLOR (C_BG false) -> true, [k; COLOR (C_BG true); COLOR C_OBJ]
           | MOTIF -> true, [k]
+          | GRID (`Sprite,nocolor) -> true, [k; GRID (`Full,nocolor)]
           | GRID _ -> true, [k]
           | _ -> false, [k]
         method alt_opt = function
@@ -1632,11 +1633,12 @@ module MyDomain : Madil.DOMAIN =
                                                `IntRange (w, rw))) in
              (match Grid_patterns.segment g with
               | [(i,j,g1)] ->
-                 let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                                 `IntRange (j, Range.make_closed 0 (w-1)))) in
                  let* dg1, _ = parse_g1 (`GridDims (g1,
-                                                    Range.make_closed 1 (h-i),
-                                                    Range.make_closed 1 (w-j))) in
+                                                    Range.make_closed 1 h,
+                                                    Range.make_closed 1 w)) in
+                 let h1, w1 = Grid.dims (get_grid dg1) in
+                 let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
+                                                 `IntRange (j, Range.make_closed 0 (w-w1)))) in
                  Myseq.return (make_dcrop dsize dpos dg1, `Null)
               | _ -> Myseq.empty)
           | _ -> assert false)
