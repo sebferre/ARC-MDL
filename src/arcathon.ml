@@ -1,19 +1,17 @@
 
+module MadilArc = Madil.Make(Domain_arc.MyDomain)
+
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
-let timeout_build = 120
+let timeout_refine = 120
 let timeout_prune = 30
 let timeout_predict = 30
-
-let _ = (* configuration *)
-  Model2.max_expressions := 200000;
-  Model2.max_refinements := 40
                     
 let tasks_path = root_path ^ "evaluation/"
 let solution_path = root_path ^ "solution/solution_madil.json"
 
-let load_tasks () (* including trailing / *) : int * (string * Task.task) list =
+let load_tasks () (* including trailing / *) : int * (string * MadilArc.task) list =
   let tasks_filenames = Array.to_list (Sys.readdir tasks_path) in
   let tasks_count = List.length tasks_filenames in
   let name_tasks =
@@ -21,38 +19,26 @@ let load_tasks () (* including trailing / *) : int * (string * Task.task) list =
       (fun task_filename ->
         match Filename.chop_suffix_opt ~suffix:".json" task_filename with
         | None -> assert false
-        | Some name -> name, Task.from_file (tasks_path ^ task_filename))
+        | Some name -> name, MadilArc.task_from_file (tasks_path ^ task_filename))
       tasks_filenames in
   tasks_count, name_tasks
 
-
-let json_of_grid (grid : Grid.t) =
-  let open Bigarray in
-  let n1, n2 = grid.height, grid.width in
-  let rows =
-    Common.fold_for_down
-      (fun i res ->
-        let row =
-          Common.fold_for_down
-            (fun j row ->
-              `Int (Array2.get grid.matrix i j) :: row)
-            (n2 - 1) 0 [] in
-        `List row :: res)
-      (n1 - 1) 0 [] in
-  `List rows
-  
-let process_test_pair m id {Task.input; output=_} = (* output not relevant *)
+let process_test_pair env m info id {Task.input; output=_} = (* output not relevant *)
   let nb_preds, preds =
     match Common.do_timeout timeout_predict
-            (fun () -> Model2.apply_model m input) with
-    | Some (Result.Ok predictions) ->
+            (fun () -> MadilArc.apply ~env m input info) with
+    | Some (Result.Ok (predictions : (MadilArc.data * MadilArc.data * Madil_common.dl) list)) ->
        let nb_preds, preds =
          List.fold_left
-           (fun (i,preds) (_gdi,predicted_output) ->
-             let pred =
-               `Assoc [ "prediction_id", `Int i;
-                        "output", json_of_grid predicted_output ] in
-             i+1, pred :: preds)
+           (fun (i,preds) (_gdi,gdo,_dl) ->
+             if i < 3 (* at most 3 predictions *)
+             then
+               let vo = Data.value gdo in
+               let pred =
+                 `Assoc [ "prediction_id", `Int i;
+                          "output", MadilArc.json_of_value vo ] in
+               i+1, pred :: preds
+             else i, preds)
            (0,[]) predictions in
        nb_preds, preds
     | _ -> 0, []
@@ -62,20 +48,21 @@ let process_test_pair m id {Task.input; output=_} = (* output not relevant *)
            "predictions", `List (List.rev preds) ]
   
 let process_task name task =
+  let env, m, info = MadilArc.get_init_task_model name task in
   let _, (m, _, _) =
-    Model2.learn_model
-      ~verbose:0
-      ~timeout_build
+    MadilArc.learn
+      ~timeout_refine
       ~timeout_prune
-      ~init_model:Model2.init_model
       ~beam_width:1
-      ~refine_degree:(!Model2.max_refinements)
+      ~refine_degree:(!MadilArc.max_refinements)
+      ~env
+      ~init_task_model:m
       task.Task.train in
   let _, tests =
     List.fold_left
       (fun (id,tests) pair ->
         try
-          let test = process_test_pair m id pair in
+          let test = process_test_pair env m info id pair in
           id+1, test :: tests
         with _ ->
           id+1, tests) (* recovery from unexpected error, failed some test pair *)
