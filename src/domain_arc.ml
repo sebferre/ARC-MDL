@@ -70,6 +70,23 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          `Grid grid
       | _ -> invalid_arg "Invalid JSON grid"
 
+    let json_of_value : value -> Yojson.Safe.t = function
+      | `Grid grid ->
+         let open Bigarray in
+         let n1, n2 = grid.height, grid.width in
+         let rows =
+           Common.fold_for_down
+             (fun i res ->
+               let row =
+                 Common.fold_for_down
+                   (fun j row ->
+                     `Int (Array2.get grid.matrix i j) :: row)
+                   (n2 - 1) 0 [] in
+               `List row :: res)
+             (n1 - 1) 0 [] in
+         `List rows
+      | _ -> invalid_arg "JSON only defined for grid values"
+           
     (* model types *)
 
     type typ =
