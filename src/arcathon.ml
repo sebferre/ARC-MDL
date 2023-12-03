@@ -79,6 +79,7 @@ let process_tasks count name_tasks =
   let _, sols =
     List.fold_left
       (fun (i,sols) (name,task) ->
+        MadilArc.reset_memoization ();
         try
           let sol = process_task name task in
           print_progress i count;
