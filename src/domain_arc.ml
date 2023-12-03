@@ -630,10 +630,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymVec_1 (`Id,tv), [|k|];
                `Tiling_1 (2,2), [|k|];
              ]
-          | MOTIF -> []
           | COLOR tc ->
              [ `Index_1 [], [|k|];
                `MajorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
+             ]
+          | MOTIF ->
+             [ `Index_1 [], [|k|]
              ]
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
@@ -670,6 +672,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
         method expr_opt k =
           match k with (* what type can be used to define k *)
+          | BOOL -> true, [k]
           | INT CARD -> true, [k]
           | INT (COORD (axis,tv)) ->
              let axis_opp = match axis with I -> J | J -> I in
@@ -681,7 +684,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | MOTIF -> true, [k]
           | GRID (`Sprite,nocolor) -> true, [k; GRID (`Full,nocolor)]
           | GRID _ -> true, [k]
-          | _ -> false, [k]
+          | OBJ tg -> true, [k]
         method alt_opt = function
           | _ -> false (* LATER *)
       end
