@@ -4,7 +4,7 @@ module MadilArc = Madil.Make(Domain_arc.MyDomain)
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
-let timeout_refine = 120
+let timeout_refine = 300 (* 120 *)
 let timeout_prune = 30
 let timeout_predict = 30
                     
