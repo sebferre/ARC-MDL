@@ -722,6 +722,7 @@ module MyDomain : Madil.DOMAIN =
     let max_nb_writes = def_param "max_nb_doc_writes" 3 string_of_int (* max nb of selected output writes *)
     let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
+    let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     
     (* constructors and accessors *)
                         
@@ -2439,6 +2440,18 @@ module MyDomain : Madil.DOMAIN =
          [ make_anymotif, varseq ]
       | GRID tg, `Grid g ->
          [ make_anygrid tg, varseq ]
+      | OBJ tg, `Obj (i,j,g1) ->
+         let xpos, varseq = Refining.new_var varseq in
+         let xi, varseq = Refining.new_var varseq in
+         let xj, varseq = Refining.new_var varseq in
+         let xg1, varseq = Refining.new_var varseq in
+         [ make_obj tg
+             (Model.make_def xpos
+                (make_vec POS
+                   (Model.make_def xi (make_anycoord I POS))
+                   (Model.make_def xj (make_anycoord J POS))))
+             (Model.make_def xg1 (make_anygrid tg)),
+           varseq ]
       | _ -> assert false
     let prunings_pat t c args varseq data =
       match t, c with
@@ -2469,7 +2482,8 @@ module MyDomain : Madil.DOMAIN =
 
     let log_reading r m ~status =
       (*print_endline "READING";
-        pp_endline xp_refinement r;*)
+      pp_endline xp_refinement r;
+      pp_endline xp_task_model m;*)
       ()
     let log_refining r m prs dl =
       Printf.printf "REF  %.3f  " dl;
