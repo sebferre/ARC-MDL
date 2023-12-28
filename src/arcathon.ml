@@ -4,6 +4,7 @@ module MadilArc = Madil.Make(Domain_arc.MyDomain)
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
+let memout = 5000
 let timeout_refine = 300 (* 120 *)
 let timeout_prune = 30
 let timeout_predict = 30
@@ -49,15 +50,17 @@ let process_test_pair env m info id {Task.input; output=_} = (* output not relev
   
 let process_task name task =
   let env, m, info = MadilArc.get_init_task_model name task in
-  let _, (m, _, _) =
+  let res : _ Learning.results =
     MadilArc.learn
+      ~memout
       ~timeout_refine
       ~timeout_prune
-      ~beam_width:1
+      ~jump_width:(!MadilArc.jump_width)
       ~refine_degree:(!MadilArc.max_refinements)
       ~env
       ~init_task_model:m
       task.Task.train in
+  let m = res.result_pruning.task_model in
   let _, tests =
     List.fold_left
       (fun (id,tests) pair ->
