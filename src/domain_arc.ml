@@ -177,7 +177,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Motif (* MOTIF, SPRITE (core), SPRITE (noise) *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
-      | Border (* SIZE : MASK *)
       | Point (* MASK *)
 
     let xp_any ~html print () =
@@ -226,8 +225,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "an empty mask of size "; xp_size ~html print ()
     let xp_full xp_size ~html print () =
       print#string "a full mask of size "; xp_size ~html print ()
-    let xp_border xp_size ~html print () =
-      print#string "a border mask of size "; xp_size ~html print ()
     let xp_point ~html print () =
       print#string "a point mask"
       
@@ -255,8 +252,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_empty xp_size ~html print ()
       | Full, [|xp_size|] ->
          xp_full xp_size ~html print ()
-      | Border, [|xp_size|] ->
-         xp_border xp_size ~html print ()
       | Point, [||] ->
          xp_point ~html print ()
       | _ -> assert false
@@ -292,7 +287,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Motif, _ -> assert false
       | Empty, _ -> print#string "size"
       | Full, _ -> print#string "size"
-      | Border, _ -> print#string "size"
       | Point, _ -> assert false
 
     (* data constr *)
@@ -312,7 +306,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DMotif (* MOTIF, SPRITE (core), SPRITE (noise) *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
-      | DBorder (* SIZE : MASK *)
       | DPoint (* MASK *)
 
     let xp_dpat dc xp_args ~html print () =
@@ -339,8 +332,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_empty xp_size ~html print ()
       | DFull, [|xp_size|] ->
          xp_full xp_size ~html print ()
-      | DBorder, [|xp_size|] ->
-         xp_border xp_size ~html print ()
       | DPoint, [||] ->
          xp_point ~html print ()
       | _ -> assert false
@@ -579,7 +570,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; GRID (`Noise,nocolor), 0|]);
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
-                 not full && nocolor, (Border, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]) ]
           | OBJ tg ->
              None,
@@ -752,7 +742,6 @@ module MyDomain : Madil.DOMAIN =
     let make_motif tg mmotif mcore mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mnoise|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
-    let make_border msize : model = Model.make_pat (GRID (`Sprite,true)) Border [|msize|] (* could be said full grid? *)
     let make_point : model = Model.make_pat (GRID (`Sprite,true)) Point [||]
       
     let get_int (d : data) : int =
@@ -856,12 +845,6 @@ module MyDomain : Madil.DOMAIN =
         | `Vec (h,w) -> Grid.Mask.full h w
         | _ -> assert false in
       Data.make_dpat (`Grid g) DFull [|dsize|]
-    let make_dborder dsize : data =
-      let g =
-        match Data.value dsize with
-        | `Vec (h,w) -> Grid.Mask.init h w (fun i j -> i = 0 || j = 0 || i = h-1 || j = w-1)
-        | _ -> assert false in
-      Data.make_dpat (`Grid g) DBorder [|dsize|]
     let make_dpoint : data =
       let g = Grid.Mask.full 1 1 in
       Data.make_dpat (`Grid g) DPoint [||]
@@ -1534,10 +1517,6 @@ module MyDomain : Madil.DOMAIN =
          (fun (h,w,c) ->
            let* dsize = gen_size (h,w,c) in
            Myseq.return (make_dfull dsize))
-      | _, Border, [|gen_size|] ->
-         (fun (h,w,c) ->
-           let* dsize = gen_size (h,w,c) in
-           Myseq.return (make_dborder dsize))
       | _, Point, [||] ->
          (fun (h,w,c) ->
            Myseq.return (make_dpoint))
@@ -1638,10 +1617,6 @@ module MyDomain : Madil.DOMAIN =
          (fun info ->
            let* dsize = gen_size info in
            Myseq.return (make_dfull dsize))
-      | _, Border, [|gen_size|] ->
-         (fun info ->
-           let* dsize = gen_size info in
-           Myseq.return (make_dborder dsize))
       | _, Point, [||] ->
          (fun info ->
            Myseq.return (make_dpoint))
@@ -1811,11 +1786,10 @@ module MyDomain : Madil.DOMAIN =
              let* data = Myseq.from_result (make_dmotif dmot dcore dnoise) in
              Myseq.return (data, `Null)
           | _ -> assert false)            
-      | _, (Empty | Full | Border as c), [|parse_size|] ->
+      | _, (Empty | Full as c), [|parse_size|] ->
          let pred_maked h w = function
            | Empty -> (fun i j c -> c = Grid.Mask.zero), make_dempty
            | Full -> (fun i j c -> c = Grid.Mask.one), make_dfull
-           | Border -> (fun i j c -> (c = Grid.Mask.one) = (i=0 || j=0 || i=h-1 || j=w-1)), make_dborder
            | _ -> assert false
          in
          (function
@@ -1894,7 +1868,6 @@ module MyDomain : Madil.DOMAIN =
       | DMotif, [|enc_motif; enc_core; enc_noise|] -> enc_motif +. enc_core +. enc_noise
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
-      | DBorder, [|enc_size|] -> enc_size
       | DPoint, [||] -> 0.
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
@@ -1950,7 +1923,6 @@ module MyDomain : Madil.DOMAIN =
       | _, Motif -> 0.
       | _, Empty -> 0.
       | _, Full -> 0.
-      | _, Border -> 0.
       | _, Point -> 0.
 
            
@@ -2413,12 +2385,10 @@ module MyDomain : Madil.DOMAIN =
            (make_empty msize, varseq_msize)
            :: (if nocolor then
                  (make_full msize, varseq_msize)
-                 :: (make_border msize, varseq_msize)
                  :: (make_point, varseq)
                  :: refs
                else refs) in
          refs
-      (* TODO: refine Full and Border as Point is size=1,1 ? *)
       | _ -> []
     let refinements_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->

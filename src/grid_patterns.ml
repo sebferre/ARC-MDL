@@ -130,11 +130,14 @@ module Motif =
 type t =
   | Scale
   | Periodic of Grid.Transf.axis * Grid.Transf.axis
+  (* symmetries *) (* TODO: add symmetry axis/center position *)
   | FlipH | FlipW | FlipHW
   | FlipD1 | FlipD2 | FlipD12
   | Rotate180 | Rotate90
   | FullSym
-(* TODO: add symmetry axis/center position *)
+  (* special motifs *)
+  | Border | CrossPlus | CrossTimes | Diamond
+  | Star (* CrossPlus+CrossTimes *) (* TODO: other combinations? *)
 
 let xp ~html print = function
   | Scale -> print#string "scale"
@@ -151,6 +154,11 @@ let xp ~html print = function
   | Rotate180 -> print#string "Rotate180"
   | Rotate90 -> print#string "Rotate90"
   | FullSym -> print#string "FullSym"
+  | Border -> print#string "Border"
+  | CrossPlus -> print#string "Cross +"
+  | CrossTimes -> print#string "Cross x"
+  | Diamond -> print#string "Diamond"
+  | Star -> print#string "Star"
 
 let project (mot : t) h w u v : (int -> int -> int * int) =
   (* project coord (i,j) in (h,w) range to (u,v) range, according to motif *)
@@ -200,6 +208,35 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
        let i_min = min i (h_1 - i) in
        let j_min = min j (w_1 - j) in
        min i_min j_min, max i_min j_min)
+  (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
+  | Border ->
+     (fun i j ->
+       if i = 0 || j = 0 || i = h_1 || j = w_1
+       then 1, 0
+       else 0, 0)
+  | CrossPlus ->
+     (fun i j ->
+       if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2
+       then 1, 0
+       else 0, 0)
+  | CrossTimes ->
+     (fun i j ->
+       if i = j || i = (w_1-j)
+       then 1, 0
+       else 0, 0)
+  | Star ->
+     (fun i j ->
+       if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2 (* CrossPlus *)
+          || i = j || i = (w_1-j) (* CrossTimes *)
+       then 1, 0
+       else 0, 0)
+  | Diamond ->
+     assert (h = w);
+     (fun i j ->
+       let p, m = i + j,  i + (w_1 - j) in
+       if p = h_1/2 || p = h_1 + h/2 || m = h_1/2 || m = h_1 + h/2
+       then 1, 0
+       else 0, 0)
              
 let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (int * int) list =
   (* range and list of core dimensions (u,v) given a motif and grid dims *)
@@ -313,6 +350,28 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        Range.make_open 0, (* dummy *)
        []
+  | Border | CrossPlus ->
+     if h >= 3 && w >= 3
+     then
+       let u, v = 2, 1 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []            
+  | CrossTimes | Diamond | Star ->
+     if h = w && h >= 3
+     then
+       let u, v = 2, 1 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []            
   
 let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result =
   Common.prof "Grid_patterns.Motif.make_grid" (fun () ->
@@ -343,6 +402,7 @@ let candidates =
     FlipD1; FlipD2; FlipD12;
     Rotate180; Rotate90;
     FullSym;
+    Border; CrossPlus; CrossTimes; Diamond; Star;
     Periodic (I, J);
     Periodic (I, PlusIJ);
     Periodic (PlusIJ, J);
@@ -518,11 +578,11 @@ let from_grid, reset_from_grid =
   Memo.memoize ~size:Grid.memoize_size from_grid
 
 (*let _ = (* TEST *)
-  let u, v = 1, 1 in
+  let u, v = 2, 1 in
   let core = Grid.init u v (fun i' j' -> 3 * i' + j') in
   let h, w, mot =
     let open Grid.Transf in
-    3*u, 6*v, Scale
+    (* 3*u, 6*v, Scale *)
     (* 3*u+1, 5*v+1, Periodic (I,J) *)
     (* 3*u+1, 5*v+1, Periodic (PlusIJ,DiffIJ) *)
     (* 2*u, v, FlipH *)
@@ -531,21 +591,23 @@ let from_grid, reset_from_grid =
     (* 2*u, v, Rotate180 *)
     (* 2*u, 2*v, Rotate90 *)
     (* 2*u-1, 2*v-1, FullSym *)
+    7, 7, Diamond
   in
-  let g = make_grid h w mot core in
-  pp Grid.xp_grid g;
-  Grid.Do.set_pixel g 1 0 3;
-  Grid.Do.set_pixel g 1 5 3;
-  pp Grid.xp_grid g;
-  print_endline "MOTIFS";
-  List.iter
-    (fun (mot,core,noise) ->
-      pp_endline xp mot;
-      pp Grid.xp_grid core;
-      pp Grid.xp_grid noise;
-      print_newline ())
-    (from_grid g)*)
-
+  match make_grid h w mot core with
+  | Result.Ok g ->
+     pp Grid.xp_grid g;
+     (*Grid.Do.set_pixel g 1 0 3;
+     Grid.Do.set_pixel g 1 5 3;
+     pp Grid.xp_grid g;*)
+     print_endline "MOTIFS";
+     List.iter
+       (fun (mot,ru,rv,core,noise) ->
+         pp_endline xp mot;
+         pp Grid.xp_grid core;
+         pp Grid.xp_grid noise;
+         print_newline ())
+       (from_grid g)
+  | Result.Error exn -> raise exn*)
   
   end
              
