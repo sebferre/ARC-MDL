@@ -13,29 +13,31 @@ let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result =
   (* transparent and undefined are left transparent *)
   Common.prof "Grid_patterns.recoloring" (fun () ->
   let nc = Grid.color_count Grid.transparent g in
+  let minpos = Array.make Grid.nb_color (max_int,max_int) in    
   let palette = Array.make nc Grid.undefined in (* color in range(0,nc) -> color in g *)
   let rev_palette = Array.make Grid.nb_color Grid.undefined in (* color in g -> color in range(0,nc) *)
-  let ok =
-    let rec aux n i = function
-      | [] -> true
-      | (n1,c1)::lnc2 ->
-         let ok = aux n1 (i+1) lnc2 in
-         palette.(i) <- c1;
-         rev_palette.(c1) <- i;
-         ok && n1 <> n
-    in
-    aux max_int 0 (Grid.color_freq_desc g) in
-  if ok
-  then
-    let gres =
-      Grid.map_pixels
-        (fun c ->
-          if c >= 0 && c < Grid.nb_color
-          then rev_palette.(c)
-          else c)
-        g in
-    Result.Ok (gres, palette)
-  else Result.Error (Failure "Grid_patterns.recoloring: ambiguous ordering"))
+  (* defining minpos: color -> min (i,j) s.t. g(i,j)=c *)
+  Grid.iter_pixels
+    (fun i j c ->
+      if Grid.is_true_color c
+      then minpos.(c) <- min minpos.(c) (i,j))
+    g;
+  (* sorting colors by descending frequency, then by ascending min pos in grid *)
+  Grid.color_freq_desc g
+  |> List.map (fun (n,c) -> let mini, minj = minpos.(c) in (n,mini,minj,c))
+  |> List.sort (fun (n1,i1,j1,c1) (n2,i2,j2,c2) -> Stdlib.compare (n2,i1,j1) (n1,i2,j2))
+  |> List.iteri (fun rank (n,i,j,c) ->
+         palette.(rank) <- c;
+         rev_palette.(c) <- rank);
+  (* computing the normalized grid *)
+  let gres =
+    Grid.map_pixels
+      (fun c ->
+        if Grid.is_true_color c
+        then rev_palette.(c)
+        else c)
+      g in
+  Result.Ok (gres, palette))
 
 let recolor (g : Grid.t) (palette : Grid.color array) : Grid.t =
   let nc = Array.length palette in
