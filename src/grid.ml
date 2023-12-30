@@ -26,6 +26,9 @@ let undefined = 11 (* for use in special algos, hidden parts, any color *)
 let nb_color = 10
 let last_color = 9
 
+let is_true_color (c : color) : bool =
+  c >= 0 && c < nb_color
+
 let all_colors = [0; 1; 2; 3; 4; 5; 6; 7; 8; 9]
              
 let name_of_color : color -> string =
@@ -328,13 +331,17 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
   let res = ref undefined in
   let nb_max = ref 0 in
   for c = black to last_color do
-    let nb = g.color_count.(c) in
-    if c <> bgcolor && nb > !nb_max then (
-      res := c;
-      nb_max := nb)
+    if c <> bgcolor then
+      let nb = g.color_count.(c) in
+      if nb > !nb_max then (
+        res := c;
+        nb_max := nb)
+      else if nb = !nb_max then (
+        res := undefined)
+      else ()
   done;
   if !res = undefined
-  then Result.Error (Undefined_result "majority_color: all transparent of bgcolor")
+  then Result.Error (Undefined_result "majority_color: all bgcolor or ambiguity")
   else Result.Ok !res
 
 let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
