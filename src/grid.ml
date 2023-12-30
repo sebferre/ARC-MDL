@@ -364,7 +364,9 @@ let color_freq_desc (grid : t) : (int * color) list =
     let n = grid.color_count.(c) in
     if n > 0 then res := (n,c) :: !res
   done;
-  List.sort Stdlib.compare !res
+  List.sort
+    (fun (n1,c1) (n2,c2) -> Stdlib.compare (n2,c1) (n1,c2))
+    !res
 
 let fill_transparent (g : t) (c : color) : t =
   map_pixels
