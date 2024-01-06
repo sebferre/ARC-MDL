@@ -172,7 +172,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* SIZE, POS, SPRITE : SPRITE *)
-      | Objects of segmentation (* SIZE, OBJ+ : SPRITE *)
+      | Objects of segmentation * int (* SIZE, OBJ+ : SPRITE *) (* int is for max seq length *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* COLOR+, SPRITE : SPRITE *)
       | Motif (* MOTIF, SPRITE (core), SPRITE (noise) *)
@@ -200,14 +200,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string " that contains at position "; xp_pos ~html print ();
       xp_newline ~html print ();
       xp_sprite ~html print ()
-    let xp_objects (seg : segmentation) xp_size xp_objs ~html print () =
+    let xp_objects (seg : segmentation) (nmax : int) xp_size xp_objs ~html print () =
       print#string "a grid of size "; xp_size ~html print ();
-      print#string " that contains ";
+      print#string " that contains at most "; print#int nmax;
       print#string
         (match seg with
          | `Default -> ""
-         | `SameColor -> "same-color ");
-      print#string "objects like";
+         | `SameColor -> " same-color");
+      print#string " objects like";
       xp_newline ~html print ();
       xp_objs ~html print ()
     let xp_monocolor xp_color xp_mask ~html print () =
@@ -247,8 +247,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_isfull xp_sprite ~html print ()
       | Crop, [|xp_size; xp_pos; xp_sprite|] ->
          xp_crop xp_size xp_pos xp_sprite ~html print ()
-      | Objects seg, [|xp_size; xp_objs|] ->
-         xp_objects seg xp_size xp_objs ~html print ()
+      | Objects (seg,nmax), [|xp_size; xp_objs|] ->
+         xp_objects seg nmax xp_size xp_objs ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | Recoloring, [|xp_colors; xp_grid|] ->
@@ -311,7 +311,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DBgColor (* COLOR, SPRITE : GRID *)
       | DIsFull (* SPRITE : GRID *)
       | DCrop (* SIZE, POS, SPRITE : SPRITE *)
-      | DObjects of segmentation (* SIZE, OBJ+ : SPRITE *)
+      | DObjects of segmentation * int (* SIZE, OBJ+ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
       | DRecoloring (* COLOR+, SPRITE : SPRITE *)
       | DMotif (* MOTIF, SPRITE (core), SPRITE (noise) *)
@@ -333,8 +333,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_isfull xp_sprite ~html print ()
       | DCrop, [|xp_size; xp_pos; xp_sprite|] ->
          xp_crop xp_size xp_pos xp_sprite ~html print ()
-      | DObjects seg, [|xp_size; xp_obj|] ->
-         xp_objects seg xp_size xp_obj ~html print ()
+      | DObjects (seg,nmax), [|xp_size; xp_obj|] ->
+         xp_objects seg nmax xp_size xp_obj ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | DRecoloring, [|xp_color; xp_grid|] ->
@@ -578,7 +578,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  not full, (Crop, [|VEC SIZE, 0; VEC POS, 0; GRID (`Sprite,nocolor), 0|]);
-                 not full, (Objects `Default, [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
+                 not full, (Objects (`Default,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]);
                  true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; GRID (`Noise,nocolor), 0|]);
@@ -752,7 +752,7 @@ module MyDomain : Madil.DOMAIN =
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (`Full,false)) BgColor [|mcol; mg1|]
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
     let make_crop msize mpos mg1 : model = Model.make_pat (GRID (`Sprite,false)) Crop [|msize; mpos; mg1|]
-    let make_objects seg msize mobj : model = Model.make_pat (GRID (`Sprite,false)) (Objects seg) [|msize; mobj|]
+    let make_objects seg nmax msize mobj : model = Model.make_pat (GRID (`Sprite,false)) (Objects (seg,nmax)) [|msize; mobj|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]
     let make_motif tg mmotif mcore mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mnoise|]
@@ -813,7 +813,7 @@ module MyDomain : Madil.DOMAIN =
            g
         | _ -> assert false in
       Data.make_dpat (`Grid g) DCrop [|dsize; dpos; dstr|]
-    let make_dobjects seg dsize dobjs : data =
+    let make_dobjects seg nmax dsize dobjs : data =
       let g =
         match Data.value dsize, Data.value dobjs with
         | `Vec (h,w), `Seq objs ->
@@ -825,7 +825,7 @@ module MyDomain : Madil.DOMAIN =
              objs;
            g
         | _ -> assert false in
-      Data.make_dpat (`Grid g) (DObjects seg) [|dsize; dobjs|]
+      Data.make_dpat (`Grid g) (DObjects (seg,nmax)) [|dsize; dobjs|]
     let make_dmonocolor dcol dmask : data =
       let g_res =
         match Data.value dcol, Data.value dmask with
@@ -1624,11 +1624,15 @@ module MyDomain : Madil.DOMAIN =
            match l with
            | [dsize; dpos; dg1] -> Myseq.return (make_dcrop dsize dpos dg1)
            | _ -> assert false)
-      | _, Objects seg, [|gen_size; gen_objs|] ->
+      | _, Objects (seg,nmax), [|gen_size; gen_objs|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_size info; gen_objs info] in
            match l with
-           | [dsize; dobjs] -> Myseq.return (make_dobjects seg dsize dobjs)
+           | [dsize; dobjs] ->
+              (match Data.value dobjs with
+               | `Seq vs1 when Array.length vs1 <= nmax -> 
+                  Myseq.return (make_dobjects seg nmax dsize dobjs)
+               | _ -> Myseq.empty)
            | _ -> assert false)
       | _, Monocolor, [|gen_col; gen_mask|] ->
          (fun info ->
@@ -1794,7 +1798,7 @@ module MyDomain : Madil.DOMAIN =
                  Myseq.return (make_dcrop dsize dpos dg1, `Null)
               | _ -> Myseq.empty)
           | _ -> assert false)
-      | _, Objects seg, [|parse_size; parse_objs|] ->
+      | _, Objects (seg,nmax), [|parse_size; parse_objs|] ->
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
              if Grid.is_full g then Myseq.empty
@@ -1806,10 +1810,10 @@ module MyDomain : Madil.DOMAIN =
                  match seg with
                  | `Default -> Grid_patterns.segment g
                  | `SameColor -> Grid_patterns.segment_same_color g in
-               let* () = Myseq.from_bool (List.length objs <= 9) in
+               let* () = Myseq.from_bool (List.length objs <= nmax) in
                let* dobjs, input = parse_objs (`Objects (h,w,nc,objs)) in
                (match input with
-               | `Objects (_,_,_,[]) -> Myseq.return (make_dobjects seg dsize dobjs, `Null)
+               | `Objects (_,_,_,[]) -> Myseq.return (make_dobjects seg nmax dsize dobjs, `Null)
                | _ -> Myseq.empty) (* all objects must be used *)
           | _ -> assert false)
       | _, Monocolor, [|parse_col; parse_mask|] ->
@@ -1928,7 +1932,7 @@ module MyDomain : Madil.DOMAIN =
       | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | DIsFull, [|enc_g1|] -> enc_g1
       | DCrop, [|enc_size; enc_pos; enc_g1|] -> enc_size +. enc_pos +. enc_g1
-      | DObjects seg, [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | DObjects (seg,nmax), [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid
       | DMotif, [|enc_motif; enc_core; enc_noise|] -> enc_motif +. enc_core +. enc_noise
@@ -1980,11 +1984,12 @@ module MyDomain : Madil.DOMAIN =
       | _, BgColor -> 0.
       | _, IsFull -> 0.
       | _, Crop -> 0.
-      | _, Objects seg ->
+      | _, Objects (seg,nmax) ->
          Mdl.Code.usage
            (match seg with
             | `Default -> 0.5
             | `SameColor -> 0.5)
+         +. Mdl.Code.universal_int_plus nmax
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
       | _, Motif -> 0.
@@ -2359,7 +2364,7 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         let refs = (* Crop *)
+         (*let refs = (* Crop *)
            if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
@@ -2380,7 +2385,7 @@ module MyDomain : Madil.DOMAIN =
                 (Model.make_def xg1 (make_anygrid (filling,nocolor))),
               varseq)
              :: refs
-           else refs in
+           else refs in*)
          let refs = (* Objects *)
            if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
@@ -2392,6 +2397,7 @@ module MyDomain : Madil.DOMAIN =
              let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              let$ refs, seg = refs, [`Default; `SameColor] in
+             let$ refs, nmax = refs, [1;9] in
              let m_g1, varseq =
                match seg with
                | `Default ->
@@ -2405,12 +2411,12 @@ module MyDomain : Madil.DOMAIN =
                        (Model.make_def xcol (make_anycolor C_OBJ))
                        (Model.make_def xm1 (make_anygrid (`Sprite,true)))),
                   varseq in
-             (make_objects seg
+             (make_objects seg nmax
                 (Model.make_def xsize
                    (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
                       (Model.make_def xsize_j (make_anycoord J SIZE))))
-                (Model.make_loop
+                (Model.make_loop (Range.make_closed 1 nmax)
                    (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
                          (Model.make_def xpos
@@ -2436,7 +2442,7 @@ module MyDomain : Madil.DOMAIN =
              let xcol, varseq = Refining.new_var varseq in
              let xgrid, varseq = Refining.new_var varseq in
              (make_recoloring
-                (Model.make_loop
+                (Model.make_loop (Range.make_closed 1 Grid.nb_color)
                    (Model.make_def xcol (make_anycolor C_OBJ)))
                 (Model.make_def xgrid (make_anygrid (filling,false))),
               varseq)
