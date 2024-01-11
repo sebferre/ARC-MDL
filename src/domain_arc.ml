@@ -3,7 +3,7 @@ open Madil_common
 open Arc_common
 
 module GPat = Grid_patterns
-   
+
 let () = Printexc.record_backtrace true
    
 module Basic_types (* : Madil.BASIC_TYPES *) =
@@ -171,7 +171,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Obj (* POS, SPRITE : OBJ *)
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
-      | Crop (* SIZE, POS, SPRITE : SPRITE *)
+      | Crop (* SPRITE ; POS, SIZE : SPRITE *)
       | Objects of segmentation * int (* SIZE, OBJ+ : SPRITE *) (* int is for max seq length *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* COLOR+, SPRITE : SPRITE *)
@@ -195,11 +195,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "a full grid that is";
       xp_newline ~html print ();
       xp_sprite ~html print ()
-    let xp_crop xp_size xp_pos xp_sprite ~html print () =
-      print#string "a grid of size "; xp_size ~html print ();
+    let xp_crop xp_sprite xp_pos xp_size ~html print () =
+      print#string "the crop of "; xp_sprite ~html print ();
+      print#string " at position "; xp_pos ~html print ();
+      print#string " with size "; xp_size ~html print ()
+      (*print#string "a grid of size "; xp_size ~html print ();
       print#string " that contains at position "; xp_pos ~html print ();
       xp_newline ~html print ();
-      xp_sprite ~html print ()
+      xp_sprite ~html print ()*)
     let xp_objects (seg : segmentation) (nmax : int) xp_size xp_objs ~html print () =
       print#string "a grid of size "; xp_size ~html print ();
       print#string " that contains at most "; print#int nmax;
@@ -245,8 +248,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_bgcolor xp_color xp_sprite ~html print ()
       | IsFull, [|xp_sprite|] ->
          xp_isfull xp_sprite ~html print ()
-      | Crop, [|xp_size; xp_pos; xp_sprite|] ->
-         xp_crop xp_size xp_pos xp_sprite ~html print ()
+      | Crop, [|xp_sprite; xp_pos; xp_size|] ->
+         xp_crop xp_sprite xp_pos xp_size ~html print ()
       | Objects (seg,nmax), [|xp_size; xp_objs|] ->
          xp_objects seg nmax xp_size xp_objs ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
@@ -278,9 +281,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor, 1 -> print#string "sprite"
       | BgColor, _ -> assert false
       | IsFull, _ -> print#string "sprite"
-      | Crop, 0 -> print#string "size"
+      | Crop, 0 -> print#string "sprite"
       | Crop, 1 -> print#string "pos"
-      | Crop, 2 -> print#string "sprite"
+      | Crop, 2 -> print#string "size"
       | Crop, _ -> assert false
       | Objects _, 0 -> print#string "size"
       | Objects _, 1 -> print#string "obj"
@@ -310,7 +313,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DObj (* SIZE, SPRITE : OBJ *)
       | DBgColor (* COLOR, SPRITE : GRID *)
       | DIsFull (* SPRITE : GRID *)
-      | DCrop (* SIZE, POS, SPRITE : SPRITE *)
+      | DCrop (* SPRITE, POS, SIZE : SPRITE *)
       | DObjects of segmentation * int (* SIZE, OBJ+ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
       | DRecoloring (* COLOR+, SPRITE : SPRITE *)
@@ -331,8 +334,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_bgcolor xp_color xp_sprite ~html print ()
       | DIsFull, [|xp_sprite|] ->
          xp_isfull xp_sprite ~html print ()
-      | DCrop, [|xp_size; xp_pos; xp_sprite|] ->
-         xp_crop xp_size xp_pos xp_sprite ~html print ()
+      | DCrop, [|xp_sprite; xp_pos; xp_size|] ->
+         xp_crop xp_sprite xp_pos xp_size ~html print ()
       | DObjects (seg,nmax), [|xp_size; xp_obj|] ->
          xp_objects seg nmax xp_size xp_obj ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
@@ -577,7 +580,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                [ true, (AnyGrid, [||]);
                  full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
-                 not full, (Crop, [|VEC SIZE, 0; VEC POS, 0; GRID (`Sprite,nocolor), 0|]);
+                 true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
                  not full, (Objects (`Default,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]);
@@ -751,7 +754,7 @@ module MyDomain : Madil.DOMAIN =
     let make_obj tg mpos mg1 : model = Model.make_pat (OBJ tg) Obj [|mpos;mg1|]
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (`Full,false)) BgColor [|mcol; mg1|]
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
-    let make_crop msize mpos mg1 : model = Model.make_pat (GRID (`Sprite,false)) Crop [|msize; mpos; mg1|]
+    let make_crop tg mg1 mpos msize : model = Model.make_pat (GRID tg) Crop [|mg1; mpos; msize|]
     let make_objects seg nmax msize mobj : model = Model.make_pat (GRID (`Sprite,false)) (Objects (seg,nmax)) [|msize; mobj|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]
@@ -804,15 +807,13 @@ module MyDomain : Madil.DOMAIN =
       Data.make_dpat (`Grid g) DBgColor [|dcol;dspr|]
     let make_disfull dspr : data =
       Data.make_dpat (Data.value dspr) DIsFull [|dspr|]
-    let make_dcrop dsize dpos dstr : data =
-      let g =
-        match Data.value dsize, Data.value dpos, Data.value dstr with
-        | `Vec (h,w), `Vec (i,j), `Grid g1 ->
-           let g = Grid.make h w Grid.transparent in
-           Grid.add_grid_at g i j g1;
-           g
+    let make_dcrop dg dpos dsize : data result =
+      let| g1 =
+        match Data.value dg, Data.value dpos, Data.value dsize with
+        | `Grid g, `Vec (i,j), `Vec (h1,w1) ->
+           Grid.Transf.crop g i j h1 w1
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DCrop [|dsize; dpos; dstr|]
+      Result.Ok (Data.make_dpat (`Grid g1) DCrop [|dg; dpos; dsize|])
     let make_dobjects seg nmax dsize dobjs : data =
       let g =
         match Data.value dsize, Data.value dobjs with
@@ -1618,11 +1619,13 @@ module MyDomain : Madil.DOMAIN =
          (fun info ->
            let* dg1 = gen_g1 info in
            Myseq.return (make_disfull dg1))
-      | _, Crop, [|gen_size; gen_pos; gen_g1|] ->
+      | _, Crop, [|gen_g; gen_pos; gen_size|] ->
          (fun info ->
-           let* l = Myseq.product_fair [gen_size info; gen_pos info; gen_g1 info] in
+           let* l = Myseq.product_fair [gen_g info; gen_pos info; gen_size info] in
            match l with
-           | [dsize; dpos; dg1] -> Myseq.return (make_dcrop dsize dpos dg1)
+           | [dg; dpos; dsize] ->
+              let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
+              Myseq.return dg1 
            | _ -> assert false)
       | _, Objects (seg,nmax), [|gen_size; gen_objs|] ->
          (fun info ->
@@ -1705,6 +1708,7 @@ module MyDomain : Madil.DOMAIN =
            then true, `Objects (h, w, nc, List.filter ((<>) obj0) objs)
            else false, input
         (*obj = obj0, `Objects (h,w,objs)*)
+        | _, `Null -> true, `Null
         | _ -> false, input in
       let ok, input = aux v input in
       if ok
@@ -1780,9 +1784,26 @@ module MyDomain : Madil.DOMAIN =
            if Grid.is_full g1
            then Myseq.return (make_disfull dg1, `Null)
            else Myseq.empty)
-      | _, Crop, [|parse_size; parse_pos; parse_g1|] ->
+      | _, Crop, [|parse_g; parse_pos; parse_size|] ->
          (function
-          | `GridDimsCols (g,rh,rw,nc) ->
+          | `GridDimsCols (g1,rh1,rw1,nc1) ->
+             let h1, w1 = Grid.dims g1 in
+             let* dsize, _ =
+               parse_size (`Vec (`IntRange (h1, rh1),
+                                 `IntRange (w1, rw1))) in
+             let* dg, _ = parse_g `Null in (* expression *)
+             let g =
+               match Data.value dg with
+               | `Grid g -> g
+               | v -> pp_endline xp_data dg; assert false in
+             let h, w = Grid.dims g in
+             let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
+             let* dpos, _ =
+               parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
+                                `IntRange (j, Range.make_closed 0 (w-w1)))) in
+             let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
+             Myseq.return (dg1, `Null)
+(*             
              let h, w = Grid.dims g in
              let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
                                                `IntRange (w, rw))) in
@@ -1797,6 +1818,7 @@ module MyDomain : Madil.DOMAIN =
                                                  `IntRange (j, Range.make_closed 0 (w-w1)))) in
                  Myseq.return (make_dcrop dsize dpos dg1, `Null)
               | _ -> Myseq.empty)
+ *)
           | _ -> assert false)
       | _, Objects (seg,nmax), [|parse_size; parse_objs|] ->
          (function
@@ -1931,7 +1953,7 @@ module MyDomain : Madil.DOMAIN =
       | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
       | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | DIsFull, [|enc_g1|] -> enc_g1
-      | DCrop, [|enc_size; enc_pos; enc_g1|] -> enc_size +. enc_pos +. enc_g1
+      | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
       | DObjects (seg,nmax), [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid
@@ -2160,7 +2182,7 @@ module MyDomain : Madil.DOMAIN =
             (*let res = (* Strip_1: covered by pattern Crop *)
               match t_args with
               | [|GRID (filling,nocolor)|] -> (GRID (false,nocolor), `Strip_1)::res
-              | _ -> res in*)
+              | _ -> res in *)
             (* TODO: PeriodicFactor_2, as pattern *)
             let res = (* Corner_2 *)
               match t_args with
@@ -2339,12 +2361,12 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list =
+    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list =
       match t, c with
       | INT (COORD (axis,tv)), AnyCoord -> []
       | COLOR tc, AnyColor -> []
       | MOTIF, AnyMotif -> []
-      | GRID (filling,nocolor), AnyGrid ->
+      | GRID (filling,nocolor as tg), AnyGrid ->
          let refs : (model * varseq) list = [] in
          let refs = (* BgColor *)
            if filling = `Full then
@@ -2364,28 +2386,33 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         (*let refs = (* Crop *)
-           if filling <> `Full then
-             let xsize, varseq = Refining.new_var varseq in
-             let xsize_i, varseq = Refining.new_var varseq in
-             let xsize_j, varseq = Refining.new_var varseq in
-             let xpos, varseq = Refining.new_var varseq in
-             let xpos_i, varseq = Refining.new_var varseq in
-             let xpos_j, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
-             (make_crop
+         let refs = (* Crop *)
+           let xpos, varseq = Refining.new_var varseq in
+           let xpos_i, varseq = Refining.new_var varseq in
+           let xpos_j, varseq = Refining.new_var varseq in
+           let xsize, varseq = Refining.new_var varseq in
+           let xsize_i, varseq = Refining.new_var varseq in
+           let xsize_j, varseq = Refining.new_var varseq in
+           let cropable_vars =
+             Mymap.fold
+               (fun x t res ->
+                 match t with
+                 | GRID (`Full,_) -> x::res
+                 | _ -> res)
+               env_vars [] in
+           let$ refs, gvar = refs, cropable_vars in
+           (make_crop tg
+              (Model.make_expr (GRID tg) (Expr.Ref (GRID tg, gvar)))
+              (Model.make_def xpos
+                 (make_vec POS
+                    (Model.make_def xpos_i (make_anycoord I POS))
+                    (Model.make_def xpos_j (make_anycoord J POS))))
                 (Model.make_def xsize
                    (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE))))
-                (Model.make_def xpos
-                   (make_vec POS
-                      (Model.make_def xpos_i (make_anycoord I POS))
-                      (Model.make_def xpos_j (make_anycoord J POS))))
-                (Model.make_def xg1 (make_anygrid (filling,nocolor))),
-              varseq)
-             :: refs
-           else refs in*)
+                      (Model.make_def xsize_j (make_anycoord J SIZE)))),
+            varseq)
+           :: refs in
          let refs = (* Objects *)
            if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
@@ -2509,7 +2536,7 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_def xg1 (make_anygrid tg)),
            varseq ]
       | _ -> assert false
-    let prunings_pat t c args varseq data =
+    let prunings_pat ~env_vars t c args varseq data =
       match t, c with
       | GRID _, AnyGrid -> []
       | GRID tg, _ -> [ make_anygrid tg, varseq ]
@@ -2522,19 +2549,20 @@ module MyDomain : Madil.DOMAIN =
       
     let varseq0 : varseq = Myseq.range 1 max_int
 
-    let get_init_task_model name task =
+    let get_init_config name task =
       let open Task_model in
-      let env0 = make_danycolor Grid.black (C_BG true) in (* dummy *)
-      let init_task_model =
-        let varseq = varseq0 in
-        let xi, varseq = Refining.new_var varseq in
-        let xo, varseq = Refining.new_var varseq in
-        { varseq;
-          input_model = Model.make_def xi (make_anygrid (`Full,false));
-          nb_env_vars = 0;
-          output_model = Model.make_def xo (make_anygrid (`Full,false)) } in
-      let info_o = () (* Grid.max_size, Grid.max_size, -1 *) in
-      env0, init_task_model, info_o
+      let env = make_danycolor Grid.black (C_BG true) in (* dummy *)
+      let varseq = varseq0 in
+      let xi, varseq = Refining.new_var varseq in
+      let xo, varseq = Refining.new_var varseq in
+      let input_model = Model.make_def xi (make_anygrid (`Full,false)) in
+      let output_model = Model.make_def xo (make_anygrid (`Full,false)) in
+      let output_generator_info = () (* Grid.max_size, Grid.max_size, -1 *) in
+      { env;
+        varseq;
+        input_model;
+        output_model;
+        output_generator_info }
 
     let log_reading r m ~status =
       (*print_endline "READING";

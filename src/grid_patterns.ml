@@ -48,6 +48,30 @@ let recolor (g : Grid.t) (palette : Grid.color array) : Grid.t =
       else c)
     g
 
+
+(* crop *)
+
+let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
+  (* empty result if more than 3 occs *)
+  Common.prof "Grid_pattern.parse_crop" (fun () ->
+  let h, w = Grid.dims g in
+  let h1, w1 = Grid.dims g1 in
+  if h1 <= h && w1 <= w
+  then (
+    let res = ref [] in
+    for i = 0 to h-h1 do
+      for j = 0 to w-w1 do
+        if Grid.for_all_pixels
+             (fun i1 j1 c1 -> c1 = g.Grid.matrix.{i+i1, j+j1})
+             g1
+        then res := (i,j)::!res
+      done
+    done;
+    if List.length !res <= 3
+    then !res
+    else [])
+  else [])
+  
 (* Segmentation into Objects *)
    
 type part = { mini : int; maxi : int;
