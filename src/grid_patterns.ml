@@ -100,8 +100,8 @@ let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
         then res := (i,j)::!res
       done
     done;
-    if List.length !res <= 3
-    then !res
+    if List.length !res <= 9
+    then List.rev !res
     else [])
   else [])
   
