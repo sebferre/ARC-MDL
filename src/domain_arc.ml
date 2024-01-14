@@ -423,6 +423,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
         
     type func =
       [ `Index_1 of int option list (* on any Ndtree *)
+      | `Reverse_1 (* Seq -> Seq *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
       | `Modulo_2 (* on Int *)
@@ -521,6 +522,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
             | None -> print#string ":"
             | Some i -> print#int i)
            ~html print is
+      | `Reverse_1 -> print#string "reverse"
       | `Plus_2 -> print#string "+"
       | `Minus_2 -> print#string "-"
       | `Modulo_2 -> print#string "%"
@@ -675,6 +677,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | BOOL -> []
           | INT CARD ->
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `Area_1, [|GRID (`Sprite,false)|];
@@ -685,6 +688,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | INT (COORD (axis,tv)) ->
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
                `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
                `Area_1, [|GRID (`Sprite,false)|];
@@ -699,6 +703,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | VEC tv ->
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `Size_1, [|GRID (`Sprite,false)|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
@@ -718,14 +723,17 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | COLOR tc ->
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `MajorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
              ]
           | MOTIF ->
-             [ `Index_1 [], [|k|]
+             [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
              ]
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
@@ -751,6 +759,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | OBJ (filling,nocolor) ->
              let full = (filling = `Full) in
              [ `Index_1 [], [|k|];
+               `Reverse_1, [|k|];
                `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
                `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
                `ApplySymGrid_1 `Id, [|k|];
@@ -1185,6 +1194,7 @@ module MyDomain : Madil.DOMAIN =
       let e = "" in
       function
       | `Index_1 _ -> assert false (* not a scalar function *)
+      | `Reverse_1 -> assert false
       | `Plus_2 ->
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
@@ -1604,6 +1614,10 @@ module MyDomain : Madil.DOMAIN =
          (match Ndtree.index v1 is with
           | Some v -> Result.Ok v
           | None -> Result.Error (Invalid_expr e))
+      | `Reverse_1, [|v1|] ->
+         let| v1s = Ndtree.unpack v1 in
+         let rev_v1s = v1s |> Array.to_list |> List.rev |> Array.of_list in
+         Result.Ok (Ndtree.pack rev_v1s)
       | _ ->
          let scalar_f = compile_scalar_func f in
          Ndtree.broadcast_result scalar_f args_tree
@@ -2294,6 +2308,7 @@ module MyDomain : Madil.DOMAIN =
                            +. (if i >= 0
                                then Mdl.Code.usage 0.75 +. Mdl.Code.universal_int_star i
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
+      | `Reverse_1 -> 0.
       | `Plus_2 -> 0.
       | `Minus_2 -> 0.
       | `Modulo_2 -> 0.
@@ -2491,6 +2506,13 @@ module MyDomain : Madil.DOMAIN =
           index 2 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
+            let res = (* Reverse *)
+              match t_args, v_args_tree with
+              | [|t1|], [|v1|] ->
+                 if Ndtree.ndim v1 >= 1 (* only defined on sequences *)
+                 then (t1, `Reverse_1, `Default)::res
+                 else res
+              | _ -> res in
             let res = (* ScaleUp, ScaleDown *)
               match t_args with
               | [|(INT _ | VEC _ | GRID _ as t1)|] ->
