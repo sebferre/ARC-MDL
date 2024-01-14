@@ -56,7 +56,12 @@ let list_mins (cmp : 'a -> 'a -> int) (l : 'a list) : 'a list =
   match l with
   | [] -> []
   | x::l -> aux x [x] l
-  
+
+(* mymap *)
+
+let mymap_keys (m : ('a,'b) Mymap.t) : 'a array =
+  m |> Mymap.bindings |> List.map fst |> Array.of_list
+          
 (* memoization *)
 
 module Memo = (* appears to be more efficient than Common versions *)

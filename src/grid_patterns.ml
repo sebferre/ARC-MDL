@@ -48,6 +48,39 @@ let recolor (g : Grid.t) (palette : Grid.color array) : Grid.t =
       else c)
     g
 
+let parse_recoloring (g : Grid.t) (g1 : Grid.t) : (Grid.color,Grid.color) Mymap.t option =
+  (* is g a recoloring of g1, and how? only for true colors *)
+  Common.prof "Grid_patterns.parse_recoloring" (fun () ->
+  let h, w = Grid.dims g in
+  let h1, w1 = Grid.dims g1 in
+  if h=h1 && w=w1
+  then
+    let m = ref (Mymap.empty : (color,color) Mymap.t) in
+    let ok = ref true in
+    let i = ref 0 in
+    while !ok && !i < h do
+      let j = ref 0 in
+      while !ok && !j < w do
+        let c = g.matrix.{!i,!j} in
+        let c1 = g1.matrix.{!i,!j} in
+        if Grid.is_true_color c && Grid.is_true_color c1
+        then
+          (match Mymap.find_opt c1 !m with
+          | Some c' ->
+             if c' <> c then ok := false (* inconsistency *)
+          | None ->
+             m := Mymap.add c1 c !m)
+        else
+          if c <> c1 then ok := false; (* different mask *)
+        incr j
+      done;
+      incr i
+    done;
+    if !ok
+    then Some !m
+    else None
+  else None) (* grid size mismatch *)
+  
 
 (* crop *)
 

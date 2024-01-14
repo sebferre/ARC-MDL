@@ -37,6 +37,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Motif of GPat.Motif.t
       | `Grid of Grid.t
       | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
+      | `Map of (value,value) Mymap.t
       | `Seq of value array ]
 
     let rec xp_value ~html (print : Xprint.t) : value -> unit = function
@@ -48,6 +49,18 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Motif motif -> GPat.Motif.xp ~html print motif
       | `Grid g -> Grid.xp_grid ~html print g
       | `Obj (i,j,g) -> xp_obj ~html print i j g
+      | `Map m ->
+         print#string "{";
+         let _ =
+           Mymap.fold
+             (fun x y first ->
+               if not first then print#string ", ";
+               xp_value ~html print x;
+               print#string " -> ";
+               xp_value ~html print y;
+               false)
+             m true in
+         print#string "}"
       | `Seq vs -> xp_array xp_value ~html print vs
 
     let value_of_json (* : Yojson.Safe.t -> value *) = function
@@ -97,6 +110,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MOTIF
       | GRID of typ_grid
       | OBJ of typ_grid
+      | MAP of typ * typ
     (* list of values have the type of their elts *)
     and typ_int =
       | CARD
@@ -129,6 +143,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MOTIF -> print#string "MOTIF"
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
+      | MAP (ta,tb) -> xp_typ ~html print ta; print#string " -> "; xp_typ ~html print tb
     and xp_typ_int ~html print = function
       | CARD -> print#string "CARD"
       | COORD (ij,tv) ->
@@ -169,12 +184,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | AnyMotif (* MOTIF *)
       | AnyGrid (* GRID *)
       | Obj (* POS, SPRITE : OBJ *)
+      | AnyMap (* MAP(A,B) *)
+      | Replace (* A, A : MAP(A,A) *)
+      | Swap (* A, A : MAP(A,A) *)
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* SPRITE ; POS, SIZE : SPRITE *)
       | Objects of segmentation * int (* SIZE, OBJ+ : SPRITE *) (* int is for max seq length *)
       | Monocolor (* COLOR, MASK : SPRITE *)
-      | Recoloring (* COLOR+, SPRITE : SPRITE *)
+      (*       | Recoloring (* COLOR+, SPRITE : SPRITE *) *)
+      | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | Motif (* MOTIF, SPRITE (core), SPRITE (noise) *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
@@ -187,6 +206,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "at position "; xp_pos ~html print ();
       print#string ": ";
       xp_sprite ~html print ()
+    let xp_replace xp_a xp_b ~html print () =
+      xp_a ~html print ();
+      print#string " is replaced by ";
+      xp_b ~html print ()
+    let xp_swap xp_a xp_b ~html print () =
+      xp_a ~html print ();
+      print#string " is swapped with ";
+      xp_b ~html print ()
     let xp_bgcolor xp_color xp_sprite ~html print () =
       print#string "a grid with background color "; xp_color ~html print ();
       print#string " and with contents"; xp_newline ~html print ();
@@ -217,10 +244,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "a grid with only color "; xp_color ~html print ();
       print#string " and with mask"; xp_newline ~html print ();
       xp_mask ~html print ()
-    let xp_recoloring xp_colors xp_grid ~html print () =
+(*    let xp_recoloring xp_colors xp_grid ~html print () =
       print#string "recoloring with "; xp_colors ~html print ();
       xp_newline ~html print ();
-      xp_grid ~html print ()
+      xp_grid ~html print () *)
+    let xp_recoloring xp_grid xp_map ~html print () =
+      print#string "a recoloring of "; xp_grid ~html print ();
+      xp_newline ~html print ();
+      print#string "where "; xp_map ~html print ()
     let xp_motif xp_mot xp_core xp_noise ~html print () =
       print#string "a grid with motif "; xp_mot ~html print ();
       print#string "  and with core:";
@@ -244,6 +275,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | AnyMotif, [||] -> xp_any ~html print ()
       | AnyGrid, [||] -> xp_any ~html print ()
       | Obj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
+      | AnyMap, [||] -> xp_any ~html print ()
+      | Replace, [|xp_a; xp_b|] -> xp_replace xp_a xp_b ~html print ()
+      | Swap, [|xp_a; xp_b|] -> xp_swap xp_a xp_b ~html print ()
       | BgColor, [|xp_color; xp_sprite|] ->
          xp_bgcolor xp_color xp_sprite ~html print ()
       | IsFull, [|xp_sprite|] ->
@@ -254,8 +288,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_objects seg nmax xp_size xp_objs ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
-      | Recoloring, [|xp_colors; xp_grid|] ->
-         xp_recoloring xp_colors xp_grid ~html print ()
+(*      | Recoloring, [|xp_colors; xp_grid|] ->
+         xp_recoloring xp_colors xp_grid ~html print () *)
+      | Recoloring, [|xp_grid; xp_map|] ->
+         xp_recoloring xp_grid xp_map ~html print ()
       | Motif, [|xp_mot; xp_core; xp_noise|] ->
          xp_motif xp_mot xp_core xp_noise ~html print ()
       | Empty, [|xp_size|] ->
@@ -277,6 +313,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Obj, 0 -> print#string "pos"
       | Obj, 1 -> print#string "sprite"
       | Obj, _ -> assert false
+      | AnyMap, _ -> assert false
+      | Replace, 0 -> print#string "a"
+      | Replace, 1 -> print#string "b"
+      | Replace, _ -> assert false
+      | Swap, 0 -> print#string "a"
+      | Swap, 1 -> print#string "b"
+      | Swap, _ -> assert false
       | BgColor, 0 -> print#string "color"
       | BgColor, 1 -> print#string "sprite"
       | BgColor, _ -> assert false
@@ -291,8 +334,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
       | Monocolor, _ -> assert false
-      | Recoloring, 0 -> print#string "color"
+(*      | Recoloring, 0 -> print#string "color"
       | Recoloring, 1 -> print#string "sprite"
+      | Recoloring, _ -> assert false *)
+      | Recoloring, 0 -> print#string "grid"
+      | Recoloring, 1 -> print#string "colormap"
       | Recoloring, _ -> assert false
       | Motif, 0 -> print#string "motif"
       | Motif, 1 -> print#string "core"
@@ -311,12 +357,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyMotif of GPat.Motif.t (* MOTIF *)
       | DAnyGrid of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
       | DObj (* SIZE, SPRITE : OBJ *)
+      | DAnyMap of (value,value) Mymap.t * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
+      | DReplace (* A, A : MAP(A,A) *)
+      | DSwap (* A, A : MAP(A,A) *)
       | DBgColor (* COLOR, SPRITE : GRID *)
       | DIsFull (* SPRITE : GRID *)
       | DCrop (* SPRITE, POS, SIZE : SPRITE *)
       | DObjects of segmentation * int (* SIZE, OBJ+ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
-      | DRecoloring (* COLOR+, SPRITE : SPRITE *)
+      (*      | DRecoloring (* COLOR+, SPRITE : SPRITE *) *)
+      | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | DMotif (* MOTIF, SPRITE (core), SPRITE (noise) *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
@@ -330,6 +380,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyMotif motif, [||] -> GPat.Motif.xp ~html print motif
       | DAnyGrid (g,tg,_,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
+      | DAnyMap (m,tb), [||] -> xp_value ~html print (`Map m)
+      | DReplace, [|xp_a; xp_b|] ->
+         xp_replace xp_a xp_b ~html print ()
+      | DSwap, [|xp_a; xp_b|] ->
+         xp_swap xp_a xp_b ~html print ()
       | DBgColor, [|xp_color; xp_sprite|] ->
          xp_bgcolor xp_color xp_sprite ~html print ()
       | DIsFull, [|xp_sprite|] ->
@@ -340,8 +395,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_objects seg nmax xp_size xp_obj ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
-      | DRecoloring, [|xp_color; xp_grid|] ->
-         xp_recoloring xp_color xp_grid ~html print ()
+(*      | DRecoloring, [|xp_color; xp_grid|] ->
+         xp_recoloring xp_color xp_grid ~html print () *)
+      | DRecoloring, [|xp_grid; xp_map|] ->
+         xp_recoloring xp_grid xp_map ~html print ()
       | DMotif, [|xp_mot; xp_core; xp_noise|] ->
          xp_motif xp_mot xp_core xp_noise ~html print ()
       | DEmpty, [|xp_size|] ->
@@ -583,7 +640,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
                  not full, (Objects (`Default,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
-                 not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]);
+                 (* not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]); *)
+                 not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
                  true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; GRID (`Noise,nocolor), 0|]);
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
@@ -591,6 +649,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | OBJ tg ->
              None,
              [ Obj, [|VEC POS, 0; GRID tg, 0|] ]
+          | MAP (ta,tb) ->
+             None,
+             List.filter_map
+               (fun (cond,c_args) ->
+                 if cond
+                 then Some c_args
+                 else None)
+               [ true, (AnyMap, [||]);
+                 ta=tb, (Replace, [|ta, 0; ta, 0|]);
+                 ta=tb, (Swap, [|ta, 0; ta, 0|]) ]
         method funcs k =
           match k with
           | BOOL -> []
@@ -677,6 +745,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
                `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
+          | MAP (ta,tb) -> []
         method expr_opt k =
           match k with (* what type can be used to define k *)
           | BOOL -> true, [k]
@@ -692,6 +761,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | GRID (`Sprite,nocolor) -> true, [k; GRID (`Full,nocolor)]
           | GRID _ -> true, [k]
           | OBJ tg -> true, [k]
+          | MAP _ -> true, [k]
         method alt_opt = function
           | _ -> false (* LATER *)
       end
@@ -709,7 +779,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
-      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * (int * int * Grid.t) list (* objects *) ]
+      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * (int * int * Grid.t) list (* objects *)
+      | `MapDomain of (value,value) Mymap.t * value array (* domain *) ]
 
     type encoding = dl
                   
@@ -752,12 +823,16 @@ module MyDomain : Madil.DOMAIN =
     let make_anymotif : model = Model.make_pat MOTIF AnyMotif [||]
     let make_anygrid tg : model = Model.make_pat (GRID tg) AnyGrid [||]
     let make_obj tg mpos mg1 : model = Model.make_pat (OBJ tg) Obj [|mpos;mg1|]
+    let make_anymap ta tb : model = Model.make_pat (MAP (ta,tb)) AnyMap [||]
+    let make_replace ta tb ma mb : model = Model.make_pat (MAP (ta,tb)) Replace [|ma; mb|]
+    let make_swap ta tb ma mb : model = Model.make_pat (MAP (ta,tb)) Swap [|ma; mb|]
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (`Full,false)) BgColor [|mcol; mg1|]
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
     let make_crop tg mg1 mpos msize : model = Model.make_pat (GRID tg) Crop [|mg1; mpos; msize|]
     let make_objects seg nmax msize mobj : model = Model.make_pat (GRID (`Sprite,false)) (Objects (seg,nmax)) [|msize; mobj|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
-    let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]
+    (*let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]*)
+    let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
     let make_motif tg mmotif mcore mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mnoise|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
@@ -799,6 +874,28 @@ module MyDomain : Madil.DOMAIN =
       let i, j = get_vec dpos in
       let g1 = get_grid dg1 in
       Data.make_dpat (`Obj (i,j,g1)) DObj [|dpos;dg1|]
+    let make_danymap tb m : data =
+      Data.make_dpat (`Map m) (DAnyMap (m,tb)) [||]
+    let make_dreplace (dom : value array) da db : data =
+      let a, b = Data.value da, Data.value db in
+      let m =
+        Array.fold_right
+          (fun k res ->
+            let v = if k = a then b else k in
+            Mymap.add k v res)
+          dom Mymap.empty in
+      Data.make_dpat (`Map m) DReplace [|da; db|]
+    let make_dswap (dom : value array) da db : data =
+      let a, b = Data.value da, Data.value db in
+      let m =
+        Array.fold_right
+          (fun k res ->
+            let v = if k = a then b
+                    else if k = b then a
+                    else k in
+            Mymap.add k v res)
+          dom Mymap.empty in
+      Data.make_dpat (`Map m) DSwap [|da; db|]
     let make_dbgcolor dcol dspr : data =
       let g =
         match Data.value dcol, Data.value dspr with
@@ -842,7 +939,7 @@ module MyDomain : Madil.DOMAIN =
          pp xp_value (`Color c);
          pp xp_value (`Grid mask);
          assert false
-    let make_drecoloring dcols dgrid : data =
+    (* let make_drecoloring dcols dgrid : data =
       let g =
         match Data.value dcols, Data.value dgrid with
         | `Seq cols, `Grid g1 ->
@@ -857,7 +954,23 @@ module MyDomain : Madil.DOMAIN =
            pp_endline xp_data dcols;
            pp_endline xp_data dgrid;
            assert false in
-      Data.make_dpat (`Grid g) DRecoloring [|dcols; dgrid|]
+      Data.make_dpat (`Grid g) DRecoloring [|dcols; dgrid|] *)
+    let make_drecoloring dgrid dmap : data =
+      let g =
+        match Data.value dgrid, Data.value dmap with
+        | `Grid g1, `Map mcol ->
+           Grid.map_pixels
+             (fun c1 ->
+               if Grid.is_true_color c1
+               then
+                 match Mymap.find_opt (`Color c1) mcol with
+                 | Some (`Color c) -> c
+                 | Some _ -> assert false
+                 | None -> c1
+               else c1)
+             g1
+        | _ -> assert false in
+      Data.make_dpat (`Grid g) DRecoloring [|dgrid; dmap|]
     let make_dmotif dmot dcore dnoise : data result =
       let mot = get_motif dmot in
       let g_core = get_grid dcore in
@@ -1609,6 +1722,27 @@ module MyDomain : Madil.DOMAIN =
            match lposg1 with
            | [dpos; dg1] -> Myseq.return (make_dobj dpos dg1)
            | _ -> assert false)
+      | MAP (ta,tb), AnyMap, [||] ->
+         (fun info ->
+           Myseq.return (make_danymap tb Mymap.empty)) (* empty map = identity map *)
+      | _, Replace, [|gen_a; gen_b|] ->
+         (fun info ->
+           let* lab = Myseq.product_fair [gen_a info; gen_b info] in
+           match lab with
+           | [da; db] ->
+              let a, b = Data.value da, Data.value db in
+              let dom = [|a; b|] in (* get the true domain through info *)
+              Myseq.return (make_dreplace dom da db)
+           | _ -> assert false)
+      | _, Swap, [|gen_a; gen_b|] ->
+         (fun info ->
+           let* lab = Myseq.product_fair [gen_a info; gen_b info] in
+           match lab with
+           | [da; db] ->
+              let a, b = Data.value da, Data.value db in
+              let dom = [|a; b|] in (* get the true domain through info *)
+              Myseq.return (make_dswap dom da db)
+           | _ -> assert false)
       | _, BgColor, [|gen_col; gen_g1|] ->
          (fun info ->
            let* lcg1 = Myseq.product_fair [gen_col info; gen_g1 info] in
@@ -1643,11 +1777,17 @@ module MyDomain : Madil.DOMAIN =
            match l with
            | [dcol; dmask] -> Myseq.return (make_dmonocolor dcol dmask)
            | _ -> assert false)
-      | _, Recoloring, [|gen_cols; gen_grid|] ->
+      (* | _, Recoloring, [|gen_cols; gen_grid|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_cols info; gen_grid info] in
            match l with
            | [dcols; dgrid] -> Myseq.return (make_drecoloring dcols dgrid)
+           | _ -> assert false) *)
+      | _, Recoloring, [|gen_grid; gen_map|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_grid info; gen_map info] in
+           match l with
+           | [dgrid; dmap] -> Myseq.return (make_drecoloring dgrid dmap)
            | _ -> assert false)
       | _, Motif, [|gen_mot; gen_core; gen_noise|] ->
          (fun info ->
@@ -1689,6 +1829,9 @@ module MyDomain : Madil.DOMAIN =
       | MOTIF, `Motif mot -> `Motif mot
       | GRID (filling,nocolor), `Grid g -> `GridDimsCols (g, Range.make_open 1, Range.make_open 1, Grid.nb_color)
       | OBJ (filling,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, Grid.nb_color, [obj])
+      | MAP _, `Map m ->
+         let domain = mymap_keys m in
+         `MapDomain (m, domain)
       | _ -> assert false
 
     let parseur_value v input =
@@ -1707,7 +1850,8 @@ module MyDomain : Madil.DOMAIN =
            if List.mem obj0 objs
            then true, `Objects (h, w, nc, List.filter ((<>) obj0) objs)
            else false, input
-        (*obj = obj0, `Objects (h,w,objs)*)
+        | `Map m0, `MapDomain (m,dom) -> m0 = m, `Null
+           
         | _, `Null -> true, `Null
         | _ -> false, input in
       let ok, input = aux v input in
@@ -1763,6 +1907,33 @@ module MyDomain : Madil.DOMAIN =
                  let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                                  `IntRange (j, Range.make_closed 0 (w-1)))) in
                  Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc,other_objs)))
+          | _ -> assert false)
+      | MAP (ta,tb), AnyMap, [||] ->
+         (function
+          | `MapDomain (m,dom) ->
+             Myseq.return (make_danymap tb m, `Null)
+          | _ -> assert false)
+      | MAP (ta,tb), Replace, [|parse_a; parse_b|] when ta=tb ->
+         (function
+          | `MapDomain (m,dom) ->
+             let m_diff = Mymap.filter (fun a b -> a <> b) m in
+             (match Mymap.bindings m_diff with
+              | [a, b] ->
+                 let* da, _ = parse_a (input_of_value ta a) in
+                 let* db, _ = parse_b (input_of_value ta b) in
+                 Myseq.return (make_dreplace dom da db, `Null)
+              | _ -> Myseq.empty)
+          | _ -> assert false)
+      | MAP (ta,tb), Swap, [|parse_a; parse_b|] when ta=tb ->
+         (function
+          | `MapDomain (m,dom) ->
+             let m_diff = Mymap.filter (fun a b -> a <> b) m in
+             (match Mymap.bindings m_diff with
+              | [a, b; c, d] when a=d && b=c ->
+                 let* da, _ = parse_a (input_of_value ta a) in
+                 let* db, _ = parse_b (input_of_value ta b) in
+                 Myseq.return (make_dswap dom da db, `Null)
+              | _ -> Myseq.empty)
           | _ -> assert false)
       | _, BgColor, [|parse_col; parse_g1|] ->
          (function
@@ -1850,7 +2021,7 @@ module MyDomain : Madil.DOMAIN =
                Myseq.return (make_dmonocolor dcol dmask, `Null)
              else Myseq.empty
           | _ -> assert false)
-      | _, Recoloring, [|parse_cols; parse_grid|] ->
+      (* | _, Recoloring, [|parse_cols; parse_grid|] ->
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
              let* g1, palette = Myseq.from_result (Grid_patterns.recoloring g) in
@@ -1862,6 +2033,23 @@ module MyDomain : Madil.DOMAIN =
                  let* dgrid, _ = parse_grid (`GridDimsCols (g1,rh,rw,nc1)) in
                  Myseq.return (make_drecoloring dcols dgrid, `Null)
               | _ -> Myseq.empty)
+          | _ -> assert false) *)
+      | _, Recoloring, [|parse_grid; parse_map|] ->
+         (function
+          | `GridDimsCols (g,rh,rw,nc) ->
+             let* dg1, _ = parse_grid `Null in (* expression expected *)
+             let g1 = get_grid dg1 in
+             (match Grid_patterns.parse_recoloring g g1 with
+              | Some mcol ->
+                 let m =
+                   Mymap.fold
+                     (fun c1 c2 res ->
+                       Mymap.add (`Color c1) (`Color c2) res)
+                     mcol (Mymap.empty : (value,value) Mymap.t) in
+                 let dom = mymap_keys m in
+                 let* dmap, _ = parse_map (`MapDomain (m,dom)) in
+                 Myseq.return (make_drecoloring dg1 dmap, `Null)
+              | None -> Myseq.empty)
           | _ -> assert false)
       | _, Motif, [|parse_mot; parse_core; parse_noise|] ->
          (function
@@ -1943,30 +2131,13 @@ module MyDomain : Madil.DOMAIN =
                       +. Mdl.Code.comb in_mask area (* noise position *)
                       +. (if nocolor then 0. else float in_mask *. dl_color)) (* noise colors *)
            
-    let encoding_dpat dc encs =
-      match dc, encs with
-      | DAnyCoord (ij,range), [||] -> Range.dl ij range
-      | DVec, [|enc_i; enc_j|] ->  enc_i +. enc_j
-      | DAnyColor (c,tc), [||] -> dl_color c tc
-      | DAnyMotif m, [||] -> dl_motif m
-      | DAnyGrid (g,tg,rh,rw,nc), [||] -> dl_grid g tg rh rw nc
-      | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
-      | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
-      | DIsFull, [|enc_g1|] -> enc_g1
-      | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
-      | DObjects (seg,nmax), [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
-      | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
-      | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid
-      | DMotif, [|enc_motif; enc_core; enc_noise|] -> enc_motif +. enc_core +. enc_noise
-      | DEmpty, [|enc_size|] -> enc_size
-      | DFull, [|enc_size|] -> enc_size
-      | DPoint, [||] -> 0.
-      | _ -> assert false
-    let encoding_alt dl_choice enc = dl_choice +. enc
-    let encoding_seq dl_length encs = dl_length +. Array.fold_left (+.) 0. encs
-    let encoding_expr_value v = 0.
-    let dl_of_encoding enc = enc
-           
+    let dl_map dl_b m =
+      (* assuming map domain (keys) known from context, only encoding values *)
+      (* TODO: should get constraint info about values, e.g. range for integers *)
+      Mymap.fold
+        (fun a b res -> dl_b b +. res)
+        m 0.
+
     let rec dl_value t v =
       match t, v with
       | _, `Null -> assert false
@@ -1988,9 +2159,39 @@ module MyDomain : Madil.DOMAIN =
          dl_value (INT (COORD (I, POS))) (`Int i)
          +. dl_value (INT (COORD (J, POS))) (`Int j)
          +. dl_value (GRID (`Sprite,false)) (`Grid g)
+      | MAP (ta,tb), `Map m -> dl_map (dl_value tb) m
       | _, `Seq _ -> assert false
       | _ -> assert false
 
+           
+    let encoding_dpat dc encs =
+      match dc, encs with
+      | DAnyCoord (ij,range), [||] -> Range.dl ij range
+      | DVec, [|enc_i; enc_j|] ->  enc_i +. enc_j
+      | DAnyColor (c,tc), [||] -> dl_color c tc
+      | DAnyMotif m, [||] -> dl_motif m
+      | DAnyGrid (g,tg,rh,rw,nc), [||] -> dl_grid g tg rh rw nc
+      | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
+      | DAnyMap (m,tb), [||] -> dl_map (dl_value tb) m
+      | DReplace, [|enc_a; enc_b|] -> enc_a +. enc_b
+      | DSwap, [|enc_a; enc_b|] -> enc_a +. enc_b
+      | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
+      | DIsFull, [|enc_g1|] -> enc_g1
+      | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
+      | DObjects (seg,nmax), [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
+      (* | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid *)
+      | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
+      | DMotif, [|enc_motif; enc_core; enc_noise|] -> enc_motif +. enc_core +. enc_noise
+      | DEmpty, [|enc_size|] -> enc_size
+      | DFull, [|enc_size|] -> enc_size
+      | DPoint, [||] -> 0.
+      | _ -> assert false
+    let encoding_alt dl_choice enc = dl_choice +. enc
+    let encoding_seq dl_length encs = dl_length +. Array.fold_left (+.) 0. encs
+    let encoding_expr_value v = 0.
+    let dl_of_encoding enc = enc
+           
     let dl_var ~nb_env_vars t p =
       let k = max 1 nb_env_vars in (* to avoid 0, happens in pruning mode *)
       Mdl.Code.uniform k
@@ -2003,6 +2204,9 @@ module MyDomain : Madil.DOMAIN =
       | _, AnyMotif -> 0.
       | _, AnyGrid -> 0.
       | _, Obj -> 0.
+      | _, AnyMap -> 0.
+      | _, Replace -> 0.
+      | _, Swap -> 0.
       | _, BgColor -> 0.
       | _, IsFull -> 0.
       | _, Crop -> 0.
@@ -2366,6 +2570,29 @@ module MyDomain : Madil.DOMAIN =
       | INT (COORD (axis,tv)), AnyCoord -> []
       | COLOR tc, AnyColor -> []
       | MOTIF, AnyMotif -> []
+      | MAP (ta,tb), AnyMap ->
+         let refs : (model * varseq) list = [] in
+         let refs = (* Replace *)
+           if ta = tb then
+             let xa, varseq = Refining.new_var varseq in
+             let xb, varseq = Refining.new_var varseq in
+             (make_replace ta tb
+                (Model.make_def xa (make_anycolor C_OBJ))
+                (Model.make_def xb (make_anycolor C_OBJ)),
+              varseq)
+             :: refs
+           else refs in
+         let refs = (* Swap *)
+           if ta = tb then
+             let xa, varseq = Refining.new_var varseq in
+             let xb, varseq = Refining.new_var varseq in
+             (make_swap ta tb
+                (Model.make_def xa (make_anycolor C_OBJ))
+                (Model.make_def xb (make_anycolor C_OBJ)),
+              varseq)
+             :: refs
+           else refs in
+         refs
       | GRID (filling,nocolor as tg), AnyGrid ->
          let refs : (model * varseq) list = [] in
          let refs = (* BgColor *)
@@ -2464,7 +2691,7 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         let refs = (* Recoloring *)
+         (*let refs = (* Recoloring *)
            if not nocolor then
              let xcol, varseq = Refining.new_var varseq in
              let xgrid, varseq = Refining.new_var varseq in
@@ -2472,6 +2699,36 @@ module MyDomain : Madil.DOMAIN =
                 (Model.make_loop (Range.make_closed 1 Grid.nb_color)
                    (Model.make_def xcol (make_anycolor C_OBJ)))
                 (Model.make_def xgrid (make_anygrid (filling,false))),
+              varseq)
+             :: refs
+           else refs in*)
+         let refs = (* Recoloring *)
+           if not nocolor then
+             let xmap, varseq = Refining.new_var varseq in
+             let xg1s =
+               Mymap.fold
+                 (fun x t res ->
+                   match t with
+                   | GRID (_,false) -> x::res
+                   | _ -> res)
+                 env_vars [] in
+             let eg1s =
+               match Grid_patterns.recoloring (get_grid data) with
+               | Result.Ok (g1,_) -> [Expr.Const (t, `Grid g1)]
+               | _ -> [] in
+             let eg1s =
+               List.fold_left
+                 (fun res xg1 ->
+                   let rg1 = Expr.Ref (t, xg1) in
+                   rg1
+                   (* :: Expr.Apply (t, `Index_1 [Some 0], [|rg1|])
+                   :: Expr.Apply (t, `Index_1 [Some (-1)], [|rg1|]) *) (* need to know var dim *)
+                   :: res)
+                 eg1s xg1s in
+             let$ refs, eg1 = refs, eg1s in
+             (make_recoloring tg
+                (Model.make_expr (GRID tg) eg1)
+                (Model.make_def xmap (make_anymap (COLOR C_OBJ) (COLOR C_OBJ))),
               varseq)
              :: refs
            else refs in
@@ -2535,11 +2792,15 @@ module MyDomain : Madil.DOMAIN =
                    (Model.make_def xj (make_anycoord J POS))))
              (Model.make_def xg1 (make_anygrid tg)),
            varseq ]
+      | MAP (ta,tb), `Map m ->
+         [ make_anymap ta tb, varseq ]
       | _ -> assert false
     let prunings_pat ~env_vars t c args varseq data =
       match t, c with
       | GRID _, AnyGrid -> []
       | GRID tg, _ -> [ make_anygrid tg, varseq ]
+      | MAP _, AnyMap -> []
+      | MAP (ta,tb), _ -> [ make_anymap ta tb, varseq ]
       | _ -> []
     let prunings_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
