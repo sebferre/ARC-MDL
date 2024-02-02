@@ -2266,12 +2266,12 @@ module MyDomain : Madil.DOMAIN =
       | _, AnyGrid -> 0.
       | _, Obj -> 0.
       | _, AnyMap -> 0.
-      | MAP (ta,tb), DomMap keys ->
-         assert (keys <> [||]);
+      | MAP (ta,tb), DomMap keys -> 0.
+         (* assert (keys <> [||]);
          Mdl.Code.universal_int_plus (Array.length keys)
          +. Array.fold_left
               (fun res a -> dl_value ta a)
-              0. keys
+              0. keys *) (* assuming keys derived from context pattern/data *)
       | _, DomMap _ -> assert false
       | _, Replace -> 0.
       | _, Swap -> 0.
@@ -2352,7 +2352,7 @@ module MyDomain : Madil.DOMAIN =
     (* expression index *)
 
     let make_index (bindings : bindings) : expr_index =
-      (*pp xp_bindings bindings;*)
+      pp xp_bindings bindings;
       (*let test level index = (* testing expr index[i]($21) in task a157, $21 is seq of pos of input objects *)
         match Mymap.find_opt 21 bindings with
         | None -> ()
@@ -2652,17 +2652,18 @@ module MyDomain : Madil.DOMAIN =
            match tb, Data.value data with
            | COLOR tc, `Map m -> (* TODO: generalize to other types *)
               let keys = mymap_keys m in
+              let xloop, varseq = Refining.new_var varseq in
               let xvals, varseq = Refining.new_var varseq in
               let mvals, varseq = (* explicit sequence of same length as keys *)
                 Array.fold_right
                   (fun _ (mvals, varseq) ->
                     let xcol, varseq = Refining.new_var varseq in
                     let mcol = Model.make_def xcol (make_anycolor tc) in
-                    let mvals = Model.make_cons mcol mvals in (* TODO: wrong if encompassing loops, extend Cons/Nil with loop var *)
+                    let mvals = Model.make_cons xloop mcol mvals in
                     mvals, varseq)
                   keys (Model.make_nil tb, varseq) in
               (make_dommap ta tb keys
-                 (Model.make_loop (Range.make_closed 1 Grid.nb_color)
+                 (Model.make_loop xloop (Range.make_closed 1 Grid.nb_color)
                     (Model.make_def xvals mvals)),
                varseq)
               :: refs
@@ -2740,6 +2741,7 @@ module MyDomain : Madil.DOMAIN =
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
+             let xloop, varseq = Refining.new_var varseq in
              let xobj, varseq = Refining.new_var varseq in
              let xpos, varseq = Refining.new_var varseq in
              let xpos_i, varseq = Refining.new_var varseq in
@@ -2765,7 +2767,7 @@ module MyDomain : Madil.DOMAIN =
                    (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
                       (Model.make_def xsize_j (make_anycoord J SIZE))))
-                (Model.make_loop (Range.make_closed 1 nmax)
+                (Model.make_loop xloop (Range.make_closed 1 nmax)
                    (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
                          (Model.make_def xpos
