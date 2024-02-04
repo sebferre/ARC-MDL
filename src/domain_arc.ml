@@ -195,7 +195,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor (* COLOR, MASK : SPRITE *)
       (*       | Recoloring (* COLOR+, SPRITE : SPRITE *) *)
       | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
-      | Motif (* MOTIF, SPRITE (core), SPRITE (noise) *)
+      | Motif (* MOTIF, SPRITE (core), derived SPRITE (pure), SPRITE (noise) *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
@@ -258,12 +258,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "a recoloring of "; xp_grid ~html print ();
       xp_newline ~html print ();
       print#string "where "; xp_map ~html print ()
-    let xp_motif xp_mot xp_core xp_noise ~html print () =
+    let xp_motif xp_mot xp_core xp_pure xp_noise ~html print () =
       print#string "a grid with motif "; xp_mot ~html print ();
       print#string "  and with core:";
       xp_newline ~html print ();
       xp_core ~html print ();
-      print#string "  plus noise:";
+      print#string "  that equals the pure grid: ";
+      xp_pure ~html print ();
+      print#string "  plus the noise:";
       xp_newline ~html print ();
       xp_noise ~html print ()
     let xp_empty xp_size ~html print () =
@@ -299,8 +301,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_colors xp_grid ~html print () *)
       | Recoloring, [|xp_grid; xp_map|] ->
          xp_recoloring xp_grid xp_map ~html print ()
-      | Motif, [|xp_mot; xp_core; xp_noise|] ->
-         xp_motif xp_mot xp_core xp_noise ~html print ()
+      | Motif, [|xp_mot; xp_core; xp_pure; xp_noise|] ->
+         xp_motif xp_mot xp_core xp_pure xp_noise ~html print ()
       | Empty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | Full, [|xp_size|] ->
@@ -377,7 +379,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DMonocolor (* COLOR, MASK : SPRITE *)
       (*      | DRecoloring (* COLOR+, SPRITE : SPRITE *) *)
       | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
-      | DMotif (* MOTIF, SPRITE (core), SPRITE (noise) *)
+      | DMotif (* MOTIF, SPRITE (core), SPRITE (pure), SPRITE (noise) *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
       | DPoint (* MASK *)
@@ -410,8 +412,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_color xp_grid ~html print () *)
       | DRecoloring, [|xp_grid; xp_map|] ->
          xp_recoloring xp_grid xp_map ~html print ()
-      | DMotif, [|xp_mot; xp_core; xp_noise|] ->
-         xp_motif xp_mot xp_core xp_noise ~html print ()
+      | DMotif, [|xp_mot; xp_core; xp_pure; xp_noise|] ->
+         xp_motif xp_mot xp_core xp_pure xp_noise ~html print ()
       | DEmpty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | DFull, [|xp_size|] ->
@@ -655,7 +657,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  (* not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]); *)
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
-                 true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; GRID (`Noise,nocolor), 0|]);
+                 true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; (* derived pure, not counting *) GRID (`Noise,nocolor), 0|]);
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]) ]
@@ -855,7 +857,7 @@ module MyDomain : Madil.DOMAIN =
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     (*let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]*)
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
-    let make_motif tg mmotif mcore mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mnoise|]
+    let make_motif tg mmotif mcore mpure mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mpure; mnoise|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
     let make_point : model = Model.make_pat (GRID (`Sprite,true)) Point [||]
@@ -1010,9 +1012,11 @@ module MyDomain : Madil.DOMAIN =
       let g_core = get_grid dcore in
       let g_noise = get_grid dnoise in
       let h, w = Grid.dims g_noise in
-      let| g = GPat.Motif.make_grid h w mot g_core in
+      let| g_pure = GPat.Motif.make_grid h w mot g_core in
+      let dpure = Data.make_dexpr (`Grid g_pure) in (* computed data *)
+      let g = Grid.Do.copy g_pure in
       Grid.add_grid_at g 0 0 g_noise;
-      Result.Ok (Data.make_dpat (`Grid g) DMotif [|dmot; dcore; dnoise|])
+      Result.Ok (Data.make_dpat (`Grid g) DMotif [|dmot; dcore; dpure; dnoise|])
     let make_dempty dsize : data =
       let g =
         match Data.value dsize with
@@ -1833,7 +1837,7 @@ module MyDomain : Madil.DOMAIN =
            match l with
            | [dgrid; dmap] -> Myseq.return (make_drecoloring dgrid dmap)
            | _ -> assert false)
-      | _, Motif, [|gen_mot; gen_core; gen_noise|] ->
+      | _, Motif, [|gen_mot; gen_core; _gen_pure; gen_noise|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_mot info; gen_core info; gen_noise info] in
            match l with
@@ -2021,9 +2025,10 @@ module MyDomain : Madil.DOMAIN =
                parse_size (`Vec (`IntRange (h1, rh1),
                                  `IntRange (w1, rw1))) in
              let* dg, _ = parse_g `Null in (* expression *)
-             let g =
+             let* g =
                match Data.value dg with
-               | `Grid g -> g
+               | `Grid g -> Myseq.return g
+               | `Null -> Myseq.empty
                | v -> pp_endline xp_data dg; assert false in
              let h, w = Grid.dims g in
              let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
@@ -2110,7 +2115,7 @@ module MyDomain : Madil.DOMAIN =
                  Myseq.return (make_drecoloring dg1 dmap, `Null)
               | None -> Myseq.empty)
           | _ -> assert false)
-      | _, Motif, [|parse_mot; parse_core; parse_noise|] ->
+      | _, Motif, [|parse_mot; parse_core; _parse_pure; parse_noise|] ->
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
              let* mot, ru, rv, g_core, g_noise = Myseq.from_list (GPat.Motif.from_grid g) in
@@ -2244,7 +2249,7 @@ module MyDomain : Madil.DOMAIN =
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       (* | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid *)
       | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
-      | DMotif, [|enc_motif; enc_core; enc_noise|] -> enc_motif +. enc_core +. enc_noise
+      | DMotif, [|enc_motif; enc_core; _enc_pure; enc_noise|] -> enc_motif +. enc_core +. enc_noise
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
       | DPoint, [||] -> 0.
@@ -2834,10 +2839,12 @@ module MyDomain : Madil.DOMAIN =
          let refs = (* Motif *)
            let xmot, varseq = Refining.new_var varseq in
            let xcore, varseq = Refining.new_var varseq in
+           let xpure, varseq = Refining.new_var varseq in
            let xnoise, varseq = Refining.new_var varseq in
            (make_motif (filling,nocolor)
              (Model.make_def xmot (make_anymotif))
              (Model.make_def xcore (make_anygrid (filling,nocolor)))
+             (Model.make_def xpure (Model.make_derived (GRID tg)))
              (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
             varseq)
            :: refs in
