@@ -175,7 +175,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     (* model constr *)
 
-    type segmentation = [`Default | `SameColor]
+    type segmentation = [`Connected | `ConnectedSameColor | `SameColor]
       
     type constr =
       | AnyCoord (* COORD *)
@@ -240,7 +240,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string " that contains at most "; print#int nmax;
       print#string
         (match seg with
-         | `Default -> ""
+         | `Connected -> " connected"
+         | `ConnectedSameColor -> " same-color connected"
          | `SameColor -> " same-color");
       print#string " objects like";
       xp_newline ~html print ();
@@ -650,7 +651,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
-                 not full, (Objects (`Default,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
+                 true (* not full *), (Objects (`Connected,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  (* not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]); *)
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
@@ -2053,15 +2054,16 @@ module MyDomain : Madil.DOMAIN =
       | _, Objects (seg,nmax), [|parse_size; parse_objs|] ->
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
-             if Grid.is_full g then Myseq.empty
-             else              
+             (*if Grid.is_full g then Myseq.empty
+             else*)              
                let h, w = Grid.dims g in
                let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
                                                  `IntRange (w, rw))) in
                let objs =
                  match seg with
-                 | `Default -> Grid_patterns.segment g
-                 | `SameColor -> Grid_patterns.segment_same_color g in
+                 | `Connected -> Grid_patterns.segment g
+                 | `ConnectedSameColor -> Grid_patterns.segment_same_color g
+                 | `SameColor -> Grid_patterns.partition_by_color g in
                let* () = Myseq.from_bool (List.length objs <= nmax) in
                let* dobjs, input = parse_objs (`Objects (h,w,nc,objs)) in
                (match input with
@@ -2193,8 +2195,7 @@ module MyDomain : Madil.DOMAIN =
     let dl_map dl_a dl_b m =
       (* TODO: should get constraint info about values, e.g. range for integers *)
       let n = Mymap.cardinal m in
-      assert (n > 0);
-      Mdl.Code.universal_int_plus n
+      Mdl.Code.universal_int_star n
       +. Mymap.fold
            (fun a b res -> dl_a a +. dl_b b +. res)
            m 0.
@@ -2283,8 +2284,9 @@ module MyDomain : Madil.DOMAIN =
       | _, Objects (seg,nmax) ->
          Mdl.Code.usage
            (match seg with
-            | `Default -> 0.5
-            | `SameColor -> 0.5)
+            | `Connected -> 0.33
+            | `ConnectedSameColor -> 0.33
+            | `SameColor -> 0.33)
          +. Mdl.Code.universal_int_plus nmax
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
@@ -2565,7 +2567,17 @@ module MyDomain : Madil.DOMAIN =
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
               | _ -> res in
-          res) in
+            let res = (* LogNot *)
+              match t_args with
+              | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
+              | _ -> res in
+            let res = (* And, Or, XOr, AndNOt *)
+              match t_args with
+              | [|GRID (`Sprite,true) as t1; t2|] when t2=t1 ->
+                 let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
+                 (t1,f, `Default)::res
+              | _ -> res in
+            res) in
       (*test "TEST LEVEL 2" index;*)
       let index = (* LEVEL 3 *)
         Expr.index_apply_functions
@@ -2620,16 +2632,6 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID (_,_) as t1; COLOR C_OBJ; COLOR C_OBJ|] -> (t1, `SwapColors_3)::res
               | _ -> res in*)
-            let res = (* LogNot *)
-              match t_args with
-              | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
-              | _ -> res in
-            let res = (* And, Or, XOr, AndNOt *)
-              match t_args with
-              | [|GRID (`Sprite,true) as t1; t2|] when t2=t1 ->
-                 let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
-                 (t1,f, `Default)::res
-              | _ -> res in
             (*let res = (* ScaleTo *)
               match t_args with
               | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, `Default)::res
@@ -2739,7 +2741,7 @@ module MyDomain : Madil.DOMAIN =
             varseq)
            :: refs in
          let refs = (* Objects *)
-           if filling <> `Full then
+           if true (* filling <> `Full *) then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
@@ -2749,14 +2751,14 @@ module MyDomain : Madil.DOMAIN =
              let xpos_i, varseq = Refining.new_var varseq in
              let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
-             let$ refs, seg = refs, [`Default; `SameColor] in
+             let$ refs, seg = refs, [`Connected; `ConnectedSameColor; `SameColor] in
              let$ refs, nmax = refs, [1;9] in
              let m_g1, varseq =
                match seg with
-               | `Default ->
+               | `Connected ->
                   Model.make_def xg1 (make_anygrid (`Sprite,nocolor)),
                   varseq
-               | `SameColor ->
+               | `ConnectedSameColor | `SameColor ->
                   let xcol, varseq = Refining.new_var varseq in
                   let xm1, varseq = Refining.new_var varseq in
                   Model.make_def xg1

@@ -161,7 +161,7 @@ let segment_gen
         fm#replace (i,j) (part_of_pixel ~height:h ~width:w i j c)
     done
   done;
-  (* merging adjacent pixels with same color *)
+  (* merging connected pixels *)
   for i = 0 to h-1 do
     for j = 0 to w-1 do
       let c = mat.{i,j} in
@@ -222,6 +222,50 @@ let segment_same_row_and_color, reset_segment_same_row_and_color = Memo.memoize 
 let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1 = j2 && c1 = c2)
 let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
 
+
+let partition_by_color (g : Grid.t) : (int * int * Grid.t) list = (* position and subgrids *)
+  Common.prof "Grid_patterns.partition_by_color" (fun () ->
+  let h, w = Grid.dims g in
+  let mat = g.matrix in
+  let color_part =
+    Array.make Grid.nb_color (* one potential part per color *)
+      { mini = h; maxi = 0;
+        minj = w; maxj = 0;
+        pixels = Bitmap.empty h w;
+        nb_pixels = 0 } in
+  for i = 0 to h-1 do
+    for j = 0 to w-1 do
+      let c = mat.{i,j} in
+      if Grid.is_true_color c then
+        let part = color_part.(c) in
+        color_part.(c) <- { mini = min i part.mini;
+                            maxi = max i part.maxi;
+                            minj = min j part.minj;
+                            maxj = max j part.maxj;
+                            pixels = Bitmap.add i j part.pixels;
+                            nb_pixels = 1 + part.nb_pixels }
+    done
+  done;
+  let parts =
+    let res = ref [] in
+    Array.iteri
+      (fun c part ->
+        if part.nb_pixels > 0 then
+          let g1 = subgrid_of_part g part in
+          let area = part.nb_pixels in
+          res := (area, part.mini, part.minj, g1) :: !res)
+      color_part;
+    !res in
+  let sorted_parts =
+    List.sort
+      (fun (a1,i1,j1,g1) (a2,i2,j2,g2) ->
+        Stdlib.compare (a2,i1,j1) (a1,i2,j2)) (* decreasing area first *)
+      parts in
+  List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts)
+
+let partition_by_color, reset_partition_by_color = Memo.memoize ~size:103 partition_by_color
+
+                                                                       
 (* MOTIFS *)
 
 module Motif =
@@ -718,6 +762,7 @@ let reset_memoized_functions () =
   reset_segment_same_color ();
   reset_segment_same_row_and_color ();
   reset_segment_same_column_and_color ();
+  reset_partition_by_color ();
     (*  Motif.reset_make_grid ();*)
   Motif.reset_from_grid ()
 
