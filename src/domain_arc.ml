@@ -365,7 +365,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyMotif of GPat.Motif.t (* MOTIF *)
       | DAnyGrid of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
       | DObj (* SIZE, SPRITE : OBJ *)
-      | DAnyMap of (value,value) Mymap.t * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
+      | DAnyMap of (value,value) Mymap.t * typ (* domain type *) * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
       | DDomMap of value array (* B+ : MAP(A,B) *)
       | DReplace (* A, A : MAP(A,A) *)
       | DSwap (* A, A : MAP(A,A) *)
@@ -389,7 +389,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DAnyMotif motif, [||] -> GPat.Motif.xp ~html print motif
       | DAnyGrid (g,tg,_,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
-      | DAnyMap (m,tb), [||] -> xp_value ~html print (`Map m)
+      | DAnyMap (m,ta,tb), [||] -> xp_value ~html print (`Map m)
       | DDomMap keys, [|xp_vals|] -> xp_dommap keys xp_vals ~html print ()
       | DReplace, [|xp_a; xp_b|] ->
          xp_replace xp_a xp_b ~html print ()
@@ -895,8 +895,8 @@ module MyDomain : Madil.DOMAIN =
       let i, j = get_vec dpos in
       let g1 = get_grid dg1 in
       Data.make_dpat (`Obj (i,j,g1)) DObj [|dpos;dg1|]
-    let make_danymap tb m : data =
-      Data.make_dpat (`Map m) (DAnyMap (m,tb)) [||]
+    let make_danymap ta tb m : data =
+      Data.make_dpat (`Map m) (DAnyMap (m,ta,tb)) [||]
     let make_ddommap (keys : value array) dvals : data =
       let m =
         match Data.value dvals with
@@ -1762,7 +1762,7 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false)
       | MAP (ta,tb), AnyMap, [||] ->
          (fun info ->
-           Myseq.return (make_danymap tb Mymap.empty)) (* empty map = identity map *)
+           Myseq.return (make_danymap ta tb Mymap.empty)) (* empty map = identity map *)
       | _, DomMap keys, [|gen_vals|] ->
          (fun info ->
            let* dvals = gen_vals info in
@@ -1956,7 +1956,7 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ta,tb), AnyMap, [||] ->
          (function
           | `MapDomain (m,dom) ->
-             Myseq.return (make_danymap tb m, `Null)
+             Myseq.return (make_danymap ta tb m, `Null)
           | _ -> assert false)
       | MAP (ta,tb), DomMap keys, [|parse_vals|] ->
          (function
@@ -2192,9 +2192,12 @@ module MyDomain : Madil.DOMAIN =
            
     let dl_map dl_a dl_b m =
       (* TODO: should get constraint info about values, e.g. range for integers *)
-      Mymap.fold
-        (fun a b res -> dl_a a +. dl_b b +. res)
-        m 0.
+      let n = Mymap.cardinal m in
+      assert (n > 0);
+      Mdl.Code.universal_int_plus n
+      +. Mymap.fold
+           (fun a b res -> dl_a a +. dl_b b +. res)
+           m 0.
 
     let rec dl_value t v =
       match t, v with
@@ -2218,8 +2221,7 @@ module MyDomain : Madil.DOMAIN =
          +. dl_value (INT (COORD (J, POS))) (`Int j)
          +. dl_value (GRID (`Sprite,false)) (`Grid g)
       | MAP (ta,tb), `Map m ->
-         Mdl.Code.universal_int_star (Mymap.cardinal m)
-         +. dl_map (dl_value ta) (dl_value tb) m
+         dl_map (dl_value ta) (dl_value tb) m
       | _, `Seq _ -> assert false
       | _ -> assert false
 
@@ -2232,7 +2234,7 @@ module MyDomain : Madil.DOMAIN =
       | DAnyMotif m, [||] -> dl_motif m
       | DAnyGrid (g,tg,rh,rw,nc), [||] -> dl_grid g tg rh rw nc
       | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
-      | DAnyMap (m,tb), [||] -> dl_map (fun _ -> 0.) (dl_value tb) m (* assuming keys known from ctx *)
+      | DAnyMap (m,ta,tb), [||] -> dl_map (dl_value ta) (dl_value tb) m
       | DDomMap keys, [|enc_vals|] -> enc_vals (* keys encoded in model *)
       | DReplace, [|enc_a; enc_b|] -> enc_a +. enc_b
       | DSwap, [|enc_a; enc_b|] -> enc_a +. enc_b
@@ -2266,12 +2268,12 @@ module MyDomain : Madil.DOMAIN =
       | _, AnyGrid -> 0.
       | _, Obj -> 0.
       | _, AnyMap -> 0.
-      | MAP (ta,tb), DomMap keys -> 0.
-         (* assert (keys <> [||]);
+      | MAP (ta,tb), DomMap keys -> (* 0. (* assuming keys derived from context pattern/data *) *)
+         assert (keys <> [||]);
          Mdl.Code.universal_int_plus (Array.length keys)
          +. Array.fold_left
               (fun res a -> dl_value ta a)
-              0. keys *) (* assuming keys derived from context pattern/data *)
+              0. keys
       | _, DomMap _ -> assert false
       | _, Replace -> 0.
       | _, Swap -> 0.
@@ -2352,7 +2354,7 @@ module MyDomain : Madil.DOMAIN =
     (* expression index *)
 
     let make_index (bindings : bindings) : expr_index =
-      pp xp_bindings bindings;
+      (*pp xp_bindings bindings;*)
       (*let test level index = (* testing expr index[i]($21) in task a157, $21 is seq of pos of input objects *)
         match Mymap.find_opt 21 bindings with
         | None -> ()
