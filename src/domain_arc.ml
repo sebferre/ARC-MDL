@@ -1616,9 +1616,7 @@ module MyDomain : Madil.DOMAIN =
           | Some v -> Result.Ok v
           | None -> Result.Error (Invalid_expr e))
       | `Reverse_1, [|v1|] ->
-         let| v1s = Ndtree.unpack v1 in
-         let rev_v1s = v1s |> Array.to_list |> List.rev |> Array.of_list in
-         Result.Ok (Ndtree.pack rev_v1s)
+         Result.Ok (Ndtree.reverse v1)
       | _ ->
          let scalar_f = compile_scalar_func f in
          Ndtree.broadcast_result scalar_f args_tree
