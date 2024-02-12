@@ -440,6 +440,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
         
     type func =
       [ `Index_1 of int option list (* on any Ndtree *)
+      | `Tail_1 (* Seq -> Seq *)
       | `Reverse_1 (* Seq -> Seq *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
@@ -539,6 +540,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
             | None -> print#string ":"
             | Some i -> print#int i)
            ~html print is
+      | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
       | `Plus_2 -> print#string "+"
       | `Minus_2 -> print#string "-"
@@ -695,6 +697,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | BOOL -> []
           | INT CARD ->
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
@@ -706,6 +709,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | INT (COORD (axis,tv)) ->
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
                `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
@@ -721,6 +725,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | VEC tv ->
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `Size_1, [|GRID (`Sprite,false)|];
                `Plus_2, [|k; k|];
@@ -741,16 +746,19 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ]
           | COLOR tc ->
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `MajorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
              ]
           | MOTIF ->
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
              ]
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
@@ -777,6 +785,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | OBJ (filling,nocolor) ->
              let full = (filling = `Full) in
              [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
                `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
@@ -1226,6 +1235,7 @@ module MyDomain : Madil.DOMAIN =
       let e = "" in
       function
       | `Index_1 _ -> assert false (* not a scalar function *)
+      | `Tail_1 -> assert false
       | `Reverse_1 -> assert false
       | `Plus_2 ->
          (function
@@ -1646,6 +1656,10 @@ module MyDomain : Madil.DOMAIN =
          (match Ndtree.index v1 is with
           | Some v -> Result.Ok v
           | None -> Result.Error (Invalid_expr e))
+      | `Tail_1, [|v1|] ->
+         (match Ndtree.tail_opt v1 with
+          | Some v2 -> Result.Ok v2
+          | None -> Result.Error (Undefined_result "tail: undefined on the empty sequence"))
       | `Reverse_1, [|v1|] ->
          Result.Ok (Ndtree.reverse v1)
       | _ ->
@@ -2366,6 +2380,7 @@ module MyDomain : Madil.DOMAIN =
                            +. (if i >= 0
                                then Mdl.Code.usage 0.75 +. Mdl.Code.universal_int_star i
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
+      | `Tail_1 -> 0.
       | `Reverse_1 -> 0.
       | `Plus_2 -> 0.
       | `Minus_2 -> 0.
@@ -2457,7 +2472,9 @@ module MyDomain : Madil.DOMAIN =
                  if ndim >= 1
                  then
                    let$ res, i = res, [0; 1; 2; -2; -1] in
-                   (t1, `Index_1 [Some i], `Default)::res
+                   (t1, `Index_1 [Some i], `Default)::
+                     (t1, `Tail_1, `Default)::
+                       res
                  else res in
                let res =
                  if ndim >= 2
