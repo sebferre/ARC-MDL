@@ -1976,6 +1976,7 @@ module MyDomain : Madil.DOMAIN =
            ok_i && ok_j, `Null
         | `Color c0, `Color c -> c = c0 && Grid.is_true_color c, `Null
         | `Color c0, `Seq (`Color c::lc) -> c = c0 && Grid.is_true_color c, `Seq lc
+        | `Color c0, `Seq (`Seq (`Color c::lc) :: l) -> c = c0 && Grid.is_true_color c, `Seq (`Seq lc :: l)
         | `Motif mot0, `Motif mot -> mot = mot0, `Null
         | `Grid g0, `GridDimsCols (g,_,_,_) -> g = g0, `Null
         | `Obj obj0, `Objects(h,w,nc,objs) ->
@@ -2015,6 +2016,7 @@ module MyDomain : Madil.DOMAIN =
              if Grid.is_true_color c
              then Myseq.return (make_danycolor c tc, `Seq lc)
              else Myseq.empty
+          | `Seq (`Seq [] :: _) -> Myseq.empty
           | `Seq (`Seq (`Color c::lc)::l) ->
              if Grid.is_true_color c
              then Myseq.return (make_danycolor c tc, `Seq (`Seq lc :: l))
@@ -2058,9 +2060,7 @@ module MyDomain : Madil.DOMAIN =
              then
                let vals = List.map snd pairs in
                let* dvals, input = parse_vals (`Seq (List.map (input_of_value tb) vals)) in
-               if input = `Seq []
-               then Myseq.return (make_ddommap keys dvals, `Null)
-               else Myseq.empty
+               Myseq.return (make_ddommap keys dvals, `Null)
              else Myseq.empty
           | _ -> assert false)
       | MAP (ta,tb), Replace, [|parse_a; parse_b|] when ta=tb ->
@@ -2156,10 +2156,8 @@ module MyDomain : Madil.DOMAIN =
                  | `ConnectedSameColor -> Grid_patterns.segment_same_color g
                  | `SameColor -> Grid_patterns.partition_by_color g in
                let* () = Myseq.from_bool (List.length objs <= nmax) in
-               let* dobjs, input = parse_objs (`Objects (h,w,nc,objs)) in
-               (match input with
-               | `Objects (_,_,_,[]) -> Myseq.return (make_dobjects seg nmax dsize dobjs, `Null)
-               | _ -> Myseq.empty) (* all objects must be used *)
+               let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
+               Myseq.return (make_dobjects seg nmax dsize dobjs, `Null)
           | _ -> assert false)
       | _, Monocolor, [|parse_col; parse_mask|] ->
          (function
@@ -2253,7 +2251,6 @@ module MyDomain : Madil.DOMAIN =
                   then Myseq.return (Array.init h (fun i -> `Color (Grid.get_pixel g i 0)))
                   else Myseq.empty in
              let* dcolors, input = parse_colors (`Seq (Array.to_list icolors)) in
-             let* () = Myseq.from_bool (input = `Seq []) in
              Myseq.return (make_dcolorseq dir dcolors, `Null)
           | _ -> assert false)
       | _, ColorMat, [|parse_colorss|] ->
@@ -2274,10 +2271,20 @@ module MyDomain : Madil.DOMAIN =
                                        (fun j -> `Color (Grid.get_pixel g i j)))))))))
                else Myseq.empty in
              let* dcolorss, input = parse_colorss icolorss in
-             let* () = Myseq.from_bool (input = `Seq []) in
              Myseq.return (make_dcolormat dcolorss, `Null)
           | _ -> assert false)
       | _ -> assert false
+
+    let rec parseur_end : input -> input Myseq.t =
+      function
+      | `Seq [] -> Myseq.return `Null
+      | `Seq (x::l) ->
+         let* x = parseur_end x in
+         if x = `Null
+         then Myseq.return (`Seq l)
+         else Myseq.return (`Seq (x::l))
+      | `Objects (_,_,_,[]) -> Myseq.return `Null
+      | _ -> Myseq.empty
 
     (* description length *)
 
