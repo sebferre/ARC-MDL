@@ -196,6 +196,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | Motif (* MOTIF, SPRITE (core), derived SPRITE (pure), SPRITE (noise) *)
+      | Repeat (* SPRITE, INT+, INT+ : SPRITE *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
@@ -271,6 +272,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "  plus the noise:";
       xp_newline ~html print ();
       xp_noise ~html print ()
+    let xp_repeat xp_grid xp_nis xp_njs ~html print () =
+      print#string "a repeat pattern on rows "; xp_nis ~html print ();
+      print#string " and on columns "; xp_njs ~html print ();
+      print#string " of grid: "; xp_grid ~html print ()
     let xp_empty xp_size ~html print () =
       print#string "an empty mask of size "; xp_size ~html print ()
     let xp_full xp_size ~html print () =
@@ -314,6 +319,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_grid xp_map ~html print ()
       | Motif, [|xp_mot; xp_core; xp_pure; xp_noise|] ->
          xp_motif xp_mot xp_core xp_pure xp_noise ~html print ()
+      | Repeat, [|xp_grid; xp_nis; xp_njs|] ->
+         xp_repeat xp_grid xp_nis xp_njs ~html print ()
       | Empty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | Full, [|xp_size|] ->
@@ -370,6 +377,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Motif, 1 -> print#string "core"
       | Motif, 2 -> print#string "noise"
       | Motif, _ -> assert false
+      | Repeat, 0 -> print#string "grid"
+      | Repeat, 1 -> print#string "rows"
+      | Repeat, 2 -> print#string "cols"
+      | Repeat, _ -> assert false
       | Empty, _ -> print#string "size"
       | Full, _ -> print#string "size"
       | Point, _ -> assert false
@@ -399,6 +410,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       (*      | DRecoloring (* COLOR+, SPRITE : SPRITE *) *)
       | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | DMotif (* MOTIF, SPRITE (core), SPRITE (pure), SPRITE (noise) *)
+      | DRepeat (* SPRITE, INT+, INT+ : SPRITE *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
       | DPoint (* MASK *)
@@ -435,6 +447,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_grid xp_map ~html print ()
       | DMotif, [|xp_mot; xp_core; xp_pure; xp_noise|] ->
          xp_motif xp_mot xp_core xp_pure xp_noise ~html print ()
+      | DRepeat, [|xp_grid; xp_nis; xp_njs|] ->
+         xp_repeat xp_grid xp_nis xp_njs ~html print ()
       | DEmpty, [|xp_size|] ->
          xp_empty xp_size ~html print ()
       | DFull, [|xp_size|] ->
@@ -685,6 +699,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  (* not nocolor, (Recoloring, [|COLOR C_OBJ, 1; GRID (filling,nocolor), 0|]); *)
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
                  true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; (* derived pure, not counting *) GRID (`Noise,nocolor), 0|]);
+                 true, (Repeat, [|GRID (filling,nocolor), 0;
+                                  INT (COORD (I, SIZE)), 1;
+                                  INT (COORD (J, SIZE)), 1|]);
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]);
@@ -894,6 +911,7 @@ module MyDomain : Madil.DOMAIN =
     (*let make_recoloring mcol mgrid : model = Model.make_pat (GRID (`Sprite,false)) Recoloring [|mcol; mgrid|]*)
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
     let make_motif tg mmotif mcore mpure mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mpure; mnoise|]
+    let make_repeat tg mgrid mnis mnjs : model = Model.make_pat (GRID tg) Repeat [|mgrid; mnis; mnjs|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
     let make_point : model = Model.make_pat (GRID (`Sprite,true)) Point [||]
@@ -1055,6 +1073,24 @@ module MyDomain : Madil.DOMAIN =
       let g = Grid.Do.copy g_pure in
       Grid.add_grid_at g 0 0 g_noise;
       Result.Ok (Data.make_dpat (`Grid g) DMotif [|dmot; dcore; dpure; dnoise|])
+    let make_drepeat dgrid dnis dnjs : data =
+      let g1 = get_grid dgrid in
+      let nis =
+        match Data.value dnis with
+        | `Seq vs ->
+           vs
+           |> Array.map (function `Int i -> i | _ -> assert false)
+           |> Array.to_list
+        | _ -> assert false in
+      let njs =
+        match Data.value dnjs with
+        | `Seq vs ->
+           vs
+           |> Array.map (function `Int j -> j | _ -> assert false)
+           |> Array.to_list
+        | _ -> assert false in
+      let g = Grid_patterns.generate_repeat g1 nis njs in
+      Data.make_dpat (`Grid g) DRepeat [|dgrid; dnis; dnjs|]
     let make_dempty dsize : data =
       let g =
         match Data.value dsize with
@@ -1919,6 +1955,12 @@ module MyDomain : Madil.DOMAIN =
            match l with
            | [dmot; dcore; dnoise] -> Myseq.from_result (make_dmotif dmot dcore dnoise)
            | _ -> assert false)
+      | _, Repeat, [|gen_grid; gen_nis; gen_njs|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
+           match l with
+           | [dgrid; dnis; dnjs] -> Myseq.return (make_drepeat dgrid dnis dnjs)
+           | _ -> assert false)         
       | _, Empty, [|gen_size|] ->
          (fun info ->
            let* dsize = gen_size info in
@@ -1993,10 +2035,13 @@ module MyDomain : Madil.DOMAIN =
       else Myseq.empty
         
     let parseur_pat t c parse_args =
+      (* TODO: generalize handling of sequences *)
       match t, c, parse_args with
       | _, AnyCoord, [||] ->
          (function
           | `IntRange (ij,range) -> Myseq.return (make_danycoord ij range, `Null)
+          | `Seq [] -> Myseq.empty
+          | `Seq (`IntRange (ij,range)::l) -> Myseq.return (make_danycoord ij range, `Seq l)
           | _ -> assert false)
       | _, Vec, [|parse_i; parse_j|] ->
          (function
@@ -2210,7 +2255,48 @@ module MyDomain : Madil.DOMAIN =
              let* dnoise, _ = parse_noise (`GridDimsCols (g_noise,rh,rw,nc)) in
              let* data = Myseq.from_result (make_dmotif dmot dcore dnoise) in
              Myseq.return (data, `Null)
-          | _ -> assert false)            
+          | _ -> assert false)
+      | _, Repeat, [|parse_grid; parse_nis; parse_njs|] ->
+         let rec aux_inputs min max_opt = function
+           | [] -> []
+           | [n] ->
+              assert (n >= min);
+              let r =
+                match max_opt with
+                | None -> Range.make_open min
+                | Some max -> Range.make_closed min max in
+              assert (Range.mem n r);
+              [`IntRange (n, r)]
+           | n::l ->
+              let r =
+                match max_opt with
+                | None -> Range.make_open 1
+                | Some max -> Range.make_closed 1 max in
+              assert (Range.mem n r);
+              `IntRange (n, r)
+              :: aux_inputs (min - n) (Option.map (fun max -> (max - n + 1)) max_opt) l
+         in
+         (function
+          | `GridDimsCols (g,rh,rw,nc) ->
+             let g1, nis, njs = Grid_patterns.parse_repeat g in
+             let h1, w1 = Grid.dims g1 in
+             let min_h, max_h_opt = Range.lower rh, Range.upper rh in
+             let min_w, max_w_opt = Range.lower rw, Range.upper rw in
+             let* dnis, _ =
+               let min = min_h in
+               let max_opt = Option.map (fun m -> m - h1 + 1) max_h_opt in
+               parse_nis (`Seq (aux_inputs min max_opt nis)) in
+             let* dnjs, _ =
+               let min = min_w in
+               let max_opt = Option.map (fun m -> m - w1 + 1) max_w_opt in
+               parse_njs (`Seq (aux_inputs min max_opt njs)) in
+             let* dgrid, _ =
+               let rh1 = Range.make_exact h1 in (* encoded as sequence length of nis *)
+               let rw1 = Range.make_exact w1 in (* encoded as sequence length of njs *)
+               parse_grid (`GridDimsCols (g1,rh1,rw1,nc)) in
+             let data = make_drepeat dgrid dnis dnjs in
+             Myseq.return (data, `Null)
+          | _ -> assert false)
       | _, (Empty | Full as c), [|parse_size|] ->
          let pred_maked h w = function
            | Empty -> (fun i j c -> c = Grid.Mask.zero), make_dempty
@@ -2384,6 +2470,7 @@ module MyDomain : Madil.DOMAIN =
       (* | DRecoloring, [|enc_cols; enc_grid|] -> enc_cols +. enc_grid *)
       | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
       | DMotif, [|enc_motif; enc_core; _enc_pure; enc_noise|] -> enc_motif +. enc_core +. enc_noise
+      | DRepeat, [|enc_grid; enc_nis; enc_njs|] -> enc_grid +. enc_nis +. enc_njs
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
       | DPoint, [||] -> 0.
@@ -2430,6 +2517,7 @@ module MyDomain : Madil.DOMAIN =
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
       | _, Motif -> 0.
+      | _, Repeat -> 0.
       | _, Empty -> 0.
       | _, Full -> 0.
       | _, Point -> 0.
@@ -2989,6 +3077,20 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
             varseq)
            :: refs in
+         let refs = (* Repeat *)
+           let xg1, varseq = Refining.new_var varseq in
+           let xli, varseq = Refining.new_var varseq in
+           let xni, varseq = Refining.new_var varseq in
+           let xlj, varseq = Refining.new_var varseq in
+           let xnj, varseq = Refining.new_var varseq in
+           (make_repeat tg
+              (Model.make_def xg1 (make_anygrid (filling,nocolor)))
+              (Model.make_loop xli (Range.make_open 1)
+                 (Model.make_def xni (make_anycoord I SIZE)))
+              (Model.make_loop xlj (Range.make_open 1)
+                 (Model.make_def xnj (make_anycoord J SIZE))),
+            varseq)
+           ::refs in
          let refs = (* Masks *)
            let msize, varseq_msize =
              let xsize, varseq = Refining.new_var varseq in

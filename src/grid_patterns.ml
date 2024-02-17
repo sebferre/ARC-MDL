@@ -105,6 +105,111 @@ let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
     else [])
   else [])
   
+
+(* Repeat (a la NumPy) *)
+
+let parse_repeat (g : Grid.t) : Grid.t * int list * int list =
+  (* returns: the compressed grid, the numbers of repeats on axis i, and the numbers of repeats on axis j *)
+  let rec cumsum offset = function
+    | [] -> []
+    | n::l -> offset :: cumsum (offset+n) l
+  in
+  Common.prof "Grid_patterns.parse_repeat" (fun () ->
+  let h, w = Grid.dims g in
+  let mat = g.matrix in
+  let i_repeats =
+    let res = ref [] in
+    let pos_end = ref (h-1) in
+    let same_row = ref true in
+    for i = h-2 downto 0 do
+      (* comparing row [i] to the following one *)
+      for j = 0 to w-1 do
+        same_row := !same_row && mat.{i,j} = mat.{i+1,j}
+      done;
+      (* updating res and pos_end *)
+      if not !same_row then (
+        res := (!pos_end - i) :: !res;
+        pos_end := i
+      );
+      (* preparing next iteration *)
+      same_row := true
+    done;
+    res := (!pos_end - (-1)) :: !res;
+    !res in
+  let j_repeats =
+    let res = ref [] in
+    let pos_end = ref (w-1) in
+    let same_col = ref true in
+    for j = w-2 downto 0 do
+      (* comparing col [j] to the following one *)
+      for i = 0 to h-1 do
+        same_col := !same_col && mat.{i,j} = mat.{i,j+1}
+      done;
+      (* updating res and pos_end *)
+      if not !same_col then (
+        res := (!pos_end - j) :: !res;
+        pos_end := j
+      );
+      (* preparing next iteration *)
+      same_col := true
+    done;
+    res := (!pos_end - (-1)) :: !res;
+    !res in
+  let h1, w1 = List.length i_repeats, List.length j_repeats in
+  let g1 = Grid.make h1 w1 Grid.transparent in
+  let i_poslist = cumsum 0 i_repeats in
+  let j_poslist = cumsum 0 j_repeats in
+  List.iteri
+    (fun i1 i ->
+      List.iteri
+        (fun j1 j ->
+          Grid.Do.set_pixel g1 i1 j1 mat.{i,j})
+        j_poslist)
+    i_poslist;
+  g1, i_repeats, j_repeats)
+
+let generate_repeat (g1 : Grid.t) (i_repeats : int list) (j_repeats : int list) : Grid.t =
+  let rec ranges offset = function
+    | [] -> []
+    | n::l -> (offset, offset + n - 1) :: ranges (offset+n) l
+  in
+  Common.prof "Grid_patterns.generate_repeat" (fun () ->
+  assert (Grid.dims g1 = (List.length i_repeats, List.length j_repeats));
+  assert (List.for_all (fun n -> n > 0) i_repeats);
+  assert (List.for_all (fun n -> n > 0) j_repeats);
+  let h = List.fold_left (+) 0 i_repeats in
+  let w = List.fold_left (+) 0 j_repeats in
+  let g = Grid.make h w Grid.transparent in
+  let i_ranges = ranges 0 i_repeats in
+  let j_ranges = ranges 0 j_repeats in
+  List.iteri
+    (fun i1 (start_i,end_i) ->
+      List.iteri
+        (fun j1 (start_j,end_j) ->
+          let c1 = Grid.get_pixel ~source:"Grid_patterns.generate_repeat" g1 i1 j1 in
+          for i = start_i to end_i do (* TODO: add function Grid.set_rectangle *)
+            for j = start_j to end_j do
+              Grid.Do.set_pixel g i j c1
+            done
+          done)
+        j_ranges)
+    i_ranges;
+  g)
+
+(*let _ = (* unit test of repeats *)
+  print_endline "UNIT TEST of parse/generate_repeat";
+  let h1, w1 = 1, 4 in
+  let i_repeats, j_repeats = [1], [4;1;2;3] in
+  let g1 = Grid.init h1 w1 (fun i1 j1 -> (i1 * w1 + j1) mod Grid.nb_color) in
+  pp_endline Grid.xp_grid g1;
+  let g = generate_repeat g1 i_repeats j_repeats in
+  pp_endline Grid.xp_grid g;
+  let g1', i_repeats, j_repeats = parse_repeat g in
+  pp_endline Grid.xp_grid g1';
+  List.iter print_int i_repeats; print_string " / "; List.iter print_int j_repeats; print_newline ();
+  print_endline "DONE"*)
+
+
 (* Segmentation into Objects *)
    
 type part = { mini : int; maxi : int;
@@ -265,7 +370,8 @@ let partition_by_color (g : Grid.t) : (int * int * Grid.t) list = (* position an
 
 let partition_by_color, reset_partition_by_color = Memo.memoize ~size:103 partition_by_color
 
-                                                                       
+
+
 (* MOTIFS *)
 
 module Motif =
