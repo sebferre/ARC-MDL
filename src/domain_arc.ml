@@ -2910,7 +2910,7 @@ module MyDomain : Madil.DOMAIN =
              Mymap.fold
                (fun x t res ->
                  match t with
-                 | GRID (`Full,_) -> x::res
+                 | GRID tgx when tgx = tg -> x::res
                  | _ -> res)
                env_vars [] in
            let$ refs, gvar = refs, cropable_vars in
