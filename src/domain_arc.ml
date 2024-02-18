@@ -192,7 +192,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* SPRITE ; POS, SIZE : SPRITE *)
-      | Objects of segmentation * int (* SIZE, OBJ+ : SPRITE *) (* int is for max seq length *)
+      | Objects of segmentation * int (* SIZE, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | Motif (* MOTIF, SPRITE (core), derived SPRITE (pure), SPRITE (noise) *)
@@ -239,7 +239,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string " that contains at position "; xp_pos ~html print ();
       xp_newline ~html print ();
       xp_sprite ~html print ()*)
-    let xp_objects (seg : segmentation) (nmax : int) xp_size xp_objs ~html print () =
+    let xp_objects (seg : segmentation) (nmax : int) xp_size xp_objs xp_merger ~html print () =
       print#string "a grid of size "; xp_size ~html print ();
       print#string " that contains at most "; print#int nmax;
       print#string
@@ -249,7 +249,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          | `SameColor -> " same-color");
       print#string " objects like";
       xp_newline ~html print ();
-      xp_objs ~html print ()
+      xp_objs ~html print ();
+      print#string " forming the constellation object: ";
+      xp_merger ~html print ()
     let xp_monocolor xp_color xp_mask ~html print () =
       print#string "a grid with only color "; xp_color ~html print ();
       print#string " and with mask"; xp_newline ~html print ();
@@ -309,8 +311,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_isfull xp_sprite ~html print ()
       | Crop, [|xp_sprite; xp_pos; xp_size|] ->
          xp_crop xp_sprite xp_pos xp_size ~html print ()
-      | Objects (seg,nmax), [|xp_size; xp_objs|] ->
-         xp_objects seg nmax xp_size xp_objs ~html print ()
+      | Objects (seg,nmax), [|xp_size; xp_objs; xp_merger|] ->
+         xp_objects seg nmax xp_size xp_objs xp_merger ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | Recoloring, [|xp_grid; xp_map|] ->
@@ -361,6 +363,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Crop, _ -> assert false
       | Objects _, 0 -> print#string "size"
       | Objects _, 1 -> print#string "obj"
+      | Objects _, 2 -> print#string "merger"
       | Objects _, _ -> assert false
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
@@ -400,7 +403,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DBgColor (* COLOR, SPRITE : GRID *)
       | DIsFull (* SPRITE : GRID *)
       | DCrop (* SPRITE, POS, SIZE : SPRITE *)
-      | DObjects of segmentation * int (* SIZE, OBJ+ : SPRITE *)
+      | DObjects of segmentation * int (* SIZE, OBJ+, derived OBJ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
       | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | DMotif (* MOTIF, SPRITE (core), SPRITE (pure), SPRITE (noise) *)
@@ -431,8 +434,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_isfull xp_sprite ~html print ()
       | DCrop, [|xp_sprite; xp_pos; xp_size|] ->
          xp_crop xp_sprite xp_pos xp_size ~html print ()
-      | DObjects (seg,nmax), [|xp_size; xp_obj|] ->
-         xp_objects seg nmax xp_size xp_obj ~html print ()
+      | DObjects (seg,nmax), [|xp_size; xp_objs; xp_merger|] ->
+         xp_objects seg nmax xp_size xp_objs xp_merger ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | DRecoloring, [|xp_grid; xp_map|] ->
@@ -465,6 +468,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleUp_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
       | `ScaleDown_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
       | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
+      | `I_1 (* Vec -> Coord *)
+      | `J_1 (* Vec -> Coord *)
+      | `Pos_1 (* Obj -> Pos *)
+      | `Grid_1 (* Obj -> Grid *)
       | `Size_1 (* Grid -> Vec *)
       | `Height_1 (* Grid -> Int *)
       | `Width_1 (* Grid -> Int *)
@@ -565,6 +572,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleUp_2 -> print#string "*"
       | `ScaleDown_2 -> print#string "/"
       | `ScaleTo_2 -> print#string "scaleTo"
+      | `I_1 -> print#string "i"
+      | `J_1 -> print#string "j"
+      | `Pos_1 -> print#string "pos"
+      | `Grid_1 -> print#string "grid"
       | `Size_1 -> print#string "size"
       | `Height_1 -> print#string "height"
       | `Width_1 -> print#string "width"
@@ -686,7 +697,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
-                 true (* not full *), (Objects (`Connected,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1|]);
+                 true (* not full *), (Objects (`Connected,1), [|VEC SIZE, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
                  true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; (* derived pure, not counting *) GRID (`Noise,nocolor), 0|]);
@@ -731,6 +742,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
+               `I_1, [|VEC tv|];
+               `J_1, [|VEC tv|];
                `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
                `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
                `Area_1, [|GRID (`Sprite,false)|];
@@ -747,6 +760,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
+               `Pos_1, [|OBJ (`Sprite,false)|];
                `Size_1, [|GRID (`Sprite,false)|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
@@ -780,6 +794,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
+               `Grid_1, [|OBJ (filling,nocolor)|];
                `ScaleUp_2, [|k; INT CARD|];
                `ScaleDown_2, [|k; INT CARD|];
                `ScaleTo_2, [|k; VEC SIZE|];
@@ -897,7 +912,7 @@ module MyDomain : Madil.DOMAIN =
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (`Full,false)) BgColor [|mcol; mg1|]
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
     let make_crop tg mg1 mpos msize : model = Model.make_pat (GRID tg) Crop [|mg1; mpos; msize|]
-    let make_objects seg nmax msize mobj : model = Model.make_pat (GRID (`Sprite,false)) (Objects (seg,nmax)) [|msize; mobj|]
+    let make_objects seg nmax msize mobjs mmerger : model = Model.make_pat (GRID (`Sprite,false)) (Objects (seg,nmax)) [|msize; mobjs; mmerger|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
     let make_motif tg mmotif mcore mpure mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mpure; mnoise|]
@@ -994,18 +1009,35 @@ module MyDomain : Madil.DOMAIN =
         | _ -> assert false in
       Result.Ok (Data.make_dpat (`Grid g1) DCrop [|dg; dpos; dsize|])
     let make_dobjects seg nmax dsize dobjs : data =
-      let g =
+      let g, merger_obj =
         match Data.value dsize, Data.value dobjs with
         | `Vec (h,w), `Seq objs ->
+           let objs =
+             Array.map
+               (function
+                | `Obj (i,j,g1) -> (i,j,g1)
+                | _ -> assert false)
+               objs in
+           let i0, j0, ih0, jw0 =
+             Array.fold_left
+               (fun (i0,j0,ih0,jw0) (i,j,g1) ->
+                 let h1, w1 = Grid.dims g1 in
+                 min i0 i, min j0 j,
+                 max ih0 (i+h1), max jw0 (j+w1))
+               (h, w, 0, 0) objs in
+           assert (i0 < ih0 && j0 < jw0);
+           let h0, w0 = ih0 - i0, jw0 - j0 in
            let g = Grid.make h w Grid.transparent in
+           let g0 = Grid.make h0 w0 Grid.transparent in (* merger object *)
            Array.iter
-             (function
-              | `Obj (i,j,g1) -> Grid.add_grid_at g i j g1
-              | _ -> assert false)
+             (fun (i,j,g1) ->
+               Grid.add_grid_at g i j g1;
+               Grid.add_grid_at g0 (i-i0) (j-j0) g1)
              objs;
-           g
+           g, `Obj (i0, j0, g0)
         | _ -> assert false in
-      Data.make_dpat (`Grid g) (DObjects (seg,nmax)) [|dsize; dobjs|]
+      let dmerger = Data.make_dexpr merger_obj in
+      Data.make_dpat (`Grid g) (DObjects (seg,nmax)) [|dsize; dobjs; dmerger|]
     let make_dmonocolor dcol dmask : data =
       let g_res =
         match Data.value dcol, Data.value dmask with
@@ -1336,6 +1368,22 @@ module MyDomain : Madil.DOMAIN =
              let| g' = Grid.Transf.scale_to new_h new_w g in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
+      | `I_1 ->
+         (function
+          | [| `Vec (i,j)|] -> Result.Ok (`Int i)
+          | _ -> Result.Error (Invalid_expr e))
+      | `J_1 ->
+         (function
+          | [| `Vec (i,j)|] -> Result.Ok (`Int j)
+          | _ -> Result.Error (Invalid_expr e))
+      | `Pos_1 ->
+         (function
+          | [| `Obj (i,j,g)|] -> Result.Ok (`Vec (i,j))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Grid_1 ->
+         (function
+          | [| `Obj (i,j,g)|] -> Result.Ok (`Grid g)
+          | _ -> Result.Error (Invalid_expr e))    
       | `Size_1 ->
          (function
           | [|`Grid g|] ->
@@ -1895,7 +1943,7 @@ module MyDomain : Madil.DOMAIN =
               let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
               Myseq.return dg1 
            | _ -> assert false)
-      | _, Objects (seg,nmax), [|gen_size; gen_objs|] ->
+      | _, Objects (seg,nmax), [|gen_size; gen_objs; _gen_merger|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_size info; gen_objs info] in
            match l with
@@ -2155,7 +2203,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> Myseq.empty)
  *)
           | _ -> assert false)
-      | _, Objects (seg,nmax), [|parse_size; parse_objs|] ->
+      | _, Objects (seg,nmax), [|parse_size; parse_objs; _parse_merger|] ->
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
              (*if Grid.is_full g then Myseq.empty
@@ -2420,7 +2468,7 @@ module MyDomain : Madil.DOMAIN =
       | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | DIsFull, [|enc_g1|] -> enc_g1
       | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
-      | DObjects (seg,nmax), [|enc_size; enc_objs|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | DObjects (seg,nmax), [|enc_size; enc_objs; _enc_merger|] -> enc_size +. enc_objs (* TODO: take seg into account for encoding objects *)
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
       | DMotif, [|enc_motif; enc_core; _enc_pure; enc_noise|] -> enc_motif +. enc_core +. enc_noise
@@ -2503,6 +2551,10 @@ module MyDomain : Madil.DOMAIN =
       | `ScaleUp_2 -> 0.
       | `ScaleDown_2 -> 0.
       | `ScaleTo_2 -> 0.
+      | `I_1 -> 0.
+      | `J_1 -> 0.
+      | `Pos_1 -> 0.
+      | `Grid_1 -> 0.
       | `Size_1 -> 0.
       | `Height_1 -> 0.
       | `Width_1 -> 0.
@@ -2601,6 +2653,22 @@ module MyDomain : Madil.DOMAIN =
             | _ -> []) in
       (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
       (*test "TEST LEVEL 0" index;*)
+      let index = (* LEVEL 0' - components *)
+        Expr.index_apply_functions
+          ~eval_func
+          index 1
+          (fun (t_args, v_args_tree) ->
+            let res = [] in
+            match t_args with
+            | [|VEC tv|] ->
+               (INT (COORD (I, tv)), `I_1, `Default)
+               ::(INT (COORD (J, tv)), `J_1, `Default)
+               ::res
+            | [|OBJ tg|] ->
+               (VEC POS, `Pos_1, `Default)
+               ::(GRID tg, `Grid_1, `Default)
+               ::res
+            | _ -> res) in
       let index = (* LEVEL 1 *)
         Expr.index_apply_functions
           ~eval_func
@@ -2937,6 +3005,7 @@ module MyDomain : Madil.DOMAIN =
              let xpos_i, varseq = Refining.new_var varseq in
              let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
+             let xmerger, varseq = Refining.new_var varseq in
              let$ refs, seg = refs, [`Connected; `ConnectedSameColor; `SameColor] in
              let$ refs, nmax = refs, [1;9] in
              let m_g1, varseq =
@@ -2964,7 +3033,8 @@ module MyDomain : Madil.DOMAIN =
                             (make_vec POS
                                (Model.make_def xpos_i (make_anycoord I POS))
                                (Model.make_def xpos_j (make_anycoord J POS))))
-                         m_g1))),
+                         m_g1)))
+                (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
               varseq)
              :: refs
            else refs in
