@@ -242,11 +242,32 @@ let merge_parts p1 p2 =
     maxj = max p1.maxj p2.maxj;
     pixels = Bitmap.union p1.pixels p2.pixels;
     nb_pixels = p1.nb_pixels + p2.nb_pixels }
-          
+
+module Objects =
+  struct
+
+type segmentation =
+  | Connected
+  | OneColor
+  | ConnectedOneColor
+
+let candidate_segmentations =
+  [ Connected; OneColor; ConnectedOneColor ]
+let nb_candidate_segmentations =
+  List.length candidate_segmentations
+
+let xp_segmentation ~html print = function
+  | Connected -> print#string "connected"
+  | OneColor -> print#string "one-color"
+  | ConnectedOneColor -> print#string "one-color connected"
+
+type obj = int * int * Grid.t (* object *)
+type t = obj list
+
 let segment_gen
       (connected_pixels : Grid.pixel -> Grid.pixel -> bool)
       (g : Grid.t)
-    : (int * int * Grid.t) list = (* position and subgrids of segments *)
+    : t = (* position and subgrids of segments *)
   Common.prof "Grid.segment" (fun () ->
   let h, w = Grid.dims g in
   let fm : (int * int, part) Find_merge.hashtbl =
@@ -328,7 +349,7 @@ let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1
 let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
 
 
-let partition_by_color (g : Grid.t) : (int * int * Grid.t) list = (* position and subgrids *)
+let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
   Common.prof "Grid_patterns.partition_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
@@ -370,7 +391,16 @@ let partition_by_color (g : Grid.t) : (int * int * Grid.t) list = (* position an
 
 let partition_by_color, reset_partition_by_color = Memo.memoize ~size:103 partition_by_color
 
+let parse (g : Grid.t) : (segmentation * t) Myseq.t =
+  let* seg = Myseq.from_list [ConnectedOneColor; Connected; OneColor] in
+  let objs =
+    match seg with
+    | Connected -> segment g
+    | OneColor -> partition_by_color g
+    | ConnectedOneColor -> segment_same_color g in
+  Myseq.return (seg, objs)
 
+  end
 
 (* MOTIFS *)
 
@@ -864,11 +894,11 @@ let from_grid, reset_from_grid =
 (* Reset of memoized functions *)
              
 let reset_memoized_functions () =
-  reset_segment ();
-  reset_segment_same_color ();
-  reset_segment_same_row_and_color ();
-  reset_segment_same_column_and_color ();
-  reset_partition_by_color ();
+  Objects.reset_segment ();
+  Objects.reset_segment_same_color ();
+  Objects.reset_segment_same_row_and_color ();
+  Objects.reset_segment_same_column_and_color ();
+  Objects.reset_partition_by_color ();
     (*  Motif.reset_make_grid ();*)
   Motif.reset_from_grid ()
 
