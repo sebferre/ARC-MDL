@@ -108,7 +108,7 @@ let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
 
 (* Repeat (a la NumPy) *)
 
-let parse_repeat (g : Grid.t) : Grid.t * int list * int list =
+let parse_repeat (g : Grid.t) : (Grid.t * int list * int list) option =
   (* returns: the compressed grid, the numbers of repeats on axis i, and the numbers of repeats on axis j *)
   let rec cumsum offset = function
     | [] -> []
@@ -156,45 +156,54 @@ let parse_repeat (g : Grid.t) : Grid.t * int list * int list =
     res := (!pos_end - (-1)) :: !res;
     !res in
   let h1, w1 = List.length i_repeats, List.length j_repeats in
-  let g1 = Grid.make h1 w1 Grid.transparent in
-  let i_poslist = cumsum 0 i_repeats in
-  let j_poslist = cumsum 0 j_repeats in
-  List.iteri
-    (fun i1 i ->
-      List.iteri
-        (fun j1 j ->
-          Grid.Do.set_pixel g1 i1 j1 mat.{i,j})
-        j_poslist)
-    i_poslist;
-  g1, i_repeats, j_repeats)
+  if (* h1 <= 5 && w1 <= 5 (* not too many areas *)
+     && *) (h1 > 1 || w1 > 1) (* not a single area *)
+     && (List.exists (fun n -> n > 1) i_repeats
+         || List.exists (fun n -> n > 1) j_repeats) (* no trivial repeat *)
+  then
+    let g1 = Grid.make h1 w1 Grid.transparent in
+    let i_poslist = cumsum 0 i_repeats in
+    let j_poslist = cumsum 0 j_repeats in
+    List.iteri
+      (fun i1 i ->
+        List.iteri
+          (fun j1 j ->
+            Grid.Do.set_pixel g1 i1 j1 mat.{i,j})
+          j_poslist)
+      i_poslist;
+    Some (g1, i_repeats, j_repeats)
+  else None)
 
-let generate_repeat (g1 : Grid.t) (i_repeats : int list) (j_repeats : int list) : Grid.t =
+let generate_repeat (g1 : Grid.t) (i_repeats : int list) (j_repeats : int list) : Grid.t result =
   let rec ranges offset = function
     | [] -> []
     | n::l -> (offset, offset + n - 1) :: ranges (offset+n) l
   in
   Common.prof "Grid_patterns.generate_repeat" (fun () ->
-  assert (Grid.dims g1 = (List.length i_repeats, List.length j_repeats));
-  assert (List.for_all (fun n -> n > 0) i_repeats);
-  assert (List.for_all (fun n -> n > 0) j_repeats);
-  let h = List.fold_left (+) 0 i_repeats in
-  let w = List.fold_left (+) 0 j_repeats in
-  let g = Grid.make h w Grid.transparent in
-  let i_ranges = ranges 0 i_repeats in
-  let j_ranges = ranges 0 j_repeats in
-  List.iteri
-    (fun i1 (start_i,end_i) ->
-      List.iteri
-        (fun j1 (start_j,end_j) ->
-          let c1 = Grid.get_pixel ~source:"Grid_patterns.generate_repeat" g1 i1 j1 in
-          for i = start_i to end_i do (* TODO: add function Grid.set_rectangle *)
-            for j = start_j to end_j do
-              Grid.Do.set_pixel g i j c1
-            done
-          done)
-        j_ranges)
-    i_ranges;
-  g)
+  if (Grid.dims g1 = (List.length i_repeats, List.length j_repeats))
+     && (List.for_all (fun n -> n > 0) i_repeats)
+     && (List.for_all (fun n -> n > 0) j_repeats)
+  then
+    let h = List.fold_left (+) 0 i_repeats in
+    let w = List.fold_left (+) 0 j_repeats in
+    let g = Grid.make h w Grid.transparent in
+    let i_ranges = ranges 0 i_repeats in
+    let j_ranges = ranges 0 j_repeats in
+    List.iteri
+      (fun i1 (start_i,end_i) ->
+        List.iteri
+          (fun j1 (start_j,end_j) ->
+            let c1 = Grid.get_pixel ~source:"Grid_patterns.generate_repeat" g1 i1 j1 in
+            for i = start_i to end_i do (* TODO: add function Grid.set_rectangle *)
+              for j = start_j to end_j do
+                Grid.Do.set_pixel g i j c1
+              done
+            done)
+          j_ranges)
+      i_ranges;
+    Result.Ok g
+  else
+    Result.Error (Failure "Invalid Repeat pattern"))
 
 (*let _ = (* unit test of repeats *)
   print_endline "UNIT TEST of parse/generate_repeat";

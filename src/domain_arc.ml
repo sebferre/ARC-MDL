@@ -965,6 +965,10 @@ module MyDomain : Madil.DOMAIN =
       match Data.value d with
       | `Grid g -> g
       | _ -> assert false
+    let get_seq_length (d : data) : int =
+      match Data.value d with
+      | `Seq vs -> Array.length vs
+      | _ -> assert false
       
     let make_danycoord ij r : data =
       Data.make_dpat (`Int ij) (DAnyCoord (ij,r)) [||]
@@ -1103,7 +1107,7 @@ module MyDomain : Madil.DOMAIN =
       let g = Grid.Do.copy g_pure in
       Grid.add_grid_at g 0 0 g_noise;
       Result.Ok (Data.make_dpat (`Grid g) DMotif [|dmot; dcore; dpure; dnoise|])
-    let make_drepeat dgrid dnis dnjs : data =
+    let make_drepeat dgrid dnis dnjs : data result =
       let g1 = get_grid dgrid in
       let nis =
         match Data.value dnis with
@@ -1119,8 +1123,8 @@ module MyDomain : Madil.DOMAIN =
            |> Array.map (function `Int j -> j | _ -> assert false)
            |> Array.to_list
         | _ -> assert false in
-      let g = Grid_patterns.generate_repeat g1 nis njs in
-      Data.make_dpat (`Grid g) DRepeat [|dgrid; dnis; dnjs|]
+      let| g = Grid_patterns.generate_repeat g1 nis njs in
+      Result.Ok (Data.make_dpat (`Grid g) DRepeat [|dgrid; dnis; dnjs|])
     let make_dempty dsize : data =
       let g =
         match Data.value dsize with
@@ -2001,10 +2005,17 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false)
       | _, Repeat, [|gen_grid; gen_nis; gen_njs|] ->
          (fun info ->
-           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
+           let* dgrid = gen_grid info in
+           let h1, w1 = Grid.dims (get_grid dgrid) in
+           let* dnis = gen_nis info in
+           let* () = Myseq.from_bool (h1 = get_seq_length dnis) in
+           let* dnjs = gen_njs info in
+           let* () = Myseq.from_bool (w1 = get_seq_length dnjs) in
+           Myseq.from_result (make_drepeat dgrid dnis dnjs))
+(*           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
            match l with
-           | [dgrid; dnis; dnjs] -> Myseq.return (make_drepeat dgrid dnis dnjs)
-           | _ -> assert false)         
+           | [dgrid; dnis; dnjs] -> Myseq.from_result (make_drepeat dgrid dnis dnjs)
+           | _ -> assert false) *)
       | _, Empty, [|gen_size|] ->
          (fun info ->
            let* dsize = gen_size info in
@@ -2313,7 +2324,7 @@ module MyDomain : Madil.DOMAIN =
          in
          (function
           | `GridDimsCols (g,rh,rw,nc) ->
-             let g1, nis, njs = Grid_patterns.parse_repeat g in
+             let* g1, nis, njs = Myseq.from_option (Grid_patterns.parse_repeat g) in
              let h1, w1 = Grid.dims g1 in
              let min_h, max_h_opt = Range.lower rh, Range.upper rh in
              let min_w, max_w_opt = Range.lower rw, Range.upper rw in
@@ -2329,7 +2340,7 @@ module MyDomain : Madil.DOMAIN =
                let rh1 = Range.make_exact h1 in (* encoded as sequence length of nis *)
                let rw1 = Range.make_exact w1 in (* encoded as sequence length of njs *)
                parse_grid (`GridDimsCols (g1,rh1,rw1,nc)) in
-             let data = make_drepeat dgrid dnis dnjs in
+             let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
              Myseq.return (data, `Null)
           | _ -> assert false)
       | _, (Empty | Full as c), [|parse_size|] ->
@@ -2937,8 +2948,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list =
-      Common.prof "Domain_arc.refinements_pat" (fun () ->
+    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list = (* QUICK *)
       match t, c with
       | INT (COORD (axis,tv)), AnyCoord -> []
       | COLOR tc, AnyColor -> []
@@ -3172,7 +3182,7 @@ module MyDomain : Madil.DOMAIN =
              ::refs
            else refs in
          refs
-      | _ -> [])
+      | _ -> []
     let refinements_postprocessing t c args =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
