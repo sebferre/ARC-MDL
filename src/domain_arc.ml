@@ -1787,7 +1787,7 @@ module MyDomain : Madil.DOMAIN =
          let scalar_f = compile_scalar_func f in
          Ndtree.broadcast_result scalar_f args_tree
 
-    let eval_unbound_var x = Result.Ok (Ndtree.scalar (Some `Null))
+    let eval_unbound_var x = Result.Error (Failure ("eval: unbound var $" ^ string_of_int x)) (* Result.Ok (Ndtree.scalar (Some `Null)) *)
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
 
     (* model-based generation *)
@@ -2092,217 +2092,148 @@ module MyDomain : Madil.DOMAIN =
       then Myseq.return (Data.make_dexpr v, input)
       else Myseq.empty
         
-    let parseur_pat t c parse_args =
-      (* TODO: generalize handling of sequences *)
-      match t, c, parse_args with
-      | _, AnyCoord, [||] ->
-         (function
-          | `IntRange (ij,range) -> Myseq.return (make_danycoord ij range, `Null)
-          | `Seq [] -> Myseq.empty
-          | `Seq (`IntRange (ij,range)::l) -> Myseq.return (make_danycoord ij range, `Seq l)
-          | _ -> assert false)
-      | _, Vec, [|parse_i; parse_j|] ->
-         (function
-          | `Vec (in_i, in_j) ->
-             let* di, _ = parse_i in_i in
-             let* dj, _ = parse_j in_j in
-             Myseq.return (make_dvec di dj, `Null)
-          | _ -> assert false)
-      | COLOR tc, AnyColor, [||] ->
-         (function
-          | `Color c ->
-             if Grid.is_true_color c
-             then Myseq.return (make_danycolor c tc, `Null)
-             else Myseq.empty
-          | `Seq [] -> Myseq.empty
-          | `Seq (`Color c::lc) -> (* TODO: generalize over other types *)
-             if Grid.is_true_color c
-             then Myseq.return (make_danycolor c tc, `Seq lc)
-             else Myseq.empty
-          | `Seq (`Seq [] :: _) -> Myseq.empty
-          | `Seq (`Seq (`Color c::lc)::l) ->
-             if Grid.is_true_color c
-             then Myseq.return (make_danycolor c tc, `Seq (`Seq lc :: l))
-             else Myseq.empty
-          | _ -> assert false)
-      | SEG, AnySeg, [||] ->
-         (function
-          | `Seg seg -> Myseq.return (make_danyseg seg, `Null)
-          | _ -> assert false)
-      | MOTIF, AnyMotif, [||] ->
-         (function
-          | `Motif mot -> Myseq.return (make_danymotif mot, `Null)
-          | _ -> assert false)
-      | GRID tg, AnyGrid, [||] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             Myseq.return (make_danygrid g tg rh rw nc, `Null)
-          | _ -> assert false)
-      | _, Obj, [|parse_pos; parse_g1|] ->
-         (function
-          | `Objects (h, w, nc, objs) ->
-             Myseq.bind_interleave_at_most 3
-               (Myseq.from_list objs)
-               (fun (i,j,g1 as obj) ->
-                 let other_objs = List.filter ((<>) obj) objs in
-                 let* dg1, _ = parse_g1 (`GridDimsCols (g1,
+    let rec parseur_pat t c parse_args input =
+      match t, c, parse_args, input with
+      | _, _, _, `Null -> Myseq.empty (* useful to avoid pruning of expression-only arguments *)
+      | _, _, _, `Seq [] -> Myseq.empty (* no more elements *)
+      | _, _, _, `Seq (i::l) ->
+         let* dx, i = parseur_pat t c parse_args i in
+         let input =
+           match i with
+           | `Null -> `Seq l
+           | _ -> `Seq (i::l) in
+         Myseq.return (dx,input)
+      | _, AnyCoord, [||], `IntRange (ij,range) ->
+         Myseq.return (make_danycoord ij range, `Null)
+      | _, Vec, [|parse_i; parse_j|], `Vec (in_i, in_j) ->
+         let* di, _ = parse_i in_i in
+         let* dj, _ = parse_j in_j in
+         Myseq.return (make_dvec di dj, `Null)
+      | COLOR tc, AnyColor, [||], `Color c ->
+         if Grid.is_true_color c
+         then Myseq.return (make_danycolor c tc, `Null)
+         else Myseq.empty
+      | SEG, AnySeg, [||], `Seg seg ->
+         Myseq.return (make_danyseg seg, `Null)
+      | MOTIF, AnyMotif, [||], `Motif mot ->
+         Myseq.return (make_danymotif mot, `Null)
+      | GRID tg, AnyGrid, [||], `GridDimsCols (g,rh,rw,nc) ->
+         Myseq.return (make_danygrid g tg rh rw nc, `Null)
+      | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, objs) ->
+         Myseq.bind_interleave_at_most 3
+           (Myseq.from_list objs)
+           (fun (i,j,g1 as obj) ->
+             let other_objs = List.filter ((<>) obj) objs in
+             let* dg1, _ = parse_g1 (`GridDimsCols (g1,
                                                     Range.make_closed 1 (h-i),
                                                     Range.make_closed 1 (w-j),
                                                     nc)) in
-                 let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                                 `IntRange (j, Range.make_closed 0 (w-1)))) in
-                 Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc,other_objs)))
-          | _ -> assert false)
-      | MAP (ta,tb), AnyMap, [||] ->
-         (function
-          | `MapDomain (m,dom) ->
-             Myseq.return (make_danymap ta tb m, `Null)
-          | _ -> assert false)
-      | MAP (ta,tb), DomMap keys, [|parse_vals|] ->
-         (function
-          | `MapDomain (m,dom) ->
-             let pairs = Mymap.bindings m in
-             let m_keys = Array.of_list (List.map fst pairs) in
-             if m_keys = keys
-             then
-               let vals = List.map snd pairs in
-               let* dvals, input = parse_vals (`Seq (List.map (input_of_value tb) vals)) in
-               Myseq.return (make_ddommap keys dvals, `Null)
-             else Myseq.empty
-          | _ -> assert false)
-      | MAP (ta,tb), Replace, [|parse_a; parse_b|] when ta=tb ->
-         (function
-          | `MapDomain (m,dom) ->
-             let m_diff = Mymap.filter (fun a b -> a <> b) m in
-             (match Mymap.bindings m_diff with
-              | [a, b] ->
-                 let* da, _ = parse_a (input_of_value ta a) in
-                 let* db, _ = parse_b (input_of_value ta b) in
-                 Myseq.return (make_dreplace dom da db, `Null)
-              | _ -> Myseq.empty)
-          | _ -> assert false)
-      | MAP (ta,tb), Swap, [|parse_a; parse_b|] when ta=tb ->
-         (function
-          | `MapDomain (m,dom) ->
-             let m_diff = Mymap.filter (fun a b -> a <> b) m in
-             (match Mymap.bindings m_diff with
-              | [a, b; c, d] when a=d && b=c ->
-                 let* da, _ = parse_a (input_of_value ta a) in
-                 let* db, _ = parse_b (input_of_value ta b) in
-                 Myseq.return (make_dswap dom da db, `Null)
-              | _ -> Myseq.empty)
-          | _ -> assert false)
-      | _, BgColor, [|parse_col; parse_g1|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             if Grid.is_full g
-             then
-               let* bc = Myseq.from_list (Segment.background_colors g) in
-               let* dcol, _ = parse_col (`Color bc) in
-               let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
-               let nc1 = if g.Grid.color_count.(bc) > 0 then nc-1 else nc in
-               let* dg1, _ = parse_g1 (`GridDimsCols (g1,rh,rw,nc1)) in
-               Myseq.return (make_dbgcolor dcol dg1, `Null)
-             else Myseq.empty
-          | _ -> assert false)
-      | _, IsFull, [|parse_g1|] ->
-         (fun input ->
-           let* dg1, _ = parse_g1 input in
-           let g1 = get_grid dg1 in
-           if Grid.is_full g1
-           then Myseq.return (make_disfull dg1, `Null)
-           else Myseq.empty)
-      | _, Crop, [|parse_g; parse_pos; parse_size|] ->
-         (function
-          | `GridDimsCols (g1,rh1,rw1,nc1) ->
-             let h1, w1 = Grid.dims g1 in
-             let* dsize, _ =
-               parse_size (`Vec (`IntRange (h1, rh1),
-                                 `IntRange (w1, rw1))) in
-             let* dg, _ = parse_g `Null in (* expression *)
-             let* g =
-               match Data.value dg with
-               | `Grid g -> Myseq.return g
-               | `Null -> Myseq.empty
-               | v -> pp_endline xp_data dg; assert false in
-             let h, w = Grid.dims g in
-             let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
-             let* dpos, _ =
-               parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
-                                `IntRange (j, Range.make_closed 0 (w-w1)))) in
-             let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
-             Myseq.return (dg1, `Null)
-(*             
-             let h, w = Grid.dims g in
-             let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
-                                               `IntRange (w, rw))) in
-             (match Grid_patterns.segment g with
-              | [(i,j,g1)] ->
-                 let* dg1, _ = parse_g1 (`GridDimsCols (g1,
-                                                        Range.make_closed 1 h,
-                                                        Range.make_closed 1 w,
-                                                        nc)) in
-                 let h1, w1 = Grid.dims (get_grid dg1) in
-                 let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
-                                                 `IntRange (j, Range.make_closed 0 (w-w1)))) in
-                 Myseq.return (make_dcrop dsize dpos dg1, `Null)
-              | _ -> Myseq.empty)
- *)
-          | _ -> assert false)
-      | _, Objects (nmax), [|parse_size; parse_seg; parse_objs; _parse_merger|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             (*if Grid.is_full g then Myseq.empty
-             else*)              
-               let h, w = Grid.dims g in
-               let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
-                                                 `IntRange (w, rw))) in
-               let* seg, objs = Grid_patterns.Objects.parse g in
-               let* () = Myseq.from_bool (List.length objs <= nmax) in
-               let* dseg, _ = parse_seg (`Seg seg) in
-               let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
-               Myseq.return (make_dobjects nmax dsize dseg dobjs, `Null)
-          | _ -> assert false)
-      | _, Monocolor, [|parse_col; parse_mask|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             if Grid.color_count Grid.transparent g = 1
-             then
-               let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
-               let* dcol, _ = parse_col (`Color c) in
-               let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.Mask.one) in
-               let* dmask, _ = parse_mask (`GridDimsCols (mask,rh,rw,1)) in
-               Myseq.return (make_dmonocolor dcol dmask, `Null)
-             else Myseq.empty
-          | _ -> assert false)
-      | _, Recoloring, [|parse_grid; parse_map|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             let* dg1, _ = parse_grid `Null in (* expression expected *)
-             let g1 = get_grid dg1 in
-             (match Grid_patterns.parse_recoloring g g1 with
-              | Some mcol ->
-                 let m =
-                   Mymap.fold
-                     (fun c1 c2 res ->
-                       Mymap.add (`Color c1) (`Color c2) res)
-                     mcol (Mymap.empty : (value,value) Mymap.t) in
-                 let dom = mymap_keys m in
-                 let* dmap, _ = parse_map (`MapDomain (m,dom)) in
-                 Myseq.return (make_drecoloring dg1 dmap, `Null)
-              | None -> Myseq.empty)
-          | _ -> assert false)
-      | _, Motif, [|parse_mot; parse_core; _parse_pure; parse_noise|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             let* mot, ru, rv, g_core, g_noise = Myseq.from_list (GPat.Motif.from_grid g) in
-             let* dmot, _ = parse_mot (`Motif mot) in
-             let* dcore, _ = parse_core (`GridDimsCols (g_core,ru,rv,nc)) in
-             let* dnoise, _ = parse_noise (`GridDimsCols (g_noise,rh,rw,nc)) in
-             let* data = Myseq.from_result (make_dmotif dmot dcore dnoise) in
-             Myseq.return (data, `Null)
-          | _ -> assert false)
-      | _, Repeat, [|parse_grid; parse_nis; parse_njs|] ->
+             let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
+                                             `IntRange (j, Range.make_closed 0 (w-1)))) in
+             Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc,other_objs)))
+      | MAP (ta,tb), AnyMap, [||], `MapDomain (m,dom) ->
+         Myseq.return (make_danymap ta tb m, `Null)
+      | MAP (ta,tb), DomMap keys, [|parse_vals|], `MapDomain (m,dom) ->
+         let pairs = Mymap.bindings m in
+         let m_keys = Array.of_list (List.map fst pairs) in
+         if m_keys = keys
+         then
+           let vals = List.map snd pairs in
+           let* dvals, input = parse_vals (`Seq (List.map (input_of_value tb) vals)) in
+           Myseq.return (make_ddommap keys dvals, `Null)
+         else Myseq.empty
+      | MAP (ta,tb), Replace, [|parse_a; parse_b|], `MapDomain (m,dom) when ta=tb ->
+         let m_diff = Mymap.filter (fun a b -> a <> b) m in
+         (match Mymap.bindings m_diff with
+          | [a, b] ->
+             let* da, _ = parse_a (input_of_value ta a) in
+             let* db, _ = parse_b (input_of_value ta b) in
+             Myseq.return (make_dreplace dom da db, `Null)
+          | _ -> Myseq.empty)
+      | MAP (ta,tb), Swap, [|parse_a; parse_b|], `MapDomain (m,dom) when ta=tb ->
+         let m_diff = Mymap.filter (fun a b -> a <> b) m in
+         (match Mymap.bindings m_diff with
+          | [a, b; c, d] when a=d && b=c ->
+             let* da, _ = parse_a (input_of_value ta a) in
+             let* db, _ = parse_b (input_of_value ta b) in
+             Myseq.return (make_dswap dom da db, `Null)
+          | _ -> Myseq.empty)
+      | _, BgColor, [|parse_col; parse_g1|], `GridDimsCols (g,rh,rw,nc) ->
+         if Grid.is_full g
+         then
+           let* bc = Myseq.from_list (Segment.background_colors g) in
+           let* dcol, _ = parse_col (`Color bc) in
+           let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
+           let nc1 = if g.Grid.color_count.(bc) > 0 then nc-1 else nc in
+           let* dg1, _ = parse_g1 (`GridDimsCols (g1,rh,rw,nc1)) in
+           Myseq.return (make_dbgcolor dcol dg1, `Null)
+         else Myseq.empty
+      | _, IsFull, [|parse_g1|], _ ->
+         let* dg1, _ = parse_g1 input in
+         let g1 = get_grid dg1 in
+         if Grid.is_full g1
+         then Myseq.return (make_disfull dg1, `Null)
+         else Myseq.empty
+      | _, Crop, [|parse_g; parse_pos; parse_size|], `GridDimsCols (g1,rh1,rw1,nc1) ->
+         let h1, w1 = Grid.dims g1 in
+         let* dsize, _ =
+           parse_size (`Vec (`IntRange (h1, rh1),
+                             `IntRange (w1, rw1))) in
+         let* dg, _ = parse_g `Null in (* expression *)
+         let* g =
+           match Data.value dg with
+           | `Grid g -> Myseq.return g
+           | `Null -> Myseq.empty
+           | v -> pp_endline xp_data dg; assert false in
+         let h, w = Grid.dims g in
+         let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
+         let* dpos, _ =
+           parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
+                            `IntRange (j, Range.make_closed 0 (w-w1)))) in
+         let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
+         Myseq.return (dg1, `Null)
+      | _, Objects (nmax), [|parse_size; parse_seg; parse_objs; _parse_merger|],
+        `GridDimsCols (g,rh,rw,nc) ->
+         let h, w = Grid.dims g in
+         let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                           `IntRange (w, rw))) in
+         let* seg, objs = Grid_patterns.Objects.parse g in
+         let* () = Myseq.from_bool (List.length objs <= nmax) in
+         let* dseg, _ = parse_seg (`Seg seg) in
+         let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
+         Myseq.return (make_dobjects nmax dsize dseg dobjs, `Null)
+      | _, Monocolor, [|parse_col; parse_mask|], `GridDimsCols (g,rh,rw,nc) ->
+         if Grid.color_count Grid.transparent g = 1
+         then
+           let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
+           let* dcol, _ = parse_col (`Color c) in
+           let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.Mask.one) in
+           let* dmask, _ = parse_mask (`GridDimsCols (mask,rh,rw,1)) in
+           Myseq.return (make_dmonocolor dcol dmask, `Null)
+         else Myseq.empty
+      | _, Recoloring, [|parse_grid; parse_map|], `GridDimsCols (g,rh,rw,nc) ->
+         let* dg1, _ = parse_grid `Null in (* expression expected *)
+         let g1 = get_grid dg1 in
+         (match Grid_patterns.parse_recoloring g g1 with
+          | Some mcol ->
+             let m =
+               Mymap.fold
+                 (fun c1 c2 res ->
+                   Mymap.add (`Color c1) (`Color c2) res)
+                 mcol (Mymap.empty : (value,value) Mymap.t) in
+             let dom = mymap_keys m in
+             let* dmap, _ = parse_map (`MapDomain (m,dom)) in
+             Myseq.return (make_drecoloring dg1 dmap, `Null)
+          | None -> Myseq.empty)
+      | _, Motif, [|parse_mot; parse_core; _parse_pure; parse_noise|],
+        `GridDimsCols (g,rh,rw,nc) ->
+         let* mot, ru, rv, g_core, g_noise = Myseq.from_list (GPat.Motif.from_grid g) in
+         let* dmot, _ = parse_mot (`Motif mot) in
+         let* dcore, _ = parse_core (`GridDimsCols (g_core,ru,rv,nc)) in
+         let* dnoise, _ = parse_noise (`GridDimsCols (g_noise,rh,rw,nc)) in
+         let* data = Myseq.from_result (make_dmotif dmot dcore dnoise) in
+         Myseq.return (data, `Null)
+      | _, Repeat, [|parse_grid; parse_nis; parse_njs|], `GridDimsCols (g,rh,rw,nc) ->
          let rec aux_inputs min max_opt = function
            | [] -> []
            | [n] ->
@@ -2322,89 +2253,74 @@ module MyDomain : Madil.DOMAIN =
               `IntRange (n, r)
               :: aux_inputs (min - n) (Option.map (fun max -> (max - n + 1)) max_opt) l
          in
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             let* g1, nis, njs = Myseq.from_option (Grid_patterns.parse_repeat g) in
-             let h1, w1 = Grid.dims g1 in
-             let min_h, max_h_opt = Range.lower rh, Range.upper rh in
-             let min_w, max_w_opt = Range.lower rw, Range.upper rw in
-             let* dnis, _ =
-               let min = min_h in
-               let max_opt = Option.map (fun m -> m - h1 + 1) max_h_opt in
-               parse_nis (`Seq (aux_inputs min max_opt nis)) in
-             let* dnjs, _ =
-               let min = min_w in
-               let max_opt = Option.map (fun m -> m - w1 + 1) max_w_opt in
-               parse_njs (`Seq (aux_inputs min max_opt njs)) in
-             let* dgrid, _ =
-               let rh1 = Range.make_exact h1 in (* encoded as sequence length of nis *)
-               let rw1 = Range.make_exact w1 in (* encoded as sequence length of njs *)
-               parse_grid (`GridDimsCols (g1,rh1,rw1,nc)) in
-             let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
-             Myseq.return (data, `Null)
-          | _ -> assert false)
-      | _, (Empty | Full as c), [|parse_size|] ->
+         let* g1, nis, njs = Myseq.from_option (Grid_patterns.parse_repeat g) in
+         let h1, w1 = Grid.dims g1 in
+         let min_h, max_h_opt = Range.lower rh, Range.upper rh in
+         let min_w, max_w_opt = Range.lower rw, Range.upper rw in
+         let* dnis, _ =
+           let min = min_h in
+           let max_opt = Option.map (fun m -> m - h1 + 1) max_h_opt in
+           parse_nis (`Seq (aux_inputs min max_opt nis)) in
+         let* dnjs, _ =
+           let min = min_w in
+           let max_opt = Option.map (fun m -> m - w1 + 1) max_w_opt in
+           parse_njs (`Seq (aux_inputs min max_opt njs)) in
+         let* dgrid, _ =
+           let rh1 = Range.make_exact h1 in (* encoded as sequence length of nis *)
+           let rw1 = Range.make_exact w1 in (* encoded as sequence length of njs *)
+           parse_grid (`GridDimsCols (g1,rh1,rw1,nc)) in
+         let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
+         Myseq.return (data, `Null)
+      | _, (Empty | Full as c), [|parse_size|],  `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
          let pred_maked h w = function
            | Empty -> (fun i j c -> c = Grid.Mask.zero), make_dempty
            | Full -> (fun i j c -> c = Grid.Mask.one), make_dfull
            | _ -> assert false
          in
-         (function
-          | `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
-             let h, w = Grid.dims mask in
-             let pred, maked = pred_maked h w c in
-             if Grid.for_all_pixels pred mask
-             then
-               let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
-                                                 `IntRange (w, rw))) in
-               Myseq.return (maked dsize, `Null)
-             else Myseq.empty
-          | _ -> assert false)
-      | _, Point, [||] ->
-         (function
-          | `GridDimsCols (mask,rh,rw,nc) -> (* nc=1 *)
-             let h, w = Grid.dims mask in
-             if h=1 && w=1 && Grid.Mask.mem 0 0 mask
-             then Myseq.return (make_dpoint, `Null)
-             else Myseq.empty
-          | _ -> assert false)
-      | _, ColorSeq dir, [|parse_colors|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             let h, w = Grid.dims g in
-             let* icolors =
-               match dir with
-               | `H ->
-                  if h = 1 && w > 1
-                  then Myseq.return (Array.init w (fun j -> `Color (Grid.get_pixel g 0 j)))
-                  else Myseq.empty
-               | `V ->
-                  if h > 1 && w = 1
-                  then Myseq.return (Array.init h (fun i -> `Color (Grid.get_pixel g i 0)))
-                  else Myseq.empty in
-             let* dcolors, input = parse_colors (`Seq (Array.to_list icolors)) in
-             Myseq.return (make_dcolorseq dir dcolors, `Null)
-          | _ -> assert false)
-      | _, ColorMat, [|parse_colorss|] ->
-         (function
-          | `GridDimsCols (g,rh,rw,nc) ->
-             let h, w = Grid.dims g in
-             let* icolorss =
-               if h > 1 && w > 1 && h <= 3 && w <= 3
-               then
-                 Myseq.return
-                   (`Seq
-                      (Array.to_list
-                         ((Array.init h
-                             (fun i ->
-                               `Seq
-                                 (Array.to_list
-                                    (Array.init w
-                                       (fun j -> `Color (Grid.get_pixel g i j)))))))))
-               else Myseq.empty in
-             let* dcolorss, input = parse_colorss icolorss in
-             Myseq.return (make_dcolormat dcolorss, `Null)
-          | _ -> assert false)
+         let h, w = Grid.dims mask in
+         let pred, maked = pred_maked h w c in
+         if Grid.for_all_pixels pred mask
+         then
+           let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                             `IntRange (w, rw))) in
+           Myseq.return (maked dsize, `Null)
+         else Myseq.empty
+      | _, Point, [||], `GridDimsCols (mask,rh,rw,nc) -> (* nc=1 *)
+         let h, w = Grid.dims mask in
+         if h=1 && w=1 && Grid.Mask.mem 0 0 mask
+         then Myseq.return (make_dpoint, `Null)
+         else Myseq.empty
+      | _, ColorSeq dir, [|parse_colors|], `GridDimsCols (g,rh,rw,nc) ->
+         let h, w = Grid.dims g in
+         let* icolors =
+           match dir with
+           | `H ->
+              if h = 1 && w > 1
+              then Myseq.return (Array.init w (fun j -> `Color (Grid.get_pixel g 0 j)))
+              else Myseq.empty
+           | `V ->
+              if h > 1 && w = 1
+              then Myseq.return (Array.init h (fun i -> `Color (Grid.get_pixel g i 0)))
+              else Myseq.empty in
+         let* dcolors, _ = parse_colors (`Seq (Array.to_list icolors)) in
+         Myseq.return (make_dcolorseq dir dcolors, `Null)
+      | _, ColorMat, [|parse_colorss|], `GridDimsCols (g,rh,rw,nc) ->
+         let h, w = Grid.dims g in
+         let* icolorss =
+           if h > 1 && w > 1 && h <= 3 && w <= 3
+           then
+             Myseq.return
+               (`Seq
+                  (Array.to_list
+                     ((Array.init h
+                         (fun i ->
+                           `Seq
+                             (Array.to_list
+                                (Array.init w
+                                   (fun j -> `Color (Grid.get_pixel g i j)))))))))
+           else Myseq.empty in
+         let* dcolorss, _ = parse_colorss icolorss in
+         Myseq.return (make_dcolormat dcolorss, `Null)
       | _ -> assert false
 
     let rec parseur_end : input -> input Myseq.t =
