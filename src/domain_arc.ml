@@ -2005,17 +2005,10 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false)
       | _, Repeat, [|gen_grid; gen_nis; gen_njs|] ->
          (fun info ->
-           let* dgrid = gen_grid info in
-           let h1, w1 = Grid.dims (get_grid dgrid) in
-           let* dnis = gen_nis info in
-           let* () = Myseq.from_bool (h1 = get_seq_length dnis) in
-           let* dnjs = gen_njs info in
-           let* () = Myseq.from_bool (w1 = get_seq_length dnjs) in
-           Myseq.from_result (make_drepeat dgrid dnis dnjs))
-(*           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
+           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
            match l with
            | [dgrid; dnis; dnjs] -> Myseq.from_result (make_drepeat dgrid dnis dnjs)
-           | _ -> assert false) *)
+           | _ -> assert false)
       | _, Empty, [|gen_size|] ->
          (fun info ->
            let* dsize = gen_size info in

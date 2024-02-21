@@ -175,13 +175,21 @@ let parse_repeat (g : Grid.t) : (Grid.t * int list * int list) option =
   else None)
 
 let generate_repeat (g1 : Grid.t) (i_repeats : int list) (j_repeats : int list) : Grid.t result =
+  let rec correct_repeats len repeats =
+    if len = 0 then []
+    else
+      match repeats with
+      | [] -> 1 :: correct_repeats (len-1) repeats
+      | r::l -> r :: correct_repeats (len-1) l in
   let rec ranges offset = function
     | [] -> []
     | n::l -> (offset, offset + n - 1) :: ranges (offset+n) l
   in
   Common.prof "Grid_patterns.generate_repeat" (fun () ->
-  if (Grid.dims g1 = (List.length i_repeats, List.length j_repeats))
-     && (List.for_all (fun n -> n > 0) i_repeats)
+  let h1, w1 = Grid.dims g1 in
+  let i_repeats = correct_repeats h1 i_repeats in    
+  let j_repeats = correct_repeats w1 j_repeats in
+  if (List.for_all (fun n -> n > 0) i_repeats)
      && (List.for_all (fun n -> n > 0) j_repeats)
   then
     let h = List.fold_left (+) 0 i_repeats in
