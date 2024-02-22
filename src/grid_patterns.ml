@@ -911,6 +911,7 @@ let from_grid, reset_from_grid =
 (* Reset of memoized functions *)
              
 let reset_memoized_functions () =
+  reset_subgrid_of_part ();
   Objects.reset_segment ();
   Objects.reset_segment_same_color ();
   Objects.reset_segment_same_row_and_color ();

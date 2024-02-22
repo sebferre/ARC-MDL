@@ -2193,6 +2193,10 @@ module MyDomain : Madil.DOMAIN =
          let* seg, objs = Grid_patterns.Objects.parse g in
          let* () = Myseq.from_bool (List.length objs <= nmax) in
          let* dseg, _ = parse_seg (`Seg seg) in
+         (*let nc = (* TODO: need to encode which color *)
+           match seg with
+           | OneColor | ConnectedOneColor -> 1
+           | Connected -> nc in*)
          let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
          Myseq.return (make_dobjects nmax dsize dseg dobjs, `Null)
       | _, Monocolor, [|parse_col; parse_mask|], `GridDimsCols (g,rh,rw,nc) ->
