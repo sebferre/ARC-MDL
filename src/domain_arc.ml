@@ -510,6 +510,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `GridOfMask_2 (* Mask, Color -> Grid *)
       | `TranslationOnto_2 (* Obj, Obj -> Vec *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
+      | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
       | `FillResizeAlike_3 of Grid.Transf.periodicity_mode (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
       | `SelfCompose_2 (* Color, Mask/Shape/Grid as T, T -> T *)
@@ -616,6 +617,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tiling_1 (k,l) ->
          print#string "tiling";
          xp_tuple2 ~delims:("[","]") xp_int xp_int ~html print (k,l)
+      | `Unrepeat_1 -> print#string "unrepeat"
       | `PeriodicFactor_2 mode ->
          print#string ("periodicFactor" ^ suffix_periodicity_mode mode)
       | `FillResizeAlike_3 mode ->
@@ -818,6 +820,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ApplySymGrid_1 `Id, [|k|];
                `Coloring_2, [|k; COLOR C_OBJ|];
                `Tiling_1 (2,2), [|k|];
+               `Unrepeat_1, [|k|];
                `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
                `SelfCompose_2, [|COLOR C_OBJ; k|];
                `UnfoldSym_1 [], [|k|];
@@ -856,6 +859,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | SEG -> true, [k]
           | MOTIF -> true, [k]
           | GRID (`Sprite,nocolor) -> true, [k; GRID (`Full,nocolor)]
+          | GRID (`Full,nocolor) -> true, [k; GRID (`Sprite,nocolor)]
           | GRID _ -> true, [k]
           | OBJ tg -> true, [k]
           | MAP _ -> true, [k]
@@ -1649,6 +1653,13 @@ module MyDomain : Madil.DOMAIN =
           | [| `Grid g|] ->
              let| g' = Grid.Transf.tile k l g in
              Result.Ok (`Grid g')
+          | _ -> Result.Error (Invalid_expr e))
+      | `Unrepeat_1 ->
+         (function
+          | [| `Grid g|] ->
+             (match Grid_patterns.parse_repeat g with
+              | Some (g1,_,_) -> Result.Ok (`Grid g1)
+              | None -> Result.Error (Invalid_expr e))             
           | _ -> Result.Error (Invalid_expr e))
       | `PeriodicFactor_2 mode ->
          (function
@@ -2538,6 +2549,7 @@ module MyDomain : Madil.DOMAIN =
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
       | `TranslationOnto_2 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
+      | `Unrepeat_1 -> 0.
       | `PeriodicFactor_2 p -> dl_periodicity_mode p
       | `FillResizeAlike_3 p -> dl_periodicity_mode p
       | `SelfCompose_2 -> 0.
@@ -2778,7 +2790,7 @@ module MyDomain : Madil.DOMAIN =
               | [|VEC tv1 as t1|] when tv1 <> MOVE ->
                  let$ res, i2 = res, [0;1;2;3] in
                  let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
-                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Vec (i2,j2))|] in
+                 let args_spec = `Custom [|`Pos 0; `Val (VEC MOVE, `Vec (i2,j2))|] in
                  (t1, `Minus_2, args_spec)::res
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
@@ -2822,6 +2834,11 @@ module MyDomain : Madil.DOMAIN =
                          else [`TradeOff; `Strict]) in
                  (t3, `FillResizeAlike_3 mode, args_spec)::res
               | _ -> res in*)
+            let res = (* Unrepeat *)
+              match t_args with
+              | [|GRID _ as t1|] ->
+                 (t1, `Unrepeat_1, `Default)::res
+              | _ -> res in
             let res = (* SelfCompose *)
               match t_args with
               | [|GRID _ as t2|] ->
@@ -3041,7 +3058,7 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
             varseq)
            :: refs in
-         let refs = (* Repeat *)
+         (* let refs = (* Repeat - too catchy, replaced by function *)
            let xg1, varseq = Refining.new_var varseq in
            let xli, varseq = Refining.new_var varseq in
            let xni, varseq = Refining.new_var varseq in
@@ -3054,7 +3071,7 @@ module MyDomain : Madil.DOMAIN =
               (Model.make_loop xlj (Range.make_open 1)
                  (Model.make_def xnj (make_anycoord J SIZE))),
             varseq)
-           ::refs in
+           ::refs in *)
          let refs = (* Masks *)
            let msize, varseq_msize =
              let xsize, varseq = Refining.new_var varseq in
