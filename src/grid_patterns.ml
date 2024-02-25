@@ -365,6 +365,20 @@ let segment_same_row_and_color, reset_segment_same_row_and_color = Memo.memoize 
 let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1 = j2 && c1 = c2)
 let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
 
+(*let _ = (* unit test *)
+  print_endline "UNIT TEST Grid_patterns.segment";
+  let g = Grid.init 2 10
+            (fun i j ->
+              match i, j with
+              | 0, 1 | 1, 0 | 1, 2 -> Grid.red
+              | 0, 5 | 1, 4 | 1, 6 -> Grid.cyan
+              | _ -> Grid.transparent) in
+  pp Grid.xp_grid g;
+  let objs = segment_same_color g in
+  List.iter
+    (fun (i,j,g1) ->
+      pp_endline Grid.xp_grid g1)
+    objs*)
 
 let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
   Common.prof "Grid_patterns.partition_by_color" (fun () ->
@@ -876,7 +890,13 @@ let from_grid, reset_from_grid =
 
 (*let _ = (* TEST *)
   let u, v = 2, 1 in
-  let core = Grid.init u v (fun i' j' -> 3 * i' + j') in
+  let core =
+    (* Grid.init u v (fun i' j' -> 3 * i' + j') in *)
+    Grid.init 2 10
+      (fun i j ->
+        if j >= 0 && j < 3 && i+j mod 2 = 1 then Grid.red
+        else if j >= 4 && j < 7 && i+j mod 2 = 1 then Grid.cyan
+        else Grid.transparent) in
   let h, w, mot =
     let open Grid.Transf in
     (* 3*u, 6*v, Scale *)
@@ -888,7 +908,8 @@ let from_grid, reset_from_grid =
     (* 2*u, v, Rotate180 *)
     (* 2*u, 2*v, Rotate90 *)
     (* 2*u-1, 2*v-1, FullSym *)
-    7, 7, Diamond
+    (* 7, 7, Diamond *)
+    6, 10, Periodic (I,J)
   in
   match make_grid h w mot core with
   | Result.Ok g ->
