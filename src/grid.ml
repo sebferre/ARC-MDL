@@ -139,9 +139,31 @@ type t = grid
 type t =
   { height : int; (* equals Array2.dim1 matrix *)
     width : int; (* equals Array2.dim2 matrix *)
-    color_count : int Array.t; (* col (0..10) -> nb. cells with that color *)
+    color_count : int Array.t; (* col (0..11) -> nb. cells with that color *)
     matrix : matrix (* [i,j] -> col *)
   }
+
+let is_well_formed (g : t) : bool =
+  let h = Array2.dim1 g.matrix in
+  let w = Array2.dim2 g.matrix in
+  let cc = Array.make (nb_color+2) 0 in
+  let ok = ref true in
+  for i = 0 to h-1 do
+    for j = 0 to w-1 do
+      let c = g.matrix.{i,j} in
+      if c >= 0 && c < nb_color+2
+      then cc.(c) <- cc.(c) + 1
+      else ok := false
+    done
+  done;
+  if not !ok then print_endline "wrong color";
+  ok := !ok && h = g.height;
+  if not !ok then print_endline "wrong height";
+  ok := !ok && w = g.width;
+  if not !ok then print_endline "wrong width";
+  ok := !ok && cc = g.color_count;
+  if not !ok then print_endline "wrong color count";
+  !ok
 
 module Do =
   struct
