@@ -711,7 +711,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  true (* not full *), (Objects 1, [|VEC SIZE, 0; SEG, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
-                 true, (Motif, [|MOTIF, 0; GRID (filling,nocolor), 0; (* derived pure, not counting *) GRID (`Noise,nocolor), 0|]);
+                 true, (Motif, [|MOTIF, 0;
+                                 GRID ((if filling = `Noise then `Sprite else filling), nocolor), 0;
+                                 (* derived pure, not counting *)
+                                 GRID (`Noise,nocolor), 0|]);
                  true, (Repeat, [|GRID (filling,nocolor), 0;
                                   INT (COORD (I, SIZE)), 1;
                                   INT (COORD (J, SIZE)), 1|]);
@@ -846,6 +849,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
           | MAP (ta,tb) -> []
         method expr_opt k =
+          let expand_grid (filling, nocolor) =
+            [(`Sprite, nocolor); (`Full, nocolor); (`Noise, nocolor)] in
           match k with (* what type can be used to define k *)
           | BOOL -> true, [k]
           | INT CARD -> true, [k]
@@ -858,10 +863,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | COLOR (C_BG false) -> true, [k; COLOR (C_BG true); COLOR C_OBJ]
           | SEG -> true, [k]
           | MOTIF -> true, [k]
-          | GRID (`Sprite,nocolor) -> true, [k; GRID (`Full,nocolor)]
-          | GRID (`Full,nocolor) -> true, [k; GRID (`Sprite,nocolor)]
-          | GRID _ -> true, [k]
-          | OBJ tg -> true, [k]
+          | GRID tg -> true, List.map (fun tg -> GRID tg) (expand_grid tg)
+          | OBJ tg -> true, List.map (fun tg -> OBJ tg) (expand_grid tg)
           | MAP _ -> true, [k]
         method alt_opt = function
           | _ -> false (* LATER *)
@@ -3053,7 +3056,7 @@ module MyDomain : Madil.DOMAIN =
            let xnoise, varseq = Refining.new_var varseq in
            (make_motif (filling,nocolor)
              (Model.make_def xmot (make_anymotif))
-             (Model.make_def xcore (make_anygrid (filling,nocolor)))
+             (Model.make_def xcore (make_anygrid ((if filling = `Noise then `Sprite else filling), nocolor)))
              (Model.make_def xpure (Model.make_derived (GRID tg)))
              (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
             varseq)
