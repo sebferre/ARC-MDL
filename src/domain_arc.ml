@@ -708,7 +708,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
-                 true (* not full *), (Objects 1, [|VEC SIZE, 0; SEG, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
+                 not full, (Objects (1), [|VEC SIZE, 0; SEG, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
                  true, (Motif, [|MOTIF, 0;
@@ -2978,7 +2978,7 @@ module MyDomain : Madil.DOMAIN =
             varseq)
            :: refs in
          let refs = (* Objects *)
-           if true (* filling <> `Full *) then
+           if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
@@ -2991,6 +2991,17 @@ module MyDomain : Madil.DOMAIN =
              let xg1, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
+             let$ refs, (mg1, varseq) =
+               refs,
+               [ make_anygrid (`Sprite,nocolor),
+                 varseq;
+
+                 (* let xg1_color, varseq = Refining.new_var varseq in (* NOTE: solves task like 3ac3 but slows down a lot *)
+                 let xg1_mask, varseq = Refining.new_var varseq in
+                 make_monocolor
+                   (Model.make_def xg1_color (make_anycolor C_OBJ))
+                   (Model.make_def xg1_mask (make_anygrid (filling,true))),
+                 varseq *) ] in
              (make_objects nmax
                 (Model.make_def xsize
                    (make_vec SIZE
@@ -3004,7 +3015,7 @@ module MyDomain : Madil.DOMAIN =
                             (make_vec POS
                                (Model.make_def xpos_i (make_anycoord I POS))
                                (Model.make_def xpos_j (make_anycoord J POS))))
-                         (Model.make_def xg1 (make_anygrid (`Sprite,nocolor))))))
+                         (Model.make_def xg1 mg1))))
                 (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
               varseq)
              :: refs

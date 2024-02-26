@@ -269,7 +269,7 @@ type segmentation =
   | ConnectedOneColor
 
 let candidate_segmentations =
-  [ Connected; OneColor; ConnectedOneColor ]
+  [ ConnectedOneColor; Connected; OneColor ]
 let nb_candidate_segmentations =
   List.length candidate_segmentations
 
@@ -423,7 +423,7 @@ let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
 let partition_by_color, reset_partition_by_color = Memo.memoize ~size:103 partition_by_color
 
 let parse (g : Grid.t) : (segmentation * t) Myseq.t =
-  let* seg = Myseq.from_list [ConnectedOneColor; Connected; OneColor] in
+  let* seg = Myseq.from_list candidate_segmentations in
   let objs =
     match seg with
     | Connected -> segment g
