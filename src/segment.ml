@@ -315,7 +315,7 @@ let background_colors (g : Grid.t) : Grid.color list = (* QUICK, in decreasing f
   let l = List.sort (fun (c1,n1) (c2,n2) -> Stdlib.compare (n2,c1) (n1,c2)) !l in
   let l =
     match l with (* keep only significant colors, and at most 2 *)
-    | (c1,n1)::(c2,n2)::_ -> [c1;c2]
+    | (c1,n1)::(c2,n2)::_ when c1 <> Grid.black -> [c1;c2] (* if it seems to be black then it's black *)
     | (c1,_)::_ -> [c1]
     | [] -> [] in
   if List.mem Grid.black l then l
