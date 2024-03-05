@@ -264,25 +264,41 @@ module Objects =
   struct
 
 type segmentation =
-  | Connected
-  | OneColor
-  | ConnectedOneColor
+  | Connected of connectedness * bool (* one-color *)
+  | SameColor
+and connectedness =
+  | Connect8
+  | Connect4
+  | Connect2_row
+  | Connect2_col
 
 let candidate_segmentations =
-  [ ConnectedOneColor; Connected; OneColor ]
+  [ Connected (Connect8,true);
+    Connected (Connect8,false);
+    Connected (Connect4,true);
+    Connected (Connect4,false);
+    Connected (Connect2_row,true);
+    Connected (Connect2_col,true);
+    SameColor ]
 let nb_candidate_segmentations =
   List.length candidate_segmentations
 
-let xp_segmentation ~html print = function
-  | Connected -> print#string "connected"
-  | OneColor -> print#string "one-color"
-  | ConnectedOneColor -> print#string "one-color connected"
+let rec xp_segmentation ~html print = function
+  | Connected (conn,mono) ->
+     if mono then print#string "same-color ";
+     xp_connectedness ~html print conn
+  | SameColor -> print#string "same-color"
+and xp_connectedness ~html print = function
+  | Connect8 -> print#string "8-connected"
+  | Connect4 -> print#string "4-connected"
+  | Connect2_row -> print#string "same-row"
+  | Connect2_col -> print#string "same-column"
 
 type obj = int * int * Grid.t (* object *)
 type t = obj list
 
 let segment_gen
-      (connected_pixels : Grid.pixel -> Grid.pixel -> bool)
+      (c_row, c_col, c_diag1, c_diag2, c_samecolor : bool * bool * bool * bool * bool) (* row, col, diag1, diag2, samecolor *)
       (g : Grid.t)
     : t = (* position and subgrids of segments *)
   Common.prof "Grid.segment" (fun () ->
@@ -308,33 +324,33 @@ let segment_gen
   for i = 0 to h-1 do
     for j = 0 to w-1 do
       let c = mat.{i,j} in
-      let pix = (i,j,c) in
+      (*let pix = (i,j,c) in*)
       if c <> Grid.transparent then (
         (* pixel on the right *)
         let j_right = j+1 in
-        if j_right < w then (
+        if c_row && j_right < w then (
           let c_right = mat.{i,j_right} in
-          if c_right <> Grid.transparent && connected_pixels pix (i,j_right,c_right) then
+          if c_right <> Grid.transparent && (not c_samecolor || c_right = c) then
 	    ignore (fm#merge [(i,j); (i,j_right)]));
         (* pixel down *)
         let i_down = i+1 in
-        if i_down < h then (
+        if c_col && i_down < h then (
           let c_down = mat.{i_down,j} in
-          if c_down <> Grid.transparent && connected_pixels pix (i_down,j,c_down) then
+          if c_down <> Grid.transparent && (not c_samecolor || c_down = c) then
 	    ignore (fm#merge [(i,j); (i_down,j)]));
         (* pixel right and down, diagonally *)
         let i_diag1 = i+1 in
         let j_diag1 = j+1 in
-        if i_diag1 < h && j_diag1 < w then (
+        if c_diag1 && i_diag1 < h && j_diag1 < w then (
           let c_diag1 = mat.{i_diag1,j_diag1} in
-          if c_diag1 <> Grid.transparent && connected_pixels pix (i_diag1,j_diag1,c_diag1) then
+          if c_diag1 <> Grid.transparent && (not c_samecolor || c_diag1 = c) then
 	    ignore (fm#merge [(i,j); (i_diag1,j_diag1)]));
         (* pixel left and down, diagonally *)
         let i_diag2 = i+1 in
         let j_diag2 = j-1 in
-        if i_diag2 < h && j_diag2 >= 0 then (
+        if c_diag2 && i_diag2 < h && j_diag2 >= 0 then (
           let c_diag2 = mat.{i_diag2,j_diag2} in
-          if c_diag2 <> Grid.transparent && connected_pixels pix (i_diag2,j_diag2,c_diag2) then
+          if c_diag2 <> Grid.transparent && (not c_samecolor || c_diag2 = c) then
 	    ignore (fm#merge [(i,j); (i_diag2,j_diag2)])))
     done
   done;
@@ -353,17 +369,17 @@ let segment_gen
       parts in
   List.map (fun (i,j,g,_) -> (i,j,g)) sorted_parts)
 
-let segment = segment_gen (fun _ _ -> true)
-let segment, reset_segment = Memo.memoize ~size:103 segment
-                    
-let segment_same_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> c1 = c2)
-let segment_same_color, reset_segment_same_color = Memo.memoize ~size:103 segment_same_color
-                    
-let segment_same_row_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> i1 = i2 && c1 = c2)
-let segment_same_row_and_color, reset_segment_same_row_and_color = Memo.memoize ~size:103 segment_same_row_and_color
-                    
-let segment_same_column_and_color = segment_gen (fun (i1,j1,c1) (i2,j2,c2) -> j1 = j2 && c1 = c2)
-let segment_same_column_and_color, reset_segment_same_column_and_color = Memo.memoize ~size:103 segment_same_column_and_color
+let segment_connected (conn : connectedness) (samecolor : bool) g =
+  segment_gen
+    (match conn with
+     | Connect8 -> (true, true, true, true, samecolor)
+     | Connect4 -> (true, true, false, false, samecolor)
+     | Connect2_row -> (true, false, false, false, samecolor)
+     | Connect2_col -> (false, true, false, false, samecolor))
+    g
+let segment_connected, reset_segment_connected =
+  Memo.memoize3 ~size:103 segment_connected
+
 
 (*let _ = (* unit test *)
   print_endline "UNIT TEST Grid_patterns.segment";
@@ -420,15 +436,15 @@ let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
       parts in
   List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts)
 
-let partition_by_color, reset_partition_by_color = Memo.memoize ~size:103 partition_by_color
+let partition_by_color, reset_partition_by_color =
+  Memo.memoize ~size:103 partition_by_color
 
 let parse (g : Grid.t) : (segmentation * t) Myseq.t =
   let* seg = Myseq.from_list candidate_segmentations in
   let objs =
     match seg with
-    | Connected -> segment g
-    | OneColor -> partition_by_color g
-    | ConnectedOneColor -> segment_same_color g in
+    | Connected (conn,samecolor) -> segment_connected conn samecolor g
+    | SameColor -> partition_by_color g in
   Myseq.return (seg, objs)
 
   end
@@ -933,10 +949,7 @@ let from_grid, reset_from_grid =
              
 let reset_memoized_functions () =
   reset_subgrid_of_part ();
-  Objects.reset_segment ();
-  Objects.reset_segment_same_color ();
-  Objects.reset_segment_same_row_and_color ();
-  Objects.reset_segment_same_column_and_color ();
+  Objects.reset_segment_connected ();
   Objects.reset_partition_by_color ();
     (*  Motif.reset_make_grid ();*)
   Motif.reset_from_grid ()
