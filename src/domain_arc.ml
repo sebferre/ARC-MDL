@@ -2171,7 +2171,7 @@ module MyDomain : Madil.DOMAIN =
            let* bc = Myseq.from_list (Segment.background_colors g) in
            let* dcol, _ = parse_col (`Color bc) in
            let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
-           let nc1 = if g.Grid.color_count.(bc) > 0 then nc-1 else nc in
+           let nc1 = if nc > 1 && g.Grid.color_count.(bc) > 0 then nc-1 else nc in
            let* dg1, _ = parse_g1 (`GridDimsCols (g1,rh,rw,nc1)) in
            Myseq.return (make_dbgcolor dcol dg1, `Null)
          else Myseq.empty
