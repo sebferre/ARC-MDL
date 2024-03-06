@@ -480,6 +480,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       [ `Index_1 of int option list (* on any Ndtree *)
       | `Tail_1 (* Seq -> Seq *)
       | `Reverse_1 (* Seq -> Seq *)
+      | `Cardinal_1 (* Seq -> Int *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
       | `Modulo_2 (* on Int *)
@@ -585,6 +586,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            ~html print is
       | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
+      | `Cardinal_1 -> print#string "cardinal"
       | `Plus_2 -> print#string "+"
       | `Minus_2 -> print#string "-"
       | `Modulo_2 -> print#string "%"
@@ -757,6 +759,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
+               `Cardinal_1, [|OBJ (`Sprite,false)|];
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `Area_1, [|GRID (`Sprite,false)|];
@@ -1371,6 +1374,7 @@ module MyDomain : Madil.DOMAIN =
       | `Index_1 _ -> assert false (* not a scalar function *)
       | `Tail_1 -> assert false
       | `Reverse_1 -> assert false
+      | `Cardinal_1 -> assert false
       | `Plus_2 ->
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
@@ -1819,6 +1823,10 @@ module MyDomain : Madil.DOMAIN =
           | None -> Result.Error (Undefined_result "tail: undefined on the empty sequence"))
       | `Reverse_1, [|v1|] ->
          Result.Ok (Ndtree.reverse v1)
+      | `Cardinal_1, [|v1|] ->
+         (match Ndtree.length v1 with
+          | Some n -> Result.Ok (Ndtree.scalar (Some (`Int n)))
+          | None -> Result.Error (Undefined_result "cardinal: not a sequence"))
       | _ ->
          let scalar_f = compile_scalar_func f in
          Ndtree.broadcast_result scalar_f args_tree
@@ -2559,6 +2567,7 @@ module MyDomain : Madil.DOMAIN =
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
       | `Tail_1 -> 0.
       | `Reverse_1 -> 0.
+      | `Cardinal_1 -> 0.
       | `Plus_2 -> 0.
       | `Minus_2 -> 0.
       | `Modulo_2 -> 0.
@@ -2770,6 +2779,11 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID tg1; OBJ _|] -> (GRID tg1, `Crop_2)::res
               | _ -> res in*)
+            let res = (* Cardinal *)
+              match t_args, v_args_tree with
+              | [|OBJ _|], [|v1|] when Ndtree.ndim v1 > 0 ->
+                 (INT CARD, `Cardinal_1, `Default)::res (* TODO: generalize beyond OBJ ? *)
+              | _ -> res in
             res) in
       (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
       (*test "TEST LEVEL 1" index;*)
