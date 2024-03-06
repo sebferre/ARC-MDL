@@ -205,6 +205,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
+      | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
       | ColorSeq of direction (* COLOR+ : GRID *)
       | ColorMat (* COLOR++ : GRID *)
     (* | Range of var (* loop var *) (* start:INT, step:INT, len:INT : INT+ *) *)
@@ -285,6 +286,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "a full mask of size "; xp_size ~html print ()
     let xp_point ~html print () =
       print#string "a point mask"
+    let xp_line xp_len xp_dir ~html print () =
+      print#string "a line of length "; xp_len ~html print ();
+      print#string " and direction "; xp_dir ~html print ()
     let xp_colorseq dir xp_colors ~html print () =
       print#string "a ";
       print#string (match dir with `H -> "horizontal" | `V -> "vertical");
@@ -329,6 +333,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_full xp_size ~html print ()
       | Point, [||] ->
          xp_point ~html print ()
+      | Line, [|xp_len; xp_dir|] ->
+         xp_line xp_len xp_dir ~html print ()
       | ColorSeq dir, [|xp_colors|] ->
          xp_colorseq dir xp_colors ~html print ()
       | ColorMat, [|xp_colorss|] ->
@@ -386,6 +392,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Empty, _ -> print#string "size"
       | Full, _ -> print#string "size"
       | Point, _ -> assert false
+      | Line, 0 -> print#string "length"
+      | Line, 1 -> print#string "direction"
+      | Line, _ -> assert false
       | ColorSeq _, 0 -> print#string "colors"
       | ColorSeq _, _ -> assert false
       | ColorMat, 0 -> print#string "colors"
@@ -416,6 +425,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
       | DPoint (* MASK *)
+      | DLine (* INT SIZE, VEC MOVE : MASK *)
       | DColorSeq of direction (* COLOR+ : GRID *)
       | DColorMat (* COLOR++ : GRID *)
 
@@ -456,6 +466,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_full xp_size ~html print ()
       | DPoint, [||] ->
          xp_point ~html print ()
+      | DLine, [|xp_len; xp_dir|] ->
+         xp_line xp_len xp_dir ~html print ()
       | DColorSeq dir, [|xp_colors|] ->
          xp_colorseq dir xp_colors ~html print ()
       | DColorMat, [|xp_colorss|] ->
@@ -721,6 +733,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]);
+                 not full && nocolor, (Line, [|INT (COORD (I, SIZE)), 0; VEC MOVE, 0|]);
                  full && not nocolor, (ColorSeq `H, [|COLOR C_OBJ, 1|]);
                  full && not nocolor, (ColorMat, [|COLOR C_OBJ, 2|]) ]
           | OBJ tg ->
@@ -947,6 +960,7 @@ module MyDomain : Madil.DOMAIN =
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
     let make_point : model = Model.make_pat (GRID (`Sprite,true)) Point [||]
+    let make_line mlen mdir : model = Model.make_pat (GRID (`Sprite,true)) Line [|mlen; mdir|]
     let make_colorseq dir mcolors : model = Model.make_pat (GRID (`Full,false)) (ColorSeq dir) [|mcolors|]
     let make_colormat mcolorss : model = Model.make_pat (GRID (`Full,false)) ColorMat [|mcolorss|]
       
@@ -1149,6 +1163,12 @@ module MyDomain : Madil.DOMAIN =
     let make_dpoint : data =
       let g = Grid.Mask.full 1 1 in
       Data.make_dpat (`Grid g) DPoint [||]
+    let make_dline dlen ddir : data result =
+      let| g =
+        match Data.value dlen, Data.value ddir with
+        | `Int len, `Vec dir -> GPat.generate_line len dir
+        | _ -> assert false in
+      Result.Ok (Data.make_dpat (`Grid g) DLine [|dlen; ddir|])
     let make_dcolorseq dir dcolors : data =
       let g =
         match Data.value dcolors with
@@ -2036,6 +2056,11 @@ module MyDomain : Madil.DOMAIN =
       | _, Point, [||] ->
          (fun info ->
            Myseq.return (make_dpoint))
+      | _, Line, [|gen_len; gen_dir|] ->
+         (fun info ->
+           let* dlen = gen_len info in
+           let* ddir = gen_dir info in
+           Myseq.from_result (make_dline dlen ddir))
       | _, ColorSeq dir, [|gen_colors|] ->
          (fun info ->
            let* dcolors = gen_colors info in
@@ -2303,6 +2328,15 @@ module MyDomain : Madil.DOMAIN =
          if h=1 && w=1 && Grid.Mask.mem 0 0 mask
          then Myseq.return (make_dpoint, `Null)
          else Myseq.empty
+      | _, Line, [|parse_len; parse_dir|], `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
+         (match GPat.parse_line mask with
+          | Some (len, (di,dj)) ->
+             let* dlen, _ = parse_len (`IntRange (len, Range.union rh rw)) in
+             let* ddir, _ = parse_dir (`Vec (`IntRange (di, Range.make_closed 0 1),
+                                             `IntRange (dj, Range.make_closed (-1) 1))) in
+             let* data = Myseq.from_result (make_dline dlen ddir) in
+             Myseq.return (data, `Null)
+          | None -> Myseq.empty)         
       | _, ColorSeq dir, [|parse_colors|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
          let* icolors =
@@ -2453,6 +2487,7 @@ module MyDomain : Madil.DOMAIN =
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
       | DPoint, [||] -> 0.
+      | DLine, [|enc_len; enc_dir|] -> enc_len +. enc_dir
       | DColorSeq dir, [|enc_colors|] -> enc_colors
       | DColorMat, [|enc_colorss|] -> enc_colorss
       | _ -> assert false
@@ -2501,6 +2536,7 @@ module MyDomain : Madil.DOMAIN =
       | _, Empty -> 0.
       | _, Full -> 0.
       | _, Point -> 0.
+      | _, Line -> 0.
       | _, ColorSeq dir -> 1. (* encoding direction *)
       | _, ColorMat -> 0.
 
@@ -3104,6 +3140,21 @@ module MyDomain : Madil.DOMAIN =
                  :: (make_point, varseq)
                  :: refs
                else refs) in
+         let refs = (* Line *)
+           if filling <> `Full && nocolor then
+             let xlen, varseq = Refining.new_var varseq in
+             let xdir, varseq = Refining.new_var varseq in
+             let xdir_i, varseq = Refining.new_var varseq in
+             let xdir_j, varseq = Refining.new_var varseq in
+             (make_line
+                (Model.make_def xlen (make_anycoord I SIZE))
+                (Model.make_def xdir
+                   (make_vec MOVE
+                      (Model.make_def xdir_i (make_anycoord I MOVE))
+                      (Model.make_def xdir_j (make_anycoord J MOVE)))),
+              varseq)
+             ::refs
+           else refs in
          let refs = (* ColorSeq *)
            if filling = `Full && not nocolor then
              let xloop, varseq = Refining.new_var varseq in

@@ -6,6 +6,60 @@ open Grid
 module Intset = Intset.Intmap
 
 
+(* Shapes *)
+
+let generate_line (len : int) (dir : int * int) (* {-1,0,1}x{-1,0,1} *) : Grid.t result (* mask *) =
+  let di, dj = dir in (* TODO: check that value -1, 0 or 1 ? *)
+  if len >= 2 && di >= -1 && di <= 1 && dj >= -1 && dj <= 1 then
+    let rec aux n i j acc =
+      if n = 0
+      then i, j, acc
+      else
+        let i1, j1 = i + di, j + dj in
+        aux (n-1) i1 j1 ((i1,j1)::acc)
+    in
+    let i_last, j_last, lpos = aux (len-1) 0 0 [(0,0)] in
+    let h, w = abs i_last + 1, abs j_last + 1 in
+    let offset_i, offset_j = min 0 i_last, min 0 j_last in
+    let g = Grid.make h w Grid.transparent in
+    List.iter
+      (fun (i,j) -> Grid.Do.set_pixel g (i - offset_i) (j - offset_j) Grid.black)
+      lpos;
+    Result.Ok g
+  else Result.Error (Failure "invalid line")
+
+let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, dir *)
+  (* TODO: possibly extend to direction with values higher than 1 *)
+  Common.prof "Grid_patterns.parse_line" (fun () ->
+  let h, w = Grid.dims g in
+  let nb_off = g.color_count.(Grid.transparent) in
+  let nb_on = g.color_count.(Grid.black) in
+  assert (h * w = nb_off + nb_on); (* a mask *)
+  if h = 1 && w > 1 && nb_on = w then Some (w, (0,1))
+  else if w = 1 && h > 1 && nb_on = h then Some (h, (1,0))
+  else if h = w && nb_on = h then (
+    let ok = ref true in
+    for k = 0 to h-1 do
+      ok := !ok && g.matrix.{k,k} = Grid.black (* diag1 *)
+    done;
+    if !ok then Some (h, (1,1))
+    else (
+      ok := true;
+      for k = 0 to h-1 do
+        ok := !ok && g.matrix.{k, w-k-1} = Grid.black (* diag2 *)
+      done;
+      if !ok then Some (h, (1,-1))
+      else None))
+  else None)
+
+(*let _ = (* unit test *)
+  print_endline "UNIT TEST Grid_patterns.make_line";
+  let g = generate_line 3 (0,1) in
+  pp Grid.xp_grid g;
+  (match parse_line g with
+   | None -> print_endline "not a line"
+   | Some (len, (di,dj)) -> Printf.printf "len=%d, dir=(%d,%d)\n" len di dj)*)
+
 (* Coloring *)
 
 let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result =
