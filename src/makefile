@@ -29,6 +29,14 @@ docker: arcathon
 	docker build -t sferre/arcathon .
 	docker save sferre/arcathon > docker_madil.tar
 
+test_common_subgrid: $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
+	ocamlfind ocamlopt $(FLAGS) -linkpkg -o test_common_subgrid $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
+
+js_common_subgrid: $(SRC) common_subgrid.ml js_common_subgrid.ml
+	ocamlfind ocamlc $(FLAGS) $(FLAGS_FABLIS) -package js_of_ocaml,js_of_ocaml-lwt,js_of_ocaml-ppx -linkpkg -o html/js_common_subgrid.byte $(OBJ) $(SRC) common_subgrid.ml js_common_subgrid.ml
+	js_of_ocaml $(JSOO_FLAGS) html/js_common_subgrid.byte
+	zip html/jscs.zip html/js_common_subgrid.js
+
 install:
 	cp -r html/index.html html/index.css html/script.js /local/ferre/web/ferre/arcmdl
 

@@ -198,6 +198,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | IsFull (* SPRITE : GRID *)
       | Crop (* SPRITE ; POS, SIZE : SPRITE *)
       | Objects of int (* SIZE, SEG, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length *)
+      | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | Motif (* MOTIF, SPRITE (core), derived SPRITE (pure), SPRITE (noise) *)
@@ -254,6 +255,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       xp_objs ~html print ();
       print#string " forming the constellation object: ";
       xp_merger ~html print ()
+    let xp_colorpartition xp_size xp_grids ~html print () =
+      print#string "a grid of size "; xp_size ~html print ();
+      print#string " that is composed of colored layers";
+      xp_newline ~html print ();
+      xp_grids ~html print ()
     let xp_monocolor xp_color xp_mask ~html print () =
       print#string "a grid with only color "; xp_color ~html print ();
       print#string " and with mask"; xp_newline ~html print ();
@@ -319,6 +325,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_crop xp_sprite xp_pos xp_size ~html print ()
       | Objects (nmax), [|xp_size; xp_seg; xp_objs; xp_merger|] ->
          xp_objects nmax xp_size xp_seg xp_objs xp_merger ~html print ()
+      | ColorPartition, [|xp_size; xp_grids|] ->
+         xp_colorpartition xp_size xp_grids ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | Recoloring, [|xp_grid; xp_map|] ->
@@ -375,6 +383,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Objects _, 2 -> print#string "obj"
       | Objects _, 3 -> print#string "merger"
       | Objects _, _ -> assert false
+      | ColorPartition, 0 -> print#string "size"
+      | ColorPartition, 1 -> print#string "layer"
+      | ColorPartition, _ -> assert false
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
       | Monocolor, _ -> assert false
@@ -418,6 +429,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DIsFull (* SPRITE : GRID *)
       | DCrop (* SPRITE, POS, SIZE : SPRITE *)
       | DObjects of int (* SIZE, SEG, OBJ+, derived OBJ : SPRITE *)
+      | DColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | DMonocolor (* COLOR, MASK : SPRITE *)
       | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | DMotif (* MOTIF, SPRITE (core), SPRITE (pure), SPRITE (noise) *)
@@ -452,6 +464,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_crop xp_sprite xp_pos xp_size ~html print ()
       | DObjects (nmax), [|xp_size; xp_seg; xp_objs; xp_merger|] ->
          xp_objects nmax xp_size xp_seg xp_objs xp_merger ~html print ()
+      | DColorPartition, [|xp_size; xp_grids|] ->
+         xp_colorpartition xp_size xp_grids ~html print ()
       | DMonocolor, [|xp_color; xp_mask|] ->
          xp_monocolor xp_color xp_mask ~html print ()
       | DRecoloring, [|xp_grid; xp_map|] ->
@@ -723,6 +737,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
                  not full, (Objects (1), [|VEC SIZE, 0; SEG, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
+                 not nocolor, (ColorPartition, [|VEC SIZE, 0; GRID (`Sprite,false), 1|]);
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
                  true, (Motif, [|MOTIF, 0;
@@ -896,6 +911,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec of input * input
       | `Color of Grid.color
       | `Seg of GPat.Objects.segmentation
+      | `SegAny
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
@@ -925,7 +941,7 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
 
-    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 1 string_of_int
+    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
     
     (* constructors and accessors *)
                         
@@ -956,6 +972,7 @@ module MyDomain : Madil.DOMAIN =
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
     let make_crop tg mg1 mpos msize : model = Model.make_pat (GRID tg) Crop [|mg1; mpos; msize|]
     let make_objects nmax msize mseg mobjs mmerger : model = Model.make_pat (GRID (`Sprite,false)) (Objects (nmax)) [|msize; mseg; mobjs; mmerger|]
+    let make_colorpartition filling msize mgrids : model = Model.make_pat (GRID (filling,false)) ColorPartition [|msize; mgrids|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
     let make_motif tg mmotif mcore mpure mnoise : model = Model.make_pat (GRID tg) Motif [|mmotif; mcore; mpure; mnoise|]
@@ -1092,6 +1109,26 @@ module MyDomain : Madil.DOMAIN =
         | _ -> assert false in
       let dmerger = Data.make_dexpr merger_obj in
       Data.make_dpat (`Grid g) (DObjects (nmax)) [|dsize; dseg; dobjs; dmerger|]
+    let make_dcolorpartition dsize dgrids : data result =
+      let| g =
+        match Data.value dsize, Data.value dgrids with
+        | `Vec (h,w), `Seq g1s ->
+           if Array.for_all
+                (function
+                 | `Grid g1 -> Grid.dims g1 = (h,w)
+                 | _ -> false)
+                g1s
+           then (
+             let g = Grid.make h w Grid.transparent in
+             Array.iter
+               (function
+                | `Grid g1 -> Grid.add_grid_at g 0 0 g1
+                | _ -> ())
+               g1s;
+             Result.Ok g)
+           else Result.Error (Failure "DColorPartition: some layer has incompatible size")
+        | _ -> assert false in
+      Result.Ok (Data.make_dpat (`Grid g) DColorPartition [|dsize; dgrids|])
     let make_dmonocolor dcol dmask : data =
       let g_res =
         match Data.value dcol, Data.value dmask with
@@ -2029,6 +2066,14 @@ module MyDomain : Madil.DOMAIN =
                   Myseq.return (make_dobjects nmax dsize dseg dobjs)
                | _ -> Myseq.empty)
            | _ -> assert false)
+      | _, ColorPartition, [|gen_size; gen_grids|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_size info; gen_grids info] in
+           match l with
+           | [dsize; dgrids] ->
+              let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
+              Myseq.return data
+           | _ -> assert false)
       | _, Monocolor, [|gen_col; gen_mask|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_col info; gen_mask info] in
@@ -2118,6 +2163,7 @@ module MyDomain : Madil.DOMAIN =
         | `Color c0, `Color c -> c = c0 && Grid.is_true_color c, `Null
         | `Color c0, `Seq (`Color c::lc) -> c = c0 && Grid.is_true_color c, `Seq lc
         | `Color c0, `Seq (`Seq (`Color c::lc) :: l) -> c = c0 && Grid.is_true_color c, `Seq (`Seq lc :: l)
+        | `Seg seg0, `SegAny -> true, `Null
         | `Seg seg0, `Seg seg -> seg = seg0, `Null
         | `Motif mot0, `Motif mot -> mot = mot0, `Null
         | `Grid g0, `GridDimsCols (g,_,_,_) -> g = g0, `Null
@@ -2156,6 +2202,9 @@ module MyDomain : Madil.DOMAIN =
          then Myseq.return (make_danycolor c tc, `Null)
          else Myseq.empty
       | SEG, AnySeg, [||], `Seg seg ->
+         Myseq.return (make_danyseg seg, `Null)
+      | SEG, AnySeg, [||], `SegAny ->
+         let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
          Myseq.return (make_danyseg seg, `Null)
       | MOTIF, AnyMotif, [||], `Motif mot ->
          Myseq.return (make_danymotif mot, `Null)
@@ -2239,15 +2288,32 @@ module MyDomain : Madil.DOMAIN =
          let h, w = Grid.dims g in
          let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
                                            `IntRange (w, rw))) in
-         let* seg, objs = Grid_patterns.Objects.parse g in
+         let* dseg, _ = parse_seg `SegAny in
+         let seg = match Data.value dseg with `Seg seg -> seg | _ -> assert false in
+         let* objs = Grid_patterns.Objects.parse seg g in
          let* () = Myseq.from_bool (List.length objs <= nmax) in
-         let* dseg, _ = parse_seg (`Seg seg) in
+         (*let* dseg, _ = parse_seg (`Seg seg) in*)
          (*let nc = (* TODO: need to encode which color *)
            match seg with
            | OneColor | ConnectedOneColor -> 1
            | Connected -> nc in*)
          let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
          Myseq.return (make_dobjects nmax dsize dseg dobjs, `Null)
+      | _, ColorPartition, [|parse_size; parse_grids|], `GridDimsCols (g,rh,rw,nc) ->
+         let h, w = Grid.dims g in
+         let rh1 = Range.make_exact h in
+         let rw1 = Range.make_exact w in
+         let* dsize, _ = parse_size (`Vec (`IntRange (h, rh),
+                                           `IntRange (w, rw))) in
+         let lg1s = Grid_patterns.partition_by_color g in
+         let* () = Myseq.from_bool (lg1s <> []) in
+         let g1s =
+           List.map
+             (fun g1 -> `GridDimsCols (g1,rh1,rw1,nc)) (* h/w known, keeping nc>1 for supporting Monocolor *)
+             lg1s in
+         let* dgrids, _ = parse_grids (`Seq g1s) in
+         let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
+         Myseq.return (data, `Null)
       | _, Monocolor, [|parse_col; parse_mask|], `GridDimsCols (g,rh,rw,nc) ->
          if Grid.color_count Grid.transparent g = 1
          then
@@ -2488,6 +2554,7 @@ module MyDomain : Madil.DOMAIN =
       | DIsFull, [|enc_g1|] -> enc_g1
       | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
       | DObjects (nmax), [|enc_size; enc_seg; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | DColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
       | DMotif, [|enc_motif; enc_core; _enc_pure; enc_noise|] -> enc_motif +. enc_core +. enc_noise
@@ -2537,6 +2604,7 @@ module MyDomain : Madil.DOMAIN =
             | `ConnectedSameColor -> 0.33
             | `SameColor -> 0.33)
          +. *) Mdl.Code.universal_int_plus nmax
+      | _, ColorPartition -> 0.
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
       | _, Motif -> 0.
@@ -3043,17 +3111,6 @@ module MyDomain : Madil.DOMAIN =
              let xg1, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
-             let$ refs, (mg1, varseq) =
-               refs,
-               [ make_anygrid (`Sprite,nocolor),
-                 varseq;
-
-                 (* let xg1_color, varseq = Refining.new_var varseq in (* NOTE: solves task like 3ac3 but slows down a lot *)
-                 let xg1_mask, varseq = Refining.new_var varseq in
-                 make_monocolor
-                   (Model.make_def xg1_color (make_anycolor C_OBJ))
-                   (Model.make_def xg1_mask (make_anygrid (filling,true))),
-                 varseq *) ] in
              (make_objects nmax
                 (Model.make_def xsize
                    (make_vec SIZE
@@ -3067,11 +3124,70 @@ module MyDomain : Madil.DOMAIN =
                             (make_vec POS
                                (Model.make_def xpos_i (make_anycoord I POS))
                                (Model.make_def xpos_j (make_anycoord J POS))))
-                         (Model.make_def xg1 mg1))))
+                         (Model.make_def xg1
+                            (make_anygrid (`Sprite,nocolor))))))
                 (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
               varseq)
              :: refs
            else refs in
+         let refs = (* Objects/SamColor *)
+           if filling <> `Full && not nocolor then
+             let xsize, varseq = Refining.new_var varseq in
+             let xsize_i, varseq = Refining.new_var varseq in
+             let xsize_j, varseq = Refining.new_var varseq in
+             let xloop, varseq = Refining.new_var varseq in
+             let xobj, varseq = Refining.new_var varseq in
+             let xpos, varseq = Refining.new_var varseq in
+             let xpos_i, varseq = Refining.new_var varseq in
+             let xpos_j, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in
+             let xg1_color, varseq = Refining.new_var varseq in
+             let xg1_mask, varseq = Refining.new_var varseq in
+             let xmerger, varseq = Refining.new_var varseq in
+             let nmax = 9 in
+             (make_objects nmax
+                (Model.make_def xsize
+                   (make_vec SIZE
+                      (Model.make_def xsize_i (make_anycoord I SIZE))
+                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                (Model.make_expr SEG (Expr.Const (SEG, `Seg GPat.Objects.SameColor)))
+                (Model.make_loop xloop (Range.make_closed 1 nmax)
+                   (Model.make_def xobj
+                      (make_obj (`Sprite,nocolor)
+                         (Model.make_def xpos
+                            (make_vec POS
+                               (Model.make_def xpos_i (make_anycoord I POS))
+                               (Model.make_def xpos_j (make_anycoord J POS))))
+                         (Model.make_def xg1
+                            (make_monocolor
+                               (Model.make_def xg1_color (make_anycolor C_OBJ))
+                               (Model.make_def xg1_mask (make_anygrid (filling,true))))))))
+                (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
+              varseq)
+             :: refs
+           else refs in
+         (*let refs = (* ColorPartition *) (* too eager *)
+           if not nocolor then
+             let xsize, varseq = Refining.new_var varseq in
+             let xsize_i, varseq = Refining.new_var varseq in
+             let xsize_j, varseq = Refining.new_var varseq in
+             let xloop, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in
+             let xg1_color, varseq = Refining.new_var varseq in
+             let xg1_mask, varseq = Refining.new_var varseq in
+             (make_colorpartition filling
+                (Model.make_def xsize
+                   (make_vec SIZE
+                      (Model.make_def xsize_i (make_anycoord I SIZE))
+                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                (Model.make_loop xloop (Range.make_closed 1 Grid.nb_color)
+                   (Model.make_def xg1
+                      (make_monocolor
+                         (Model.make_def xg1_color (make_anycolor C_OBJ))
+                         (Model.make_def xg1_mask (make_anygrid (filling,true)))))),
+              varseq)
+             ::refs
+           else refs in*)
          let refs = (* Monocolor *)
            if not nocolor then
              let xcol, varseq = Refining.new_var varseq in

@@ -333,7 +333,7 @@ let candidate_segmentations =
     Connected (Connect4,false);
     Connected (Connect2_row,true);
     Connected (Connect2_col,true);
-    SameColor ]
+    (*SameColor*) ]
 let nb_candidate_segmentations =
   List.length candidate_segmentations
 
@@ -450,8 +450,8 @@ let segment_connected, reset_segment_connected =
       pp_endline Grid.xp_grid g1)
     objs*)
 
-let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
-  Common.prof "Grid_patterns.partition_by_color" (fun () ->
+let segment_by_color (g : Grid.t) : t = (* position and subgrids *)
+  Common.prof "Grid_patterns.segment_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
   let color_part =
@@ -490,18 +490,59 @@ let partition_by_color (g : Grid.t) : t = (* position and subgrids *)
       parts in
   List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts)
 
-let partition_by_color, reset_partition_by_color =
-  Memo.memoize ~size:103 partition_by_color
+let segment_by_color, reset_segment_by_color =
+  Memo.memoize ~size:103 segment_by_color
 
-let parse (g : Grid.t) : (segmentation * t) Myseq.t =
-  let* seg = Myseq.from_list candidate_segmentations in
+let parse seg (g : Grid.t) : t Myseq.t =
   let objs =
     match seg with
     | Connected (conn,samecolor) -> segment_connected conn samecolor g
-    | SameColor -> partition_by_color g in
-  Myseq.return (seg, objs)
+    | SameColor -> segment_by_color g in
+  Myseq.return objs
 
   end
+
+let partition_by_color (g : Grid.t) : Grid.t list =
+  Common.prof "Grid_patterns.partition_by_color" (fun () ->
+  let h, w = Grid.dims g in
+  let mat = g.matrix in
+  let color_part =
+    Array.init Grid.nb_color (* one potential grid per color *)
+      (fun c -> (Grid.make h w Grid.transparent, ref 0)) in
+  for i = 0 to h-1 do
+    for j = 0 to w-1 do
+      let c = mat.{i,j} in
+      if Grid.is_true_color c then
+        let g1, area = color_part.(c) in
+        Grid.Do.set_pixel g1 i j c;
+        incr area
+    done
+  done;
+  let parts =
+    let res = ref [] in
+    Array.iteri
+      (fun c (g1,area) ->
+        if !area > 0 then
+          res := (!area, c, g1) :: !res)
+      color_part;
+    !res in
+  let sorted_parts =
+    List.sort
+      (fun (a1,c1,g1) (a2,c2,g2) ->
+        Stdlib.compare (a2,c1) (a1,c2)) (* decreasing area first *)
+      parts in
+  List.map (fun (_,_,g1) -> g1) sorted_parts)
+
+let partition_by_color, reset_partition_by_color =
+  Memo.memoize ~size:103 partition_by_color
+
+(*let _ =
+  print_endline "UNIT TEST Grid_patterns.partition_by_color";
+  let g = Grid.init 6 8 (fun _ _ -> Random.int 4) in
+  pp Grid.xp_grid g;
+  let lg1s = partition_by_color g in
+  List.iter (pp Grid.xp_grid) lg1s*)
+
 
 (* MOTIFS *)
 
@@ -1004,7 +1045,8 @@ let from_grid, reset_from_grid =
 let reset_memoized_functions () =
   reset_subgrid_of_part ();
   Objects.reset_segment_connected ();
-  Objects.reset_partition_by_color ();
+  Objects.reset_segment_by_color ();
+  reset_partition_by_color ();
     (*  Motif.reset_make_grid ();*)
   Motif.reset_from_grid ()
 
