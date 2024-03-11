@@ -1176,20 +1176,20 @@ module Transf =
       
     (* TODO: selecting halves and quarters *)
 
-    let compose (c1_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color bgcolor1 *)
+    let compose (bgcolor : color) (c1_mask : color) (g1 : t) (g2 : t) : t result = (* repeating g2 for each pixel of g1 that has color bgcolor1 *)
       let h1, w1 = dims g1 in
       let h2, w2 = dims g2 in
       let h, w = h1*h2, w1*w2 in
       if h > max_size || w > max_size
       then Result.Error (Undefined_result "compose: result grid too large")
       else (
-        let res = make h w black (* or whatever color *) in
+        let res = make h w bgcolor in
         iter_pixels
           (fun i1 j1 c1 ->
             if c1 = c1_mask then
               iter_pixels
                 (fun i2 j2 c2 ->
-                  if c2 <> black then
+                  if c2 <> bgcolor then
                     Do.set_pixel res (i1*h2+i2) (j1*w2+j2) c2)
                 g2)
           g1;

@@ -540,7 +540,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
       | `FillResizeAlike_3 of Grid.Transf.periodicity_mode (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
-      | `SelfCompose_2 (* Color, Mask/Shape/Grid as T, T -> T *)
+      | `SelfCompose_3 (* Color bg, Color cmask, Mask/Shape/Grid as T, T -> T *)
       | `ApplySymVec_1 of symmetry * typ_vec (* on Vec *)
       | `ApplySymGrid_1 of symmetry (* on Mask, Shape, Layer; type of the argument as computation depends on it *)
       | `UnfoldSym_1 of symmetry list list (* on Mask, Shape, Layer *)
@@ -650,7 +650,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string ("periodicFactor" ^ suffix_periodicity_mode mode)
       | `FillResizeAlike_3 mode ->
          print#string ("fillResizeAlike" ^ suffix_periodicity_mode mode)
-      | `SelfCompose_2 -> print#string "compose"
+      | `SelfCompose_3 -> print#string "compose"
       | `ApplySymVec_1 (sym,_) ->
          print#string "applySymVec";
          xp_tuple1 ~delims:("[","]") xp_symmetry ~html print sym
@@ -856,7 +856,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Tiling_1 (2,2), [|k|];
                `Unrepeat_1, [|k|];
                `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
-               `SelfCompose_2, [|COLOR C_OBJ; k|];
+               `SelfCompose_3, [|COLOR (C_BG full); COLOR C_OBJ; k|];
                `UnfoldSym_1 [], [|k|];
                `CloseSym_2 [], [|COLOR (C_BG full); k|];
                `SwapColors_3, [|k; COLOR C_OBJ; COLOR C_OBJ|];
@@ -938,10 +938,11 @@ module MyDomain : Madil.DOMAIN =
     let max_nb_writes = def_param "max_nb_doc_writes" 3 string_of_int (* max nb of selected output writes *)
     let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
     let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 1000 string_of_int (* max nb of considered expr refinements per grid read *)
-    let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
+    let max_expr_refinements_per_var = def_param "max_expr_refinements_per_var" 10 string_of_int (* max nb of considered expr refinements per model var *)
+    let max_refinements = def_param "max_refinements" 1000 string_of_int (* max nb of considered refinements *)
     let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
 
-    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
+    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 2 string_of_int
     
     (* constructors and accessors *)
                         
@@ -1752,10 +1753,10 @@ module MyDomain : Madil.DOMAIN =
                  Result.Ok (`Obj (i, j, shape'))
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
-      | `SelfCompose_2 ->
+      | `SelfCompose_3 ->
          (function
-          | [| `Color c_mask; `Grid g1|] ->
-             let| g = Grid.Transf.compose c_mask g1 g1 in
+          | [| `Color bgcolor; `Color c_mask; `Grid g1|] ->
+             let| g = Grid.Transf.compose bgcolor c_mask g1 g1 in
              Result.Ok (`Grid g)
           | _ -> Result.Error (Invalid_expr e))
       | `ApplySymVec_1 (sym,tv) ->
@@ -2670,7 +2671,7 @@ module MyDomain : Madil.DOMAIN =
       | `Unrepeat_1 -> 0.
       | `PeriodicFactor_2 p -> dl_periodicity_mode p
       | `FillResizeAlike_3 p -> dl_periodicity_mode p
-      | `SelfCompose_2 -> 0.
+      | `SelfCompose_3 -> 0.
       | `ApplySymVec_1 (sym,tv) -> Mdl.Code.uniform nb_symmetry +. Mdl.Code.uniform nb_typ_vec
       | `ApplySymGrid_1 sym -> Mdl.Code.uniform nb_symmetry
       | `UnfoldSym_1 symar -> Mdl.Code.uniform nb_symmetry_unfold
@@ -2964,10 +2965,14 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             let res = (* SelfCompose *)
               match t_args with
-              | [|GRID _ as t2|] ->
-                 let$ res, color = res, Grid.all_colors in
-                 let args_spec = `Custom [|`Val (COLOR C_OBJ, `Color color); `Pos 0|] in
-                 (t2, `SelfCompose_2, args_spec)::res
+              | [|GRID (filling,nocolor) as t2|] ->
+                 let full = filling = `Full in
+                 let bgcolor = if full then Grid.black else Grid.transparent in 
+                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
+                 let args_spec = `Custom [| `Val (COLOR (C_BG full), `Color bgcolor);
+                                            `Val (COLOR C_OBJ, `Color color);
+                                            `Pos 0|] in
+                 (t2, `SelfCompose_3, args_spec)::res
               | _ -> res in
             (*let res = (* UnfoldSym *)
               match t_args with
