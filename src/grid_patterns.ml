@@ -34,8 +34,8 @@ let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, di
   let h, w = Grid.dims g in
   let nb_off = g.color_count.(Grid.transparent) in
   let nb_on = g.color_count.(Grid.black) in
-  assert (h * w = nb_off + nb_on); (* a mask *)
-  if h = 1 && w > 1 && nb_on = w then Some (w, (0,1))
+  if not (h * w = nb_off + nb_on) then None (* not a valid mask *)
+  else if h = 1 && w > 1 && nb_on = w then Some (w, (0,1))
   else if w = 1 && h > 1 && nb_on = h then Some (h, (1,0))
   else if h = w && nb_on = h then (
     let ok = ref true in
