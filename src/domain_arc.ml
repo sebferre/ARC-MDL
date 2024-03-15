@@ -3038,10 +3038,6 @@ module MyDomain : Madil.DOMAIN =
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
               | _ -> res in
-            let res = (* LogNot *)
-              match t_args with
-              | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
-              | _ -> res in
             let res = (* And, Or, XOr, AndNOt *)
               match t_args with
               | [|GRID (`Sprite,true) as t1; t2|] when t2=t1 ->
@@ -3056,6 +3052,10 @@ module MyDomain : Madil.DOMAIN =
           index 1 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
+            let res = (* LogNot *)
+              match t_args with
+              | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
+              | _ -> res in
             (*let res = (* Tiling *)
               match t_args with
               | [|(VEC SIZE | GRID _ as t1)|] ->
