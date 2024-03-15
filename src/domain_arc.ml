@@ -508,6 +508,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `I_1 (* Vec -> Coord *)
       | `J_1 (* Vec -> Coord *)
       | `Transpose_1 (* I <-> J *)
+      | `Direction_1 (* Int/Vec -> Int/Vec *)
+      | `Abs_1 (* Int/Vec -> Int/Vec *)
       | `AsTVec_1 of typ_vec (* Int/Vec -> tv *)
       | `Pos_1 (* Obj -> Pos *)
       | `Grid_1 (* Obj -> Grid *)
@@ -621,6 +623,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `I_1 -> print#string "i"
       | `J_1 -> print#string "j"
       | `Transpose_1 -> print#string "transpose"
+      | `Direction_1 -> print#string "direction"
+      | `Abs_1 -> print#string "abs"
       | `AsTVec_1 tv -> print#string "as"; xp_typ_vec ~html print tv
       | `Pos_1 -> print#string "pos"
       | `Grid_1 -> print#string "grid"
@@ -808,6 +812,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `I_1, [|VEC tv|];
                `J_1, [|VEC tv|];
                `Transpose_1, [|INT (COORD (axis_transpose axis, tv))|];
+               `Direction_1, [|k|];
+               `Abs_1, [|k|];
                `AsTVec_1 tv, [|INT (COORD (axis, tv))|]; (* should be any other tv *)
                `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
                `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
@@ -834,6 +840,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ProjI_1, [|k|];
                `ProjJ_1, [|k|];
                `Transpose_1, [|k|];
+               `Direction_1, [|k|];
+               `Abs_1, [|k|];
                `AsTVec_1 tv, [|VEC tv|]; (* should be any other tv *)
                `Corner_2, [|k; k|]; (* only on POS *)
                `Span_2, [|k; k|]; (* only on POS *)
@@ -1501,6 +1509,16 @@ module MyDomain : Madil.DOMAIN =
           | [| `Int ij|] -> Result.Ok (`Int ij)
           | [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
           | _ -> Result.Error (Invalid_expr e))
+      | `Direction_1 ->
+         (function
+          | [| `Int ij|] -> Result.Ok (`Int (ij / abs ij))
+          | [| `Vec (i,j)|] -> Result.Ok (`Vec (i / abs i, j / abs j))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Abs_1 ->
+         (function
+          | [| `Int ij|] -> Result.Ok (`Int (abs ij))
+          | [| `Vec (i,j)|] -> Result.Ok (`Vec (abs i, abs j))
+          | _ -> Result.Error (Invalid_expr e))
       | `AsTVec_1 POS ->
          (function
           | [| `Int ij|] when ij >= 0 -> Result.Ok (`Int ij)
@@ -1635,7 +1653,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Norm_1 ->
          (function
-          | [| `Vec (i, j)|] -> Result.Ok (`Int (i+j))
+          | [| `Vec (i, j)|] -> Result.Ok (`Int (abs i + abs j))
           | _ -> Result.Error (Invalid_expr e))
       | `Diag1_1 k ->
          (function
@@ -2725,6 +2743,8 @@ module MyDomain : Madil.DOMAIN =
       | `I_1 -> 0.
       | `J_1 -> 0.
       | `Transpose_1 -> 0.
+      | `Direction_1 -> 0.
+      | `Abs_1 -> 0.
       | `AsTVec_1 tv -> Mdl.Code.uniform nb_typ_vec
       | `Pos_1 -> 0.
       | `Grid_1 -> 0.
@@ -2851,6 +2871,11 @@ module MyDomain : Madil.DOMAIN =
           index 2 (* TEST *)
           (fun (t_args, v_args_tree) ->
             let res = [] in
+            let res = (* Norm_1 *)
+              match t_args with
+              | [|VEC tv|] ->
+                 (INT CARD, `Norm_1, `Default)::res
+              | _ -> res in
             let res = (* Size_1, Height, Width, Area_1 *)
               match t_args with
               | [|GRID (filling,nocolor)|] ->
@@ -2888,6 +2913,11 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|INT (COORD (axis,tv))|] -> (INT (COORD (axis_transpose axis, tv)), `Transpose_1, `Default)::res
               | [|VEC tv|] -> (VEC tv, `Transpose_1, `Default)::res
+              | _ -> res in
+            let res = (* Direction_1, Abs_1 *)
+              match t_args with
+              | [|INT ti as t|] -> (t, `Direction_1, `Default)::(t, `Abs_1, `Default)::res
+              | [|VEC tv as t|] -> (t, `Direction_1, `Default)::(t, `Abs_1, `Default)::res
               | _ -> res in
             let res = (* AsTVec_1 *)
               match t_args with
