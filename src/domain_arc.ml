@@ -137,6 +137,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       
     let nb_typ_axis = 2
     let nb_typ_vec = 3
+
+    let axis_transpose = function
+      | I -> J
+      | J -> I
       
     let rec xp_typ ~html print = function
       | BOOL -> print#string "BOOL"
@@ -503,6 +507,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
       | `I_1 (* Vec -> Coord *)
       | `J_1 (* Vec -> Coord *)
+      | `Transpose_1 (* I <-> J *)
+      | `AsTVec_1 of typ_vec (* Int/Vec -> tv *)
       | `Pos_1 (* Obj -> Pos *)
       | `Grid_1 (* Obj -> Grid *)
       | `Size_1 (* Grid -> Vec *)
@@ -609,6 +615,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleTo_2 -> print#string "scaleTo"
       | `I_1 -> print#string "i"
       | `J_1 -> print#string "j"
+      | `Transpose_1 -> print#string "transpose"
+      | `AsTVec_1 tv -> print#string "as"; xp_typ_vec ~html print tv
       | `Pos_1 -> print#string "pos"
       | `Grid_1 -> print#string "grid"
       | `Size_1 -> print#string "size"
@@ -789,6 +797,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Reverse_1, [|k|];
                `I_1, [|VEC tv|];
                `J_1, [|VEC tv|];
+               `Transpose_1, [|INT (COORD (axis_transpose axis, tv))|];
+               `AsTVec_1 tv, [|INT (COORD (axis, tv))|]; (* should be any other tv *)
                `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
                `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
                `Area_1, [|GRID (`Sprite,false)|];
@@ -813,6 +823,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `ScaleDown_2, [|k; INT CARD|];
                `ProjI_1, [|k|];
                `ProjJ_1, [|k|];
+               `Transpose_1, [|k|];
+               `AsTVec_1 tv, [|VEC tv|]; (* should be any other tv *)
                `Corner_2, [|k; k|]; (* only on POS *)
                `Span_2, [|k; k|]; (* only on POS *)
                `Min_n, [|k; k|];
@@ -885,9 +897,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           match k with (* what type can be used to define k *)
           | BOOL -> true, [k]
           | INT CARD -> true, [k]
-          | INT (COORD (axis,tv)) ->
-             let axis_opp = match axis with I -> J | J -> I in
-             true, [k; INT (COORD (axis_opp,tv)); INT CARD]
+          | INT (COORD (axis,tv)) -> true, [k; INT CARD]
           | VEC _ -> true, [k]
           | COLOR C_OBJ -> true, [k; COLOR (C_BG true)]
           | COLOR (C_BG true) -> true, [k; COLOR C_OBJ]
@@ -942,7 +952,7 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 1000 string_of_int (* max nb of considered refinements *)
     let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
 
-    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 2 string_of_int
+    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
     
     (* constructors and accessors *)
                         
@@ -1474,6 +1484,26 @@ module MyDomain : Madil.DOMAIN =
       | `J_1 ->
          (function
           | [| `Vec (i,j)|] -> Result.Ok (`Int j)
+          | _ -> Result.Error (Invalid_expr e))
+      | `Transpose_1 ->
+         (function
+          | [| `Int ij|] -> Result.Ok (`Int ij)
+          | [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
+          | _ -> Result.Error (Invalid_expr e))
+      | `AsTVec_1 POS ->
+         (function
+          | [| `Int ij|] when ij >= 0 -> Result.Ok (`Int ij)
+          | [| `Vec (i,j)|] when i >= 0 && j >= 0 -> Result.Ok (`Vec (i,j))
+          | _ -> Result.Error (Invalid_expr e))
+      | `AsTVec_1 SIZE ->
+         (function
+          | [| `Int ij|] when ij >= 1 -> Result.Ok (`Int ij)
+          | [| `Vec (i,j)|] when i >= 1 && j >= 1 -> Result.Ok (`Vec (i,j))
+          | _ -> Result.Error (Invalid_expr e))
+      | `AsTVec_1 MOVE ->
+         (function
+          | [| `Int ij|] -> Result.Ok (`Int ij)
+          | [| `Vec (i,j)|] -> Result.Ok (`Vec (i,j))
           | _ -> Result.Error (Invalid_expr e))
       | `Pos_1 ->
          (function
@@ -2645,6 +2675,8 @@ module MyDomain : Madil.DOMAIN =
       | `ScaleTo_2 -> 0.
       | `I_1 -> 0.
       | `J_1 -> 0.
+      | `Transpose_1 -> 0.
+      | `AsTVec_1 tv -> Mdl.Code.uniform nb_typ_vec
       | `Pos_1 -> 0.
       | `Grid_1 -> 0.
       | `Size_1 -> 0.
@@ -2791,6 +2823,26 @@ module MyDomain : Madil.DOMAIN =
             let res = (* ProjI/J_1 *)
               match t_args with
               | [|VEC tv|] -> (VEC tv, `ProjI_1, `Default)::(VEC tv, `ProjJ_1, `Default)::res
+              | _ -> res in
+            let res = (* Transpose_1 *)
+              match t_args with
+              | [|INT (COORD (axis,tv))|] -> (INT (COORD (axis_transpose axis, tv)), `Transpose_1, `Default)::res
+              | [|VEC tv|] -> (VEC tv, `Transpose_1, `Default)::res
+              | _ -> res in
+            let res = (* AsTVec_1 *)
+              match t_args with
+              | [|INT (COORD (axis,tv))|] ->
+                 let$ res, tv' = res, (match tv with
+                                       | POS -> [SIZE; MOVE]
+                                       | SIZE -> [POS; MOVE]
+                                       | MOVE -> [POS; SIZE]) in
+                 (INT (COORD (axis,tv')), `AsTVec_1 tv', `Default)::res
+              | [|VEC tv|] ->
+                 let$ res, tv' = res, (match tv with
+                                       | POS -> [SIZE; MOVE]
+                                       | SIZE -> [POS; MOVE]
+                                       | MOVE -> [POS; SIZE]) in
+                 (VEC tv', `AsTVec_1 tv', `Default)::res
               | _ -> res in
             let res = (* MajorityColor_1 *)
               match t_args with
