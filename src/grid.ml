@@ -366,6 +366,23 @@ let majority_color (bgcolor : color) (g : t) : color result = (* not counting bg
   then Result.Error (Undefined_result "majority_color: all bgcolor or ambiguity")
   else Result.Ok !res
 
+let minority_color (bgcolor : color) (g : t) : color result = (* not counting bgcolor *)
+  let res = ref undefined in
+  let nb_min = ref 0 in
+  for c = black to last_color do
+    if c <> bgcolor then
+      let nb = g.color_count.(c) in
+      if nb < !nb_min then (
+        res := c;
+        nb_min := nb)
+      else if nb = !nb_min then (
+        res := undefined)
+      else ()
+  done;
+  if !res = undefined
+  then Result.Error (Undefined_result "minority_color: all bgcolor or ambiguity")
+  else Result.Ok !res
+
 let color_count (bgcolor : color) (grid : t) : int = (* not counting bgcolor *)
   let res = ref 0 in
   for c = black to last_color do

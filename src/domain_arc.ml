@@ -555,6 +555,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
       | `TranslationSym_2 of symmetry (* viz Grid *) (* Obj, Obj/Grid -> Vec *)
       | `MajorityColor_1 (* Grid -> Color *)
+      | `MinorityColor_1 (* Grid -> Color *)
       | `ColorCount_1 (* Grid -> Int *)
       | `Coloring_2 (* Shape/Obj, Color -> Shape/Obj *)
       | `SwapColors_3 (* Grid, Color, Color -> Grid *)
@@ -675,6 +676,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "translationSym";
          xp_tuple1 ~delims:("[","]") xp_symmetry ~html print sym
       | `MajorityColor_1 -> print#string "majorityColor"
+      | `MinorityColor_1 -> print#string "minorityColor"
       | `ColorCount_1 -> print#string "colorCount"
       | `Coloring_2 -> print#string "coloring"
       | `SwapColors_3 -> print#string "swapColor"
@@ -840,6 +842,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
                `MajorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
+               `MinorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
              ]
           | SEG ->
              [ `Index_1 [], [|k|];
@@ -1852,6 +1855,12 @@ module MyDomain : Madil.DOMAIN =
              let| c = Grid.majority_color Grid.black g in
              Result.Ok (`Color c)
           | _ -> Result.Error (Invalid_expr e))
+      | `MinorityColor_1 ->
+         (function
+          | [| `Grid g|] ->
+             let| c = Grid.minority_color Grid.black g in
+             Result.Ok (`Color c)
+          | _ -> Result.Error (Invalid_expr e))
       | `ColorCount_1 ->
          (function
           | [| `Grid g|] ->
@@ -2710,6 +2719,7 @@ module MyDomain : Madil.DOMAIN =
       | `CloseSym_2 symar -> Mdl.Code.uniform nb_symmetry_unfold
       | `TranslationSym_2 sym -> Mdl.Code.uniform nb_symmetry
       | `MajorityColor_1 -> 0.
+      | `MinorityColor_1 -> 0.
       | `ColorCount_1 -> 0.
       | `Coloring_2 -> 0.
       | `SwapColors_3 -> 0.
@@ -2844,12 +2854,14 @@ module MyDomain : Madil.DOMAIN =
                                        | MOVE -> [POS; SIZE]) in
                  (VEC tv', `AsTVec_1 tv', `Default)::res
               | _ -> res in
-            let res = (* MajorityColor_1 *)
+            let res = (* MajorityColor_1, MinorityColor_1 *)
               match t_args with
               | [|GRID (filling,false)|] ->
                  let full = (filling = `Full) in
                  let$ res, tc = res, [C_BG full; C_OBJ] in
-                 (COLOR tc, `MajorityColor_1, `Default)::res
+                 (COLOR tc, `MajorityColor_1, `Default)
+                 ::(COLOR tc, `MinorityColor_1, `Default)
+                 ::res
               | _ -> res in
             let res = (* ColorCount_1 *)
               match t_args with
