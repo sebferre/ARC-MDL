@@ -539,7 +539,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Middle_1 (* on Layer *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
-      | `MaskOfGrid_1 (* Grid -> Mask TODO: specify bgcolor *)
+      | `MaskOfGrid_1 (* Sprite -> Mask *)
       | `GridOfMask_2 (* Mask, Color -> Grid *)
       | `TranslationOnto_2 (* Obj, Obj -> Vec *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
@@ -1723,7 +1723,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `MaskOfGrid_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.black g)) (* TODO: improve *)
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.transparent g))
           | _ -> Result.Error (Invalid_expr e))
       | `GridOfMask_2 ->
          (function
@@ -2912,6 +2912,11 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID tg1; OBJ _|] -> (GRID tg1, `Crop_2)::res
               | _ -> res in*)
+            let res = (* MaskOfGrid *)
+              match t_args with
+              | [|GRID ((`Sprite|`Noise as filling), false)|] ->
+                 (GRID (filling, true), `MaskOfGrid_1, `Default)::res
+              | _ -> res in
             let res = (* Cardinal *)
               match t_args, v_args_tree with
               | [|OBJ _|], [|v1|] when Ndtree.ndim v1 > 0 ->
