@@ -537,6 +537,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 (* on Layer *)
       | `Bottom_1 (* on Layer *)
       | `Middle_1 (* on Layer *)
+      | `TopHalf_1 (* Grid -> Grid *)
+      | `BottomHalf_1 (* Grid -> Grid *)
+      | `LeftHalf_1 (* Grid -> Grid *)
+      | `RightHalf_1 (* Grid -> Grid *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
@@ -646,6 +650,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 -> print#string "top"
       | `Bottom_1 -> print#string "bottom"
       | `Middle_1 -> print#string "middle"
+      | `TopHalf_1 -> print#string "topHalf"
+      | `BottomHalf_1 -> print#string "bottomHalf"
+      | `LeftHalf_1 -> print#string "leftHalf"
+      | `RightHalf_1 -> print#string "rightHalf"
       | `ProjI_1 -> print#string "projI"
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
@@ -1713,6 +1721,38 @@ module MyDomain : Madil.DOMAIN =
              then Result.Error (Undefined_result "Middle: no middle, even height")
              else Result.Ok (`Int (i + h/2 + 1))
           | _ -> Result.Error (Invalid_expr e))
+      | `TopHalf_1 ->
+         (function
+          | [| `Grid g|] ->
+             let h, w = Grid.dims g in
+             let h' = h / 2 in
+             let| g1 = Grid.Transf.crop g 0 0 h' w in
+             Result.Ok (`Grid g1)
+          | _ -> Result.Error (Invalid_expr e))
+      | `BottomHalf_1 ->
+         (function
+          | [| `Grid g|] ->
+             let h, w = Grid.dims g in
+             let h' = h / 2 in
+             let| g1 = Grid.Transf.crop g (h - h') 0 h' w in
+             Result.Ok (`Grid g1)
+          | _ -> Result.Error (Invalid_expr e))
+      | `LeftHalf_1 ->
+         (function
+          | [| `Grid g|] ->
+             let h, w = Grid.dims g in
+             let w' = w / 2 in
+             let| g1 = Grid.Transf.crop g 0 0 h w' in
+             Result.Ok (`Grid g1)
+          | _ -> Result.Error (Invalid_expr e))
+      | `RightHalf_1 ->
+         (function
+          | [| `Grid g|] ->
+             let h, w = Grid.dims g in
+             let w' = w / 2 in
+             let| g1 = Grid.Transf.crop g 0 (w - w') h w' in
+             Result.Ok (`Grid g1)
+          | _ -> Result.Error (Invalid_expr e))
       | `ProjI_1 ->
          (function
           | [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
@@ -2705,6 +2745,7 @@ module MyDomain : Madil.DOMAIN =
       | `Stack_n -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
+      | `TopHalf_1 | `BottomHalf_1 | `LeftHalf_1 | `RightHalf_1 -> 0.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
       | `TranslationOnto_2 -> 0.
@@ -2828,6 +2869,15 @@ module MyDomain : Madil.DOMAIN =
                  ::(INT (COORD (J,POS)), `Center_1, `Default)
                  ::(INT (COORD (I,POS)), `Bottom_1, `Default)
                  ::(INT (COORD (I,POS)), `Middle_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
+              match t_args with
+              | [|GRID tg|] ->
+                 (GRID tg, `TopHalf_1, `Default)
+                 ::(GRID tg, `BottomHalf_1, `Default)
+                 ::(GRID tg, `LeftHalf_1, `Default)
+                 ::(GRID tg, `RightHalf_1, `Default)
                  ::res
               | _ -> res in
             let res = (* ProjI/J_1 *)
