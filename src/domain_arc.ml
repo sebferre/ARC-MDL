@@ -968,7 +968,7 @@ module MyDomain : Madil.DOMAIN =
     let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
     let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 1000 string_of_int (* max nb of considered expr refinements per grid read *)
     let max_expr_refinements_per_var = def_param "max_expr_refinements_per_var" 10 string_of_int (* max nb of considered expr refinements per model var *)
-    let max_refinements = def_param "max_refinements" 1000 string_of_int (* max nb of considered refinements *)
+    let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
 
     let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
@@ -1510,9 +1510,10 @@ module MyDomain : Madil.DOMAIN =
           | [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
           | _ -> Result.Error (Invalid_expr e))
       | `Direction_1 ->
+         let dir ij = if ij = 0 then 0 else ij / abs ij [@@inline] in
          (function
-          | [| `Int ij|] -> Result.Ok (`Int (ij / abs ij))
-          | [| `Vec (i,j)|] -> Result.Ok (`Vec (i / abs i, j / abs j))
+          | [| `Int ij|] -> Result.Ok (`Int (dir ij))
+          | [| `Vec (i,j)|] -> Result.Ok (`Vec (dir i, dir j))
           | _ -> Result.Error (Invalid_expr e))
       | `Abs_1 ->
          (function
