@@ -2613,10 +2613,21 @@ module MyDomain : Madil.DOMAIN =
       | _, `Null -> assert false
       | BOOL, `Bool b -> 1.
       | INT CARD, `Int i ->
-         Mdl.Code.universal_int_star i
+         if i >= 0
+         then Mdl.Code.universal_int_star i
+         else (print_int i; assert false)
       | INT (COORD (axis,tv)), `Int ij ->
-         assert (ij >= 0 && ij <= Grid.max_size);
-         Range.dl ij (Range.make_closed 0 Grid.max_size)
+         (match tv with
+          | POS ->
+             if ij >= 0 && ij < Grid.max_size
+             then Range.dl ij (Range.make_closed 0 (Grid.max_size-1))
+             else (print_int ij; assert false)
+          | SIZE ->
+             if ij > 0
+             then Mdl.Code.universal_int_plus ij
+             else (print_int ij; assert false)
+          | MOVE ->
+             1. +. Mdl.Code.universal_int_star (abs ij))
       | VEC tv, `Vec (i,j) ->
          dl_value (INT (COORD (I,tv))) (`Int i)
          +. dl_value (INT (COORD (J,tv))) (`Int j)
@@ -3039,25 +3050,25 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             let res = (* Plus *)
               match t_args with
-              | [|INT (COORD (_,tv1)) as t1|] when tv1 <> MOVE ->
+              | [|INT (COORD (axis,tv1)) as t1|] when tv1 <> MOVE ->
                  let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Int i2)|] in
+                 let args_spec = `Custom [|`Pos 0; `Val (INT (COORD (axis,MOVE)), `Int i2)|] in
                  (t1, `Plus_2, args_spec)::res
               | [|INT (COORD (_,tv1)) as t1; INT (COORD (_,(SIZE|MOVE)))|] when tv1 <> MOVE ->
                  (t1, `Plus_2, `Default)::res
               | [|VEC tv1 as t1|] when tv1 <> MOVE ->
                  let$ res, i2 = res, [0;1;2;3] in
                  let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
-                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Vec (i2,j2))|] in
+                 let args_spec = `Custom [|`Pos 0; `Val (VEC MOVE, `Vec (i2,j2))|] in
                  (t1, `Plus_2, args_spec)::res
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Plus_2, `Default)::res
               | _ -> res in
             let res = (* Minus *)
               match t_args with
-              | [|INT (COORD (_,tv1)) as t1|] when tv1 <> MOVE ->
+              | [|INT (COORD (axis,tv1)) as t1|] when tv1 <> MOVE ->
                  let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (t1, `Int i2)|] in
+                 let args_spec = `Custom [|`Pos 0; `Val (INT (COORD (axis,MOVE)), `Int i2)|] in
                  (t1, `Minus_2, args_spec)::res
               | [|INT (COORD (_,tv1)) as t1; INT (COORD (_, (SIZE|MOVE)))|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
