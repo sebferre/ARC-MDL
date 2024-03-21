@@ -944,7 +944,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
-      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * (int * int * Grid.t) list (* objects *)
+      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * int (* consumed objects *) * (int * int * Grid.t) list (* objects *)
       | `MapDomain of (value,value) Mymap.t * value array (* domain *)
       | `Seq of input list ]
 
@@ -2244,7 +2244,7 @@ module MyDomain : Madil.DOMAIN =
       | SEG, `Seg seg -> `Seg seg
       | MOTIF, `Motif mot -> `Motif mot
       | GRID (filling,nocolor), `Grid g -> `GridDimsCols (g, Range.make_open 1, Range.make_open 1, Grid.nb_color)
-      | OBJ (filling,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, Grid.nb_color, [obj])
+      | OBJ (filling,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, Grid.nb_color, 0, [obj])
       | MAP _, `Map m ->
          let domain = mymap_keys m in
          `MapDomain (m, domain)
@@ -2266,9 +2266,9 @@ module MyDomain : Madil.DOMAIN =
         | `Seg seg0, `Seg seg -> seg = seg0, `Null
         | `Motif mot0, `Motif mot -> mot = mot0, `Null
         | `Grid g0, `GridDimsCols (g,_,_,_) -> g = g0, `Null
-        | `Obj obj0, `Objects(h,w,nc,objs) ->
+        | `Obj obj0, `Objects(h,w,nc,nb_consumed_objs,objs) ->
            if List.mem obj0 objs
-           then true, `Objects (h, w, nc, List.filter ((<>) obj0) objs)
+           then true, `Objects (h, w, nc, nb_consumed_objs-1, List.filter ((<>) obj0) objs)
            else false, input
         | `Map m0, `MapDomain (m,dom) -> m0 = m, `Null
            
@@ -2309,8 +2309,11 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (make_danymotif mot, `Null)
       | GRID tg, AnyGrid, [||], `GridDimsCols (g,rh,rw,nc) ->
          Myseq.return (make_danygrid g tg rh rw nc, `Null)
-      | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, objs) ->
-         Myseq.bind_interleave_at_most !max_interleave_parse_obj
+      | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, nb_consumed_objs, objs) ->
+         Myseq.bind_interleave_at_most
+           (if nb_consumed_objs < !max_interleave_parse_obj
+            then !max_interleave_parse_obj
+            else 1)
            (Myseq.from_list objs)
            (fun (i,j,g1 as obj) ->
              let other_objs = List.filter ((<>) obj) objs in
@@ -2320,7 +2323,7 @@ module MyDomain : Madil.DOMAIN =
                                                     nc)) in
              let* dpos, _ = parse_pos (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                              `IntRange (j, Range.make_closed 0 (w-1)))) in
-             Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc,other_objs)))
+             Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc, nb_consumed_objs-1, other_objs)))
       | MAP (ta,tb), AnyMap, [||], `MapDomain (m,dom) ->
          Myseq.return (make_danymap ta tb m, `Null)
       | MAP (ta,tb), DomMap keys, [|parse_vals|], `MapDomain (m,dom) ->
@@ -2396,7 +2399,7 @@ module MyDomain : Madil.DOMAIN =
            match seg with
            | OneColor | ConnectedOneColor -> 1
            | Connected -> nc in*)
-         let* dobjs, _ = parse_objs (`Objects (h,w,nc,objs)) in
+         let* dobjs, _ = parse_objs (`Objects (h,w,nc,0,objs)) in
          Myseq.return (make_dobjects nmax dsize dseg dobjs, `Null)
       | _, ColorPartition, [|parse_size; parse_grids|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
@@ -2551,7 +2554,7 @@ module MyDomain : Madil.DOMAIN =
          if x = `Null
          then Myseq.return (`Seq l)
          else Myseq.return (`Seq (x::l))
-      | `Objects (_,_,_,[]) -> Myseq.return `Null
+      | `Objects (_,_,_,_,[]) -> Myseq.return `Null
       | _ -> Myseq.empty
 
     (* description length *)
