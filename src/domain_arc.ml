@@ -117,6 +117,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     (* list of values have the type of their elts *)
     and typ_int =
       | CARD
+      | INDEX
       | COORD of typ_axis * typ_vec
     and typ_axis =
       | I
@@ -154,6 +155,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MAP (ta,tb) -> xp_typ ~html print ta; print#string " -> "; xp_typ ~html print tb
     and xp_typ_int ~html print = function
       | CARD -> print#string "CARD"
+      | INDEX -> print#string "INDEX"
       | COORD (ij,tv) ->
          xp_typ_vec ~html print tv;
          print#string (match ij with I -> ".I" | J -> ".J")
@@ -730,6 +732,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           (* synchronize with is_default_constr *)
           | BOOL -> None, [ ]
           | INT CARD -> None, [ ]
+          | INT INDEX -> None, [ ]
           | INT (COORD _) ->
              None,
              [ AnyCoord, [||] ]
@@ -790,13 +793,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  ta=tb, (Replace, [|ta, 0; ta, 0|]);
                  ta=tb, (Swap, [|ta, 0; ta, 0|]) ]
         method funcs k =
+          (* TODO: handle dimension *)
           match k with
           | BOOL -> []
           | INT CARD ->
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
-               `Cardinal_1, [|OBJ (`Sprite,false)|];
+               `Cardinal_1, [|OBJ (`Sprite,false)|]; (* TODO: generalize *)
                `Plus_2, [|k; k|];
                `Minus_2, [|k; k|];
                `Area_1, [|GRID (`Sprite,false)|];
@@ -804,6 +808,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `Min_n, [|k; k|];
                `Max_n, [|k; k|];
                `Average_n, [|k; k|];
+             ]
+          | INT INDEX ->
+             [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
+               `Reverse_1, [|k|];
              ]
           | INT (COORD (axis,tv)) ->
              [ `Index_1 [], [|k|];
@@ -916,6 +925,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           match k with (* what type can be used to define k *)
           | BOOL -> true, [k]
           | INT CARD -> true, [k]
+          | INT INDEX -> true, [k; INT CARD]
           | INT (COORD (axis,tv)) -> true, [k; INT CARD]
           | VEC _ -> true, [k]
           | COLOR C_OBJ -> true, [k; COLOR (C_BG true)]
@@ -2615,7 +2625,7 @@ module MyDomain : Madil.DOMAIN =
       match t, v with
       | _, `Null -> assert false
       | BOOL, `Bool b -> 1.
-      | INT CARD, `Int i ->
+      | INT (CARD | INDEX), `Int i ->
          if i >= 0
          then Mdl.Code.universal_int_star i
          else (print_int i; assert false)
