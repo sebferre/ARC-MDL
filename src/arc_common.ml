@@ -61,7 +61,30 @@ let list_mins (cmp : 'a -> 'a -> int) (l : 'a list) : 'a list =
 
 let mymap_keys (m : ('a,'b) Mymap.t) : 'a array =
   m |> Mymap.bindings |> List.map fst |> Array.of_list
-          
+
+(* myseq *)
+
+let myseq_bind_list_interleave (k : int) (l : 'a list) (f : 'a * 'a list -> 'b Myseq.t) : 'b Myseq.t =
+  let rec aux k rev_l r =
+    fun () ->
+    match r with
+    | [] -> Myseq.Nil
+    | [x] -> f (x, List.rev rev_l) ()
+    | x :: r1 ->
+       (match f (x, List.rev_append rev_l r1) () with
+       | Myseq.Nil ->
+          if k > 1
+          then aux (k-1) (x::rev_l) r1 () (* here, k-1 differs from Myseq.bind_interleave_at_most *)
+          else Myseq.Nil
+       | Myseq.Cons (y,next) as node ->
+          if k > 1
+          then Cons (y, Myseq.interleave [aux (k-1) (x::rev_l) r1; next])
+          else node)
+  in
+  if k > 0
+  then aux k [] l
+  else Myseq.empty
+
 (* memoization *)
 
 module Memo = (* appears to be more efficient than Common versions *)

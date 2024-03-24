@@ -2288,7 +2288,77 @@ module MyDomain : Madil.DOMAIN =
       if ok
       then Myseq.return (Data.make_dexpr v, input)
       else Myseq.empty
-        
+
+(* EXPL    let rec parseur_pat_input xls t c input : input array Myseq.t * (data array -> data) =
+      match t, c, input with
+      | _, _, `Null -> Myseq.empty
+      | _, AnyCoord, `IntRange (ij,range) ->
+         Myseq.return [||],
+         (function
+          | [||] -> make_danycoord ij range
+          | _ -> assert false)
+      | _, Vec, `Vec (i,j) ->
+         Myseq.return [|i; j|],
+         (function
+          | [|di; dj|] -> make_dvec di dj
+          | _ -> assert false)
+      | _, Obj, `Obj (h, w, nc, i, j, g1) ->
+         let pos =
+           `Vec (`IntRange (i, Range.make_closed 0 (h-1)),
+                 `IntRange (j, Range.make_closed 0 (w-1))) in
+         let g1 =
+           `GridDimsCols (g1,
+                          Range.make_closed 1 (h-i),
+                          Range.make_closed 1 (w-j),
+                          nc) in
+         Myseq.return [|pos; g1|],
+         (function
+          | [|dpos; dg1|] -> make_dobj dpos dg1
+          | _ -> assert false)
+      | _, Objects (nmax), `GridDimsCols (g,rh,rw,nc) ->
+         let h, w = Grid.dims g in
+         let seg = match Data.value dseg with `Seg seg -> seg | _ -> assert false in
+         let* objs = Grid_patterns.Objects.parse seg g in
+         let* () = Myseq.from_bool (List.length objs <= nmax) in
+         let* objs = Myseq.from_list [objs] in (* TODO: shuffle *)
+         Myseq.return [| `Vec (`IntRange (h, rh), `IntRange (w, rw));
+                         `SegAny;
+                         `Seq (objs |> List.map (fun (i,j,g1) -> `Obj (h,w,nc,i,j,g1)));
+                         `Null |],
+         (function
+          | [|dsize; dseg; dobjs; _|] -> make_dobjects nmax dsize dseg dobjs
+          | _ -> assert false)
+      | _, Range, `Seq lin ->
+         let li_opt = list_map_opt (function `Input i -> Some i | _ -> None) lin in
+         (match li_opt with
+         | None -> Myseq.empty
+         | Some li ->
+            match parse_range li with
+            | None -> Myseq.empty
+            | Some (start, stop, step) ->
+               Myseq.return [|`IntRange (start, _); `IntRange (stop, _); `IntRange (step, _)|]),
+         (function
+          | [|dstart; dstop; dstep; _ |] -> make_drange dstart dstop dstep
+          | _ -> assert false)
+      | _, Nil, `Seq [] ->
+         Myseq.return [||],
+         (function _ -> make_dseq [])
+      | _, Cons xl, `Seq (in0::lin1) when xl = List.hd xls ->
+         Myseq.return [|in0; `Seq lin1|],
+         (function
+          | [|d0; dseq1|] -> Data.Seq.cons d0 dseq1
+          | _ -> assert false)
+      | _, _, `Seq lin ->
+         let l_sin_maked = Array.map (parseur_pat_input (List.tl xls) t c) lin in
+         let l_sin, l_maked = List.split (Array.to_list l_sin_maked) in
+         (let* l_iargs = Myseq.product_fair l_sin in (* seq of arrays *)
+          let arg_sin = array2_transpose_apply_Seq (Array.of_list l_iargs) in (* array of seqs *)
+          Myseq.return arg_sin),
+         (fun dseq_args -> (* array of dseqs *)
+           let dargs_seq = transpose dseq_args in (* seq of arrays *)
+           let data_seq = map2 (fun maked dargs -> maked dargs) l_maked dargs_seq in
+           `Seq data_seq) *)
+
     let rec parseur_pat t c parse_args input =
       match t, c, parse_args, input with
       | _, _, _, `Null -> Myseq.empty (* useful to avoid pruning of expression-only arguments *)
@@ -2320,13 +2390,13 @@ module MyDomain : Madil.DOMAIN =
       | GRID tg, AnyGrid, [||], `GridDimsCols (g,rh,rw,nc) ->
          Myseq.return (make_danygrid g tg rh rw nc, `Null)
       | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, nb_consumed_objs, objs) ->
-         Myseq.bind_interleave_at_most
-           (if nb_consumed_objs < !max_interleave_parse_obj
-            then !max_interleave_parse_obj
+         myseq_bind_list_interleave
+           (let k = !max_interleave_parse_obj in
+            if nb_consumed_objs < k 
+            then k - nb_consumed_objs
             else 1)
-           (Myseq.from_list objs)
-           (fun (i,j,g1 as obj) ->
-             let other_objs = List.filter ((<>) obj) objs in
+           objs
+           (fun ((i,j,g1), other_objs) ->
              let* dg1, _ = parse_g1 (`GridDimsCols (g1,
                                                     Range.make_closed 1 (h-i),
                                                     Range.make_closed 1 (w-j),
@@ -3107,6 +3177,13 @@ module MyDomain : Madil.DOMAIN =
           index 1 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
+            (* TEST let res = (* AsTVec_1 *)
+              match t_args with
+              | [|INT CARD|] ->
+                 let$ res, axis = res, [I; J] in
+                 let$ res, tv = res, [POS; SIZE; MOVE] in
+                 (INT (COORD (axis,tv)), `AsTVec_1 tv, `Default)::res
+              | _ -> res in *)
             let res = (* LogNot *)
               match t_args with
               | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
