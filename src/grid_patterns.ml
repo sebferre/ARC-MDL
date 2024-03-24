@@ -28,9 +28,8 @@ let generate_line (len : int) (dir : int * int) (* {-1,0,1}x{-1,0,1} *) : Grid.t
     Result.Ok g
   else Result.Error (Failure "invalid line")
 
-let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, dir *)
+let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, dir *) (* QUICK *)
   (* TODO: possibly extend to direction with values higher than 1 *)
-  Common.prof "Grid_patterns.parse_line" (fun () ->
   let h, w = Grid.dims g in
   let nb_off = g.color_count.(Grid.transparent) in
   let nb_on = g.color_count.(Grid.black) in
@@ -50,7 +49,7 @@ let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, di
       done;
       if !ok then Some (h, (1,-1))
       else None))
-  else None)
+  else None
 
 (*let _ = (* unit test *)
   print_endline "UNIT TEST Grid_patterns.make_line";
@@ -62,10 +61,9 @@ let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, di
 
 (* Coloring *)
 
-let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result =
+let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result = (* QUICK *)
   (* normalize grid coloring, and return a color palette to give original coloring *)
   (* transparent and undefined are left transparent *)
-  Common.prof "Grid_patterns.recoloring" (fun () ->
   let nc = Grid.color_count Grid.transparent g in
   let minpos = Array.make Grid.nb_color (max_int,max_int) in    
   let palette = Array.make nc Grid.undefined in (* color in range(0,nc) -> color in g *)
@@ -91,7 +89,7 @@ let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result =
         then rev_palette.(c)
         else c)
       g in
-  Result.Ok (gres, palette))
+  Result.Ok (gres, palette)
 
 let recolor (g : Grid.t) (palette : Grid.color array) : Grid.t =
   let nc = Array.length palette in
@@ -102,9 +100,8 @@ let recolor (g : Grid.t) (palette : Grid.color array) : Grid.t =
       else c)
     g
 
-let parse_recoloring (g : Grid.t) (g1 : Grid.t) : (Grid.color,Grid.color) Mymap.t option =
+let parse_recoloring (g : Grid.t) (g1 : Grid.t) : (Grid.color,Grid.color) Mymap.t option = (* QUICK *)
   (* is g a recoloring of g1, and how? only for true colors *)
-  Common.prof "Grid_patterns.parse_recoloring" (fun () ->
   let h, w = Grid.dims g in
   let h1, w1 = Grid.dims g1 in
   if h=h1 && w=w1
@@ -133,14 +130,13 @@ let parse_recoloring (g : Grid.t) (g1 : Grid.t) : (Grid.color,Grid.color) Mymap.
     if !ok
     then Some !m
     else None
-  else None) (* grid size mismatch *)
+  else None (* grid size mismatch *)
   
 
 (* crop *)
 
-let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
+let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list = (* QUICK *)
   (* empty result if more than 3 occs *)
-  Common.prof "Grid_pattern.parse_crop" (fun () ->
   let h, w = Grid.dims g in
   let h1, w1 = Grid.dims g1 in
   if h1 <= h && w1 <= w
@@ -157,18 +153,17 @@ let parse_crop (g : Grid.t) (g1 : Grid.t) : (int * int) list =
     if List.length !res <= 9
     then List.rev !res
     else [])
-  else [])
+  else []
   
 
 (* Repeat (a la NumPy) *)
 
-let parse_repeat (g : Grid.t) : (Grid.t * int list * int list) option =
+let parse_repeat (g : Grid.t) : (Grid.t * int list * int list) option = (* QUICK *)
   (* returns: the compressed grid, the numbers of repeats on axis i, and the numbers of repeats on axis j *)
   let rec cumsum offset = function
     | [] -> []
     | n::l -> offset :: cumsum (offset+n) l
   in
-  Common.prof "Grid_patterns.parse_repeat" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
   let i_repeats =
@@ -226,7 +221,7 @@ let parse_repeat (g : Grid.t) : (Grid.t * int list * int list) option =
           j_poslist)
       i_poslist;
     Some (g1, i_repeats, j_repeats)
-  else None)
+  else None
 
 let generate_repeat (g1 : Grid.t) (i_repeats : int list) (j_repeats : int list) : Grid.t result =
   let rec correct_repeats len repeats =
@@ -288,15 +283,14 @@ type part = { mini : int; maxi : int;
 	      nb_pixels : int;
 	      pixels : Bitmap.t }
 
-let subgrid_of_part (g : Grid.t) (p : part) : Grid.t =
-  Common.prof "Objects.subgrid_of_part" (fun () ->
+let subgrid_of_part (g : Grid.t) (p : part) : Grid.t = (* QUICK *)
   let h1, w1 = p.maxi - p.mini + 1, p.maxj - p.minj + 1 in
   let g1 = Grid.make h1 w1 Grid.transparent in
   Bitmap.iter
     (fun i j ->
       Grid.Do.set_pixel g1 (i - p.mini) (j - p.minj) g.matrix.{i,j})
     p.pixels;
-  g1)
+  g1
 let subgrid_of_part, reset_subgrid_of_part =
   Memo.memoize2 ~size:103 subgrid_of_part
 
@@ -795,8 +789,7 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        []            
   
-let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result =
-  Common.prof "Grid_patterns.Motif.make_grid" (fun () ->
+let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (* QUICK *)
   let u, v = Grid.dims core in
   let ru, rv, luv = all_coredims_of_motif mot h w in
   if List.mem (u,v) luv
@@ -811,7 +804,7 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result =
             assert false); *)
           core.Grid.matrix.{i',j'}) in
     Result.Ok g
-  else Result.Error (Failure "Grid_patterns.make_grid: incompatible motif and core grid with grid size"))
+  else Result.Error (Failure "Grid_patterns.make_grid: incompatible motif and core grid with grid size")
 (*let make_grid, reset_make_grid = (* TODO: there is a confusing bug, grids get mixed *)
   Memo.memoize4 ~size:Grid.memoize_size make_grid*)
 
