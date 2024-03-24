@@ -926,7 +926,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | BOOL -> true, [k]
           | INT CARD -> true, [k]
           | INT INDEX -> true, [k; INT CARD]
-          | INT (COORD (axis,tv)) -> true, [k; INT CARD]
+          | INT (COORD (axis,tv)) -> true, [k]
           | VEC _ -> true, [k]
           | COLOR C_OBJ -> true, [k; COLOR (C_BG true)]
           | COLOR (C_BG true) -> true, [k; COLOR C_OBJ]
@@ -3177,13 +3177,13 @@ module MyDomain : Madil.DOMAIN =
           index 1 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
-            (* TEST let res = (* AsTVec_1 *)
+            let res = (* AsTVec_1 *)
               match t_args with
               | [|INT CARD|] ->
                  let$ res, axis = res, [I; J] in
                  let$ res, tv = res, [POS; SIZE; MOVE] in
                  (INT (COORD (axis,tv)), `AsTVec_1 tv, `Default)::res
-              | _ -> res in *)
+              | _ -> res in
             let res = (* LogNot *)
               match t_args with
               | [|GRID (`Sprite,true) as t1|] -> (t1, `LogNot_1, `Default)::res
