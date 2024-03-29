@@ -1887,7 +1887,15 @@ by the parser.
     v2.6 & 2022-11-07 & 30s & 13s & ~97 / 107.8~ & ~94 / 94.5~ & 20s & ~34 / 38.3~ & ~23 / 23.5~ \\
     v2.6 & 2022-11-07 & 60s & 21s & ~97 / 107.8~ & ~94 / 94.5~ &  35s & ~35 / 40.1~ & ~24 / 24.5~ \\
     \hline
-    v2.7 & 2022-12-20 & 60s & 22s & ~102 / 112.6~ & ~96 / 96.5~ & 35s & ~32 / 39.9~ & ~23 / 23.5~ \\ 
+    v2.7 & 2022-12-20 & 60s & 22s & ~102 / 112.6~ & ~96 / 96.5~ & 35s & ~32 / 39.9~ & ~23 / 23.5~ \\
+    \hline
+    \hline
+    v3.0 & 2023-12-10 & 60s & 55s & ~85 / 88.3~ & ~77 / 77.5~ & 45s & ~31 / 35.5~ & ~27 / 18.0~ \\
+    \hline
+    v3.1 & 2024-02-26 & 60s & 32s & ~101 / 103.0~ & ~89 / 89.0~ & - & ~36 / -~ & ~32 / -~ \\
+         &            & 120s & - & - & - & 62s & ~38 / 52.7~ & ~35 / 41.0~ \\
+    \hline
+    v3.2 & 2024-03-26 & 60s & 36s & ~111 / 114.3~ & ~99 / 100.0~ & 44s & ~47 / 53.5~ & ~41 / 42.0~ \\  
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2217,6 +2225,32 @@ Those changes result in 10 additional successful training tasks, 52
 \end{itemize}
 Those changes result in a sharp increase of the number of solved
 tasks, from 52 to 94 training tasks (23.5\%), and from 9 to 23 evaluation tasks (5.75\%).
+
+\paragraph{Version 2.7.}
+\begin{itemize}
+\item a lot of refactoring
+\item patterns: grid tiling
+\end{itemize}
+
+\paragraph{Version 3.0} Restart with the MADIL framework. New models:
+lost incremental object addition and object overlapping; gained
+sequences (of objects and other things); lifted a number of functions
+as patterns for better incrementality and findability (motifs).
+
+\paragraph{Version 3.1}
+\begin{itemize}
+\item introduced loop vars
+\item patterns: segmentation mode as argument for objects + derived field for all objects as one; small grids as color sequences or matrices (sequence of sequences); derived pure grid in motifs; maps (replace, swap, fixed-domain); crop of a grid expression; recoloring of a grid expression; new motifs (border, crosses, star, diamond)
+\item functions: unrepeat to compress grids; tail and reverse of a sequence
+\end{itemize}
+
+\paragraph{Version 3.2}
+\begin{itemize}
+\item patterns: line objects, defined by length and direction; more segmentation modes for objects (connect by 8, 4, 2 and/or color)
+\item functions: abs and direction (sign) of ints/vecs; transpose of vecs; top/bottom/left/right halves of grids; mask of a grid (ignoring colors); minority color of a grid; self-compose takes a bgcolor; cardinal of a sequence
+\item bounding interleaving of object lists for parsing
+\item explicit conversions between different kinds of integers (expressions) to penalize thorough DL
+\end{itemize}
 
 %%%
 \section{Discussion and Perspectives}
