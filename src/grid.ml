@@ -1114,7 +1114,7 @@ module Transf =
     let strip, reset_strip =
       Memo.memoize3 ~size:memoize_size strip
 
-      
+    
     (* concatenating *)
       
     let concatHeight g1 g2 : t result =
@@ -1443,6 +1443,23 @@ module Mask =
     let to_grid, reset_to_grid =
       Memo.memoize3 ~size:memoize_size to_grid
 
+
+    let crop (bgcolor : color) (m : t) (g : t) : t result =
+      let h, w = dims g in
+      if dims m <> (h,w) then
+        Result.Error (Undefined_result "Grid.Mask.crop: incompatible dims")
+      else
+        let res =
+          map2_pixels
+            (fun b c ->
+              if b = one
+              then c
+              else bgcolor)
+            m g in
+        Result.Ok res
+    let crop, reset_crop =
+      Memo.memoize3 ~size:memoize_size crop
+    
     let to_string m =
       let h, w = dims m in
       let bytes = Bytes.create (h * w + h - 1) in
@@ -1471,7 +1488,8 @@ module Mask =
       reset_from_bitmap ();
       reset_from_grid_background ();
       reset_from_grid_color ();
-      reset_to_grid ()
+      reset_to_grid ();
+      reset_crop ()
              
   end
 
