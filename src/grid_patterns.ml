@@ -803,8 +803,10 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (*
             (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
             assert false); *)
           core.Grid.matrix.{i',j'}) in
-    Result.Ok g
-  else Result.Error (Failure "Grid_patterns.make_grid: incompatible motif and core grid with grid size")
+    if g.color_count.(Grid.undefined) = 0
+    then Result.Ok g
+    else Result.Error (Failure "Grid_patterns.Motif.make_grid: undefined cells")
+  else Result.Error (Failure "Grid_patterns.Motif.make_grid: incompatible motif and core grid with grid size")
 (*let make_grid, reset_make_grid = (* TODO: there is a confusing bug, grids get mixed *)
   Memo.memoize4 ~size:Grid.memoize_size make_grid*)
 
@@ -830,20 +832,25 @@ let candidates =
     Periodic (MinIJ, Zero) ]
 let nb_candidates = List.length candidates
 
-let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, noise) that [g] agreeds to *)
+let from_grid (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
+  (* bgcolor is the color to be ignored *)
   Common.prof "Grid_patterns.from_grid" (fun () ->
   let h, w = Grid.dims g in
   (* color stats: lists of (color,count) pairs *)
-  let rec add_color c cstats =
-    match cstats with
-    | [] -> [(c,1)]
-    | (c0,n0)::cstats1 ->
-       if c = c0 then (c0,n0+1)::cstats1
-       else
-         match add_color c cstats1 with
-         | (c1,n1)::cstats2 when n1 > n0 ->
-            (c1,n1)::(c0,n0)::cstats2
-         | cstats1 -> (c0,n0)::cstats1
+  let add_color c (n,n_def,cstats) =
+    let rec aux_cstats = function
+      | [] -> [(c,1)]
+      | (c0,n0)::cstats1 ->
+         if c = c0 then (c0,n0+1)::cstats1
+         else
+           match aux_cstats cstats1 with
+           | (c1,n1)::cstats2 when n1 > n0 ->
+              (c1,n1)::(c0,n0)::cstats2
+           | cstats1 -> (c0,n0)::cstats1
+    in
+    if c = bgcolor
+    then (n+1, n_def, cstats)
+    else (n+1, n_def+1, aux_cstats cstats)
   in
   (* initialization *)
   let motifs =
@@ -854,8 +861,8 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
           List.fold_left
             (fun res2 (u,v) ->
               let proj = project mot h w u v in
-              let cols = Array.make_matrix u v [] in 
-              (u,v,proj,cols)::res2)
+              let ncols = Array.make_matrix u v (0,0,[]) in 
+              (u,v,proj,ncols)::res2)
             [] luv in
         (mot,ru,rv,cores)::res)
       [] candidates in
@@ -863,7 +870,7 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
   List.iter (* much more efficient to iterate on motifs first, then on pixels *)
     (fun (mot,ru,rv,cores) ->
       List.iter
-        (fun (u,v,proj,cols) ->
+        (fun (u,v,proj,ncols) ->
           Grid.iter_pixels
             (fun i j c ->
               let i', j' = proj i j in
@@ -871,8 +878,7 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
               (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
                 pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
                 assert false);*)
-              if c <> Grid.undefined then
-                cols.(i').(j') <- add_color c cols.(i').(j'))              
+              ncols.(i').(j') <- add_color c ncols.(i').(j'))
             g)
         cores)
     motifs;
@@ -888,30 +894,31 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
               Array.iteri
                 (fun i' row ->
                   Array.iteri
-                    (fun j' cstats ->
-                      match cstats with
-                      | [] -> () (* empty equiv class *)
-                      | [_,n] ->
-                         l_ijcols := (infinity,i',j',cstats)::!l_ijcols
-                      | (_,n1)::(_,n2)::_ ->
-                         let ratio = float n1 /. float n2 in
-                         l_ijcols := (ratio,i',j',cstats)::!l_ijcols)
+                    (fun j' (n,n_def,cstats) ->
+                      if n > 0 then (* non-empty equiv class *)
+                        match cstats with
+                        | [] ->
+                           l_ijcols := (0.,i',j',n,n_def,cstats)::!l_ijcols
+                        | [_,n1] ->
+                           l_ijcols := (infinity,i',j',n,n_def,cstats)::!l_ijcols
+                        | (_,n1)::(_,n2)::_ ->
+                           let ratio = float n1 /. float n2 in
+                           l_ijcols := (ratio,i',j',n,n_def,cstats)::!l_ijcols)
                     row)
                 cols;
               (* sorting equiv classes from most imbalanced to least, then from larger to smaller *)
               let l_ijcols_sorted =
                 List.sort (* TODO: is there a better sorting criteria? *)
-                  (fun (ratio1,_,_,_) (ratio2,_,_,_) -> Stdlib.compare ratio2 ratio1)
+                  (fun (ratio1,_,_,_,_,_) (ratio2,_,_,_,_,_) -> Stdlib.compare ratio2 ratio1)
                   !l_ijcols in
               (* defining the core, while checking disjunct colors between core and noise *)
               let g_core_opt =
                 let g_core = Grid.make u v Grid.undefined in
                 let ok, cols_core, cols_noise =
                   List.fold_left
-                    (fun (ok,cols_core,cols_noise as res) (_,i',j',cstats) ->
+                    (fun (ok,cols_core,cols_noise as res) (_,i',j',n,n_def,cstats) ->
                       if ok
                       then
-                        let n = List.fold_left (fun res (c1,n1) -> res + n1) 0 cstats in
                         let cstats_core, cstats =
                           List.partition (fun (c1,n1) -> Intset.mem c1 cols_core) cstats in
                         match cstats_core with
@@ -923,28 +930,27 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
                             | [] -> (* only noise colors: fail *)
                                false, cols_core, cols_noise
                             | (c1,n1)::cstats1 -> (* choosing most frequent color c *)
-                               if c1 <> Grid.undefined
-                                  && n1 * 2 >= n (* if frequent enough *)
+                               if n1 * 2 >= n_def (* if frequent enough *)
                                then (
                                  Grid.Do.set_pixel g_core i' j' c1;
                                  let cols_core = Intset.add c1 cols_core in
                                  let ok, cols_noise =
                                    List.fold_left
                                      (fun (ok,cols) (c1,n1) ->
-                                       if c1 = Grid.undefined || c1 = Grid.transparent
+                                       if c1 = Grid.transparent
                                        then false, cols
                                        else ok, Intset.add c1 cols)
                                      (ok,cols_noise) cstats1 in
                                  ok, cols_core, cols_noise)
                                else false, cols_core, cols_noise)
                         | [(c1,n1)] ->
-                           if n1 * 2 >= n (* if frequent enough *)
+                           if n1 * 2 >= n_def (* if frequent enough *)
                            then (
                              Grid.Do.set_pixel g_core i' j' c1;
                              let ok, cols_noise =
                                List.fold_left
                                  (fun (ok,cols) (c1,n1) ->
-                                   if c1 = Grid.undefined || c1 = Grid.transparent
+                                   if c1 = Grid.transparent
                                    then false, cols
                                    else ok, Intset.add c1 cols)
                                  (true,cols_noise) cstats in
@@ -960,37 +966,43 @@ let from_grid (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t) list = (*
                 else None in
               match g_core_opt with
               | Some g_core ->
-                 let g_without_noise =
-                   match make_grid h w mot g_core with
-                   | Result.Ok g -> g
-                   | Result.Error _ -> assert false in
-                 let g_noise =
-                   Grid.map2_pixels
-                     (fun c1 c2 ->
-                       if c1 = c2 then Grid.transparent
-                       else c1)
-                     g g_without_noise in
-                 let area_core = Grid.color_area Grid.undefined g_core in
-                 let area_noise = Grid.color_area Grid.transparent g_noise in
-                 Some (area_core+area_noise,g_core,g_noise)
+                 (* g = pure(core) |> filtered by mask |> plus noise *)
+                 (match make_grid h w mot g_core with
+                  | Result.Error _ -> None
+                  | Result.Ok g_without_noise ->
+                     let g_mask_opt =
+                       if g.color_count.(bgcolor) = 0
+                       then None
+                       else Some (Grid.Mask.from_grid_background bgcolor g) in
+                     let g_noise =
+                       Grid.map2_pixels
+                         (fun c1 c2 ->
+                           if c1 <> c2 && c1 <> bgcolor then c1 (* noise *)
+                           else Grid.transparent)
+                         g g_without_noise in
+                     let area_core = Grid.color_area Grid.undefined g_core in
+                     (* mask area not relevant *)
+                     let area_noise = Grid.color_area Grid.transparent g_noise in
+                     Some (area_core + 2 * area_noise,
+                           g_core,g_mask_opt,g_noise))
               | None -> None)
             cores in
         match list_best
-                (fun (a1,_,_) (a2,_,_) -> a1 < a2)
+                (fun (a1,_,_,_) (a2,_,_,_) -> a1 < a2)
                 cores_ok with
         | None -> res
-        | Some (area,g_core,g_noise) ->
-           (area,mot,ru,rv,g_core,g_noise)::res)
+        | Some (area,g_core,g_mask_opt,g_noise) ->
+           (area,mot,ru,rv,g_core,g_mask_opt,g_noise)::res)
       [] motifs in
   let res =
     List.sort
-      (fun (a1,_,_,_,_,_) (a2,_,_,_,_,_) -> Stdlib.compare a1 a2)
+      (fun (a1,_,_,_,_,_,_) (a2,_,_,_,_,_,_) -> Stdlib.compare a1 a2)
       res in
   let res =
-    List.map (fun (_,mot,ru,rv,core,noise) -> (mot,ru,rv,core,noise)) res in
+    List.map (fun (_,mot,ru,rv,core,mask_opt,noise) -> (mot,ru,rv,core,mask_opt,noise)) res in
   res)
 let from_grid, reset_from_grid =
-  Memo.memoize ~size:Grid.memoize_size from_grid
+  Memo.memoize2 ~size:Grid.memoize_size from_grid
 
 (*let _ = (* TEST *)
   let u, v = 2, 1 in
