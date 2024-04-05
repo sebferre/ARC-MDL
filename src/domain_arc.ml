@@ -208,6 +208,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | Motif of bool (* partial *) (* MOTIF, SPRITE (core), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
+      | Metagrid (* COLOR, VEC SIZE, SIZE+, SIZE+, GRID++ : GRID *)
       | Repeat (* SPRITE, INT+, INT+ : SPRITE *)
       | Empty (* SIZE : MASK *)
       | Full (* SIZE : MASK *)
@@ -293,6 +294,19 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "  plus the noise:";
       xp_newline ~html print ();
       xp_noise ~html print ()
+    let xp_metagrid xp_sepcolor xp_dims xp_heights xp_widths xp_gridss ~html print () =
+      print#string "a metagrid with dims ";
+      xp_dims ~html print ();
+      print#string " and sep-color ";
+      xp_sepcolor ~html print ();
+      xp_newline ~html print ();
+      print#string "  with subgrid heights:";
+      xp_heights ~html print ();
+      xp_newline ~html print ();
+      print#string "  with subgrid widths:";
+      xp_widths ~html print ();
+      print#string "  with subgrids:";
+      xp_gridss ~html print ()      
     let xp_repeat xp_grid xp_nis xp_njs ~html print () =
       print#string "a repeat pattern on rows "; xp_nis ~html print ();
       print#string " and on columns "; xp_njs ~html print ();
@@ -344,6 +358,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_grid xp_map ~html print ()
       | Motif partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
          xp_motif partial xp_mot xp_core xp_pure xp_mask_opt xp_noise ~html print ()
+      | Metagrid, [|xp_sepcolor; xp_dims; xp_heights; xp_widths; xp_gridss|] ->
+         xp_metagrid xp_sepcolor xp_dims xp_heights xp_widths xp_gridss ~html print ()
       | Repeat, [|xp_grid; xp_nis; xp_njs|] ->
          xp_repeat xp_grid xp_nis xp_njs ~html print ()
       | Empty, [|xp_size|] ->
@@ -409,6 +425,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Motif _, 3 -> print#string "mask"
       | Motif _, 4 -> print#string "noise"
       | Motif _, _ -> assert false
+      | Metagrid, 0 -> print#string "sepcolor"
+      | Metagrid, 1 -> print#string "dims"
+      | Metagrid, 2 -> print#string "heights"
+      | Metagrid, 3 -> print#string "widths"
+      | Metagrid, 4 -> print#string "gridss"
+      | Metagrid, _ -> assert false
       | Repeat, 0 -> print#string "grid"
       | Repeat, 1 -> print#string "rows"
       | Repeat, 2 -> print#string "cols"
@@ -446,6 +468,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DMonocolor (* COLOR, MASK : SPRITE *)
       | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
       | DMotif of bool (* partial *) (* MOTIF, SPRITE (core), SPRITE (pure), MASK?, SPRITE (noise) *)
+      | DMetagrid (* COLOR, VEC SIZE, SIZE+, SIZE+, GRID++ : GRID *)
       | DRepeat (* SPRITE, INT+, INT+ : SPRITE *)
       | DEmpty (* SIZE : MASK *)
       | DFull (* SIZE : MASK *)
@@ -485,6 +508,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_recoloring xp_grid xp_map ~html print ()
       | DMotif partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
          xp_motif partial xp_mot xp_core xp_pure xp_mask_opt xp_noise ~html print ()
+      | DMetagrid, [|xp_sepcolor; xp_dims; xp_heights; xp_widths; xp_gridss|] ->
+         xp_metagrid xp_sepcolor xp_dims xp_heights xp_widths xp_gridss ~html print ()
       | DRepeat, [|xp_grid; xp_nis; xp_njs|] ->
          xp_repeat xp_grid xp_nis xp_njs ~html print ()
       | DEmpty, [|xp_size|] ->
@@ -781,6 +806,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  true, (Repeat, [|GRID (filling,nocolor), 0;
                                   INT (COORD (I, SIZE)), 1;
                                   INT (COORD (J, SIZE)), 1|]);
+                 true, (Metagrid,
+                        [|COLOR C_OBJ, 0;
+                          VEC SIZE, 0;
+                          INT (COORD (I,SIZE)), 1;
+                          INT (COORD (J,SIZE)), 1;
+                          GRID (filling,nocolor), 2|]);
                  not full (*&& nocolor*), (Empty, [|VEC SIZE, 0|]);
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]);
@@ -804,7 +835,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
         method funcs k =
           (* TODO: handle dimension *)
           match k with
-          | BOOL -> []
+          | BOOL ->
+             [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
+               `Reverse_1, [|k|];
+             ]
           | INT CARD ->
              [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
@@ -926,8 +961,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
                `ApplySymGrid_1 `Id, [|k|];
                `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR (C_BG full); k|] ]
-          | MAP (ta,tb) -> []
+               `CloseSym_2 [], [|COLOR (C_BG full); k|];
+             ]
+          | MAP (ta,tb) ->
+             [ `Index_1 [], [|k|];
+               `Tail_1, [|k|];
+               `Reverse_1, [|k|];
+             ]
         method expr_opt k =
           let expand_grid (filling, nocolor) =
             [(`Sprite, nocolor); (`Full, nocolor); (`Noise, nocolor)] in
@@ -963,7 +1003,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
-      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * int (* consumed objects *) * (int * int * Grid.t) list (* objects *)
+      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * int (* consumed objects *) * (int * int * Grid.t) list (* objects *) (* TODO: merge with Seq *)
       | `MapDomain of (value,value) Mymap.t * value array (* domain *)
       | `Seq of input list ]
 
@@ -1025,6 +1065,7 @@ module MyDomain : Madil.DOMAIN =
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
     let make_motif tg partial mmotif mcore mpure mmask_opt mnoise : model = Model.make_pat (GRID tg) (Motif partial) [|mmotif; mcore; mpure; mmask_opt; mnoise|]
+    let make_metagrid tg msepcolor mdims mheights mwidths mgridss : model = Model.make_pat (GRID tg) Metagrid [|msepcolor; mdims; mheights; mwidths; mgridss|]
     let make_repeat tg mgrid mnis mnjs : model = Model.make_pat (GRID tg) Repeat [|mgrid; mnis; mnjs|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
@@ -1061,6 +1102,20 @@ module MyDomain : Madil.DOMAIN =
       match Data.value d with
       | `Seq vs -> Array.length vs
       | _ -> assert false
+    let get_seq (f : value -> 'a) (d : data) : 'a array =
+      match Data.value d with
+      | `Seq vs -> Array.map f vs
+      | _ -> assert false
+    let get_seq_seq (f : value -> 'a) (d : data) : 'a array array =
+      match Data.value d with
+      | `Seq vs ->
+         Array.map
+           (function
+            | `Seq vs1 -> Array.map f vs1
+            | _ -> assert false)
+           vs
+      | _ -> assert false
+             
       
     let make_danycoord ij r : data =
       Data.make_dpat (`Int ij) (DAnyCoord (ij,r)) [||]
@@ -1225,6 +1280,21 @@ module MyDomain : Madil.DOMAIN =
            Grid.Mask.crop bgcolor m g_pure in
       Grid.add_grid_at g 0 0 g_noise;
       Result.Ok (Data.make_dpat (`Grid g) (DMotif partial) [|dmot; dcore; dpure; dmask_opt; dnoise|])
+    let make_dmetagrid dsepcolor ddims dheights dwidths dgridss : data result =
+      let sepcolor = get_color dsepcolor in
+      let k, l = get_vec ddims in
+      let part_heights = get_seq (function `Int h -> h | _ -> assert false) dheights in
+      let part_widths = get_seq (function `Int w -> w | _ -> assert false) dwidths in
+      let parts = get_seq_seq (function `Grid g -> g | _ -> assert false) dgridss in
+      let mg =
+        { GPat.Metagrid.sepcolor;
+          k;
+          l;
+          part_heights;
+          part_widths;
+          parts } in
+      let| g = GPat.Metagrid.generate mg in
+      Result.Ok (Data.make_dpat (`Grid g) DMetagrid [|dsepcolor; ddims; dheights; dwidths; dgridss|])
     let make_drepeat dgrid dnis dnjs : data result =
       let g1 = get_grid dgrid in
       let nis =
@@ -2216,6 +2286,13 @@ module MyDomain : Madil.DOMAIN =
            match l with
            | [dmot; dcore; dmask_opt; dnoise] -> Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise)
            | _ -> assert false)
+      | _, Metagrid, [|gen_sepcolor; gen_dims; gen_heights; gen_widths; gen_gridss|] ->
+         (fun info ->
+           let* l = Myseq.product_fair [gen_sepcolor info; gen_dims info; gen_heights info; gen_widths info; gen_gridss info] in
+           match l with
+           | [dsepcolor; ddims; dheights; dwidths; dgridss] ->
+              Myseq.from_result (make_dmetagrid dsepcolor ddims dheights dwidths dgridss)
+           | _ -> assert false)
       | _, Repeat, [|gen_grid; gen_nis; gen_njs|] ->
          (fun info ->
            let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
@@ -2548,6 +2625,33 @@ module MyDomain : Madil.DOMAIN =
          let* dnoise, _ = parse_noise (`GridDimsCols (g_noise,rh,rw,nc)) in
          let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
          Myseq.return (data, `Null)
+      | _, Metagrid, [|parse_sepcolor; parse_dims; parse_heights; parse_widths; parse_gridss|], `GridDimsCols (g,rh,rw,nc) ->
+         let make_range = function
+           | Range.Closed (a,b) -> Range.make_closed 1 ((b+1) / 2)
+           | Range.Open a -> Range.make_open 1
+         in
+         let* mg : GPat.Metagrid.t = Myseq.from_list (GPat.Metagrid.parse g) in
+         let* dsepcolor, _ = parse_sepcolor (`Color mg.sepcolor) in
+         let* ddims, _ = parse_dims (`Vec (`IntRange (mg.k, make_range rh),
+                                           `IntRange (mg.l, make_range rw))) in
+         let* dheights, _ = parse_heights (`Seq (Array.to_list (Array.map (fun h1 -> `IntRange (h1, rh)) mg.part_heights))) in (* TODO: refine ranges *)
+         let* dwidths, _ = parse_widths (`Seq (Array.to_list (Array.map (fun w1 -> `IntRange (w1, rw)) mg.part_widths))) in (* TODO: refine ranges *)
+         let* dgridss, _ = parse_gridss
+                             (`Seq (Array.to_list
+                                      (Array.map
+                                         (fun row ->
+                                           `Seq (Array.to_list
+                                                   (Array.map
+                                                      (fun g1 ->
+                                                        (* dims are known from heigths and widths *)
+                                                        let h1, w1 = Grid.dims g1 in
+                                                        let rh1 = Range.make_exact h1 in
+                                                        let rw1 = Range.make_exact w1 in
+                                                        `GridDimsCols (g1, rh1, rw1, nc))
+                                                      row)))
+                                         mg.parts))) in
+         let* data = Myseq.from_result (make_dmetagrid dsepcolor ddims dheights dwidths dgridss) in
+         Myseq.return (data, `Null)         
       | _, Repeat, [|parse_grid; parse_nis; parse_njs|], `GridDimsCols (g,rh,rw,nc) ->
          let rec aux_inputs min max_opt = function
            | [] -> []
@@ -2647,16 +2751,57 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (make_dcolormat dcolorss, `Null)
       | _ -> assert false
 
-    let rec parseur_end : input -> input Myseq.t =
-      function
-      | `Seq [] -> Myseq.return `Null
-      | `Seq (x::l) ->
-         let* x = parseur_end x in
+    let rec parseur_end ~depth (i : input) : input Myseq.t =
+      match depth, i with
+      | 1, `Seq [] ->
+         Myseq.return `Null
+      | _, `Seq (x::l) ->
+         let* x = parseur_end ~depth:(depth-1) x in
          if x = `Null
          then Myseq.return (`Seq l)
          else Myseq.return (`Seq (x::l))
-      | `Objects (_,_,_,_,[]) -> Myseq.return `Null
+      | _, `Objects (_,_,_,_,[]) ->
+         Myseq.return `Null (* TODO: merge with `Seq *)
+      | _, `Vec (i1,i2) ->
+         let* i1' = parseur_end ~depth i1 in
+         let* i2' = parseur_end ~depth i2 in
+         Myseq.return (`Vec (i1',i2'))
       | _ -> Myseq.empty
+
+    (*let _ = (* unit test parsing 2D ndtree of colors *)
+      let vtree : value Ndtree.t =
+        { ndim = 2;
+          tree =
+            (*Ndtree.Vector1 [| Some (`Color 1)|]*)
+            Ndtree.Vector
+              [| Ndtree.Vector1 [| Some (`Color 1)|];
+                 Ndtree.Vector1 [| Some (`Color 3); Some (`Color 4)|];
+                 Ndtree.Vector1 [| Some (`Color 5); Some (`Color 6)|];
+              |]
+        } in
+      let m : model =
+        Model.Loop
+          (1, Range.make_open 0,
+           Model.Loop
+             (2, Range.make_open 0,
+              Model.Value
+                (COLOR C_OBJ, vtree))
+          )  in
+      let input : input =
+        (*`Seq [`Color 1]*)
+        `Seq [`Seq [`Color 1];
+              `Seq [`Color 3; `Color 4];
+              `Seq [`Color 5; `Color 6];
+          ] in    
+      (Model.parseur
+        ~parseur_value
+        ~parseur_pat
+        ~parseur_end
+        ~value_of_seq
+        ~xis:[] m input)
+      |> Myseq.iter
+           (fun (d,input) -> pp_endline xp_value (Data.value d))*)
+    
 
     (* description length *)
 
@@ -2771,7 +2916,10 @@ module MyDomain : Madil.DOMAIN =
       | DColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
       | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
-      | DMotif partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] -> enc_motif +. enc_core +. enc_mask_opt +. enc_noise
+      | DMotif partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
+         enc_motif +. enc_core +. enc_mask_opt +. enc_noise
+      | DMetagrid, [|enc_sepcolor; enc_dims; enc_heights; enc_widths; enc_gridss|] ->
+         enc_sepcolor +. enc_dims +. enc_heights +. enc_widths +. enc_gridss
       | DRepeat, [|enc_grid; enc_nis; enc_njs|] -> enc_grid +. enc_nis +. enc_njs
       | DEmpty, [|enc_size|] -> enc_size
       | DFull, [|enc_size|] -> enc_size
@@ -2822,6 +2970,7 @@ module MyDomain : Madil.DOMAIN =
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
       | _, Motif partial -> 1.
+      | _, Metagrid -> 0.
       | _, Repeat -> 0.
       | _, Empty -> 0.
       | _, Full -> 0.
@@ -2958,8 +3107,14 @@ module MyDomain : Madil.DOMAIN =
                let res =
                  if ndim >= 2
                  then
-                   let$ res, j = res, [0; 1; 2; -2; -1] in
-                   (t1, `Index_1 [None; Some j], `Default)::res
+                   let res =
+                     let$ res, j = res, [0; 1; 2; -2; -1] in
+                     (t1, `Index_1 [None; Some j], `Default) :: res in
+                   (* let res =
+                     let$ res, i = res, [0; 1; -1] in
+                     let$ res, j = res, [0; 1; -1] in
+                     (t1, `Index_1 [Some i; Some j], `Default) :: res in TODO *)
+                   res
                  else res in
                res
             | _ -> []) in
@@ -3525,6 +3680,36 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
             varseq)
            :: refs in
+         let refs = (* Metagrid *)
+           let xsepcolor, varseq = Refining.new_var varseq in
+           let xdims, varseq = Refining.new_var varseq in
+           let xk, varseq = Refining.new_var varseq in
+           let xl, varseq = Refining.new_var varseq in
+           let xl_heights, varseq = Refining.new_var varseq in
+           let xheight, varseq = Refining.new_var varseq in
+           let xl_widths, varseq = Refining.new_var varseq in
+           let xwidth, varseq = Refining.new_var varseq in
+           let xl_i, varseq = Refining.new_var varseq in
+           let xl_j, varseq = Refining.new_var varseq in
+           let xg1, varseq = Refining.new_var varseq in
+           (make_metagrid tg
+              (Model.make_def xsepcolor (make_anycolor C_OBJ))
+              (Model.make_def xdims
+                 (make_vec SIZE
+                    (Model.make_def xk (make_anycoord I SIZE))
+                    (Model.make_def xl (make_anycoord J SIZE))))
+              (Model.make_loop xl_heights (Range.make_open 1)
+                 (Model.make_def xheight
+                    (make_anycoord I SIZE)))
+              (Model.make_loop xl_widths (Range.make_open 1)
+                 (Model.make_def xwidth
+                    (make_anycoord J SIZE)))
+              (Model.make_loop xl_i (Range.make_open 1)
+                 (Model.make_loop xl_j (Range.make_open 1)
+                    (Model.make_def xg1
+                       (make_anygrid tg)))),
+            varseq)
+           :: refs in
          (* let refs = (* Repeat - too catchy, replaced by function *)
            let xg1, varseq = Refining.new_var varseq in
            let xli, varseq = Refining.new_var varseq in
@@ -3666,7 +3851,8 @@ module MyDomain : Madil.DOMAIN =
     let log_reading r m ~status =
       (*print_endline "READING";
       pp_endline xp_refinement r;
-      pp_endline xp_task_model m;*)
+      pp_endline xp_task_model m;
+      flush stdout;*)
       ()
     let log_refining r m prs dl =
       Printf.printf "REF  %.3f  " dl;
@@ -3708,3 +3894,5 @@ module MyDomain : Madil.DOMAIN =
   end
 
 module MyMadil = Madil.Make(MyDomain)
+
+

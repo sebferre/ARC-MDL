@@ -1044,7 +1044,212 @@ let from_grid, reset_from_grid =
   | Result.Error exn -> raise exn*)
   
   end
-             
+
+
+module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
+  struct
+
+    type t =
+      { sepcolor : Grid.color;
+        k : int;
+        l : int;
+        part_heights : int array;
+        part_widths : int array;
+        parts : Grid.t array array; (* grid matrix, row-wise *)
+      }
+
+    let is_well_formed (mg : t) : bool =
+      let k, l = mg.k, mg.l in
+      let ok = ref (k > 0 && l > 0) in
+      ok := !ok && k = Array.length mg.part_heights;
+      ok := !ok && l = Array.length mg.part_widths;
+      ok := !ok && k = Array.length mg.parts;
+      let i = ref 0 in
+      let j = ref 0 in
+      while !ok && !i < k do
+        let hi = mg.part_heights.(!i) in
+        let row = mg.parts.(!i) in
+        ok := !ok && l = Array.length row;
+        while !ok && !j < l do
+          let wj = mg.part_widths.(!j) in
+          let g1 = row.(!j) in
+          let h1, w1 = Grid.dims g1 in
+          ok := !ok && h1 = hi && w1 = wj;
+          incr j
+        done;
+        incr i;
+        j := 0
+      done;
+      !ok
+
+    let init_parts (k : int) (l : int) (f : int -> int -> Grid.t) : Grid.t array array =
+      Array.init k
+        (fun i ->
+          Array.init l
+            (fun j ->
+              f i j))
+    
+    let generate (mg : t) : Grid.t result =
+      let get_offsets n part_lengths =
+        let offset_g = Array.make n 0 in
+        let offset_f = Array.make (n-1) 0 in
+        let offset = ref part_lengths.(0) in
+        for i = 1 to n-1 do
+          offset_f.(i-1) <- !offset;
+          incr offset;
+          offset_g.(i) <- !offset;
+          offset := !offset + part_lengths.(i)
+        done;
+        offset_g, offset_f
+      in
+      if is_well_formed mg
+      then
+        let k, l = mg.k, mg.l in
+        let h = Array.fold_left (+) (k-1) mg.part_heights in (* k-1 frontiers *)
+        let w = Array.fold_left (+) (l-1) mg.part_widths in (* l-1 frontiers *)
+        let offset_h_g, offset_h_f = get_offsets k mg.part_heights in
+        let offset_w_g, offset_w_f = get_offsets l mg.part_widths in
+        (* initializing the grid *)
+        let g = Grid.make h w Grid.transparent in
+        (* drawing horizontal frontiers *)
+        Array.iter
+          (fun i ->
+            for j = 0 to w-1 do
+              Grid.Do.set_pixel g i j mg.sepcolor
+            done)
+          offset_h_f;
+        (* drawing vertical frontiers *)
+        Array.iter
+          (fun j ->
+            for i = 0 to h-1 do
+              Grid.Do.set_pixel g i j mg.sepcolor
+            done)
+          offset_w_f;
+        (* drawing part grids *)
+        Array.iteri
+          (fun i offset_i ->
+            Array.iteri
+              (fun j offset_j ->
+                Grid.add_grid_at g offset_i offset_j mg.parts.(i).(j))
+              offset_w_g)
+          offset_h_g;
+        Result.Ok g
+      else Result.Error (Failure "Grid_patterns.Metagrid.generate: ill-formed metagrid")
+    
+    let parse (g : Grid.t) : t list =
+      let h, w = Grid.dims g in
+      (* looking for horizontal frontiers *)
+      let color_h_fs = Array.make Grid.nb_color [] in
+      for i = h-1 downto 0 do
+        let c = g.matrix.{i,0} in
+        if Grid.is_true_color c then (
+          let j = ref 1 in
+          while !j < w && g.matrix.{i,!j} = c do
+            incr j
+          done;
+          if !j >= w then color_h_fs.(c) <- i :: color_h_fs.(c)
+        )
+      done;
+      (* looking for vertical frontiers *)
+      let color_w_fs = Array.make Grid.nb_color [] in
+      for j = w-1 downto 0 do
+        let c = g.matrix.{0,j} in
+        if Grid.is_true_color c then (
+          let i = ref 1 in
+          while !i < h && g.matrix.{!i,j} = c do
+            incr i
+          done;
+          if !i >= h then color_w_fs.(c) <- j :: color_w_fs.(c)
+        )
+      done;
+      (* collecting metagrid candidates *)
+      let c_fs = ref ([] : (Grid.color * int list * int list) list) in
+      Array.iteri
+        (fun c h_fs ->
+          let w_fs = color_w_fs.(c) in
+          match h_fs, w_fs with
+          | [], [] -> ()
+          | h_fs, w_fs -> c_fs := (c,h_fs,w_fs) :: !c_fs)
+        color_h_fs;
+      let mgs =
+        let sizes_offsets_of_fs left right fs =
+          let rec aux left = function
+            | [] -> (right - left) :: [], left :: []
+            | f::fs1 ->
+               let sizes1, offsets1 = aux (f+1) fs1 in
+               (f - left) :: sizes1, left :: offsets1
+          in
+          let sizes, offsets = aux left fs in
+          Array.of_list sizes, Array.of_list offsets
+        in
+        List.filter_map
+          (fun (c,h_fs,w_fs) ->
+            let part_heights, part_h_offsets = sizes_offsets_of_fs 0 h h_fs in
+            let part_widths, part_w_offsets = sizes_offsets_of_fs 0 w w_fs in
+            let k = Array.length part_heights in
+            let l = Array.length part_widths in
+            if Array.exists (fun h -> h = 0) part_heights
+               || Array.exists (fun w -> w = 0) part_widths
+            then None
+            else
+              let parts =
+                init_parts k l
+                  (fun i j ->
+                    let g1_res =
+                      Grid.Transf.crop g
+                        part_h_offsets.(i) part_w_offsets.(j)
+                        part_heights.(i) part_widths.(j) in
+                    match g1_res with
+                    | Result.Ok g1 -> g1
+                    | Result.Error _ -> assert false) in
+              Some
+                { sepcolor = c;
+                  k;
+                  l;
+                  part_heights;
+                  part_widths;
+                  parts })
+          !c_fs in
+      let mgs = (* sorting by decreasing meta-area *)
+        List.sort
+          (fun mg1 mg2 -> Stdlib.compare (mg2.k * mg2.l) (mg1.k * mg1.l))
+          mgs in
+      mgs
+        
+(*    let _ = (* unit test *)
+      print_endline "UNIT TEST Grid_patterns.Metagrid";
+      let mg =
+        let part_heights = [|2;1|] in
+        let part_widths = [|3;1;2|] in
+        let k = Array.length part_heights in
+        let l = Array.length part_widths in
+        let parts =
+          init_parts k l
+            (fun i j ->
+              let c = Grid.black + 1 + Random.int 4 in
+              Grid.make part_heights.(i) part_widths.(j) c) in
+        { sepcolor = Grid.transparent;
+          k;
+          l;
+          part_heights;
+          part_widths;
+          parts }in
+      assert (is_well_formed mg);
+      match generate mg with
+      | Result.Error exn -> raise exn
+      | Result.Ok g ->
+         pp Grid.xp_grid g;
+         parse g
+         |> List.iter
+              (fun mg1 ->
+                match generate mg1 with
+                | Result.Ok g1 ->
+                   Printf.printf "Parsing with dims %d x %d" mg1.k mg1.l;
+                   pp Grid.xp_grid g1
+                | Result.Error exn -> raise exn)*)
+    
+  end
+
 (* Reset of memoized functions *)
              
 let reset_memoized_functions () =
