@@ -2626,16 +2626,38 @@ module MyDomain : Madil.DOMAIN =
          let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
          Myseq.return (data, `Null)
       | _, Metagrid, [|parse_sepcolor; parse_dims; parse_heights; parse_widths; parse_gridss|], `GridDimsCols (g,rh,rw,nc) ->
-         let make_range = function
-           | Range.Closed (a,b) -> Range.make_closed 1 ((b+1) / 2)
-           | Range.Open a -> Range.make_open 1
+         let h, w = Grid.dims g in
+         assert (Range.mem h rh);
+         assert (Range.mem w rw);
+         let make_input_dim kl rhw =
+           let r =
+             match rhw with
+             | Range.Closed (a,b) -> Range.make_closed 1 ((b+1) / 2)
+             | Range.Open a -> Range.make_open 1 in
+           assert (Range.mem kl r);
+           `IntRange (kl,r)
+         and make_input_sizes rhw kl sizes =
+           let r, l =
+             let init_range = Range.sub rhw (Range.make_exact (kl - 1 + kl)) in (* minus frontiers, and minus at least 1 for each size *)
+             Array.fold_right
+               (fun hw1 (r,xs) ->
+                 let r1 =
+                   match Range.upper r with
+                   | None -> Range.make_open 1
+                   | Some b -> Range.make_closed 1 (1+b) in
+                 assert (Range.mem hw1 r1);
+                 Range.sub r (Range.make_exact (hw1-1)), (* minus excess of current size viz default 1 *)
+                 `IntRange (hw1,r1)::xs)
+               sizes (init_range, []) in
+           assert (Range.mem 0 r);
+           `Seq l           
          in
          let* mg : GPat.Metagrid.t = Myseq.from_list (GPat.Metagrid.parse g) in
+         let k, l = mg.k, mg.l in
          let* dsepcolor, _ = parse_sepcolor (`Color mg.sepcolor) in
-         let* ddims, _ = parse_dims (`Vec (`IntRange (mg.k, make_range rh),
-                                           `IntRange (mg.l, make_range rw))) in
-         let* dheights, _ = parse_heights (`Seq (Array.to_list (Array.map (fun h1 -> `IntRange (h1, rh)) mg.part_heights))) in (* TODO: refine ranges *)
-         let* dwidths, _ = parse_widths (`Seq (Array.to_list (Array.map (fun w1 -> `IntRange (w1, rw)) mg.part_widths))) in (* TODO: refine ranges *)
+         let* ddims, _ = parse_dims (`Vec (make_input_dim k rh, make_input_dim l rw)) in
+         let* dheights, _ = parse_heights (make_input_sizes rh k mg.part_heights) in
+         let* dwidths, _ = parse_widths (make_input_sizes rw l mg.part_widths) in
          let* dgridss, _ = parse_gridss
                              (`Seq (Array.to_list
                                       (Array.map
@@ -2893,7 +2915,7 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ta,tb), `Map m ->
          dl_map (dl_value ta) (dl_value tb) m
       | _, `Seq _ -> assert false
-      | _ -> assert false
+      | _ -> pp xp_value v; assert false
 
            
     let encoding_dpat dc encs =
