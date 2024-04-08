@@ -305,6 +305,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       xp_newline ~html print ();
       print#string "  with subgrid widths:";
       xp_widths ~html print ();
+      xp_newline ~html print ();
       print#string "  with subgrids:";
       xp_gridss ~html print ()      
     let xp_repeat xp_grid xp_nis xp_njs ~html print () =

@@ -552,6 +552,7 @@ type t =
   | Rotate180 | Rotate90
   | FullSym
   (* special motifs *)
+  | Corners
   | Border | CrossPlus | CrossTimes | Diamond
   | Star (* CrossPlus+CrossTimes *) (* TODO: other combinations? *)
 
@@ -570,6 +571,7 @@ let xp ~html print = function
   | Rotate180 -> print#string "Rotate180"
   | Rotate90 -> print#string "Rotate90"
   | FullSym -> print#string "FullSym"
+  | Corners -> print#string "Corners"
   | Border -> print#string "Border"
   | CrossPlus -> print#string "Cross +"
   | CrossTimes -> print#string "Cross x"
@@ -625,6 +627,11 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
        let j_min = min j (w_1 - j) in
        min i_min j_min, max i_min j_min)
   (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
+  | Corners ->
+     (fun i j ->
+       if (i = 0 || i = h_1) && (j = 0 || j = w_1)
+       then 1, 0
+       else 0, 0)
   | Border ->
      (fun i j ->
        if i = 0 || j = 0 || i = h_1 || j = w_1
@@ -766,7 +773,7 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        Range.make_open 0, (* dummy *)
        []
-  | Border | CrossPlus ->
+  | Corners | Border | CrossPlus ->
      if h >= 3 && w >= 3
      then
        let u, v = 2, 1 in
@@ -819,7 +826,7 @@ let candidates =
     FlipD1; FlipD2; FlipD12;
     Rotate180; Rotate90;
     FullSym;
-    Border; CrossPlus; CrossTimes; Diamond; Star;
+    Corners; Border; CrossPlus; CrossTimes; Diamond; Star;
     Periodic (I, J);
     Periodic (I, PlusIJ);
     Periodic (PlusIJ, J);
