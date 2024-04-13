@@ -300,13 +300,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string " and sep-color ";
       xp_sepcolor ~html print ();
       xp_newline ~html print ();
-      print#string "  with subgrid heights:";
+      print#string "  with subgrid heights: ";
       xp_heights ~html print ();
       xp_newline ~html print ();
-      print#string "  with subgrid widths:";
+      print#string "  with subgrid widths: ";
       xp_widths ~html print ();
       xp_newline ~html print ();
-      print#string "  with subgrids:";
+      print#string "  with subgrids: ";
       xp_gridss ~html print ()      
     let xp_repeat xp_grid xp_nis xp_njs ~html print () =
       print#string "a repeat pattern on rows "; xp_nis ~html print ();
@@ -2354,7 +2354,6 @@ module MyDomain : Madil.DOMAIN =
       | _ -> assert false
 
     let parseur_value v input =
-      (* TODO: generalize handling of sequences *)
       let rec aux v input =
         match v, input with
         | `Null, `Null -> true, `Null
@@ -2364,8 +2363,6 @@ module MyDomain : Madil.DOMAIN =
            let ok_j, _ = aux (`Int j) in_j in
            ok_i && ok_j, `Null
         | `Color c0, `Color c -> c = c0 && Grid.is_true_color c, `Null
-        | `Color c0, `Seq (`Color c::lc) -> c = c0 && Grid.is_true_color c, `Seq lc
-        | `Color c0, `Seq (`Seq (`Color c::lc) :: l) -> c = c0 && Grid.is_true_color c, `Seq (`Seq lc :: l)
         | `Seg seg0, `SegAny -> true, `Null
         | `Seg seg0, `Seg seg -> seg = seg0, `Null
         | `Motif mot0, `Motif mot -> mot = mot0, `Null
@@ -2375,8 +2372,13 @@ module MyDomain : Madil.DOMAIN =
            then true, `Objects (h, w, nc, nb_consumed_objs-1, List.filter ((<>) obj0) objs)
            else false, input
         | `Map m0, `MapDomain (m,dom) -> m0 = m, `Null
-           
-        | _, `Null -> true, `Null
+
+        | _, `Null -> true, `Null (* to handle expr args *)
+        | _, `Seq (x::lx) -> (* to handle sequences *)
+           let ok, x' = aux v x in
+           let input = if x' = `Null then `Seq lx else `Seq (x'::lx) in
+           ok, input
+    
         | _ -> false, input in
       let ok, input = aux v input in
       if ok
@@ -2651,7 +2653,7 @@ module MyDomain : Madil.DOMAIN =
                  `IntRange (hw1,r1)::xs)
                sizes (init_range, []) in
            assert (Range.mem 0 r);
-           `Seq l           
+           `Seq l
          in
          let* mg : GPat.Metagrid.t = Myseq.from_list (GPat.Metagrid.parse g) in
          let k, l = mg.k, mg.l in
