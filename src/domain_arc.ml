@@ -795,18 +795,18 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
                  not full, (Objects (1), [|VEC SIZE, 0; SEG, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
-                 not nocolor, (ColorPartition, [|VEC SIZE, 0; GRID (`Sprite,false), 1|]);
+                 (*not nocolor, (ColorPartition, [|VEC SIZE, 0; GRID (`Sprite,false), 1|]);*)
                  not nocolor, (Monocolor, [|COLOR C_OBJ, 0; GRID (filling,true), 0|]);
-                 not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 1|]);
+                 not nocolor, (Recoloring, [|GRID (filling,nocolor), 0; MAP (COLOR C_OBJ, COLOR C_OBJ), 0|]);
                  true, (Motif false,
                         [|MOTIF, 0;
                           GRID ((if filling = `Noise then `Sprite else filling), nocolor), 0;
                           (* derived pure, not counting *)
                           GRID (`Sprite,true), 0; (* TODO: encode optional *)
                           GRID (`Noise,nocolor), 0|]);
-                 true, (Repeat, [|GRID (filling,nocolor), 0;
+                 (*true, (Repeat, [|GRID (filling,nocolor), 0;
                                   INT (COORD (I, SIZE)), 1;
-                                  INT (COORD (J, SIZE)), 1|]);
+                                  INT (COORD (J, SIZE)), 1|]);*)
                  true, (Metagrid,
                         [|COLOR C_OBJ, 0;
                           VEC SIZE, 0;
