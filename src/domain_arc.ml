@@ -994,7 +994,17 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     (* model processing *)
       
-    type generator_info = unit (* int * int * Grid.color (* container height, width, and color *) *)
+    type generator_info =
+      [ `Null
+      | `Int of int * int (* interval *)
+      | `Vec of generator_info (* i *) * generator_info (* j *)
+      | `Color of Grid.color list (* interval *)
+      | `Seg of GPat.Objects.segmentation list
+      | `Motif of GPat.Motif.t list
+      | `Grid of (int * int) (* height *) * (int * int) (* width *) * Grid.color list (* color *)
+      | `Obj of generator_info (* pos *) * generator_info (* grid *)
+      | `Map of generator_info (* src *) * generator_info (* dst *)
+      | `Seq of generator_info list ]
 
     type input =
       [ `Null
@@ -2073,270 +2083,257 @@ module MyDomain : Madil.DOMAIN =
 
     (* model-based generation *)
       
-(*    let generator_pat t c gen_args =
-      match t, c, gen_args with
-      | INT (COORD (axis,tv)), AnyCoord, [||] ->
-         (fun (h,w,c) ->
-           let bound = match axis with I -> h | J -> w in
-           let ij, range =
-             match tv with
-             | SIZE -> min (max 1 (bound / 3)) bound, Range.make_closed 1 bound
-             | POS | MOVE -> 0, Range.make_closed 0 (bound-1) in
-           Myseq.return (make_danycoord ij range))
-      | _, Vec, [|gen_i; gen_j|] ->
-         (fun (h,w,c) ->
-           let* di = gen_i (h,w,c) in
-           let* dj = gen_j (h,w,c) in
-           Myseq.return (make_dvec di dj))
-      | COLOR tc, AnyColor, [||] ->
-         (fun (h,w,c) -> Myseq.return (make_danycolor (min (c+1) Grid.last_color) tc))
-      | MOTIF, AnyMotif, [||] ->
-         (fun (h,w,c) -> Myseq.return (make_danymotif GPat.Motif.FlipHW))
-      | GRID ((filling,nocolor) as tg), AnyGrid, [||] ->
-         (fun (h,w,c) ->
-           let c1 = if nocolor then Grid.Mask.one else min (c+1) Grid.last_color in
-           let h1, w1 = min (max 1 (h/3)) h, min (max 1 (w/3)) w in
-           let g1 = Grid.make h1 w1 c1 in (* TODO: specialize according to filling *) 
-           Myseq.return (make_danygrid g1 tg (Range.make_closed 1 h) (Range.make_closed 1 w)))
-      | _, Obj, [|gen_pos; gen_g1|] ->
-         (fun (h,w,c) ->
-           let* dg1 = gen_g1 (h,w,c) in
-           let g1 = get_grid dg1 in
-           let h1, w1 = Grid.dims g1 in
-           let* dpos = gen_pos (h-h1, w-w1, c) in
-           Myseq.return (make_dobj dpos dg1))
-      | _, BgColor, [|gen_col; gen_g1|] ->
-         (fun (h,w,c) ->
-           let* dcol = gen_col (h,w,c) in
-           let c = get_color dcol in
-           let* dg1 = gen_g1 (h,w,c) in
-           Myseq.return (make_dbgcolor dcol dg1))
-      | _, IsFull, [|gen_g1|] ->
-         (fun (h,w,c) ->
-           let* dg1 = gen_g1 (h,w,c) in
-           Myseq.return (make_disfull dg1))
-      | _, Crop, [|gen_size; gen_pos; gen_g1|] ->
-         (fun (h0,w0,c0) ->
-           let* dsize = gen_size (h0,w0,c0) in
-           let h, w = get_vec dsize in
-           let* dpos = gen_pos (h,w,c0) in
-           let* dg1 = gen_g1 (h,w,c0) in
-           Myseq.return (make_dcrop dsize dpos dg1))
-      | _, Objects seg, [|gen_size; gen_objs|] ->
-         (fun (h0,w0,c0) ->
-           let* dsize = gen_size (h0,w0,c0) in
-           let h, w = get_vec dsize in
-           let* dobjs = gen_objs (h,w,c0) in (* TODO: take seg into account... *)
-           Myseq.return (make_dobjects seg dsize dobjs))
-      | _, Monocolor, [|gen_col; gen_mask|] ->
-         (fun (h,w,c) ->
-           let* dcol = gen_col (h,w,c) in
-           let* dmask = gen_mask (h,w,c) in
-           Myseq.return (make_dmonocolor dcol dmask))
-      | _, Motif, [|gen_mot; gen_core; gen_noise|] ->
-         (fun (h0,w0,c0) ->
-           let* dmot = gen_mot (h0,w0,c0) in
-           let* dcore = gen_core (h0,w0,c0) in
-           let* dnoise = gen_noise (h0,w0,c0) in
-           Myseq.from_result (make_dmotif dmot dcore dnoise))
-      | _, Empty, [|gen_size|] ->
-         (fun (h,w,c) ->
-           let* dsize = gen_size (h,w,c) in
-           Myseq.return (make_dempty dsize))
-      | _, Full, [|gen_size|] ->
-         (fun (h,w,c) ->
-           let* dsize = gen_size (h,w,c) in
-           Myseq.return (make_dfull dsize))
-      | _, Point, [||] ->
-         (fun (h,w,c) ->
-           Myseq.return (make_dpoint))
-      | _ -> assert false *)
-
-    let default_grid (filling, nocolor) (h, w) =
+(*    let default_grid (filling, nocolor) (h, w) =
       match filling, nocolor with
       | `Full, _ -> Grid.make h w Grid.black
       | `Sprite, false -> Grid.make h w Grid.blue
       | `Sprite, true -> Grid.make h w Grid.Mask.one
       | `Noise, _ -> Grid.make h w Grid.transparent
     let default_grid, reset_default_grid =
-      Memo.memoize2 ~size:103 default_grid
+      Memo.memoize2 ~size:103 default_grid *)
 
-    let generator_pat t c gen_args = (* systematic version *)
-      match t, c, gen_args with
-      | INT CARD, AnyInt, [||] ->
-         let range = Range.make_closed 1 3 in
-         (fun info ->
-           let* n = Myseq.range 1 3 in
-           Myseq.return (make_danyint n range))
-      | INT (COORD (axis,tv)), AnyInt, [||] ->
-         let a, b =
-           match tv with
-           | SIZE -> 1, Grid.max_size
-           | POS | MOVE -> 0, Grid.max_size-1 in
+    let generator_value v info =
+      let rec aux info =
+        match info with
+        | `Seq [] -> None
+        | `Seq (x::lx) -> (* to handle sequences *)
+           (match aux x with
+           | Some x' -> Some (if x' = `Null then `Seq lx else `Seq (x'::lx))
+           | None -> Some (`Seq lx))
+        | _ -> Some `Null
+      in
+      match aux info with
+      | Some info -> Myseq.return (Data.make_dexpr v, info)
+      | None -> Myseq.empty
+    
+    let rec generator_pat t c gen_args info = (* systematic version *)
+      match t, c, gen_args, info with
+      | _, _, _, `Seq [] -> Myseq.empty (* end of sequence *)
+      | _, _, _, `Seq (i::l) ->
+         let* dx, i = generator_pat t c gen_args i in
+         let info =
+           match i with
+           | `Null -> `Seq l
+           | _ -> `Seq (i::l) in
+         Myseq.return (dx,info)
+    
+      | INT _, AnyInt, [||], `Int (a,b) ->
          let range = Range.make_closed a b in
-         (fun info ->
-           let* ij = Myseq.range a b in
-           Myseq.return (make_danyint ij range))
-      | _, Vec, [|gen_i; gen_j|] ->
-         (fun info ->
-           let* lij = Myseq.product_fair [gen_i info; gen_j info] in
-           match lij with
-           | [di; dj] -> Myseq.return (make_dvec di dj)
-           | _ -> assert false)
-      | COLOR tc, AnyColor, [||] ->
-         let a, b =
-           match tc with
-           | C_BG true | C_OBJ -> Grid.black, Grid.last_color
-           | C_BG false -> Grid.black, Grid.transparent in
-         (fun info ->
-           let* c = Myseq.range a b in
-           Myseq.return (make_danycolor c tc))
-      | SEG, AnySeg, [||] ->
-         (fun info ->
-           let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
-           Myseq.return (make_danyseg seg))
-      | MOTIF, AnyMotif, [||] ->
-         (fun info ->
-           let* mot = Myseq.from_list GPat.Motif.candidates in
-           Myseq.return (make_danymotif mot))
-      | GRID tg, AnyGrid, [||] ->
-         let range = Range.make_closed 1 Grid.max_size in
-         let nc = Grid.nb_color in
-         (fun info ->
-           let* lhw = Myseq.product_fair [Myseq.range 1 8; Myseq.range 1 8] in
-           match lhw with
-           | [h; w] ->
-              let g = default_grid tg (h,w) in 
-              Myseq.return (make_danygrid g tg range range nc)
-           | _ -> assert false)
-      | _, Obj, [|gen_pos; gen_g1|] ->
-         (fun info ->
-           let* lposg1 = Myseq.product_fair [gen_pos info; gen_g1 info] in
-           match lposg1 with
-           | [dpos; dg1] -> Myseq.return (make_dobj dpos dg1)
-           | _ -> assert false)
-      | MAP (ta,tb), AnyMap, [||] ->
-         (fun info ->
-           Myseq.return (make_danymap ta tb Mymap.empty)) (* empty map = identity map *)
-      | _, DomMap keys, [|gen_vals|] ->
-         (fun info ->
-           let* dvals = gen_vals info in
-           match Data.value dvals with
-           | `Seq vals when Array.length vals = Array.length keys ->
-              Myseq.return (make_ddommap keys dvals)
-           | _ -> Myseq.empty)
-      | _, Replace, [|gen_a; gen_b|] ->
-         (fun info ->
-           let* lab = Myseq.product_fair [gen_a info; gen_b info] in
-           match lab with
-           | [da; db] ->
-              let a, b = Data.value da, Data.value db in
-              let dom = [|a; b|] in (* get the true domain through info *)
-              Myseq.return (make_dreplace dom da db)
-           | _ -> assert false)
-      | _, Swap, [|gen_a; gen_b|] ->
-         (fun info ->
-           let* lab = Myseq.product_fair [gen_a info; gen_b info] in
-           match lab with
-           | [da; db] ->
-              let a, b = Data.value da, Data.value db in
-              let dom = [|a; b|] in (* get the true domain through info *)
-              Myseq.return (make_dswap dom da db)
-           | _ -> assert false)
-      | _, BgColor, [|gen_col; gen_g1|] ->
-         (fun info ->
-           let* lcg1 = Myseq.product_fair [gen_col info; gen_g1 info] in
-           match lcg1 with
-           | [dcol; dg1] -> Myseq.return (make_dbgcolor dcol dg1)
-           | _ -> assert false)
-      | _, IsFull, [|gen_g1|] ->
-         (fun info ->
-           let* dg1 = gen_g1 info in
-           Myseq.return (make_disfull dg1))
-      | _, Crop, [|gen_g; gen_pos; gen_size|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_g info; gen_pos info; gen_size info] in
-           match l with
-           | [dg; dpos; dsize] ->
-              let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
-              Myseq.return dg1 
-           | _ -> assert false)
-      | _, Objects (nmax), [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_size info; gen_seg info; gen_card info; gen_objs info] in
-           match l with
-           | [dsize; dseg; dcard; dobjs] ->
-              (match Data.value dcard, Data.value dobjs with
-               | `Int card, `Seq vs1 ->
-                  let n = Array.length vs1 in
-                  let* () = Myseq.from_bool (n <= nmax && card = n) in 
-                  Myseq.return (make_dobjects nmax dsize dseg dcard dobjs)
-               | _ -> Myseq.empty)
-           | _ -> assert false)
-      | _, ColorPartition, [|gen_size; gen_grids|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_size info; gen_grids info] in
-           match l with
-           | [dsize; dgrids] ->
-              let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
-              Myseq.return data
-           | _ -> assert false)
-      | _, Monocolor, [|gen_col; gen_mask|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_col info; gen_mask info] in
-           match l with
-           | [dcol; dmask] -> Myseq.return (make_dmonocolor dcol dmask)
-           | _ -> assert false)
-      | _, Recoloring, [|gen_grid; gen_map|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_grid info; gen_map info] in
-           match l with
-           | [dgrid; dmap] -> Myseq.return (make_drecoloring dgrid dmap)
-           | _ -> assert false)
-      | _, Motif partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_mot info; gen_core info; gen_mask_opt info; gen_noise info] in
-           match l with
-           | [dmot; dcore; dmask_opt; dnoise] -> Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise)
-           | _ -> assert false)
-      | _, Metagrid, [|gen_sepcolor; gen_dims; gen_heights; gen_widths; gen_gridss|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_sepcolor info; gen_dims info; gen_heights info; gen_widths info; gen_gridss info] in
-           match l with
-           | [dsepcolor; ddims; dheights; dwidths; dgridss] ->
-              Myseq.from_result (make_dmetagrid dsepcolor ddims dheights dwidths dgridss)
-           | _ -> assert false)
-      | _, Repeat, [|gen_grid; gen_nis; gen_njs|] ->
-         (fun info ->
-           let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
-           match l with
-           | [dgrid; dnis; dnjs] -> Myseq.from_result (make_drepeat dgrid dnis dnjs)
-           | _ -> assert false)
-      | _, Empty, [|gen_size|] ->
-         (fun info ->
-           let* dsize = gen_size info in
-           Myseq.return (make_dempty dsize))
-      | _, Full, [|gen_size|] ->
-         (fun info ->
-           let* dsize = gen_size info in
-           Myseq.return (make_dfull dsize))
-      | _, Point, [||] ->
-         (fun info ->
-           Myseq.return (make_dpoint))
-      | _, Line, [|gen_len; gen_dir|] ->
-         (fun info ->
-           let* dlen = gen_len info in
-           let* ddir = gen_dir info in
-           Myseq.from_result (make_dline dlen ddir))
-      | _, ColorSeq dir, [|gen_colors|] ->
-         (fun info ->
-           let* dcolors = gen_colors info in
-           Myseq.return (make_dcolorseq dir dcolors))
-      | _, ColorMat, [|gen_colorss|] ->
-         (fun info ->
-           let* dcolorss = gen_colorss info in
-           Myseq.return (make_dcolormat dcolorss))
-      | _ -> assert false
+         let* n = Myseq.range a b in
+         Myseq.return (make_danyint n range, `Null)
+      | _, Vec, [|gen_i; gen_j|], `Vec (info_i, info_j) ->
+         let* lij = Myseq.product_fair [gen_i info_i; gen_j info_j] in
+         (match lij with
+          | [di, _; dj, _] -> Myseq.return (make_dvec di dj, `Null)
+          | _ -> assert false)
+      | COLOR tc, AnyColor, [||], `Color lc ->
+         let* c = Myseq.from_list lc in
+         Myseq.return (make_danycolor c tc, `Null)
+      | SEG, AnySeg, [||], `Seg lseg ->
+         let* seg = Myseq.from_list lseg in
+         Myseq.return (make_danyseg seg, `Null)
+      | MOTIF, AnyMotif, [||], `Motif lmot ->
+         let* mot = Myseq.from_list lmot in
+         Myseq.return (make_danymotif mot, `Null)
+      | GRID tg, AnyGrid, [||], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let range_h = Range.make_closed minh maxh in
+         let range_w = Range.make_closed minw maxw in
+         let nc = List.length lc in
+         let* lhwc = Myseq.product_fair
+                       [Myseq.range minh maxh;
+                        Myseq.range minw maxw;
+                        Myseq.from_list lc] in
+         (match lhwc with
+         | [h; w; c] ->
+            let g = Grid.make h w c in
+            Myseq.return (make_danygrid g tg range_h range_w nc, `Null)
+         | _ -> assert false)
+      | OBJ _, Obj, [|gen_pos; gen_g1|], `Obj (info_pos, info_g1) ->
+         let* lposg1 = Myseq.product_fair [gen_pos info_pos; gen_g1 info_g1] in
+         (match lposg1 with
+          | [dpos, _; dg1, _] ->
+             Myseq.return (make_dobj dpos dg1, `Null)
+         | _ -> assert false)
+      | MAP (ta,tb), AnyMap, [||], `Map (info_a, info_b) ->
+         Myseq.return (make_danymap ta tb Mymap.empty, `Null) (* empty map = identity map *)
+      | MAP (ta,tb), DomMap keys, [|gen_vals|], `Map (info_a,info_b) ->
+         let k = Array.length keys in
+         let* dvals, _ = gen_vals (`Seq (List.init k (fun _ -> info_b))) in
+         (match Data.value dvals with
+         | `Seq vals when Array.length vals = Array.length keys ->
+            Myseq.return (make_ddommap keys dvals, `Null)
+         | _ -> Myseq.empty)
+      | MAP (ta,tb), Replace, [|gen_a; gen_b|], `Map (info_a,info_b) ->
+         let* lab = Myseq.product_fair [gen_a info_a; gen_b info_b] in
+         (match lab with
+         | [da, _; db, _] ->
+            let a, b = Data.value da, Data.value db in
+            let dom = [|a; b|] in
+            Myseq.return (make_dreplace dom da db, `Null)
+         | _ -> assert false)
+      | MAP (ta,tb), Swap, [|gen_a; gen_b|], `Map (info_a,info_b) ->
+         let* lab = Myseq.product_fair [gen_a info_a; gen_b info_b] in
+         (match lab with
+          | [da, _; db, _] ->
+             let a, b = Data.value da, Data.value db in
+             let dom = [|a; b|] in
+             Myseq.return (make_dswap dom da db, `Null)
+          | _ -> assert false)
+      | GRID _, BgColor, [|gen_col; gen_g1|], `Grid (rh,rw,lc) ->
+         let* dbc, _ = gen_col (`Color lc) in
+         let bc = get_color dbc in
+         let lc1 = List.filter ((<>) bc) lc in
+         let* dg1, _ = gen_g1 (`Grid (rh,rw,lc1)) in
+         Myseq.return (make_dbgcolor dbc dg1, `Null)
+      | GRID _, IsFull, [|gen_g1|], _ ->
+         let* dg1, _ = gen_g1 info in
+         Myseq.return (make_disfull dg1, `Null)
+      | GRID _, Crop, [|gen_g; gen_pos; gen_size|], _ ->
+         let* dg, _ = gen_g `Null in (* a fixed value *)
+         let g = get_grid dg in
+         let h, w = Grid.dims g in
+         let* l = Myseq.product_fair
+                    [gen_pos (`Vec (`Int (0,0), `Int (0,0)));
+                     gen_size (`Vec (`Int (1, h), `Int (1, w)))] in
+         (match l with
+          | [dpos, _; dsize, _] ->
+             let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
+             Myseq.return (dg1, `Null)
+          | _ -> assert false)
+      | GRID _, Objects (nmax), [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let* l = Myseq.product_fair
+                    [gen_seg (`Seg [GPat.Objects.(Connected (Connect8,false))]);
+                     gen_card (`Int (1,nmax))] in
+         (match l with
+          | [dseg, _; dcard, _] ->
+             (match Data.value dcard with
+              | `Int card ->
+                 let info_obj = `Obj (`Vec (`Int (0,0), `Int (0,0)), `Grid ((2,2),(2,2),lc)) in
+                 let* () = Myseq.from_bool (card <= nmax) in
+                 let* dobjs, _ = gen_objs (`Seq (List.init card (fun _ -> info_obj))) in
+                 let minh, minw =
+                   Array.fold_left
+                     (fun (minh,minw) (ih1,jw1) -> max minh ih1, max minw jw1)
+                     (minh,minw)
+                     (get_seq
+                        (function
+                         | `Obj (i,j,g1) ->
+                            let h1, w1 = Grid.dims g1 in
+                            i+h1, j+w1
+                         | _ -> assert false)
+                        dobjs) in
+                 let maxh, maxw = max maxh minh, max maxw minw in
+                 let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+                 Myseq.return (make_dobjects nmax dsize dseg dcard dobjs, `Null)
+              | _ -> Myseq.empty)
+          | _ -> assert false)
+(* TODO      | _, ColorPartition, [|gen_size; gen_grids|], _ ->
+         let* l = Myseq.product_fair [gen_size info; gen_grids info] in
+         (match l with
+          | [dsize, _; dgrids, _] ->
+             let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
+             Myseq.return (data, `Null)
+          | _ -> assert false) *)
+      | GRID _, Monocolor, [|gen_col; gen_mask|], `Grid (rh,rw,lc) ->
+         let* l = Myseq.product_fair [gen_col (`Color lc); gen_mask (`Grid (rh,rw,[Grid.Mask.one]))] in
+         (match l with
+          | [dcol, _; dmask, _] -> Myseq.return (make_dmonocolor dcol dmask, `Null)
+          | _ -> assert false)
+      | GRID _, Recoloring, [|gen_grid; gen_map|], `Grid (rh,rw,lc) ->
+         let* l = Myseq.product_fair [gen_grid info; gen_map (`Map (`Color lc, `Color lc))] in
+         (match l with
+          | [dgrid, _; dmap, _] -> Myseq.return (make_drecoloring dgrid dmap, `Null)
+          | _ -> assert false)
+      | GRID _, Motif partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let* l = Myseq.product_fair
+                    [gen_mot (`Motif GPat.Motif.candidates);
+                     gen_core (`Grid ((2,maxh),(2,maxw),lc));
+                     gen_noise (`Grid ((minh,maxh),(minw,maxw),lc))] in
+         (match l with
+          | [dmot, _; dcore, _; dnoise, _] ->
+             let h, w = Grid.dims (get_grid dnoise) in
+             let* dmask_opt, _ = gen_mask_opt (`Grid ((h,h),(w,w),[Grid.Mask.one])) in
+             let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
+             Myseq.return (data, `Null)
+          | _ -> assert false)
+      | GRID _, Metagrid, [|gen_sepcolor; gen_dims; gen_heights; gen_widths; gen_gridss|], `Grid (rh,rw,lc) ->
+         let* l = Myseq.product_fair [gen_sepcolor (`Color lc);
+                                      gen_dims (`Vec (`Int (1,3), `Int (1,3)))] in
+         (match l with
+          | [dsepcolor, _; ddims, _] ->
+             let sepcolor = get_color dsepcolor in
+             let lc1 = List.filter ((<>) sepcolor) lc in
+             let k, l = get_vec ddims in
+             let* l1 = Myseq.product_fair
+                         [gen_heights (`Seq (List.init k (fun _ -> `Int (1,10))));
+                          gen_widths (`Seq (List.init l (fun _ -> `Int (1,10))))] in
+             (match l1 with
+              | [dheights, _; dwidths, _] ->
+                 let heights = get_seq (function `Int i -> i | _ -> assert false) dheights in
+                 let widths = get_seq (function `Int j -> j | _ -> assert false) dwidths in
+                 let* dgridss, _ =
+                   gen_gridss
+                     (`Seq (List.init k (fun i ->
+                                `Seq (List.init l (fun j ->
+                                          let h1, w1 = heights.(i), widths.(j) in
+                                          `Grid ((h1,h1),(w1,w1),lc1)))))) in
+                 let* data = Myseq.from_result (make_dmetagrid dsepcolor ddims dheights dwidths dgridss) in
+                 Myseq.return (data, `Null)
+              | _ -> assert false)
+          | _ -> assert false)
+(* TODO      | _, Repeat, [|gen_grid; gen_nis; gen_njs|], _ ->
+         let* l = Myseq.product_fair [gen_grid info; gen_nis info; gen_njs info] in
+         (match l with
+          | [dgrid, _; dnis, _; dnjs, _] ->
+             let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
+             Myseq.return (data, `Null)
+         | _ -> assert false) *)
+      | GRID _, Empty, [|gen_size|], `Grid ((minh,maxh),(minw,maxw),_) ->
+         let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+         Myseq.return (make_dempty dsize, `Null)
+      | GRID _, Full, [|gen_size|], `Grid ((minh,maxh),(minw,maxw),_) ->
+         let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+         Myseq.return (make_dfull dsize, `Null)
+      | GRID _, Point, [||], _ ->
+         Myseq.return (make_dpoint, `Null)
+      | GRID _, Line, [|gen_len; gen_dir|], `Grid ((minh,maxh),(minw,maxw),_) ->
+         let* dlen, _ = gen_len (`Int (min minh minw, max maxh maxw)) in
+         let* ddir, _ = gen_dir (`Vec (`Int (-1,1), `Int (-1,1))) in (* TODO: avoid (0,0) *)
+         let* data = Myseq.from_result (make_dline dlen ddir) in
+         Myseq.return (data, `Null)
+      | GRID _, ColorSeq dir, [|gen_colors|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let* k = (* TODO: use length arg *)
+           match dir with
+           | `H -> Myseq.range minw maxw
+           | `V -> Myseq.range minh maxh in
+         let* dcolors, _ = gen_colors (`Seq (List.init k (fun _ -> `Color lc))) in
+         Myseq.return (make_dcolorseq dir dcolors, `Null)
+      | GRID _, ColorMat, [|gen_colorss|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         (* TODO: use length args *)
+         let* k = Myseq.range minh maxh in
+         let* l = Myseq.range minw maxw in
+         let* dcolorss, _ =
+           gen_colorss
+             (`Seq (List.init k (fun _ ->
+                        `Seq (List.init l (fun _ ->
+                                  `Color lc))))) in
+         Myseq.return (make_dcolormat dcolorss, `Null)
+      | _ ->
+         pp_endline xp_typ t;
+         pp_endline (xp_pat c (Array.map (fun _ -> fun ~html print _ -> print#string "_") gen_args)) ();
+         (if info = `Null then print_endline "info = NULL");
+         assert false
+
+    let rec generator_end ~depth (i : generator_info) : generator_info Myseq.t =
+      match depth, i with
+      | 1, `Seq [] ->
+         Myseq.return `Null
+      | _, `Seq (x::l) ->
+         let* x = generator_end ~depth:(depth-1) x in
+         if x = `Null
+         then Myseq.return (`Seq l)
+         else Myseq.return (`Seq (x::l))
+      | _ -> Myseq.empty
 
     (* model-based parsing *)
            
@@ -2387,6 +2384,7 @@ module MyDomain : Madil.DOMAIN =
         | `Map m0, `MapDomain (m,dom) -> m0 = m, `Null
 
         | _, `Null -> true, `Null (* to handle expr args *)
+        | _, `Seq [] -> false, input (* sequence end *)
         | _, `Seq (x::lx) -> (* to handle sequences *)
            let ok, x' = aux v x in
            let input = if x' = `Null then `Seq lx else `Seq (x'::lx) in
@@ -3897,7 +3895,7 @@ module MyDomain : Madil.DOMAIN =
       let xo, varseq = Refining.new_var varseq in
       let input_model = Model.make_def xi (make_anygrid (`Full,false)) in
       let output_model = Model.make_def xo (make_anygrid (`Full,false)) in
-      let output_generator_info = () (* Grid.max_size, Grid.max_size, -1 *) in
+      let output_generator_info = `Grid ((1,Grid.max_size),(1,Grid.max_size),Grid.all_colors) in
       { env;
         varseq;
         input_model;
@@ -3945,7 +3943,7 @@ module MyDomain : Madil.DOMAIN =
       Grid_patterns.reset_memoized_functions ();
       Segment.reset_memoized_functions ();
       Funct.reset_memoized_functions_apply ();
-      reset_default_grid ();
+      (*reset_default_grid ();*)
       reset_make_index ()
   end
 
