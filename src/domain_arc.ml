@@ -214,8 +214,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
       | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
-      | ColorSeq of direction (* COLOR+ : GRID *)
-      | ColorMat (* COLOR++ : GRID *)
+      | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
+      | ColorMat (* VEC SIZE, COLOR++ : GRID *)
     (* | Range of var (* loop var *) (* start:INT, step:INT, len:INT : INT+ *) *)
 
     let xp_any ~html print () =
@@ -322,13 +322,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let xp_line xp_len xp_dir ~html print () =
       print#string "a line of length "; xp_len ~html print ();
       print#string " and direction "; xp_dir ~html print ()
-    let xp_colorseq dir xp_colors ~html print () =
+    let xp_colorseq dir xp_size xp_colors ~html print () =
       print#string "a ";
       print#string (match dir with `H -> "horizontal" | `V -> "vertical");
-      print#string " 1D grid with colors: ";
+      print#string " 1D grid with size "; xp_size ~html print ();
+      print#string " and colors: ";
       xp_colors ~html print ()
-    let xp_colormat xp_colorss ~html print () =
-      print#string "a 2D grid with colors: ";
+    let xp_colormat xp_size xp_colorss ~html print () =
+      print#string "a 2D grid with size "; xp_size ~html print ();
+      print#string " and colors: ";
       xp_colorss ~html print ()
       
     let xp_pat c xp_args ~html print () =
@@ -372,10 +374,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_point ~html print ()
       | Line, [|xp_len; xp_dir|] ->
          xp_line xp_len xp_dir ~html print ()
-      | ColorSeq dir, [|xp_colors|] ->
-         xp_colorseq dir xp_colors ~html print ()
-      | ColorMat, [|xp_colorss|] ->
-         xp_colormat xp_colorss ~html print ()
+      | ColorSeq dir, [|xp_size; xp_colors|] ->
+         xp_colorseq dir xp_size xp_colors ~html print ()
+      | ColorMat, [|xp_size; xp_colorss|] ->
+         xp_colormat xp_size xp_colorss ~html print ()
       | _ -> assert false
 
     let xp_field ~html print = function
@@ -444,9 +446,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Line, 0 -> print#string "length"
       | Line, 1 -> print#string "direction"
       | Line, _ -> assert false
-      | ColorSeq _, 0 -> print#string "colors"
+      | ColorSeq _, 0 -> print#string "size"
+      | ColorSeq _, 1 -> print#string "colors"
       | ColorSeq _, _ -> assert false
-      | ColorMat, 0 -> print#string "colors"
+      | ColorMat, 0 -> print#string "size"
+      | ColorMat, 1 -> print#string "colors"
       | ColorMat, _ -> assert false
 
     (* data constr *)
@@ -477,8 +481,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | DFull (* SIZE : MASK *)
       | DPoint (* MASK *)
       | DLine (* INT SIZE, VEC MOVE : MASK *)
-      | DColorSeq of direction (* COLOR+ : GRID *)
-      | DColorMat (* COLOR++ : GRID *)
+      | DColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
+      | DColorMat (* VEC SIZE, COLOR++ : GRID *)
 
     let xp_dpat dc xp_args ~html print () =
       match dc, xp_args with (* TODO: consider printing other params for better introspection *)
@@ -523,10 +527,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_point ~html print ()
       | DLine, [|xp_len; xp_dir|] ->
          xp_line xp_len xp_dir ~html print ()
-      | DColorSeq dir, [|xp_colors|] ->
-         xp_colorseq dir xp_colors ~html print ()
-      | DColorMat, [|xp_colorss|] ->
-         xp_colormat xp_colorss ~html print ()
+      | DColorSeq dir, [|xp_size; xp_colors|] ->
+         xp_colorseq dir xp_size xp_colors ~html print ()
+      | DColorMat, [|xp_size; xp_colorss|] ->
+         xp_colormat xp_size xp_colorss ~html print ()
       | _ -> assert false
 
     (* functions *)
@@ -819,8 +823,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full && nocolor, (Full, [|VEC SIZE, 0|]);
                  not full && nocolor, (Point, [||]);
                  not full && nocolor, (Line, [|INT (COORD (I, SIZE)), 0; VEC MOVE, 0|]);
-                 full && not nocolor, (ColorSeq `H, [|COLOR C_OBJ, 1|]);
-                 full && not nocolor, (ColorMat, [|COLOR C_OBJ, 2|]) ]
+                 full && not nocolor, (ColorSeq `H, [|INT (COORD (I,SIZE)), 0; COLOR C_OBJ, 1|]);
+                 full && not nocolor, (ColorMat, [|VEC SIZE, 0; COLOR C_OBJ, 2|]) ]
           | OBJ tg ->
              None,
              [ Obj, [|VEC POS, 0; GRID tg, 0|] ]
@@ -1086,8 +1090,8 @@ module MyDomain : Madil.DOMAIN =
     let make_full msize : model = Model.make_pat (GRID (`Sprite,true)) Full [|msize|]
     let make_point : model = Model.make_pat (GRID (`Sprite,true)) Point [||]
     let make_line mlen mdir : model = Model.make_pat (GRID (`Sprite,true)) Line [|mlen; mdir|]
-    let make_colorseq dir mcolors : model = Model.make_pat (GRID (`Full,false)) (ColorSeq dir) [|mcolors|]
-    let make_colormat mcolorss : model = Model.make_pat (GRID (`Full,false)) ColorMat [|mcolorss|]
+    let make_colorseq dir msize mcolors : model = Model.make_pat (GRID (`Full,false)) (ColorSeq dir) [|msize; mcolors|]
+    let make_colormat msize mcolorss : model = Model.make_pat (GRID (`Full,false)) ColorMat [|msize; mcolorss|]
       
     let get_int (d : data) : int =
       match Data.value d with
@@ -1350,22 +1354,24 @@ module MyDomain : Madil.DOMAIN =
         | `Int len, `Vec dir -> GPat.generate_line len dir
         | _ -> assert false in
       Result.Ok (Data.make_dpat (`Grid g) DLine [|dlen; ddir|])
-    let make_dcolorseq dir dcolors : data =
+    let make_dcolorseq dir dsize dcolors : data =
       let g =
-        match Data.value dcolors with
-        | `Seq vcolors ->
+        match Data.value dsize, Data.value dcolors with
+        | `Int size, `Seq vcolors ->
            let n = Array.length vcolors in
+           assert (n = size);
            let colors = Array.map (function `Color c -> c | _ -> assert false) vcolors in
            (match dir with
            | `H -> Grid.init 1 n (fun i j -> colors.(j))
            | `V -> Grid.init n 1 (fun i j -> colors.(i)))
         | _ -> assert false in
-      Data.make_dpat (`Grid g) (DColorSeq dir) [|dcolors|]
-    let make_dcolormat dcolorss : data =
+      Data.make_dpat (`Grid g) (DColorSeq dir) [|dsize; dcolors|]
+    let make_dcolormat dsize dcolorss : data =
       let g =
-        match Data.value dcolorss with
-        | `Seq vcolorss ->
+        match Data.value dsize, Data.value dcolorss with
+        | `Vec (size_h, size_w), `Seq vcolorss ->
            let h = Array.length vcolorss in
+           assert (h = size_h);
            let w =
              Array.fold_left
                (fun res ->
@@ -1373,6 +1379,7 @@ module MyDomain : Madil.DOMAIN =
                  | `Seq vcolors -> min res (Array.length vcolors)
                  | _ -> assert false)
                max_int vcolorss in
+           assert (w = size_w);
            Grid.init h w
              (fun i j ->
                match vcolorss.(i) with
@@ -1382,7 +1389,7 @@ module MyDomain : Madil.DOMAIN =
                    | _ -> assert false)
                | _ -> assert false)
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DColorMat [|dcolorss|]
+      Data.make_dpat (`Grid g) DColorMat [|dsize; dcolorss|]
       
     (* evaluation *)
 
@@ -2301,23 +2308,25 @@ module MyDomain : Madil.DOMAIN =
          let* ddir, _ = gen_dir (`Vec (`Int (-1,1), `Int (-1,1))) in (* TODO: avoid (0,0) *)
          let* data = Myseq.from_result (make_dline dlen ddir) in
          Myseq.return (data, `Null)
-      | GRID _, ColorSeq dir, [|gen_colors|], `Grid ((minh,maxh),(minw,maxw),lc) ->
-         let* k = (* TODO: use length arg *)
-           match dir with
-           | `H -> Myseq.range minw maxw
-           | `V -> Myseq.range minh maxh in
+      | GRID _, ColorSeq dir, [|gen_size; gen_colors|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let* dsize, _ =
+           gen_size
+             (match dir with
+              | `H -> `Int (max 2 minw,maxw)
+              | `V -> `Int (max 2 minh,maxh)) in
+         let k = get_int dsize in
          let* dcolors, _ = gen_colors (`Seq (List.init k (fun _ -> `Color lc))) in
-         Myseq.return (make_dcolorseq dir dcolors, `Null)
-      | GRID _, ColorMat, [|gen_colorss|], `Grid ((minh,maxh),(minw,maxw),lc) ->
-         (* TODO: use length args *)
-         let* k = Myseq.range minh maxh in
-         let* l = Myseq.range minw maxw in
+         Myseq.return (make_dcolorseq dir dsize dcolors, `Null)
+      | GRID _, ColorMat, [|gen_size; gen_colorss|], `Grid ((minh,maxh),(minw,maxw),lc) ->
+         let* dsize, _ = gen_size (`Vec (`Int (max 2 minh, min 3 maxh),
+                                         `Int (max 2 minw, min 3 maxw))) in
+         let k, l = get_vec dsize in
          let* dcolorss, _ =
            gen_colorss
              (`Seq (List.init k (fun _ ->
                         `Seq (List.init l (fun _ ->
                                   `Color lc))))) in
-         Myseq.return (make_dcolormat dcolorss, `Null)
+         Myseq.return (make_dcolormat dsize dcolorss, `Null)
       | _ ->
          pp_endline xp_typ t;
          pp_endline (xp_pat c (Array.map (fun _ -> fun ~html print _ -> print#string "_") gen_args)) ();
@@ -2756,37 +2765,44 @@ module MyDomain : Madil.DOMAIN =
              let* data = Myseq.from_result (make_dline dlen ddir) in
              Myseq.return (data, `Null)
           | None -> Myseq.empty)         
-      | _, ColorSeq dir, [|parse_colors|], `GridDimsCols (g,rh,rw,nc) ->
+      | _, ColorSeq dir, [|parse_size; parse_colors|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
-         let* icolors =
-           match dir with
-           | `H ->
-              if h = 1 && w > 1
-              then Myseq.return (Array.init w (fun j -> `Color (Grid.get_pixel g 0 j)))
-              else Myseq.empty
-           | `V ->
-              if h > 1 && w = 1
-              then Myseq.return (Array.init h (fun i -> `Color (Grid.get_pixel g i 0)))
-              else Myseq.empty in
-         let* dcolors, _ = parse_colors (`Seq (Array.to_list icolors)) in
-         Myseq.return (make_dcolorseq dir dcolors, `Null)
-      | _, ColorMat, [|parse_colorss|], `GridDimsCols (g,rh,rw,nc) ->
+         (match dir with
+          | `H ->
+             let* () = Myseq.from_bool (h = 1 && w > 1) in
+             let* dsize, _ = parse_size (`IntRange (w, Range.inter rw (Range.make_open 2))) in
+             let* dcolors, _ =
+               parse_colors
+                 (`Seq (Array.to_list
+                          (Array.init w
+                             (fun j -> `Color (Grid.get_pixel g 0 j))))) in
+             Myseq.return (make_dcolorseq dir dsize dcolors, `Null)
+          | `V ->
+             let* () = Myseq.from_bool (w = 1 && h > 1) in
+             let* dsize, _ = parse_size (`IntRange (h, Range.inter rh (Range.make_open 2))) in
+             let* dcolors, _ =
+               parse_colors
+                 (`Seq (Array.to_list
+                          (Array.init h
+                             (fun i -> `Color (Grid.get_pixel g i 0))))) in
+             Myseq.return (make_dcolorseq dir dsize dcolors, `Null))
+      | _, ColorMat, [|parse_size; parse_colorss|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
-         let* icolorss =
-           if h > 1 && w > 1 && h <= 3 && w <= 3
-           then
-             Myseq.return
-               (`Seq
-                  (Array.to_list
-                     ((Array.init h
-                         (fun i ->
-                           `Seq
-                             (Array.to_list
-                                (Array.init w
-                                   (fun j -> `Color (Grid.get_pixel g i j)))))))))
-           else Myseq.empty in
-         let* dcolorss, _ = parse_colorss icolorss in
-         Myseq.return (make_dcolormat dcolorss, `Null)
+         let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in
+         let* dsize, _ =
+           parse_size (`Vec (`IntRange (h, Range.inter rh (Range.make_closed 2 3)),
+                             `IntRange (w, Range.inter rw (Range.make_closed 2 3)))) in
+         let* dcolorss, _ =
+           parse_colorss
+             (`Seq
+                (Array.to_list
+                   (Array.init h
+                      (fun i ->
+                        `Seq
+                          (Array.to_list
+                             (Array.init w
+                                (fun j -> `Color (Grid.get_pixel g i j)))))))) in
+         Myseq.return (make_dcolormat dsize dcolorss, `Null)
       | _ -> assert false
 
     let rec parseur_end ~depth (i : input) : input Myseq.t =
@@ -2963,8 +2979,8 @@ module MyDomain : Madil.DOMAIN =
       | DFull, [|enc_size|] -> enc_size
       | DPoint, [||] -> 0.
       | DLine, [|enc_len; enc_dir|] -> enc_len +. enc_dir
-      | DColorSeq dir, [|enc_colors|] -> enc_colors
-      | DColorMat, [|enc_colorss|] -> enc_colorss
+      | DColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
+      | DColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
     let encoding_seq dl_length encs = dl_length +. Array.fold_left (+.) 0. encs
@@ -3811,10 +3827,12 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          let refs = (* ColorSeq *)
            if filling = `Full && not nocolor then
+             let xsize, varseq = Refining.new_var varseq in
              let xloop, varseq = Refining.new_var varseq in
              let xcol, varseq = Refining.new_var varseq in
-             let$ refs, dir = refs, [`H; `V] in
+             let$ refs, (dir,axis) = refs, [`H, J; `V, I] in
              (make_colorseq dir
+                (Model.make_def xsize (make_anycoord axis SIZE))
                 (Model.make_loop xloop (Range.make_open 2)
                    (Model.make_def xcol (make_anycolor C_OBJ))),
               varseq)
@@ -3822,10 +3840,17 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          let refs = (* ColorMat *)
            if filling = `Full && not nocolor then
+             let xsize, varseq = Refining.new_var varseq in
+             let xh, varseq = Refining.new_var varseq in
+             let xw, varseq = Refining.new_var varseq in
              let xloop1, varseq = Refining.new_var varseq in
              let xloop2, varseq = Refining.new_var varseq in
              let xcol, varseq = Refining.new_var varseq in
              (make_colormat
+                (Model.make_def xsize
+                   (make_vec SIZE
+                      (Model.make_def xh (make_anycoord I SIZE))
+                      (Model.make_def xw (make_anycoord J SIZE))))
                 (Model.make_loop xloop1 (Range.make_closed 2 3)
                    (Model.make_loop xloop2 (Range.make_closed 2 3)
                       (Model.make_def xcol (make_anycolor C_OBJ)))),
