@@ -1213,15 +1213,19 @@ module MyDomain : Madil.DOMAIN =
                 | _ -> assert false)
                objs in
            assert (card = Array.length objs);
-           let i0, j0, ih0, jw0 =
-             Array.fold_left
-               (fun (i0,j0,ih0,jw0) (i,j,g1) ->
-                 let h1, w1 = Grid.dims g1 in
-                 min i0 i, min j0 j,
-                 max ih0 (i+h1), max jw0 (j+w1))
-               (h, w, 0, 0) objs in
-           assert (i0 < ih0 && j0 < jw0);
-           let h0, w0 = ih0 - i0, jw0 - j0 in
+           let i0, j0, h0, w0 =
+             if card = 0
+             then 0, 0, 1, 1 (* dummy merger pos/size *)
+             else
+               let i0, j0, ih0, jw0 =
+                 Array.fold_left
+                   (fun (i0,j0,ih0,jw0) (i,j,g1) ->
+                     let h1, w1 = Grid.dims g1 in
+                     min i0 i, min j0 j,
+                     max ih0 (i+h1), max jw0 (j+w1))
+                   (h, w, 0, 0) objs in
+               assert (i0 < ih0 && j0 < jw0);
+               i0, j0, ih0 - i0, jw0 - j0 in
            let g = Grid.make h w Grid.transparent in
            let g0 = Grid.make h0 w0 Grid.transparent in (* merger object *)
            Array.iter
@@ -2983,7 +2987,7 @@ module MyDomain : Madil.DOMAIN =
       | DColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
-    let encoding_seq dl_length encs = dl_length +. Array.fold_left (+.) 0. encs
+    let encoding_seq encs = Array.fold_left (+.) 0. encs
     let encoding_expr_value v = 0.
     let dl_of_encoding enc = enc
            
@@ -3002,8 +3006,7 @@ module MyDomain : Madil.DOMAIN =
       | _, Obj -> 0.
       | _, AnyMap -> 0.
       | MAP (ta,tb), DomMap keys -> (* 0. (* assuming keys derived from context pattern/data *) *)
-         assert (keys <> [||]);
-         Mdl.Code.universal_int_plus (Array.length keys)
+         Mdl.Code.universal_int_star (Array.length keys)
          +. Array.fold_left
               (fun res a -> dl_value ta a)
               0. keys
@@ -3522,7 +3525,7 @@ module MyDomain : Madil.DOMAIN =
                     mvals, varseq)
                   keys (Model.make_nil tb, varseq) in
               (make_dommap ta tb keys
-                 (Model.make_loop xloop (Range.make_closed 1 Grid.nb_color)
+                 (Model.make_loop xloop
                     (Model.make_def xvals mvals)),
                varseq)
               :: refs
@@ -3617,7 +3620,7 @@ module MyDomain : Madil.DOMAIN =
                       (Model.make_def xsize_j (make_anycoord J SIZE))))
                 (Model.make_def xseg (make_anyseg))
                 (Model.make_def xcard make_anycard)
-                (Model.make_loop xloop (Range.make_closed 1 nmax)
+                (Model.make_loop xloop
                    (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
                          (Model.make_def xpos
@@ -3653,7 +3656,7 @@ module MyDomain : Madil.DOMAIN =
                       (Model.make_def xsize_j (make_anycoord J SIZE))))
                 (Model.make_expr SEG (Expr.Const (SEG, `Seg GPat.Objects.SameColor)))
                 (Model.make_def xcard make_anycard)
-                (Model.make_loop xloop (Range.make_closed 1 nmax)
+                (Model.make_loop xloop
                    (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
                          (Model.make_def xpos
@@ -3768,14 +3771,14 @@ module MyDomain : Madil.DOMAIN =
                  (make_vec SIZE
                     (Model.make_def xk (make_anycoord I SIZE))
                     (Model.make_def xl (make_anycoord J SIZE))))
-              (Model.make_loop xl_heights (Range.make_open 1)
+              (Model.make_loop xl_heights
                  (Model.make_def xheight
                     (make_anycoord I SIZE)))
-              (Model.make_loop xl_widths (Range.make_open 1)
+              (Model.make_loop xl_widths
                  (Model.make_def xwidth
                     (make_anycoord J SIZE)))
-              (Model.make_loop xl_i (Range.make_open 1)
-                 (Model.make_loop xl_j (Range.make_open 1)
+              (Model.make_loop xl_i
+                 (Model.make_loop xl_j
                     (Model.make_def xg1
                        (make_anygrid tg)))),
             varseq)
@@ -3833,7 +3836,7 @@ module MyDomain : Madil.DOMAIN =
              let$ refs, (dir,axis) = refs, [`H, J; `V, I] in
              (make_colorseq dir
                 (Model.make_def xsize (make_anycoord axis SIZE))
-                (Model.make_loop xloop (Range.make_open 2)
+                (Model.make_loop xloop
                    (Model.make_def xcol (make_anycolor C_OBJ))),
               varseq)
              ::refs
@@ -3851,8 +3854,8 @@ module MyDomain : Madil.DOMAIN =
                    (make_vec SIZE
                       (Model.make_def xh (make_anycoord I SIZE))
                       (Model.make_def xw (make_anycoord J SIZE))))
-                (Model.make_loop xloop1 (Range.make_closed 2 3)
-                   (Model.make_loop xloop2 (Range.make_closed 2 3)
+                (Model.make_loop xloop1
+                   (Model.make_loop xloop2
                       (Model.make_def xcol (make_anycolor C_OBJ)))),
               varseq)
              ::refs
