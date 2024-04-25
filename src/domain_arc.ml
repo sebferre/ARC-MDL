@@ -539,6 +539,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       [ `Index_1 of int option list (* on any Ndtree *)
       | `Tail_1 (* Seq -> Seq *)
       | `Reverse_1 (* Seq -> Seq *)
+      | `Transpose_1 (* SeqSeq -> SeqSeq *)
+      | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* SeqSeq -> Seq *)
       | `Cardinal_1 (* Seq -> Int *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
@@ -548,7 +550,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
       | `I_1 (* Vec -> Coord *)
       | `J_1 (* Vec -> Coord *)
-      | `Transpose_1 (* I <-> J *)
+      | `IJTranspose_1 (* I <-> J *)
       | `Direction_1 (* Int/Vec -> Int/Vec *)
       | `Abs_1 (* Int/Vec -> Int/Vec *)
       | `AsTVec_1 of typ_vec (* Int/Vec -> tv *)
@@ -654,6 +656,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            ~html print is
       | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
+      | `Transpose_1 -> print#string "transpose"
+      | `Flatten_1 (rows,snake) ->
+         print#string "flatten";
+         print#string (if rows then "_by_rows" else "_by_cols");
+         if snake then print#string "_like_snake"
       | `Cardinal_1 -> print#string "cardinal"
       | `Plus_2 -> print#string "+"
       | `Minus_2 -> print#string "-"
@@ -663,7 +670,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ScaleTo_2 -> print#string "scaleTo"
       | `I_1 -> print#string "i"
       | `J_1 -> print#string "j"
-      | `Transpose_1 -> print#string "transpose"
+      | `IJTranspose_1 -> print#string "ij_transpose"
       | `Direction_1 -> print#string "direction"
       | `Abs_1 -> print#string "abs"
       | `AsTVec_1 tv -> print#string "as"; xp_typ_vec ~html print tv
@@ -841,140 +848,108 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  ta=tb, (Swap, [|ta, 0; ta, 0|]) ]
         method funcs k =
           (* TODO: handle dimension *)
-          match k with
-          | BOOL ->
-             [ `Index_1 [], [|k|];
+          let res =
+            [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
-             ]
-          | INT CARD ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `Cardinal_1, [|OBJ (`Sprite,false)|]; (* TODO: generalize *)
-               `Plus_2, [|k; k|];
-               `Minus_2, [|k; k|];
-               `Area_1, [|GRID (`Sprite,false)|];
-               `ColorCount_1, [|GRID (`Sprite,false)|]; (* also for `Noise? *)
-               `Min_n, [|k; k|];
-               `Max_n, [|k; k|];
-               `Average_n, [|k; k|];
-             ]
-          | INT INDEX ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-             ]
-          | INT (COORD (axis,tv)) ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `I_1, [|VEC tv|];
-               `J_1, [|VEC tv|];
-               `Transpose_1, [|INT (COORD (axis_transpose axis, tv))|];
-               `Direction_1, [|k|];
-               `Abs_1, [|k|];
-               `AsTVec_1 tv, [|INT (COORD (axis, tv))|]; (* should be any other tv *)
-               `Height_1, [|GRID (`Sprite,false)|]; (* if axis=I *)
-               `Width_1, [|GRID (`Sprite,false)|]; (* if axis=J *)
-               `Area_1, [|GRID (`Sprite,false)|];
-               `Plus_2, [|k; k|];
-               `Minus_2, [|k; k|];
-               `ScaleUp_2, [|k; INT CARD|];
-               `ScaleDown_2, [|k; INT CARD|];
-               `Span_2, [|k; k|]; (* only on same axis POS *)
-               `Min_n, [|k; k|];
-               `Max_n, [|k; k|];
-               `Average_n, [|k; k|];               
-             ]
-          | VEC tv ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `Pos_1, [|OBJ (`Sprite,false)|];
-               `Size_1, [|GRID (`Sprite,false)|];
-               `Plus_2, [|k; k|];
-               `Minus_2, [|k; k|];
-               `ScaleUp_2, [|k; INT CARD|];
-               `ScaleDown_2, [|k; INT CARD|];
-               `ProjI_1, [|k|];
-               `ProjJ_1, [|k|];
                `Transpose_1, [|k|];
-               `Direction_1, [|k|];
-               `Abs_1, [|k|];
-               `AsTVec_1 tv, [|VEC tv|]; (* should be any other tv *)
-               `Corner_2, [|k; k|]; (* only on POS *)
-               `Span_2, [|k; k|]; (* only on POS *)
-               `Min_n, [|k; k|];
-               `Max_n, [|k; k|];
-               `Average_n, [|k; k|];
-               `TranslationOnto_2, [|OBJ (`Sprite,false); OBJ (`Sprite,false)|];
-               `TranslationSym_2 `Id, [|OBJ (`Sprite,false); GRID (`Sprite,false)|];
-               `ApplySymVec_1 (`Id,tv), [|k|];
-               `Tiling_1 (2,2), [|k|];
-             ]
+               `Flatten_1 (true,false), [|k|] ] in
+          match k with
+          | BOOL -> res
+          | INT CARD ->
+             (`Cardinal_1, [|OBJ (`Sprite,false)|]) (* TODO: generalize *)
+             ::(`Plus_2, [|k; k|])
+             ::(`Minus_2, [|k; k|])
+             ::(`Area_1, [|GRID (`Sprite,false)|])
+             ::(`ColorCount_1, [|GRID (`Sprite,false)|]) (* also for `Noise? *)
+             ::(`Min_n, [|k; k|])
+             ::(`Max_n, [|k; k|])
+             ::(`Average_n, [|k; k|])
+             ::res
+          | INT INDEX -> res
+          | INT (COORD (axis,tv)) ->
+             (`I_1, [|VEC tv|])
+             ::(`J_1, [|VEC tv|])
+             ::(`IJTranspose_1, [|INT (COORD (axis_transpose axis, tv))|])
+             ::(`Direction_1, [|k|])
+             ::(`Abs_1, [|k|])
+             ::(`AsTVec_1 tv, [|INT (COORD (axis, tv))|]) (* should be any other tv *)
+             ::(`Height_1, [|GRID (`Sprite,false)|]) (* if axis=I *)
+             ::(`Width_1, [|GRID (`Sprite,false)|]) (* if axis=J *)
+             ::(`Area_1, [|GRID (`Sprite,false)|])
+             ::(`Plus_2, [|k; k|])
+             ::(`Minus_2, [|k; k|])
+             ::(`ScaleUp_2, [|k; INT CARD|])
+             ::(`ScaleDown_2, [|k; INT CARD|])
+             ::(`Span_2, [|k; k|]) (* only on same axis POS *)
+             ::(`Min_n, [|k; k|])
+             ::(`Max_n, [|k; k|])
+             ::(`Average_n, [|k; k|])
+             ::res
+          | VEC tv ->
+             (`Pos_1, [|OBJ (`Sprite,false)|])
+             ::(`Size_1, [|GRID (`Sprite,false)|])
+             ::(`Plus_2, [|k; k|])
+             ::(`Minus_2, [|k; k|])
+             ::(`ScaleUp_2, [|k; INT CARD|])
+             ::(`ScaleDown_2, [|k; INT CARD|])
+             ::(`ProjI_1, [|k|])
+             ::(`ProjJ_1, [|k|])
+             ::(`IJTranspose_1, [|k|])
+             ::(`Direction_1, [|k|])
+             ::(`Abs_1, [|k|])
+             ::(`AsTVec_1 tv, [|VEC tv|]) (* should be any other tv *)
+             ::(`Corner_2, [|k; k|]) (* only on POS *)
+             ::(`Span_2, [|k; k|]) (* only on POS *)
+             ::(`Min_n, [|k; k|])
+             ::(`Max_n, [|k; k|])
+             ::(`Average_n, [|k; k|])
+             ::(`TranslationOnto_2, [|OBJ (`Sprite,false); OBJ (`Sprite,false)|])
+             ::(`TranslationSym_2 `Id, [|OBJ (`Sprite,false); GRID (`Sprite,false)|])
+             ::(`ApplySymVec_1 (`Id,tv), [|k|])
+             ::(`Tiling_1 (2,2), [|k|])
+             ::res
           | COLOR tc ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `MajorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
-               `MinorityColor_1, [|GRID (`Sprite,false)|]; (* also `Full and `Noise *)
-             ]
-          | SEG ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-             ]
-          | MOTIF ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-             ]
+             (`MajorityColor_1, [|GRID (`Sprite,false)|]) (* also `Full and `Noise *)
+             ::(`MinorityColor_1, [|GRID (`Sprite,false)|]) (* also `Full and `Noise *)
+             ::res
+          | SEG -> res
+          | MOTIF -> res
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `Grid_1, [|OBJ (filling,nocolor)|];
-               `ScaleUp_2, [|k; INT CARD|];
-               `ScaleDown_2, [|k; INT CARD|];
-               `ScaleTo_2, [|k; VEC SIZE|];
-               (*`Strip_1, [|GRID (false,false)|];*)
-               `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
-               `Crop_2, [|GRID (`Full,false); OBJ (`Sprite,false)|];
-               `ApplySymGrid_1 `Id, [|k|];
-               `Coloring_2, [|k; COLOR C_OBJ|];
-               `Tiling_1 (2,2), [|k|];
-               `Unrepeat_1, [|k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
-               `SelfCompose_3, [|COLOR (C_BG full); COLOR C_OBJ; k|];
-               `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR (C_BG full); k|];
-               `SwapColors_3, [|k; COLOR C_OBJ; COLOR C_OBJ|];
-               `Stack_n, [|k; k|];
-               (* on masks *)
-               `LogNot_1, [|k|];
-               `LogAnd_2, [|k; k|];
-               `LogOr_2, [|k; k|];
-               `LogAndNot_2, [|k; k|];
-               `LogXOr_2, [|k; k|];
-             ]
+             (`Grid_1, [|OBJ (filling,nocolor)|])
+             ::(`ScaleUp_2, [|k; INT CARD|])
+             ::(`ScaleDown_2, [|k; INT CARD|])
+             ::(`ScaleTo_2, [|k; VEC SIZE|])
+               (*::(`Strip_1, [|GRID (false,false)|])*)
+             ::(`PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|])
+             ::(`Crop_2, [|GRID (`Full,false); OBJ (`Sprite,false)|])
+             ::(`ApplySymGrid_1 `Id, [|k|])
+             ::(`Coloring_2, [|k; COLOR C_OBJ|])
+             ::(`Tiling_1 (2,2), [|k|])
+             ::(`Unrepeat_1, [|k|])
+             ::(`FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|])
+             ::(`SelfCompose_3, [|COLOR (C_BG full); COLOR C_OBJ; k|])
+             ::(`UnfoldSym_1 [], [|k|])
+             ::(`CloseSym_2 [], [|COLOR (C_BG full); k|])
+             ::(`SwapColors_3, [|k; COLOR C_OBJ; COLOR C_OBJ|])
+             ::(`Stack_n, [|k; k|])
+             (* on masks *)
+             ::(`LogNot_1, [|k|])
+             ::(`LogAnd_2, [|k; k|])
+             ::(`LogOr_2, [|k; k|])
+             ::(`LogAndNot_2, [|k; k|])
+             ::(`LogXOr_2, [|k; k|])
+             ::res
           | OBJ (filling,nocolor) ->
              let full = (filling = `Full) in
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-               `PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|];
-               `FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|];
-               `ApplySymGrid_1 `Id, [|k|];
-               `UnfoldSym_1 [], [|k|];
-               `CloseSym_2 [], [|COLOR (C_BG full); k|];
-             ]
-          | MAP (ta,tb) ->
-             [ `Index_1 [], [|k|];
-               `Tail_1, [|k|];
-               `Reverse_1, [|k|];
-             ]
+             (`PeriodicFactor_2 `TradeOff, [|COLOR (C_BG full); k|])
+             ::(`FillResizeAlike_3 `TradeOff, [|COLOR (C_BG full); VEC SIZE; k|])
+             ::(`ApplySymGrid_1 `Id, [|k|])
+             ::(`UnfoldSym_1 [], [|k|])
+             ::(`CloseSym_2 [], [|COLOR (C_BG full); k|])
+             ::res
+          | MAP (ta,tb) -> res
         method expr_opt k =
           let expand_grid (filling, nocolor) =
             [(`Sprite, nocolor); (`Full, nocolor); (`Noise, nocolor)] in
@@ -1563,6 +1538,8 @@ module MyDomain : Madil.DOMAIN =
       | `Index_1 _ -> assert false (* not a scalar function *)
       | `Tail_1 -> assert false
       | `Reverse_1 -> assert false
+      | `Transpose_1 -> assert false
+      | `Flatten_1 _ -> assert false
       | `Cardinal_1 -> assert false
       | `Plus_2 ->
          (function
@@ -1626,7 +1603,7 @@ module MyDomain : Madil.DOMAIN =
          (function
           | [| `Vec (i,j)|] -> Result.Ok (`Int j)
           | _ -> Result.Error (Invalid_expr e))
-      | `Transpose_1 ->
+      | `IJTranspose_1 ->
          (function
           | [| `Int ij|] -> Result.Ok (`Int ij)
           | [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
@@ -2081,6 +2058,24 @@ module MyDomain : Madil.DOMAIN =
           | None -> Result.Error (Undefined_result "tail: undefined on the empty sequence"))
       | `Reverse_1, [|v1|] ->
          Result.Ok (Ndtree.reverse v1)
+      | `Transpose_1, [|v1|] ->
+         if Ndtree.ndim v1 >= 2
+         then
+           match Ndtree.transpose v1 with
+           | Some res -> Result.Ok res
+           | None -> Result.Error (Undefined_result "transpose: rows have different lengths")
+         else Result.Error (Undefined_result "transpose: less than 2 dims")
+      | `Flatten_1 (rows,snake), [|v1|] ->
+         if Ndtree.ndim v1 >= 2
+         then
+           let res_opt =
+             (if rows then Ndtree.flatten_by_rows else Ndtree.flatten_by_cols)
+               ~snake
+               v1 in
+           match res_opt with
+           | Some res -> Result.Ok res
+           | None -> Result.Error (Undefined_result "flatten: rows have different lengths")
+         else Result.Error (Undefined_result "flatten: less than 2 dims")
       | `Cardinal_1, [|v1|] ->
          (match Ndtree.length v1 with
           | Some n -> Result.Ok (Ndtree.scalar (Some (`Int n)))
@@ -3056,6 +3051,8 @@ module MyDomain : Madil.DOMAIN =
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
       | `Tail_1 -> 0.
       | `Reverse_1 -> 0.
+      | `Transpose_1 -> 0.
+      | `Flatten_1 (rows,snake) -> 1. +. Mdl.Code.usage (if snake then 0.1 else 0.9)
       | `Cardinal_1 -> 0.
       | `Plus_2 -> 0.
       | `Minus_2 -> 0.
@@ -3065,7 +3062,7 @@ module MyDomain : Madil.DOMAIN =
       | `ScaleTo_2 -> 0.
       | `I_1 -> 0.
       | `J_1 -> 0.
-      | `Transpose_1 -> 0.
+      | `IJTranspose_1 -> 0.
       | `Direction_1 -> 0.
       | `Abs_1 -> 0.
       | `AsTVec_1 tv -> Mdl.Code.uniform nb_typ_vec
@@ -3238,10 +3235,10 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|VEC tv|] -> (VEC tv, `ProjI_1, `Default)::(VEC tv, `ProjJ_1, `Default)::res
               | _ -> res in
-            let res = (* Transpose_1 *)
+            let res = (* IJTranspose_1 *)
               match t_args with
               | [|INT (COORD (axis,tv))|] -> (INT (COORD (axis_transpose axis, tv)), `Transpose_1, `Default)::res
-              | [|VEC tv|] -> (VEC tv, `Transpose_1, `Default)::res
+              | [|VEC tv|] -> (VEC tv, `IJTranspose_1, `Default)::res
               | _ -> res in
             let res = (* Direction_1, Abs_1 *)
               match t_args with
@@ -3343,9 +3340,19 @@ module MyDomain : Madil.DOMAIN =
             let res = (* Reverse *)
               match t_args, v_args_tree with
               | [|t1|], [|v1|] ->
-                 if Ndtree.ndim v1 >= 1 (* only defined on sequences *)
-                 then (t1, `Reverse_1, `Default)::res
-                 else res
+                 let res =
+                   if Ndtree.ndim v1 >= 1 (* only defined on sequences *)
+                   then (t1, `Reverse_1, `Default)::res
+                   else res in
+                 let res =
+                   if Ndtree.ndim v1 >= 2 (* only defined on sequences of sequences *)
+                   then
+                     let res = (t1, `Transpose_1, `Default)::res in
+                     let$ res, rows = res, [true; false] in
+                     let$ res, snake = res, [false; true] in
+                     (t1, `Flatten_1 (rows,snake), `Default)::res
+                   else res in
+                 res
               | _ -> res in
             let res = (* ScaleUp, ScaleDown *)
               match t_args with
