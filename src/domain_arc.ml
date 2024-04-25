@@ -2274,6 +2274,7 @@ module MyDomain : Madil.DOMAIN =
           | [dsepcolor, _; ddims, _] ->
              let sepcolor = get_color dsepcolor in
              let lc1 = List.filter ((<>) sepcolor) lc in
+             let lc1 = if lc1 = [] then Grid.all_colors else lc1 in
              let k, l = get_vec ddims in
              let* l1 = Myseq.product_fair
                          [gen_heights (`Seq (List.init k (fun _ -> `Int (1,10))));
@@ -3167,10 +3168,10 @@ module MyDomain : Madil.DOMAIN =
                    let res =
                      let$ res, j = res, [0; 1; 2; -2; -1] in
                      (t1, `Index_1 [None; Some j], `Default) :: res in
-                   (* let res =
+                   let res =
                      let$ res, i = res, [0; 1; -1] in
                      let$ res, j = res, [0; 1; -1] in
-                     (t1, `Index_1 [Some i; Some j], `Default) :: res in TODO *)
+                     (t1, `Index_1 [Some i; Some j], `Default) :: res in
                    res
                  else res in
                res
