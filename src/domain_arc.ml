@@ -539,6 +539,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       [ `Index_1 of int option list (* on any Ndtree *)
       | `Tail_1 (* Seq -> Seq *)
       | `Reverse_1 (* Seq -> Seq *)
+      | `Rotate_1 of int (* shift *) (* Seq -> Seq *)
       | `Transpose_1 (* SeqSeq -> SeqSeq *)
       | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* SeqSeq -> Seq *)
       | `Cardinal_1 (* Seq -> Int *)
@@ -656,6 +657,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            ~html print is
       | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
+      | `Rotate_1 shift -> print#string "rotate["; print#int shift; print#string "]"
       | `Transpose_1 -> print#string "transpose"
       | `Flatten_1 (rows,snake) ->
          print#string "flatten";
@@ -852,6 +854,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
             [ `Index_1 [], [|k|];
                `Tail_1, [|k|];
                `Reverse_1, [|k|];
+               `Rotate_1 1, [|k|];
                `Transpose_1, [|k|];
                `Flatten_1 (true,false), [|k|] ] in
           match k with
@@ -1538,6 +1541,7 @@ module MyDomain : Madil.DOMAIN =
       | `Index_1 _ -> assert false (* not a scalar function *)
       | `Tail_1 -> assert false
       | `Reverse_1 -> assert false
+      | `Rotate_1 _ -> assert false
       | `Transpose_1 -> assert false
       | `Flatten_1 _ -> assert false
       | `Cardinal_1 -> assert false
@@ -2058,6 +2062,10 @@ module MyDomain : Madil.DOMAIN =
           | None -> Result.Error (Undefined_result "tail: undefined on the empty sequence"))
       | `Reverse_1, [|v1|] ->
          Result.Ok (Ndtree.reverse v1)
+      | `Rotate_1 shift, [|v1|] ->
+         if Ndtree.ndim v1 >= 1
+         then Result.Ok (Ndtree.rotate ~shift v1)
+         else Result.Error (Undefined_result "rotate: not defined on scalars")
       | `Transpose_1, [|v1|] ->
          if Ndtree.ndim v1 >= 2
          then
@@ -3051,6 +3059,9 @@ module MyDomain : Madil.DOMAIN =
                                else Mdl.Code.usage 0.25 +. Mdl.Code.universal_int_plus (-i)))
       | `Tail_1 -> 0.
       | `Reverse_1 -> 0.
+      | `Rotate_1 shift ->
+         assert (shift <> 0);
+         1. (* sign *) +. Mdl.Code.universal_int_plus (abs shift)
       | `Transpose_1 -> 0.
       | `Flatten_1 (rows,snake) -> 1. +. Mdl.Code.usage (if snake then 0.1 else 0.9)
       | `Cardinal_1 -> 0.
@@ -3337,12 +3348,15 @@ module MyDomain : Madil.DOMAIN =
           index 2 (* TEST *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
-            let res = (* Reverse *)
+            let res = (* Reverse, Rotate, Transpose, Flatten *)
               match t_args, v_args_tree with
               | [|t1|], [|v1|] ->
                  let res =
                    if Ndtree.ndim v1 >= 1 (* only defined on sequences *)
-                   then (t1, `Reverse_1, `Default)::res
+                   then
+                     let res = (t1, `Reverse_1, `Default)::res in
+                     let$ res, shift = res, [-1; 1] in
+                     (t1, `Rotate_1 shift, `Default)::res
                    else res in
                  let res =
                    if Ndtree.ndim v1 >= 2 (* only defined on sequences of sequences *)
