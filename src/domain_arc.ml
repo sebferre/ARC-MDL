@@ -2261,11 +2261,14 @@ module MyDomain : Madil.DOMAIN =
       | GRID _, Motif partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|], `Grid ((minh,maxh),(minw,maxw),lc) ->
          let* l = Myseq.product_fair
                     [gen_mot (`Motif GPat.Motif.candidates);
-                     gen_core (`Grid ((2,maxh),(2,maxw),lc));
                      gen_noise (`Grid ((minh,maxh),(minw,maxw),lc))] in
          (match l with
-          | [dmot, _; dcore, _; dnoise, _] ->
+          | [dmot, _; dnoise, _] ->
+             let mot = get_motif dmot in
              let h, w = Grid.dims (get_grid dnoise) in
+             let _, _, luv = GPat.Motif.all_coredims_of_motif mot h w in
+             let* u, v = Myseq.from_list luv in
+             let* dcore, _ = gen_core (`Grid ((u,u),(v,v),lc)) in
              let* dmask_opt, _ = gen_mask_opt (`Grid ((h,h),(w,w),[Grid.Mask.one])) in
              let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
              Myseq.return (data, `Null)
