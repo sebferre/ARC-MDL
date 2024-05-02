@@ -1015,7 +1015,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* parameters *)
 
-    let alpha = def_param "alpha" 10. string_of_float
+    let alpha = def_param "alpha" 100. string_of_float
     let max_nb_parse = def_param "max_nb_parse" 100 string_of_int (* max nb of considered doc parses *)
     let max_nb_reads = def_param "max_nb_doc_reads" 3 string_of_int (* max nb of selected doc reads, passed to the next stage *)
     let max_nb_writes = def_param "max_nb_doc_writes" 3 string_of_int (* max nb of selected output writes *)
