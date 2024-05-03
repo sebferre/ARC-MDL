@@ -1329,6 +1329,10 @@ module Mask =
     let zero = transparent
     let one = black
     let bool (b : bool) : color = if b then one else zero
+
+    let is_well_formed m =
+      let h, w = dims m in
+      m.color_count.(zero) + m.color_count.(one) = h * w (* only colors zero and one *)
     
     let area m = m.color_count.(one) [@@inline]
 
