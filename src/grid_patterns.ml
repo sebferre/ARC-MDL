@@ -1155,10 +1155,10 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
     let parse (g : Grid.t) : t list =
       let h, w = Grid.dims g in
       (* looking for horizontal frontiers *)
-      let color_h_fs = Array.make Grid.nb_color [] in
+      let color_h_fs = Array.make (Grid.nb_color + 1) [] in
       for i = h-1 downto 0 do
         let c = g.matrix.{i,0} in
-        if Grid.is_true_color c then (
+        if c <> Grid.undefined then (
           let j = ref 1 in
           while !j < w && g.matrix.{i,!j} = c do
             incr j
@@ -1167,10 +1167,10 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
         )
       done;
       (* looking for vertical frontiers *)
-      let color_w_fs = Array.make Grid.nb_color [] in
+      let color_w_fs = Array.make (Grid.nb_color + 1) [] in
       for j = w-1 downto 0 do
         let c = g.matrix.{0,j} in
-        if Grid.is_true_color c then (
+        if c <> Grid.undefined then (
           let i = ref 1 in
           while !i < h && g.matrix.{!i,j} = c do
             incr i

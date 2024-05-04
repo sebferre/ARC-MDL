@@ -826,7 +826,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                   INT (COORD (I, SIZE)), 1;
                                   INT (COORD (J, SIZE)), 1|]);*)
                  true, (Metagrid,
-                        [|COLOR C_OBJ, 0;
+                        [|COLOR (C_BG full), 0;
                           GRID (`Sprite,true), 0;
                           VEC SIZE, 0;
                           INT (COORD (I,SIZE)), 1;
@@ -3809,7 +3809,7 @@ module MyDomain : Madil.DOMAIN =
            let xl_j, varseq = Refining.new_var varseq in
            let xg1, varseq = Refining.new_var varseq in
            (make_metagrid tg
-              (Model.make_def xsepcolor (make_anycolor C_OBJ))
+              (Model.make_def xsepcolor (make_anycolor (C_BG (filling = `Full))))
               (Model.make_def xborders (make_anygrid (`Sprite,true)))
               (Model.make_def xdims
                  (make_vec SIZE
