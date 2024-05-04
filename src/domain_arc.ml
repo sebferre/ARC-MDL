@@ -2399,7 +2399,7 @@ module MyDomain : Madil.DOMAIN =
            let ok_i, _ = aux (`Int i) in_i in
            let ok_j, _ = aux (`Int j) in_j in
            ok_i && ok_j, `Null
-        | `Color c0, `Color c -> c = c0 && Grid.is_true_color c, `Null
+        | `Color c0, `Color c -> c = c0, `Null
         | `Seg seg0, `SegAny -> true, `Null
         | `Seg seg0, `Seg seg -> seg = seg0, `Null
         | `Motif mot0, `Motif mot -> mot = mot0, `Null
@@ -2511,9 +2511,7 @@ module MyDomain : Madil.DOMAIN =
          let* dj, _ = parse_j in_j in
          Myseq.return (make_dvec di dj, `Null)
       | COLOR tc, AnyColor, [||], `Color c ->
-         if Grid.is_true_color c
-         then Myseq.return (make_danycolor c tc, `Null)
-         else Myseq.empty
+         Myseq.return (make_danycolor c tc, `Null)
       | SEG, AnySeg, [||], `Seg seg ->
          Myseq.return (make_danyseg seg, `Null)
       | SEG, AnySeg, [||], `SegAny ->
@@ -2889,6 +2887,8 @@ module MyDomain : Madil.DOMAIN =
 
     let dl_color (c : Grid.color) (tc : typ_color) : dl =
       (* Mdl.Code.uniform Grid.nb_color *)
+      if c = Grid.undefined then 0. (* no information on color *)
+      else
       match tc with
       | C_OBJ ->
          if c = 0 then Mdl.Code.usage 0.091
