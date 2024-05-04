@@ -3406,6 +3406,24 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID _ as t1; COLOR _|] -> (t1, `Coloring_2, `Default)::res
               | _ -> res in
+            let res = (* SelfCompose *)
+              match t_args with
+              | [|GRID (filling,nocolor) as t2|] ->
+                 let full = filling = `Full in
+                 let bgcolor = if full then Grid.black else Grid.transparent in 
+                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
+                 let args_spec = `Custom [| `Val (COLOR (C_BG full), `Color bgcolor);
+                                            `Val (COLOR C_OBJ, `Color color);
+                                            `Pos 0|] in
+                 (t2, `SelfCompose_3, args_spec)::res
+              | [|COLOR C_OBJ; GRID (filling,nocolor) as t2|] ->
+                 let full = filling = `Full in
+                 let bgcolor = if full then Grid.black else Grid.transparent in
+                 let args_spec = `Custom [| `Val (COLOR (C_BG full), `Color bgcolor);
+                                            `Pos 0;
+                                            `Pos 1|] in                 
+                 (t2, `SelfCompose_3, args_spec)::res
+              | _ -> res in
             let res = (* Plus *)
               match t_args with
               | [|INT (CARD | INDEX) as t1|] ->
@@ -3461,7 +3479,7 @@ module MyDomain : Madil.DOMAIN =
       let index = (* LEVEL 3 *)
         Expr.index_apply_functions
           ~eval_func
-          index 1 (* TEST *)
+          index 1 (* TEST: 2, binary, is too expansive *)
           (fun (t_args,v_args_tree) ->
             let res = [] in
             let res = (* AsTVec_1 *)
@@ -3500,17 +3518,6 @@ module MyDomain : Madil.DOMAIN =
               match t_args with
               | [|GRID _ as t1|] ->
                  (t1, `Unrepeat_1, `Default)::res
-              | _ -> res in
-            let res = (* SelfCompose *)
-              match t_args with
-              | [|GRID (filling,nocolor) as t2|] ->
-                 let full = filling = `Full in
-                 let bgcolor = if full then Grid.black else Grid.transparent in 
-                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
-                 let args_spec = `Custom [| `Val (COLOR (C_BG full), `Color bgcolor);
-                                            `Val (COLOR C_OBJ, `Color color);
-                                            `Pos 0|] in
-                 (t2, `SelfCompose_3, args_spec)::res
               | _ -> res in
             (*let res = (* UnfoldSym *)
               match t_args with
