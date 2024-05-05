@@ -29,18 +29,22 @@ let process_test_pair env m info id {Task.input; output=_} = (* output not relev
     match Common.do_timeout timeout_predict
             (fun () -> MadilArc.apply ~env m input info) with
     | Some (Result.Ok (predictions : (MadilArc.data * MadilArc.data * Madil_common.dl) list)) ->
-       let nb_preds, preds =
+       let nb_preds, preds, _ =
          List.fold_left
-           (fun (i,preds) (_gdi,gdo,_dl) ->
+           (fun (i,preds,seen_outputs) (_gdi,gdo,_dl) ->
              if i < 3 (* at most 3 predictions *)
              then
                let vo = Data.value gdo in
-               let pred =
-                 `Assoc [ "prediction_id", `Int i;
-                          "output", MadilArc.json_of_value vo ] in
-               i+1, pred :: preds
-             else i, preds)
-           (0,[]) predictions in
+               let output = MadilArc.json_of_value vo in
+               if List.mem output seen_outputs
+               then i, preds, seen_outputs (* ignore this redundant prediction *)
+               else
+                 let pred =
+                   `Assoc [ "prediction_id", `Int i;
+                            "output", output ] in
+                 i+1, pred :: preds, output :: seen_outputs
+             else i, preds, seen_outputs)
+           (0,[],[]) predictions in
        nb_preds, preds
     | _ -> 0, []
   in
