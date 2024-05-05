@@ -3746,9 +3746,24 @@ module MyDomain : Madil.DOMAIN =
            if not nocolor then
              let xcol, varseq = Refining.new_var varseq in
              let xmask, varseq = Refining.new_var varseq in
+             let mmask, varseq =
+               if filling = `Full
+               then (* a monocolor full grid must have a full mask of some size *)
+                 let msize, varseq =
+                   let xsize, varseq = Refining.new_var varseq in
+                   let xsize_i, varseq = Refining.new_var varseq in
+                   let xsize_j, varseq = Refining.new_var varseq in
+                   Model.make_def xsize
+                     (make_vec SIZE
+                        (Model.make_def xsize_i (make_anycoord I SIZE))
+                        (Model.make_def xsize_j (make_anycoord J SIZE))),
+                   varseq in
+                 make_full msize, varseq
+               else
+                 make_anygrid (filling,true), varseq in
              (make_monocolor
                 (Model.make_def xcol (make_anycolor C_OBJ))
-                (Model.make_def xmask (make_anygrid (filling,true))),
+                (Model.make_def xmask mmask),
               varseq)
              :: refs
            else refs in
