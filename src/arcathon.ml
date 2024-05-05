@@ -4,7 +4,7 @@ module MadilArc = Madil.Make(Domain_arc.MyDomain)
 (* PARAMS TO BE DEFINED *)
 (*let root_path = "/local/ferre/prog/ocaml/arc/arcathon/sandbox/" (* local *)*)
 let root_path = "/data/" (* docker *)
-let memout = 5000
+let memout = 10000
 let timeout_refine = 300 (* 120 *)
 let timeout_prune = 30
 let timeout_predict = 30
@@ -14,14 +14,14 @@ let solution_path = root_path ^ "solution/solution_madil.json"
 
 let load_tasks () (* including trailing / *) : int * (string * MadilArc.task) list =
   let tasks_filenames = Array.to_list (Sys.readdir tasks_path) in
-  let tasks_count = List.length tasks_filenames in
   let name_tasks =
-    List.map
+    List.filter_map
       (fun task_filename ->
         match Filename.chop_suffix_opt ~suffix:".json" task_filename with
-        | None -> assert false
-        | Some name -> name, MadilArc.task_from_file (tasks_path ^ task_filename))
+        | None -> None
+        | Some name -> Some (name, MadilArc.task_from_file (tasks_path ^ task_filename)))
       tasks_filenames in
+  let tasks_count = List.length name_tasks in
   tasks_count, name_tasks
 
 let process_test_pair env m info id {Task.input; output=_} = (* output not relevant *)
@@ -49,7 +49,9 @@ let process_test_pair env m info id {Task.input; output=_} = (* output not relev
            "predictions", `List (List.rev preds) ]
   
 let process_task name task =
-  let env, m, info = MadilArc.get_init_task_model name task in
+  let {MadilArc.env; varseq; input_model; output_model; output_generator_info=info} =
+    MadilArc.get_init_config name task in
+  let init_task_model = MadilArc.make_task_model varseq input_model output_model in
   let res : _ Learning.results =
     MadilArc.learn
       ~memout
@@ -58,7 +60,7 @@ let process_task name task =
       ~jump_width:(!MadilArc.jump_width)
       ~refine_degree:(!MadilArc.max_refinements)
       ~env
-      ~init_task_model:m
+      ~init_task_model
       task.Task.train in
   let m = res.result_pruning.task_model in
   let _, tests =
