@@ -26,8 +26,8 @@ arcathon: $(SRC:.cmo=.cmx) arcathon.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o arcathon $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) arcathon.ml
 
 docker: arcathon
-	docker build -t sferre/arcathon .
-	docker save sferre/arcathon > docker_madil.tar
+	sudo docker build -t sferre/arcathon .  # add ferre to dockergroup to avoid sudo
+	sudo docker save sferre/arcathon > docker_madil.tar
 
 test_common_subgrid: $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o test_common_subgrid $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
