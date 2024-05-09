@@ -1,5 +1,5 @@
 # build command: docker build -t sferre/arcathon .
-FROM fedora:32
+FROM fedora:39
 WORKDIR /usr/local/bin
 COPY arcathon .
 CMD ["arcathon"]
