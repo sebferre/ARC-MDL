@@ -1895,7 +1895,9 @@ by the parser.
     v3.1 & 2024-02-26 & 60s & 32s & ~101 / 103.0~ & ~89 / 89.0~ & - & ~36 / -~ & ~32 / -~ \\
          &            & 120s & - & - & - & 62s & ~38 / 52.7~ & ~35 / 41.0~ \\
     \hline
-    v3.2 & 2024-03-26 & 60s & 36s & ~111 / 114.3~ & ~99 / 100.0~ & 44s & ~47 / 53.5~ & ~41 / 42.0~ \\  
+    v3.2 & 2024-03-26 & 60s & 36s & ~111 / 114.3~ & ~99 / 100.0~ & 44s & ~47 / 53.5~ & ~41 / 42.0~ \\
+    \hline
+    v3.3 & 2024-05-05 & 60s & 42s & ~125 / 127.7~ & ~112 / 113.3~ & 48s & ~63 / 68.0~ & ~56 / 57.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2250,6 +2252,18 @@ as patterns for better incrementality and findability (motifs).
 \item functions: abs and direction (sign) of ints/vecs; transpose of vecs; top/bottom/left/right halves of grids; mask of a grid (ignoring colors); minority color of a grid; self-compose takes a bgcolor; cardinal of a sequence
 \item bounding interleaving of object lists for parsing
 \item explicit conversions between different kinds of integers (expressions) to penalize thorough DL
+\end{itemize}
+
+\paragraph{Version 3.3}
+\begin{itemize}
+\item Ndtrees: transpose, flatten, and rotate functions on first dimension
+\item sequence lengths encoded by patterns as extra arguments, parsing and generation conform to them
+\item improved handling of sequences when parsing values
+\item generation revised to align with parsing
+\item enumeration of expressions by increasing size, with size limited to 9
+\item alpha increased from 10 to 100
+\item patterns: Monocolor includes pattern FullMask for full grids; Metagrid for grids of grids and one-color frontiers; partial motifs (adding a mask); new motif Corners for four-corner-dots objects
+\item functions: selfCompose can use color expression
 \end{itemize}
 
 %%%
