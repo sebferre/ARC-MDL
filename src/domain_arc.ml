@@ -1024,6 +1024,7 @@ module MyDomain : Madil.DOMAIN =
     let max_nb_reads = def_param "max_nb_doc_reads" 3 string_of_int (* max nb of selected doc reads, passed to the next stage *)
     let max_nb_writes = def_param "max_nb_doc_writes" 3 string_of_int (* max nb of selected output writes *)
     let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
+    let max_expr_size = def_param "max_expr_size" 9 string_of_int (* max size of candidate expressions *)
     let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 1000 string_of_int (* max nb of considered expr refinements per grid read *)
     let max_expr_refinements_per_var = def_param "max_expr_refinements_per_var" 10 string_of_int (* max nb of considered expr refinements per model var *)
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
