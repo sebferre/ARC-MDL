@@ -3552,7 +3552,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (data : data) : (model * varseq) list = (* QUICK *)
+    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       match t, c with
       | INT ti, AnyInt -> []
       | COLOR tc, AnyColor -> []
@@ -3561,7 +3561,7 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ta,tb), AnyMap ->
          let refs : (model * varseq) list = [] in
          let refs = (* DomMap *)
-           match tb, Data.value data with
+           match tb, value with
            | COLOR tc, `Map m -> (* TODO: generalize to other types *)
               let keys = mymap_keys m in
               let xloop, varseq = Refining.new_var varseq in
@@ -3779,9 +3779,12 @@ module MyDomain : Madil.DOMAIN =
                    | _ -> res)
                  env_vars [] in
              let eg1s =
-               match Grid_patterns.recoloring (get_grid data) with
-               | Result.Ok (g1,_) -> [Expr.Const (t, `Grid g1)]
-               | _ -> [] in
+               match value with
+               | `Grid g ->
+                  (match Grid_patterns.recoloring g with
+                   | Result.Ok (g1,_) -> [Expr.Const (t, `Grid g1)]
+                   | _ -> [])
+               | _ -> assert false in
              let eg1s =
                List.fold_left
                  (fun res xg1 ->
@@ -3929,7 +3932,7 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          refs
       | _ -> []
-    let refinements_postprocessing t c args =
+    let refinements_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
 
@@ -3967,14 +3970,14 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ta,tb), `Map m ->
          [ make_anymap ta tb, varseq ]
       | _ -> assert false
-    let prunings_pat ~env_vars t c args varseq data =
+    let prunings_pat ~env_vars t c args varseq value =
       match t, c with
       | GRID _, AnyGrid -> []
       | GRID tg, _ -> [ make_anygrid tg, varseq ]
       | MAP _, AnyMap -> []
       | MAP (ta,tb), _ -> [ make_anymap ta tb, varseq ]
       | _ -> []
-    let prunings_postprocessing t c args =
+    let prunings_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
 
