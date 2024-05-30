@@ -26,82 +26,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       print#string "an object "; Grid.xp_grid ~html print g;
       print#string " at position "; xp_vec xp_int xp_int ~html print i j
       
-    (* values *)
-
-    type value =
-      [ `Null
-      | `Bool of bool
-      | `Int of int
-      | `Vec of int * int
-      | `Color of Grid.color
-      | `Seg of GPat.Objects.segmentation
-      | `Motif of GPat.Motif.t
-      | `Grid of Grid.t
-      | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
-      | `Map of (value,value) Mymap.t
-      | `Seq of value array ]
-
-    let rec xp_value ~html (print : Xprint.t) : value -> unit = function
-      | `Null -> print#string "null"
-      | `Bool b -> xp_bool ~html print b
-      | `Int i -> xp_int ~html print i
-      | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
-      | `Color c -> Grid.xp_color ~html print c
-      | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
-      | `Motif motif -> GPat.Motif.xp ~html print motif
-      | `Grid g -> Grid.xp_grid ~html print g
-      | `Obj (i,j,g) -> xp_obj ~html print i j g
-      | `Map m ->
-         print#string "{";
-         let _ =
-           Mymap.fold
-             (fun x y first ->
-               if not first then print#string ", ";
-               xp_value ~html print x;
-               print#string " -> ";
-               xp_value ~html print y;
-               false)
-             m true in
-         print#string "}"
-      | `Seq vs -> xp_array xp_value ~html print vs
-
-    let value_of_json (* : Yojson.Safe.t -> value *) = function
-      | `List (`List row::_ as rows) ->
-         let height = List.length rows in
-         let width = List.length row in
-         let grid = Grid.make height width 0 in
-         List.iteri
-           (fun i ->
-	     function
-	     | `List cells ->
-	        List.iteri
-	          (fun j ->
-	            function
-	            | `Int col -> Grid.Do.set_pixel grid i j col
-	            | _ -> invalid_arg "Invalid JSON grid color")
-	          cells
-	     | _ -> invalid_arg "Invalid JSON grid row")
-           rows;
-         `Grid grid
-      | _ -> invalid_arg "Invalid JSON grid"
-
-    let json_of_value : value -> Yojson.Safe.t = function
-      | `Grid grid ->
-         let open Bigarray in
-         let n1, n2 = grid.height, grid.width in
-         let rows =
-           Common.fold_for_down
-             (fun i res ->
-               let row =
-                 Common.fold_for_down
-                   (fun j row ->
-                     `Int (Array2.get grid.matrix i j) :: row)
-                   (n2 - 1) 0 [] in
-               `List row :: res)
-             (n1 - 1) 0 [] in
-         `List rows
-      | _ -> invalid_arg "JSON only defined for grid values"
-           
     (* model types *)
 
     type typ =
@@ -175,6 +99,86 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          | `Noise, false -> "NOISE"
          | `Noise, true -> "NOISE_MASK")
 
+    (* values *)
+
+    type value =
+      [ `Null
+      | `Bool of bool
+      | `Int of int
+      | `IntRange of int * Range.t (* INT of some range *)
+      | `Vec of int * int
+      | `Color of Grid.color
+      | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
+      | `Seg of GPat.Objects.segmentation
+      | `Motif of GPat.Motif.t
+      | `Grid of Grid.t
+      | `GridRange of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
+      | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
+      | `Map of (value,value) Mymap.t
+      | `MapTyp of (value,value) Mymap.t * typ (* domain type *) * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
+      | `Seq of value array ]
+
+    let rec xp_value ~html (print : Xprint.t) : value -> unit = function
+      | `Null -> print#string "null"
+      | `Bool b -> xp_bool ~html print b
+      | `Int i | `IntRange (i,_) -> xp_int ~html print i
+      | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
+      | `Color c | `ColorTyp (c,_) -> Grid.xp_color ~html print c
+      | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
+      | `Motif motif -> GPat.Motif.xp ~html print motif
+      | `Grid g | `GridRange (g,_,_,_,_) -> Grid.xp_grid ~html print g
+      | `Obj (i,j,g) -> xp_obj ~html print i j g
+      | `Map m | `MapTyp (m,_,_) ->
+         print#string "{";
+         let _ =
+           Mymap.fold
+             (fun x y first ->
+               if not first then print#string ", ";
+               xp_value ~html print x;
+               print#string " -> ";
+               xp_value ~html print y;
+               false)
+             m true in
+         print#string "}"
+      | `Seq vs -> xp_array xp_value ~html print vs
+
+    let value_of_json (* : Yojson.Safe.t -> value *) = function
+      | `List (`List row::_ as rows) ->
+         let height = List.length rows in
+         let width = List.length row in
+         let grid = Grid.make height width 0 in
+         List.iteri
+           (fun i ->
+	     function
+	     | `List cells ->
+	        List.iteri
+	          (fun j ->
+	            function
+	            | `Int col -> Grid.Do.set_pixel grid i j col
+	            | _ -> invalid_arg "Invalid JSON grid color")
+	          cells
+	     | _ -> invalid_arg "Invalid JSON grid row")
+           rows;
+         `Grid grid
+      | _ -> invalid_arg "Invalid JSON grid"
+
+    let json_of_value : value -> Yojson.Safe.t = function
+      | `Grid grid ->
+         let open Bigarray in
+         let n1, n2 = grid.height, grid.width in
+         let rows =
+           Common.fold_for_down
+             (fun i res ->
+               let row =
+                 Common.fold_for_down
+                   (fun j row ->
+                     `Int (Array2.get grid.matrix i j) :: row)
+                   (n2 - 1) 0 [] in
+               `List row :: res)
+             (n1 - 1) 0 [] in
+         `List rows
+      | _ -> invalid_arg "JSON only defined for grid values"
+           
     (* model vars *)
       
     type var = int
@@ -189,14 +193,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     type direction = [`H | `V]
       
     type constr =
-      | AnyInt (* INT *)
       | Vec (* COORD, COORD : VEC *)
-      | AnyColor (* COLOR *)
-      | AnySeg (* SEG *)
-      | AnyMotif (* MOTIF *)
-      | AnyGrid (* GRID *)
       | Obj (* POS, SPRITE : OBJ *)
-      | AnyMap (* MAP(A,B) *)
       | DomMap of value array (* B+ : MAP(A,B) *) (* fixed set of keys, assumed known from ctx *)
       | Replace (* A, A : MAP(A,A) *)
       | Swap (* A, A : MAP(A,A) *)
@@ -218,9 +216,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
     (* | Range of var (* loop var *) (* start:INT, step:INT, len:INT : INT+ *) *)
 
-    let xp_any ~html print () =
+    let xp_any t ~html print () =
       xp_html_elt "span" ~classe:"model-any" ~html print
         (fun () -> print#string "?")
+    
     let xp_obj xp_pos xp_sprite ~html print () =
       print#string "at position "; xp_pos ~html print ();
       print#string ": ";
@@ -337,14 +336,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       
     let xp_pat c xp_args ~html print () =
       match c, xp_args with
-      | AnyInt, [||] -> xp_any ~html print ()
       | Vec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | AnyColor, [||] -> xp_any ~html print ()
-      | AnySeg, [||] -> xp_any ~html print ()
-      | AnyMotif, [||] -> xp_any ~html print ()
-      | AnyGrid, [||] -> xp_any ~html print ()
       | Obj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
-      | AnyMap, [||] -> xp_any ~html print ()
       | DomMap keys, [|xp_vals|] -> xp_dommap keys xp_vals ~html print ()
       | Replace, [|xp_a; xp_b|] -> xp_replace xp_a xp_b ~html print ()
       | Swap, [|xp_a; xp_b|] -> xp_swap xp_a xp_b ~html print ()
@@ -383,18 +376,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | _ -> assert false
 
     let xp_field ~html print = function
-      | AnyInt, _ -> assert false
       | Vec, 0 -> print#string "i"
       | Vec, 1 -> print#string "j"
       | Vec, _ -> assert false
-      | AnyColor, _ -> assert false
-      | AnySeg, _ -> assert false
-      | AnyMotif, _ -> assert false
-      | AnyGrid, _ -> assert false
       | Obj, 0 -> print#string "pos"
       | Obj, 1 -> print#string "sprite"
       | Obj, _ -> assert false
-      | AnyMap, _ -> assert false
       | DomMap _, 0 -> print#string "vals"
       | DomMap _, _ -> assert false
       | Replace, 0 -> print#string "a"
@@ -459,14 +446,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     (* data constr *)
                   
     type dconstr = (* make sure data from constant models can be identified as so *)
-      | DAnyInt of int * Range.t (* INT in some range *)
       | DVec (* COORD, COORD : VEC *)
-      | DAnyColor of Grid.color * typ_color (* COLOR *)
-      | DAnySeg of GPat.Objects.segmentation (* SEG *)
-      | DAnyMotif of GPat.Motif.t (* MOTIF *)
-      | DAnyGrid of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
       | DObj (* SIZE, SPRITE : OBJ *)
-      | DAnyMap of (value,value) Mymap.t * typ (* domain type *) * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
       | DDomMap of value array (* B+ : MAP(A,B) *)
       | DReplace (* A, A : MAP(A,A) *)
       | DSwap (* A, A : MAP(A,A) *)
@@ -489,14 +470,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     let xp_dpat dc xp_args ~html print () =
       match dc, xp_args with (* TODO: consider printing other params for better introspection *)
-      | DAnyInt (ij,_), [||] -> print#int ij
       | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | DAnyColor (c,_), [||] -> Grid.xp_color ~html print c
-      | DAnySeg seg, [||] -> GPat.Objects.xp_segmentation ~html print seg
-      | DAnyMotif motif, [||] -> GPat.Motif.xp ~html print motif
-      | DAnyGrid (g,tg,_,_,_), [||] -> Grid.xp_grid ~html print g
       | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
-      | DAnyMap (m,ta,tb), [||] -> xp_value ~html print (`Map m)
       | DDomMap keys, [|xp_vals|] -> xp_dommap keys xp_vals ~html print ()
       | DReplace, [|xp_a; xp_b|] ->
          xp_replace xp_a xp_b ~html print ()
@@ -785,21 +760,17 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | INT CARD -> None, [ ]
           | INT INDEX -> None, [ ]
           | INT (COORD _) ->
-             None,
-             [ AnyInt, [||] ]
+             None, [ ]
           | VEC tv ->
              None,
              [ Vec, [|INT (COORD (I, tv)), 0;
                       INT (COORD (J, tv)), 0|] ]
           | COLOR tc ->
-             None,
-             [ AnyColor, [||] ]
+             None, [ ]
           | SEG ->
-             None,
-             [ AnySeg, [||] ]
+             None, [ ]
           | MOTIF ->
-             None,
-             [ AnyMotif, [||] ]
+             None, [ ]
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              None,
@@ -808,8 +779,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  if cond
                  then Some c_args
                  else None)
-               [ true, (AnyGrid, [||]);
-                 full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
+               [ full, (BgColor, [|COLOR (C_BG full), 0; GRID (`Sprite,nocolor), 0|]);
                  not full, (IsFull, [|GRID (`Full,nocolor), 0|]);
                  true, (Crop, [|GRID (filling,nocolor), 0; VEC POS, 0; VEC SIZE, 0|]);
                  not full, (Objects (1), [|VEC SIZE, 0; SEG, 0; INT CARD, 0; OBJ (`Sprite,nocolor), 1; (* derived merger, not counting *)|]);
@@ -848,8 +818,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  if cond
                  then Some c_args
                  else None)
-               [ true, (AnyMap, [||]);
-                 true, (DomMap [||], [|tb, 1|]);
+               [ true, (DomMap [||], [|tb, 1|]);
                  ta=tb, (Replace, [|ta, 0; ta, 0|]);
                  ta=tb, (Swap, [|ta, 0; ta, 0|]) ]
         method funcs k =
@@ -1046,16 +1015,17 @@ module MyDomain : Madil.DOMAIN =
       | `Obj (_, _, shape) -> Some (Grid.dims shape)
       | _ -> None
 
-    let make_anyint ti : model = Model.make_pat (INT ti) AnyInt [||]
+    let make_anyint ti : model = Model.make_any (INT ti)
     let make_anycard : model = make_anyint CARD
     let make_anycoord axis tv : model = make_anyint (COORD (axis,tv))
+    let make_anycolor tc : model = Model.make_any (COLOR tc)
+    let make_anyseg : model = Model.make_any SEG
+    let make_anymotif : model = Model.make_any MOTIF
+    let make_anygrid tg : model = Model.make_any (GRID tg)
+    let make_anymap ta tb : model = Model.make_any (MAP (ta,tb))
+    
     let make_vec tv mi mj : model = Model.make_pat (VEC tv) Vec [|mi;mj|]
-    let make_anycolor tc : model = Model.make_pat (COLOR tc) AnyColor [||]
-    let make_anyseg : model = Model.make_pat SEG AnySeg [||]
-    let make_anymotif : model = Model.make_pat MOTIF AnyMotif [||]
-    let make_anygrid tg : model = Model.make_pat (GRID tg) AnyGrid [||]
     let make_obj tg mpos mg1 : model = Model.make_pat (OBJ tg) Obj [|mpos;mg1|]
-    let make_anymap ta tb : model = Model.make_pat (MAP (ta,tb)) AnyMap [||]
     let make_dommap ta tb keys mvals : model = Model.make_pat (MAP (ta,tb)) (DomMap keys) [|mvals|]
     let make_replace ta tb ma mb : model = Model.make_pat (MAP (ta,tb)) Replace [|ma; mb|]
     let make_swap ta tb ma mb : model = Model.make_pat (MAP (ta,tb)) Swap [|ma; mb|]
@@ -1120,24 +1090,25 @@ module MyDomain : Madil.DOMAIN =
              
       
     let make_danyint ij r : data =
-      Data.make_dpat (`Int ij) (DAnyInt (ij,r)) [||]
+      Data.make_dany (`Int ij) (`IntRange (ij,r))
+    let make_danycolor c tc : data =
+      Data.make_dany (`Color c) (`ColorTyp (c,tc))
+    let make_danyseg seg : data =
+      Data.make_dany (`Seg seg) (`Seg seg)
+    let make_danymotif m : data =
+      Data.make_dany (`Motif m) (`Motif m)
+    let make_danygrid g tg rh rw nc : data =
+      Data.make_dany (`Grid g) (`GridRange (g,tg,rh,rw,nc))
+    let make_danymap ta tb m : data =
+      Data.make_dany (`Map m) (`MapTyp (m,ta,tb))
+
     let make_dvec di dj : data =
       let i, j = get_int di, get_int dj in
       Data.make_dpat (`Vec (i,j)) DVec [|di;dj|]
-    let make_danycolor c tc : data =
-      Data.make_dpat (`Color c) (DAnyColor (c,tc)) [||]
-    let make_danyseg seg : data =
-      Data.make_dpat (`Seg seg) (DAnySeg seg) [||]
-    let make_danymotif m : data =
-      Data.make_dpat (`Motif m) (DAnyMotif m) [||]
-    let make_danygrid g tg rh rw nc : data =
-      Data.make_dpat (`Grid g) (DAnyGrid (g,tg,rh,rw,nc)) [||]
     let make_dobj dpos dg1 : data =
       let i, j = get_vec dpos in
       let g1 = get_grid dg1 in
       Data.make_dpat (`Obj (i,j,g1)) DObj [|dpos;dg1|]
-    let make_danymap ta tb m : data =
-      Data.make_dpat (`Map m) (DAnyMap (m,ta,tb)) [||]
     let make_ddommap (keys : value array) dvals : data =
       let m =
         match Data.value dvals with
@@ -2126,38 +2097,32 @@ module MyDomain : Madil.DOMAIN =
       match aux info with
       | Some info -> Myseq.return (Data.make_dexpr v, info)
       | None -> Myseq.empty
-    
-    let rec generator_pat t c gen_args bindings info = (* systematic version *)
-      match t, c, gen_args, info with
-      | _, _, _, `Seq [] -> Myseq.empty (* end of sequence *)
-      | _, _, _, `Seq (i::l) ->
-         let* dx, i = generator_pat t c gen_args bindings i in
+
+    let rec generator_any t bindings info =
+      match t, info with
+      | _, `Seq [] -> Myseq.empty (* end of sequence *)
+      | _, `Seq (i::l) ->
+         let* dx, i = generator_any t bindings i in
          let info =
            match i with
            | `Null -> `Seq l
            | _ -> `Seq (i::l) in
          Myseq.return (dx,info)
     
-      | INT _, AnyInt, [||], `Int (a,b) ->
+      | INT _, `Int (a,b) ->
          let range = Range.make_closed a b in
          let* n = Myseq.range a b in
          Myseq.return (make_danyint n range, `Null)
-      | _, Vec, [|gen_i; gen_j|], `Vec (info_i, info_j) ->
-         let* lij = Myseq.product_fair [gen_i bindings info_i;
-                                        gen_j bindings info_j] in
-         (match lij with
-          | [di, _; dj, _] -> Myseq.return (make_dvec di dj, `Null)
-          | _ -> assert false)
-      | COLOR tc, AnyColor, [||], `Color lc ->
+      | COLOR tc, `Color lc ->
          let* c = Myseq.from_list lc in
          Myseq.return (make_danycolor c tc, `Null)
-      | SEG, AnySeg, [||], `Seg lseg ->
+      | SEG, `Seg lseg ->
          let* seg = Myseq.from_list lseg in
          Myseq.return (make_danyseg seg, `Null)
-      | MOTIF, AnyMotif, [||], `Motif lmot ->
+      | MOTIF, `Motif lmot ->
          let* mot = Myseq.from_list lmot in
          Myseq.return (make_danymotif mot, `Null)
-      | GRID tg, AnyGrid, [||], `Grid ((minh,maxh),(minw,maxw),lc) ->
+      | GRID tg, `Grid ((minh,maxh),(minw,maxw),lc) ->
          let range_h = Range.make_closed minh maxh in
          let range_w = Range.make_closed minw maxw in
          let nc = List.length lc in
@@ -2170,6 +2135,27 @@ module MyDomain : Madil.DOMAIN =
             let g = Grid.make h w c in
             Myseq.return (make_danygrid g tg range_h range_w nc, `Null)
          | _ -> assert false)
+      | MAP (ta,tb), `Map (info_a, info_b) ->
+         Myseq.return (make_danymap ta tb Mymap.empty, `Null) (* empty map = identity map *)
+      | _ -> assert false
+    
+    let rec generator_pat t c gen_args bindings info = (* systematic version *)
+      match t, c, gen_args, info with
+      | _, _, _, `Seq [] -> Myseq.empty (* end of sequence *)
+      | _, _, _, `Seq (i::l) ->
+         let* dx, i = generator_pat t c gen_args bindings i in
+         let info =
+           match i with
+           | `Null -> `Seq l
+           | _ -> `Seq (i::l) in
+         Myseq.return (dx,info)
+    
+      | _, Vec, [|gen_i; gen_j|], `Vec (info_i, info_j) ->
+         let* lij = Myseq.product_fair [gen_i bindings info_i;
+                                        gen_j bindings info_j] in
+         (match lij with
+          | [di, _; dj, _] -> Myseq.return (make_dvec di dj, `Null)
+          | _ -> assert false)
       | OBJ _, Obj, [|gen_pos; gen_g1|], `Obj (info_pos, info_g1) ->
          let* lposg1 = Myseq.product_fair [gen_pos bindings info_pos;
                                            gen_g1 bindings info_g1] in
@@ -2177,8 +2163,6 @@ module MyDomain : Madil.DOMAIN =
           | [dpos, _; dg1, _] ->
              Myseq.return (make_dobj dpos dg1, `Null)
          | _ -> assert false)
-      | MAP (ta,tb), AnyMap, [||], `Map (info_a, info_b) ->
-         Myseq.return (make_danymap ta tb Mymap.empty, `Null) (* empty map = identity map *)
       | MAP (ta,tb), DomMap keys, [|gen_vals|], `Map (info_a,info_b) ->
          let k = Array.length keys in
          let* dvals, _ = gen_vals bindings (`Seq (List.init k (fun _ -> info_b))) in
@@ -2501,6 +2485,38 @@ module MyDomain : Madil.DOMAIN =
            let data_seq = map2 (fun maked dargs -> maked dargs) l_maked dargs_seq in
            `Seq data_seq) *)
 
+    let rec parseur_any t bindings input =
+      match t, input with
+      | _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments TODO: this is dirty *)
+      | _, `Seq [] -> Myseq.empty (* no more elements *)
+      | _, `Seq (i::l) ->
+         let* dx, i = parseur_any t bindings i in
+         let input =
+           match i with
+           | `Null -> `Seq l
+           | _ -> `Seq (i::l) in
+         Myseq.return (dx,input)
+
+      | INT _, `IntRange (ij,range) ->
+         Myseq.return (make_danyint ij range, `Null)
+      | COLOR tc, `Color c ->
+         Myseq.return (make_danycolor c tc, `Null)
+      | SEG, `Seg seg ->
+         Myseq.return (make_danyseg seg, `Null)
+      | SEG, `SegAny ->
+         let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
+         Myseq.return (make_danyseg seg, `Null)
+      | MOTIF, `Motif mot ->
+         Myseq.return (make_danymotif mot, `Null)
+      | GRID tg, `GridDimsCols (g,rh,rw,nc) ->
+         Myseq.return (make_danygrid g tg rh rw nc, `Null)
+      | MAP (ta,tb), `MapDomain (m,dom) ->
+         Myseq.return (make_danymap ta tb m, `Null)
+      | _ ->
+         print_string "PARSE FAILURE in parseur_any:";
+         pp xp_typ t;
+         assert false
+    
     let rec parseur_pat t c parse_args bindings input =
       match t, c, parse_args, input with
       | _, _, _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments *)
@@ -2512,23 +2528,11 @@ module MyDomain : Madil.DOMAIN =
            | `Null -> `Seq l
            | _ -> `Seq (i::l) in
          Myseq.return (dx,input)
-      | _, AnyInt, [||], `IntRange (ij,range) ->
-         Myseq.return (make_danyint ij range, `Null)
+
       | _, Vec, [|parse_i; parse_j|], `Vec (in_i, in_j) ->
          let* di, _ = parse_i bindings in_i in
          let* dj, _ = parse_j bindings in_j in
          Myseq.return (make_dvec di dj, `Null)
-      | COLOR tc, AnyColor, [||], `Color c ->
-         Myseq.return (make_danycolor c tc, `Null)
-      | SEG, AnySeg, [||], `Seg seg ->
-         Myseq.return (make_danyseg seg, `Null)
-      | SEG, AnySeg, [||], `SegAny ->
-         let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
-         Myseq.return (make_danyseg seg, `Null)
-      | MOTIF, AnyMotif, [||], `Motif mot ->
-         Myseq.return (make_danymotif mot, `Null)
-      | GRID tg, AnyGrid, [||], `GridDimsCols (g,rh,rw,nc) ->
-         Myseq.return (make_danygrid g tg rh rw nc, `Null)
       | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, nb_consumed_objs, objs) ->
          myseq_bind_list_interleave
            (let k = !max_interleave_parse_obj in
@@ -2546,8 +2550,6 @@ module MyDomain : Madil.DOMAIN =
                               (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                      `IntRange (j, Range.make_closed 0 (w-1)))) in
              Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc, nb_consumed_objs-1, other_objs)))
-      | MAP (ta,tb), AnyMap, [||], `MapDomain (m,dom) ->
-         Myseq.return (make_danymap ta tb m, `Null)
       | MAP (ta,tb), DomMap keys, [|parse_vals|], `MapDomain (m,dom) ->
          let pairs = Mymap.bindings m in
          let m_keys = Array.of_list (List.map fst pairs) in
@@ -3002,17 +3004,20 @@ module MyDomain : Madil.DOMAIN =
       | _, `Seq _ -> assert false
       | _ -> pp xp_value v; assert false
 
-           
+    let encoding_dany v =
+      match v with
+      | `IntRange (ij,range) -> Range.dl ij range
+      | `ColorTyp (c,tc) -> dl_color c tc
+      | `Seg seg -> dl_seg seg
+      | `Motif m -> dl_motif m
+      | `GridRange (g,tg,rh,rw,nc) -> dl_grid g tg rh rw nc
+      | `MapTyp (m,ta,tb) -> dl_map (dl_value ta) (dl_value tb) m
+      | _ -> assert false
+    
     let encoding_dpat dc encs =
       match dc, encs with
-      | DAnyInt (ij,range), [||] -> Range.dl ij range
       | DVec, [|enc_i; enc_j|] ->  enc_i +. enc_j
-      | DAnyColor (c,tc), [||] -> dl_color c tc
-      | DAnySeg seg, [||] -> dl_seg seg
-      | DAnyMotif m, [||] -> dl_motif m
-      | DAnyGrid (g,tg,rh,rw,nc), [||] -> dl_grid g tg rh rw nc
       | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
-      | DAnyMap (m,ta,tb), [||] -> dl_map (dl_value ta) (dl_value tb) m
       | DDomMap keys, [|enc_vals|] -> enc_vals (* keys encoded in model *)
       | DReplace, [|enc_a; enc_b|] -> enc_a +. enc_b
       | DSwap, [|enc_a; enc_b|] -> enc_a +. enc_b
@@ -3046,14 +3051,8 @@ module MyDomain : Madil.DOMAIN =
 
     let dl_constr_params t c =
       match t, c with
-      | _, AnyInt -> 0.
       | _, Vec -> 0.
-      | _, AnyColor -> 0.
-      | _, AnySeg -> 0.
-      | _, AnyMotif -> 0.
-      | _, AnyGrid -> 0.
       | _, Obj -> 0.
-      | _, AnyMap -> 0.
       | MAP (ta,tb), DomMap keys -> (* 0. (* assuming keys derived from context pattern/data *) *)
          Mdl.Code.universal_int_star (Array.length keys)
          +. Array.fold_left
@@ -3576,13 +3575,13 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
-      match t, c with
-      | INT ti, AnyInt -> []
-      | COLOR tc, AnyColor -> []
-      | SEG, AnySeg -> []
-      | MOTIF, AnyMotif -> []
-      | MAP (ta,tb), AnyMap ->
+    let refinements_any ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+      match t with
+      | INT ti -> []
+      | COLOR tc -> []
+      | SEG -> []
+      | MOTIF -> []
+      | MAP (ta,tb) ->
          let refs : (model * varseq) list = [] in
          let refs = (* DomMap *)
            match tb, value with
@@ -3625,7 +3624,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else refs in
          refs
-      | GRID (filling,nocolor as tg), AnyGrid ->
+      | GRID (filling,nocolor as tg) ->
          let refs : (model * varseq) list = [] in
          let refs = (* BgColor *)
            if filling = `Full then
@@ -3955,7 +3954,9 @@ module MyDomain : Madil.DOMAIN =
              ::refs
            else refs in
          refs
-      | _ -> []
+      | _ -> assert false    
+    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+      []
     let refinements_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
@@ -3994,11 +3995,11 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ta,tb), `Map m ->
          [ make_anymap ta tb, varseq ]
       | _ -> assert false
+    let prunings_any ~env_vars t varseq value =
+      []
     let prunings_pat ~env_vars t c args varseq value =
       match t, c with
-      | GRID _, AnyGrid -> []
       | GRID tg, _ -> [ make_anygrid tg, varseq ]
-      | MAP _, AnyMap -> []
       | MAP (ta,tb), _ -> [ make_anymap ta tb, varseq ]
       | _ -> []
     let prunings_postprocessing t m =
@@ -4070,5 +4071,3 @@ module MyDomain : Madil.DOMAIN =
   end
 
 module MyMadil = Madil.Make(MyDomain)
-
-
