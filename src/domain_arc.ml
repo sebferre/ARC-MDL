@@ -220,159 +220,123 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       xp_html_elt "span" ~classe:"model-any" ~html print
         (fun () -> print#string "?")
     
-    let xp_obj xp_pos xp_sprite ~html print () =
-      print#string "at position "; xp_pos ~html print ();
-      print#string ": ";
-      xp_sprite ~html print ()
-    let xp_dommap keys xp_vals ~html print () =
-      xp_array ~delims:("〈","〉") xp_value ~html print keys;
-      print#string " -> ";
-      xp_vals ~html print ()
-    let xp_replace xp_a xp_b ~html print () =
-      xp_a ~html print ();
-      print#string " is replaced by ";
-      xp_b ~html print ()
-    let xp_swap xp_a xp_b ~html print () =
-      xp_a ~html print ();
-      print#string " is swapped with ";
-      xp_b ~html print ()
-    let xp_bgcolor xp_color xp_sprite ~html print () =
-      print#string "a grid with background color "; xp_color ~html print ();
-      print#string " and with contents"; xp_newline ~html print ();
-      xp_sprite ~html print ()
-    let xp_isfull xp_sprite ~html print () =
-      print#string "a full grid that is";
-      xp_newline ~html print ();
-      xp_sprite ~html print ()
-    let xp_crop xp_sprite xp_pos xp_size ~html print () =
-      print#string "the crop of "; xp_sprite ~html print ();
-      print#string " at position "; xp_pos ~html print ();
-      print#string " with size "; xp_size ~html print ()
-      (*print#string "a grid of size "; xp_size ~html print ();
-      print#string " that contains at position "; xp_pos ~html print ();
-      xp_newline ~html print ();
-      xp_sprite ~html print ()*)
-    let xp_objects (nmax : int) xp_size xp_seg xp_card xp_objs xp_merger ~html print () =
-      print#string "a grid of size "; xp_size ~html print ();
-      print#string " that contains "; xp_card ~html print ();
-      print#string " <= "; print#int nmax;
-      print#string " "; xp_seg ~html print ();
-      print#string " objects like";
-      xp_newline ~html print ();
-      xp_objs ~html print ();
-      print#string " forming the constellation object: ";
-      xp_merger ~html print ()
-    let xp_colorpartition xp_size xp_grids ~html print () =
-      print#string "a grid of size "; xp_size ~html print ();
-      print#string " that is composed of colored layers";
-      xp_newline ~html print ();
-      xp_grids ~html print ()
-    let xp_monocolor xp_color xp_mask ~html print () =
-      print#string "a grid with only color "; xp_color ~html print ();
-      print#string " and with mask"; xp_newline ~html print ();
-      xp_mask ~html print ()
-(*    let xp_recoloring xp_colors xp_grid ~html print () =
-      print#string "recoloring with "; xp_colors ~html print ();
-      xp_newline ~html print ();
-      xp_grid ~html print () *)
-    let xp_recoloring xp_grid xp_map ~html print () =
-      print#string "a recoloring of "; xp_grid ~html print ();
-      xp_newline ~html print ();
-      print#string "where "; xp_map ~html print ()
-    let xp_motif partial xp_mot xp_core xp_pure xp_mask_opt xp_noise ~html print () =
-      print#string (if partial then "a grid with partial motif " else "a grid with motif ");
-      xp_mot ~html print ();
-      print#string "  and with core:";
-      xp_newline ~html print ();
-      xp_core ~html print ();
-      print#string "  that equals the pure grid: ";
-      xp_pure ~html print ();
-      if partial then (
-        print#string "  filtered by the mask: ";
-        xp_mask_opt ~html print ()
-      );
-      print#string "  plus the noise:";
-      xp_newline ~html print ();
-      xp_noise ~html print ()
-    let xp_metagrid xp_sepcolor xp_borders xp_dims xp_heights xp_widths xp_gridss ~html print () =
-      print#string "a metagrid with dims ";
-      xp_dims ~html print ();
-      print#string " and sep-color ";
-      xp_sepcolor ~html print ();
-      print#string " and borders ";
-      xp_borders ~html print ();
-      xp_newline ~html print ();
-      print#string "  with subgrid heights: ";
-      xp_heights ~html print ();
-      xp_newline ~html print ();
-      print#string "  with subgrid widths: ";
-      xp_widths ~html print ();
-      xp_newline ~html print ();
-      print#string "  with subgrids: ";
-      xp_gridss ~html print ()      
-    let xp_repeat xp_grid xp_nis xp_njs ~html print () =
-      print#string "a repeat pattern on rows "; xp_nis ~html print ();
-      print#string " and on columns "; xp_njs ~html print ();
-      print#string " of grid: "; xp_grid ~html print ()
-    let xp_empty xp_size ~html print () =
-      print#string "an empty mask of size "; xp_size ~html print ()
-    let xp_full xp_size ~html print () =
-      print#string "a full mask of size "; xp_size ~html print ()
-    let xp_point ~html print () =
-      print#string "a point mask"
-    let xp_line xp_len xp_dir ~html print () =
-      print#string "a line of length "; xp_len ~html print ();
-      print#string " and direction "; xp_dir ~html print ()
-    let xp_colorseq dir xp_size xp_colors ~html print () =
-      print#string "a ";
-      print#string (match dir with `H -> "horizontal" | `V -> "vertical");
-      print#string " 1D grid with size "; xp_size ~html print ();
-      print#string " and colors: ";
-      xp_colors ~html print ()
-    let xp_colormat xp_size xp_colorss ~html print () =
-      print#string "a 2D grid with size "; xp_size ~html print ();
-      print#string " and colors: ";
-      xp_colorss ~html print ()
-      
     let xp_pat c xp_args ~html print () =
       match c, xp_args with
-      | Vec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | Obj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
-      | DomMap keys, [|xp_vals|] -> xp_dommap keys xp_vals ~html print ()
-      | Replace, [|xp_a; xp_b|] -> xp_replace xp_a xp_b ~html print ()
-      | Swap, [|xp_a; xp_b|] -> xp_swap xp_a xp_b ~html print ()
+      | Vec, [|xp_i; xp_j|] ->
+         xp_vec xp_i xp_j ~html print () ()
+      | Obj, [|xp_pos; xp_sprite|] ->
+         print#string "at position "; xp_pos ~html print ();
+         print#string ": ";
+         xp_sprite ~html print ()
+      | DomMap keys, [|xp_vals|] ->
+         xp_array ~delims:("〈","〉") xp_value ~html print keys;
+         print#string " -> ";
+         xp_vals ~html print ()
+      | Replace, [|xp_a; xp_b|] ->
+         xp_a ~html print ();
+         print#string " is replaced by ";
+         xp_b ~html print ()
+      | Swap, [|xp_a; xp_b|] ->
+         xp_a ~html print ();
+         print#string " is swapped with ";
+         xp_b ~html print ()
       | BgColor, [|xp_color; xp_sprite|] ->
-         xp_bgcolor xp_color xp_sprite ~html print ()
+         print#string "a grid with background color "; xp_color ~html print ();
+         print#string " and with contents"; xp_newline ~html print ();
+         xp_sprite ~html print ()
       | IsFull, [|xp_sprite|] ->
-         xp_isfull xp_sprite ~html print ()
+         print#string "a full grid that is";
+         xp_newline ~html print ();
+         xp_sprite ~html print ()
       | Crop, [|xp_sprite; xp_pos; xp_size|] ->
-         xp_crop xp_sprite xp_pos xp_size ~html print ()
+         print#string "the crop of "; xp_sprite ~html print ();
+         print#string " at position "; xp_pos ~html print ();
+         print#string " with size "; xp_size ~html print ()
+         (*print#string "a grid of size "; xp_size ~html print ();
+           print#string " that contains at position "; xp_pos ~html print ();
+           xp_newline ~html print ();
+           xp_sprite ~html print ()*)
       | Objects (nmax), [|xp_size; xp_seg; xp_card; xp_objs; xp_merger|] ->
-         xp_objects nmax xp_size xp_seg xp_card xp_objs xp_merger ~html print ()
+         print#string "a grid of size "; xp_size ~html print ();
+         print#string " that contains "; xp_card ~html print ();
+         print#string " <= "; print#int nmax;
+         print#string " "; xp_seg ~html print ();
+         print#string " objects like";
+         xp_newline ~html print ();
+         xp_objs ~html print ();
+         print#string " forming the constellation object: ";
+         xp_merger ~html print ()
       | ColorPartition, [|xp_size; xp_grids|] ->
-         xp_colorpartition xp_size xp_grids ~html print ()
+         print#string "a grid of size "; xp_size ~html print ();
+         print#string " that is composed of colored layers";
+         xp_newline ~html print ();
+         xp_grids ~html print ()
       | Monocolor, [|xp_color; xp_mask|] ->
-         xp_monocolor xp_color xp_mask ~html print ()
+         print#string "a grid with only color "; xp_color ~html print ();
+         print#string " and with mask"; xp_newline ~html print ();
+         xp_mask ~html print ()
+         (* let xp_recoloring xp_colors xp_grid ~html print () =
+            print#string "recoloring with "; xp_colors ~html print ();
+            xp_newline ~html print ();
+            xp_grid ~html print () *)
       | Recoloring, [|xp_grid; xp_map|] ->
-         xp_recoloring xp_grid xp_map ~html print ()
+         print#string "a recoloring of "; xp_grid ~html print ();
+         xp_newline ~html print ();
+         print#string "where "; xp_map ~html print ()
       | Motif partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
-         xp_motif partial xp_mot xp_core xp_pure xp_mask_opt xp_noise ~html print ()
+         print#string (if partial then "a grid with partial motif " else "a grid with motif ");
+         xp_mot ~html print ();
+         print#string "  and with core:";
+         xp_newline ~html print ();
+         xp_core ~html print ();
+         print#string "  that equals the pure grid: ";
+         xp_pure ~html print ();
+         if partial then (
+           print#string "  filtered by the mask: ";
+           xp_mask_opt ~html print ()
+         );
+         print#string "  plus the noise:";
+         xp_newline ~html print ();
+         xp_noise ~html print ()
       | Metagrid, [|xp_sepcolor; xp_borders; xp_dims; xp_heights; xp_widths; xp_gridss|] ->
-         xp_metagrid xp_sepcolor xp_borders xp_dims xp_heights xp_widths xp_gridss ~html print ()
+         print#string "a metagrid with dims ";
+         xp_dims ~html print ();
+         print#string " and sep-color ";
+         xp_sepcolor ~html print ();
+         print#string " and borders ";
+         xp_borders ~html print ();
+         xp_newline ~html print ();
+         print#string "  with subgrid heights: ";
+         xp_heights ~html print ();
+         xp_newline ~html print ();
+         print#string "  with subgrid widths: ";
+         xp_widths ~html print ();
+         xp_newline ~html print ();
+         print#string "  with subgrids: ";
+         xp_gridss ~html print ()      
       | Repeat, [|xp_grid; xp_nis; xp_njs|] ->
-         xp_repeat xp_grid xp_nis xp_njs ~html print ()
+         print#string "a repeat pattern on rows "; xp_nis ~html print ();
+         print#string " and on columns "; xp_njs ~html print ();
+         print#string " of grid: "; xp_grid ~html print ()
       | Empty, [|xp_size|] ->
-         xp_empty xp_size ~html print ()
+         print#string "an empty mask of size "; xp_size ~html print ()
       | Full, [|xp_size|] ->
-         xp_full xp_size ~html print ()
+         print#string "a full mask of size "; xp_size ~html print ()
       | Point, [||] ->
-         xp_point ~html print ()
+         print#string "a point mask"
       | Line, [|xp_len; xp_dir|] ->
-         xp_line xp_len xp_dir ~html print ()
+         print#string "a line of length "; xp_len ~html print ();
+         print#string " and direction "; xp_dir ~html print ()
       | ColorSeq dir, [|xp_size; xp_colors|] ->
-         xp_colorseq dir xp_size xp_colors ~html print ()
+         print#string "a ";
+         print#string (match dir with `H -> "horizontal" | `V -> "vertical");
+         print#string " 1D grid with size "; xp_size ~html print ();
+         print#string " and colors: ";
+         xp_colors ~html print ()
       | ColorMat, [|xp_size; xp_colorss|] ->
-         xp_colormat xp_size xp_colorss ~html print ()
+         print#string "a 2D grid with size "; xp_size ~html print ();
+         print#string " and colors: ";
+         xp_colorss ~html print ()
       | _ -> assert false
 
     let xp_field ~html print = function
@@ -443,74 +407,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorMat, 1 -> print#string "colors"
       | ColorMat, _ -> assert false
 
-    (* data constr *)
-                  
-    type dconstr = (* make sure data from constant models can be identified as so *)
-      | DVec (* COORD, COORD : VEC *)
-      | DObj (* SIZE, SPRITE : OBJ *)
-      | DDomMap of value array (* B+ : MAP(A,B) *)
-      | DReplace (* A, A : MAP(A,A) *)
-      | DSwap (* A, A : MAP(A,A) *)
-      | DBgColor (* COLOR, SPRITE : GRID *)
-      | DIsFull (* SPRITE : GRID *)
-      | DCrop (* SPRITE, POS, SIZE : SPRITE *)
-      | DObjects of int (* SIZE, SEG, CARD, OBJ+, derived OBJ : SPRITE *)
-      | DColorPartition (* SIZE, SPRITE+ : SPRITE *)
-      | DMonocolor (* COLOR, MASK : SPRITE *)
-      | DRecoloring (* SPRITE; MAP(COLOR,COLOR) : SPRITE *)
-      | DMotif of bool (* partial *) (* MOTIF, SPRITE (core), SPRITE (pure), MASK?, SPRITE (noise) *)
-      | DMetagrid (* COLOR, MASK, VEC SIZE, SIZE+, SIZE+, GRID++ : GRID *)
-      | DRepeat (* SPRITE, INT+, INT+ : SPRITE *)
-      | DEmpty (* SIZE : MASK *)
-      | DFull (* SIZE : MASK *)
-      | DPoint (* MASK *)
-      | DLine (* INT SIZE, VEC MOVE : MASK *)
-      | DColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
-      | DColorMat (* VEC SIZE, COLOR++ : GRID *)
-
-    let xp_dpat dc xp_args ~html print () =
-      match dc, xp_args with (* TODO: consider printing other params for better introspection *)
-      | DVec, [|xp_i; xp_j|] -> xp_vec xp_i xp_j ~html print () ()
-      | DObj, [|xp_pos; xp_sprite|] -> xp_obj xp_pos xp_sprite ~html print ()
-      | DDomMap keys, [|xp_vals|] -> xp_dommap keys xp_vals ~html print ()
-      | DReplace, [|xp_a; xp_b|] ->
-         xp_replace xp_a xp_b ~html print ()
-      | DSwap, [|xp_a; xp_b|] ->
-         xp_swap xp_a xp_b ~html print ()
-      | DBgColor, [|xp_color; xp_sprite|] ->
-         xp_bgcolor xp_color xp_sprite ~html print ()
-      | DIsFull, [|xp_sprite|] ->
-         xp_isfull xp_sprite ~html print ()
-      | DCrop, [|xp_sprite; xp_pos; xp_size|] ->
-         xp_crop xp_sprite xp_pos xp_size ~html print ()
-      | DObjects (nmax), [|xp_size; xp_seg; xp_card; xp_objs; xp_merger|] ->
-         xp_objects nmax xp_size xp_seg xp_card xp_objs xp_merger ~html print ()
-      | DColorPartition, [|xp_size; xp_grids|] ->
-         xp_colorpartition xp_size xp_grids ~html print ()
-      | DMonocolor, [|xp_color; xp_mask|] ->
-         xp_monocolor xp_color xp_mask ~html print ()
-      | DRecoloring, [|xp_grid; xp_map|] ->
-         xp_recoloring xp_grid xp_map ~html print ()
-      | DMotif partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
-         xp_motif partial xp_mot xp_core xp_pure xp_mask_opt xp_noise ~html print ()
-      | DMetagrid, [|xp_sepcolor; xp_borders; xp_dims; xp_heights; xp_widths; xp_gridss|] ->
-         xp_metagrid xp_sepcolor xp_borders xp_dims xp_heights xp_widths xp_gridss ~html print ()
-      | DRepeat, [|xp_grid; xp_nis; xp_njs|] ->
-         xp_repeat xp_grid xp_nis xp_njs ~html print ()
-      | DEmpty, [|xp_size|] ->
-         xp_empty xp_size ~html print ()
-      | DFull, [|xp_size|] ->
-         xp_full xp_size ~html print ()
-      | DPoint, [||] ->
-         xp_point ~html print ()
-      | DLine, [|xp_len; xp_dir|] ->
-         xp_line xp_len xp_dir ~html print ()
-      | DColorSeq dir, [|xp_size; xp_colors|] ->
-         xp_colorseq dir xp_size xp_colors ~html print ()
-      | DColorMat, [|xp_size; xp_colorss|] ->
-         xp_colormat xp_size xp_colorss ~html print ()
-      | _ -> assert false
-
+    
     (* functions *)
         
     type func =
@@ -1104,11 +1001,11 @@ module MyDomain : Madil.DOMAIN =
 
     let make_dvec di dj : data =
       let i, j = get_int di, get_int dj in
-      Data.make_dpat (`Vec (i,j)) DVec [|di;dj|]
+      Data.make_dpat (`Vec (i,j)) Vec [|di;dj|]
     let make_dobj dpos dg1 : data =
       let i, j = get_vec dpos in
       let g1 = get_grid dg1 in
-      Data.make_dpat (`Obj (i,j,g1)) DObj [|dpos;dg1|]
+      Data.make_dpat (`Obj (i,j,g1)) Obj [|dpos;dg1|]
     let make_ddommap (keys : value array) dvals : data =
       let m =
         match Data.value dvals with
@@ -1120,7 +1017,7 @@ module MyDomain : Madil.DOMAIN =
              keys vals;
            !res
         | _ -> assert false in
-      Data.make_dpat (`Map m) (DDomMap keys) [|dvals|]
+      Data.make_dpat (`Map m) (DomMap keys) [|dvals|]
     let make_dreplace (dom : value array) da db : data =
       let a, b = Data.value da, Data.value db in
       let m =
@@ -1129,7 +1026,7 @@ module MyDomain : Madil.DOMAIN =
             let v = if k = a then b else k in
             Mymap.add k v res)
           dom Mymap.empty in
-      Data.make_dpat (`Map m) DReplace [|da; db|]
+      Data.make_dpat (`Map m) Replace [|da; db|]
     let make_dswap (dom : value array) da db : data =
       let a, b = Data.value da, Data.value db in
       let m =
@@ -1140,22 +1037,22 @@ module MyDomain : Madil.DOMAIN =
                     else k in
             Mymap.add k v res)
           dom Mymap.empty in
-      Data.make_dpat (`Map m) DSwap [|da; db|]
+      Data.make_dpat (`Map m) Swap [|da; db|]
     let make_dbgcolor dcol dspr : data =
       let g =
         match Data.value dcol, Data.value dspr with
         | `Color bc, `Grid g1 -> Grid.fill_transparent g1 bc
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DBgColor [|dcol;dspr|]
+      Data.make_dpat (`Grid g) BgColor [|dcol;dspr|]
     let make_disfull dspr : data =
-      Data.make_dpat (Data.value dspr) DIsFull [|dspr|]
+      Data.make_dpat (Data.value dspr) IsFull [|dspr|]
     let make_dcrop dg dpos dsize : data result =
       let| g1 =
         match Data.value dg, Data.value dpos, Data.value dsize with
         | `Grid g, `Vec (i,j), `Vec (h1,w1) ->
            Grid.Transf.crop g i j h1 w1
         | _ -> assert false in
-      Result.Ok (Data.make_dpat (`Grid g1) DCrop [|dg; dpos; dsize|])
+      Result.Ok (Data.make_dpat (`Grid g1) Crop [|dg; dpos; dsize|])
     let make_dobjects nmax dsize dseg dcard dobjs : data =
       let g, merger_obj =
         match Data.value dsize, Data.value dseg, Data.value dcard, Data.value dobjs with
@@ -1190,7 +1087,7 @@ module MyDomain : Madil.DOMAIN =
            g, `Obj (i0, j0, g0)
         | _ -> assert false in
       let dmerger = Data.make_dexpr merger_obj in
-      Data.make_dpat (`Grid g) (DObjects (nmax)) [|dsize; dseg; dcard; dobjs; dmerger|]
+      Data.make_dpat (`Grid g) (Objects (nmax)) [|dsize; dseg; dcard; dobjs; dmerger|]
     let make_dcolorpartition dsize dgrids : data result =
       let| g =
         match Data.value dsize, Data.value dgrids with
@@ -1210,7 +1107,7 @@ module MyDomain : Madil.DOMAIN =
              Result.Ok g)
            else Result.Error (Failure "DColorPartition: some layer has incompatible size")
         | _ -> assert false in
-      Result.Ok (Data.make_dpat (`Grid g) DColorPartition [|dsize; dgrids|])
+      Result.Ok (Data.make_dpat (`Grid g) ColorPartition [|dsize; dgrids|])
     let make_dmonocolor dcol dmask : data =
       let g_res =
         match Data.value dcol, Data.value dmask with
@@ -1219,7 +1116,7 @@ module MyDomain : Madil.DOMAIN =
         | _ -> assert false in
       match g_res with
       | Result.Ok g ->
-         Data.make_dpat (`Grid g) DMonocolor [|dcol; dmask|]
+         Data.make_dpat (`Grid g) Monocolor [|dcol; dmask|]
       | _ ->
          let c = get_color dcol in
          let mask = get_grid dmask in
@@ -1241,7 +1138,7 @@ module MyDomain : Madil.DOMAIN =
                else c1)
              g1
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DRecoloring [|dgrid; dmap|]
+      Data.make_dpat (`Grid g) Recoloring [|dgrid; dmap|]
     let make_dmotif partial dmot dcore dmask_opt dnoise : data result =
       let mot = get_motif dmot in
       let g_core = get_grid dcore in
@@ -1257,7 +1154,7 @@ module MyDomain : Madil.DOMAIN =
            let bgcolor = if partial then Grid.transparent else assert false in
            Grid.Mask.crop bgcolor m g_pure in
       Grid.add_grid_at g 0 0 g_noise;
-      Result.Ok (Data.make_dpat (`Grid g) (DMotif partial) [|dmot; dcore; dpure; dmask_opt; dnoise|])
+      Result.Ok (Data.make_dpat (`Grid g) (Motif partial) [|dmot; dcore; dpure; dmask_opt; dnoise|])
     let make_dmetagrid dsepcolor dborders ddims dheights dwidths dgridss : data result =
       let sepcolor = get_color dsepcolor in
       let borders = get_grid dborders in
@@ -1274,7 +1171,7 @@ module MyDomain : Madil.DOMAIN =
           part_widths;
           parts } in
       let| g = GPat.Metagrid.generate mg in
-      Result.Ok (Data.make_dpat (`Grid g) DMetagrid [|dsepcolor; dborders; ddims; dheights; dwidths; dgridss|])
+      Result.Ok (Data.make_dpat (`Grid g) Metagrid [|dsepcolor; dborders; ddims; dheights; dwidths; dgridss|])
     let make_drepeat dgrid dnis dnjs : data result =
       let g1 = get_grid dgrid in
       let nis =
@@ -1292,28 +1189,28 @@ module MyDomain : Madil.DOMAIN =
            |> Array.to_list
         | _ -> assert false in
       let| g = Grid_patterns.generate_repeat g1 nis njs in
-      Result.Ok (Data.make_dpat (`Grid g) DRepeat [|dgrid; dnis; dnjs|])
+      Result.Ok (Data.make_dpat (`Grid g) Repeat [|dgrid; dnis; dnjs|])
     let make_dempty dsize : data =
       let g =
         match Data.value dsize with
         | `Vec (h,w) -> Grid.Mask.empty h w
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DEmpty [|dsize|]
+      Data.make_dpat (`Grid g) Empty [|dsize|]
     let make_dfull dsize : data =
       let g =
         match Data.value dsize with
         | `Vec (h,w) -> Grid.Mask.full h w
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DFull [|dsize|]
+      Data.make_dpat (`Grid g) Full [|dsize|]
     let make_dpoint : data =
       let g = Grid.Mask.full 1 1 in
-      Data.make_dpat (`Grid g) DPoint [||]
+      Data.make_dpat (`Grid g) Point [||]
     let make_dline dlen ddir : data result =
       let| g =
         match Data.value dlen, Data.value ddir with
         | `Int len, `Vec dir -> GPat.generate_line len dir
         | _ -> assert false in
-      Result.Ok (Data.make_dpat (`Grid g) DLine [|dlen; ddir|])
+      Result.Ok (Data.make_dpat (`Grid g) Line [|dlen; ddir|])
     let make_dcolorseq dir dsize dcolors : data =
       let g =
         match Data.value dsize, Data.value dcolors with
@@ -1325,7 +1222,7 @@ module MyDomain : Madil.DOMAIN =
            | `H -> Grid.init 1 n (fun i j -> colors.(j))
            | `V -> Grid.init n 1 (fun i j -> colors.(i)))
         | _ -> assert false in
-      Data.make_dpat (`Grid g) (DColorSeq dir) [|dsize; dcolors|]
+      Data.make_dpat (`Grid g) (ColorSeq dir) [|dsize; dcolors|]
     let make_dcolormat dsize dcolorss : data =
       let g =
         match Data.value dsize, Data.value dcolorss with
@@ -1349,7 +1246,7 @@ module MyDomain : Madil.DOMAIN =
                    | _ -> assert false)
                | _ -> assert false)
         | _ -> assert false in
-      Data.make_dpat (`Grid g) DColorMat [|dsize; dcolorss|]
+      Data.make_dpat (`Grid g) ColorMat [|dsize; dcolorss|]
       
     (* evaluation *)
 
@@ -3016,29 +2913,29 @@ module MyDomain : Madil.DOMAIN =
     
     let encoding_dpat dc encs =
       match dc, encs with
-      | DVec, [|enc_i; enc_j|] ->  enc_i +. enc_j
-      | DObj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
-      | DDomMap keys, [|enc_vals|] -> enc_vals (* keys encoded in model *)
-      | DReplace, [|enc_a; enc_b|] -> enc_a +. enc_b
-      | DSwap, [|enc_a; enc_b|] -> enc_a +. enc_b
-      | DBgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
-      | DIsFull, [|enc_g1|] -> enc_g1
-      | DCrop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
-      | DObjects (nmax), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_card +. enc_objs (* TODO: take seg into account for encoding objects *)
-      | DColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
-      | DMonocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
-      | DRecoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
-      | DMotif partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
+      | Vec, [|enc_i; enc_j|] ->  enc_i +. enc_j
+      | Obj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
+      | DomMap keys, [|enc_vals|] -> enc_vals (* keys encoded in model *)
+      | Replace, [|enc_a; enc_b|] -> enc_a +. enc_b
+      | Swap, [|enc_a; enc_b|] -> enc_a +. enc_b
+      | BgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
+      | IsFull, [|enc_g1|] -> enc_g1
+      | Crop, [|enc_g; enc_pos; enc_size|] -> enc_g +. enc_pos +. enc_size
+      | Objects (nmax), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_card +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | ColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
+      | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
+      | Recoloring, [|enc_grid; enc_map|] -> enc_grid +. enc_map
+      | Motif partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
          enc_motif +. enc_core +. enc_mask_opt +. enc_noise
-      | DMetagrid, [|enc_sepcolor; enc_borders; enc_dims; enc_heights; enc_widths; enc_gridss|] ->
+      | Metagrid, [|enc_sepcolor; enc_borders; enc_dims; enc_heights; enc_widths; enc_gridss|] ->
          enc_sepcolor +. enc_borders +. enc_dims +. enc_heights +. enc_widths +. enc_gridss
-      | DRepeat, [|enc_grid; enc_nis; enc_njs|] -> enc_grid +. enc_nis +. enc_njs
-      | DEmpty, [|enc_size|] -> enc_size
-      | DFull, [|enc_size|] -> enc_size
-      | DPoint, [||] -> 0.
-      | DLine, [|enc_len; enc_dir|] -> enc_len +. enc_dir
-      | DColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
-      | DColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
+      | Repeat, [|enc_grid; enc_nis; enc_njs|] -> enc_grid +. enc_nis +. enc_njs
+      | Empty, [|enc_size|] -> enc_size
+      | Full, [|enc_size|] -> enc_size
+      | Point, [||] -> 0.
+      | Line, [|enc_len; enc_dir|] -> enc_len +. enc_dir
+      | ColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
+      | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
     let encoding_seq encs = Array.fold_left (+.) 0. encs
