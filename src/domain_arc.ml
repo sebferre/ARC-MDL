@@ -1981,7 +1981,7 @@ module MyDomain : Madil.DOMAIN =
     let default_grid, reset_default_grid =
       Memo.memoize2 ~size:103 default_grid *)
 
-    let generator_value v bindings info =
+    let generator_value v info =
       let rec aux info =
         match info with
         | `Seq [] -> None
@@ -1995,11 +1995,11 @@ module MyDomain : Madil.DOMAIN =
       | Some info -> Myseq.return (Data.make_dexpr v, info)
       | None -> Myseq.empty
 
-    let rec generator_any t bindings info =
+    let rec generator_any t info =
       match t, info with
       | _, `Seq [] -> Myseq.empty (* end of sequence *)
       | _, `Seq (i::l) ->
-         let* dx, i = generator_any t bindings i in
+         let* dx, i = generator_any t i in
          let info =
            match i with
            | `Null -> `Seq l
@@ -2036,11 +2036,11 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (make_danymap ta tb Mymap.empty, `Null) (* empty map = identity map *)
       | _ -> assert false
     
-    let rec generator_pat t c gen_args bindings info = (* systematic version *)
+    let rec generator_pat t c gen_args info = (* systematic version *)
       match t, c, gen_args, info with
       | _, _, _, `Seq [] -> Myseq.empty (* end of sequence *)
       | _, _, _, `Seq (i::l) ->
-         let* dx, i = generator_pat t c gen_args bindings i in
+         let* dx, i = generator_pat t c gen_args i in
          let info =
            match i with
            | `Null -> `Seq l
@@ -2048,28 +2048,28 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (dx,info)
     
       | _, Vec, [|gen_i; gen_j|], `Vec (info_i, info_j) ->
-         let* lij = Myseq.product_fair [gen_i bindings info_i;
-                                        gen_j bindings info_j] in
+         let* lij = Myseq.product_fair [gen_i info_i;
+                                        gen_j info_j] in
          (match lij with
           | [di, _; dj, _] -> Myseq.return (make_dvec di dj, `Null)
           | _ -> assert false)
       | OBJ _, Obj, [|gen_pos; gen_g1|], `Obj (info_pos, info_g1) ->
-         let* lposg1 = Myseq.product_fair [gen_pos bindings info_pos;
-                                           gen_g1 bindings info_g1] in
+         let* lposg1 = Myseq.product_fair [gen_pos info_pos;
+                                           gen_g1 info_g1] in
          (match lposg1 with
           | [dpos, _; dg1, _] ->
              Myseq.return (make_dobj dpos dg1, `Null)
          | _ -> assert false)
       | MAP (ta,tb), DomMap keys, [|gen_vals|], `Map (info_a,info_b) ->
          let k = Array.length keys in
-         let* dvals, _ = gen_vals bindings (`Seq (List.init k (fun _ -> info_b))) in
+         let* dvals, _ = gen_vals (`Seq (List.init k (fun _ -> info_b))) in
          (match Data.value dvals with
          | `Seq vals when Array.length vals = Array.length keys ->
             Myseq.return (make_ddommap keys dvals, `Null)
          | _ -> Myseq.empty)
       | MAP (ta,tb), Replace, [|gen_a; gen_b|], `Map (info_a,info_b) ->
-         let* lab = Myseq.product_fair [gen_a bindings info_a;
-                                        gen_b bindings info_b] in
+         let* lab = Myseq.product_fair [gen_a info_a;
+                                        gen_b info_b] in
          (match lab with
          | [da, _; db, _] ->
             let a, b = Data.value da, Data.value db in
@@ -2077,8 +2077,8 @@ module MyDomain : Madil.DOMAIN =
             Myseq.return (make_dreplace dom da db, `Null)
          | _ -> assert false)
       | MAP (ta,tb), Swap, [|gen_a; gen_b|], `Map (info_a,info_b) ->
-         let* lab = Myseq.product_fair [gen_a bindings info_a;
-                                        gen_b bindings info_b] in
+         let* lab = Myseq.product_fair [gen_a info_a;
+                                        gen_b info_b] in
          (match lab with
           | [da, _; db, _] ->
              let a, b = Data.value da, Data.value db in
@@ -2086,21 +2086,21 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (make_dswap dom da db, `Null)
           | _ -> assert false)
       | GRID _, BgColor, [|gen_col; gen_g1|], `Grid (rh,rw,lc) ->
-         let* dbc, _ = gen_col bindings (`Color lc) in
+         let* dbc, _ = gen_col (`Color lc) in
          let bc = get_color dbc in
          let lc1 = List.filter ((<>) bc) lc in
-         let* dg1, _ = gen_g1 bindings (`Grid (rh,rw,lc1)) in
+         let* dg1, _ = gen_g1 (`Grid (rh,rw,lc1)) in
          Myseq.return (make_dbgcolor dbc dg1, `Null)
       | GRID _, IsFull, [|gen_g1|], _ ->
-         let* dg1, _ = gen_g1 bindings info in
+         let* dg1, _ = gen_g1 info in
          Myseq.return (make_disfull dg1, `Null)
       | GRID _, Crop, [|gen_g; gen_pos; gen_size|], _ ->
-         let* dg, _ = gen_g bindings `Null in (* a fixed value *)
+         let* dg, _ = gen_g `Null in (* a fixed value *)
          let g = get_grid dg in
          let h, w = Grid.dims g in
          let* l = Myseq.product_fair
-                    [gen_pos bindings (`Vec (`Int (0,0), `Int (0,0)));
-                     gen_size bindings (`Vec (`Int (1, h), `Int (1, w)))] in
+                    [gen_pos (`Vec (`Int (0,0), `Int (0,0)));
+                     gen_size (`Vec (`Int (1, h), `Int (1, w)))] in
          (match l with
           | [dpos, _; dsize, _] ->
              let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
@@ -2108,15 +2108,15 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
       | GRID _, Objects (nmax), [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|], `Grid ((minh,maxh),(minw,maxw),lc) ->
          let* l = Myseq.product_fair
-                    [gen_seg bindings (`Seg [GPat.Objects.(Connected (Connect8,false))]);
-                     gen_card bindings (`Int (1,nmax))] in
+                    [gen_seg (`Seg [GPat.Objects.(Connected (Connect8,false))]);
+                     gen_card (`Int (1,nmax))] in
          (match l with
           | [dseg, _; dcard, _] ->
              (match Data.value dcard with
               | `Int card ->
                  let info_obj = `Obj (`Vec (`Int (0,0), `Int (0,0)), `Grid ((2,2),(2,2),lc)) in
                  let* () = Myseq.from_bool (card <= nmax) in
-                 let* dobjs, _ = gen_objs bindings (`Seq (List.init card (fun _ -> info_obj))) in
+                 let* dobjs, _ = gen_objs (`Seq (List.init card (fun _ -> info_obj))) in
                  let minh, minw =
                    Array.fold_left
                      (fun (minh,minw) (ih1,jw1) -> max minh ih1, max minw jw1)
@@ -2129,7 +2129,7 @@ module MyDomain : Madil.DOMAIN =
                          | _ -> assert false)
                         dobjs) in
                  let maxh, maxw = max maxh minh, max maxw minw in
-                 let* dsize, _ = gen_size bindings (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+                 let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
                  Myseq.return (make_dobjects nmax dsize dseg dcard dobjs, `Null)
               | _ -> Myseq.empty)
           | _ -> assert false)
@@ -2141,36 +2141,36 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (data, `Null)
           | _ -> assert false) *)
       | GRID _, Monocolor, [|gen_col; gen_mask|], `Grid (rh,rw,lc) ->
-         let* l = Myseq.product_fair [gen_col bindings (`Color lc);
-                                      gen_mask bindings (`Grid (rh,rw,[Grid.Mask.one]))] in
+         let* l = Myseq.product_fair [gen_col (`Color lc);
+                                      gen_mask (`Grid (rh,rw,[Grid.Mask.one]))] in
          (match l with
           | [dcol, _; dmask, _] -> Myseq.return (make_dmonocolor dcol dmask, `Null)
           | _ -> assert false)
       | GRID _, Recoloring, [|gen_grid; gen_map|], `Grid (rh,rw,lc) ->
-         let* l = Myseq.product_fair [gen_grid bindings info;
-                                      gen_map bindings (`Map (`Color lc, `Color lc))] in
+         let* l = Myseq.product_fair [gen_grid info;
+                                      gen_map (`Map (`Color lc, `Color lc))] in
          (match l with
           | [dgrid, _; dmap, _] -> Myseq.return (make_drecoloring dgrid dmap, `Null)
           | _ -> assert false)
       | GRID _, Motif partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|], `Grid ((minh,maxh),(minw,maxw),lc) ->
          let* l = Myseq.product_fair
-                    [gen_mot bindings (`Motif GPat.Motif.candidates);
-                     gen_noise bindings (`Grid ((minh,maxh),(minw,maxw),lc))] in
+                    [gen_mot (`Motif GPat.Motif.candidates);
+                     gen_noise (`Grid ((minh,maxh),(minw,maxw),lc))] in
          (match l with
           | [dmot, _; dnoise, _] ->
              let mot = get_motif dmot in
              let h, w = Grid.dims (get_grid dnoise) in
              let _, _, luv = GPat.Motif.all_coredims_of_motif mot h w in
              let* u, v = Myseq.from_list luv in
-             let* dcore, _ = gen_core bindings (`Grid ((u,u),(v,v),lc)) in
-             let* dmask_opt, _ = gen_mask_opt bindings (`Grid ((h,h),(w,w),[Grid.Mask.one])) in
+             let* dcore, _ = gen_core (`Grid ((u,u),(v,v),lc)) in
+             let* dmask_opt, _ = gen_mask_opt (`Grid ((h,h),(w,w),[Grid.Mask.one])) in
              let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
              Myseq.return (data, `Null)
           | _ -> assert false)
       | GRID _, Metagrid, [|gen_sepcolor; gen_borders; gen_dims; gen_heights; gen_widths; gen_gridss|], `Grid (rh,rw,lc) ->
-         let* l = Myseq.product_fair [gen_sepcolor bindings (`Color lc);
-                                      gen_borders bindings (`Grid ((2,2), (2,2), [Grid.Mask.one]));
-                                      gen_dims bindings (`Vec (`Int (1,3), `Int (1,3)))] in
+         let* l = Myseq.product_fair [gen_sepcolor (`Color lc);
+                                      gen_borders (`Grid ((2,2), (2,2), [Grid.Mask.one]));
+                                      gen_dims (`Vec (`Int (1,3), `Int (1,3)))] in
          (match l with
           | [dsepcolor, _; dborders, _; ddims, _] ->
              let sepcolor = get_color dsepcolor in
@@ -2178,14 +2178,14 @@ module MyDomain : Madil.DOMAIN =
              let lc1 = if lc1 = [] then Grid.all_colors else lc1 in
              let k, l = get_vec ddims in
              let* l1 = Myseq.product_fair
-                         [gen_heights bindings (`Seq (List.init k (fun _ -> `Int (1,10))));
-                          gen_widths bindings (`Seq (List.init l (fun _ -> `Int (1,10))))] in
+                         [gen_heights (`Seq (List.init k (fun _ -> `Int (1,10))));
+                          gen_widths (`Seq (List.init l (fun _ -> `Int (1,10))))] in
              (match l1 with
               | [dheights, _; dwidths, _] ->
                  let heights = get_seq (function `Int i -> i | _ -> assert false) dheights in
                  let widths = get_seq (function `Int j -> j | _ -> assert false) dwidths in
                  let* dgridss, _ =
-                   gen_gridss bindings
+                   gen_gridss
                      (`Seq (List.init k (fun i ->
                                 `Seq (List.init l (fun j ->
                                           let h1, w1 = heights.(i), widths.(j) in
@@ -2202,34 +2202,34 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (data, `Null)
          | _ -> assert false) *)
       | GRID _, Empty, [|gen_size|], `Grid ((minh,maxh),(minw,maxw),_) ->
-         let* dsize, _ = gen_size bindings (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+         let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
          Myseq.return (make_dempty dsize, `Null)
       | GRID _, Full, [|gen_size|], `Grid ((minh,maxh),(minw,maxw),_) ->
-         let* dsize, _ = gen_size bindings (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
+         let* dsize, _ = gen_size (`Vec (`Int (minh,maxh), `Int (minw,maxw))) in
          Myseq.return (make_dfull dsize, `Null)
       | GRID _, Point, [||], _ ->
          Myseq.return (make_dpoint, `Null)
       | GRID _, Line, [|gen_len; gen_dir|], `Grid ((minh,maxh),(minw,maxw),_) ->
-         let* dlen, _ = gen_len bindings (`Int (min minh minw, max maxh maxw)) in
-         let* ddir, _ = gen_dir bindings (`Vec (`Int (-1,1), `Int (-1,1))) in (* TODO: avoid (0,0) *)
+         let* dlen, _ = gen_len (`Int (min minh minw, max maxh maxw)) in
+         let* ddir, _ = gen_dir (`Vec (`Int (-1,1), `Int (-1,1))) in (* TODO: avoid (0,0) *)
          let* data = Myseq.from_result (make_dline dlen ddir) in
          Myseq.return (data, `Null)
       | GRID _, ColorSeq dir, [|gen_size; gen_colors|], `Grid ((minh,maxh),(minw,maxw),lc) ->
          let* dsize, _ =
-           gen_size bindings
+           gen_size
              (match dir with
               | `H -> `Int (max 2 minw,maxw)
               | `V -> `Int (max 2 minh,maxh)) in
          let k = get_int dsize in
-         let* dcolors, _ = gen_colors bindings (`Seq (List.init k (fun _ -> `Color lc))) in
+         let* dcolors, _ = gen_colors (`Seq (List.init k (fun _ -> `Color lc))) in
          Myseq.return (make_dcolorseq dir dsize dcolors, `Null)
       | GRID _, ColorMat, [|gen_size; gen_colorss|], `Grid ((minh,maxh),(minw,maxw),lc) ->
-         let* dsize, _ = gen_size bindings
+         let* dsize, _ = gen_size
                            (`Vec (`Int (max 2 minh, min 3 maxh),
                                   `Int (max 2 minw, min 3 maxw))) in
          let k, l = get_vec dsize in
          let* dcolorss, _ =
-           gen_colorss bindings
+           gen_colorss
              (`Seq (List.init k (fun _ ->
                         `Seq (List.init l (fun _ ->
                                   `Color lc))))) in
@@ -2279,7 +2279,7 @@ module MyDomain : Madil.DOMAIN =
          `MapDomain (m, domain)
       | _ -> assert false
 
-    let parseur_value v bindings input =
+    let parseur_value v input =
       let rec aux v input =
         match v, input with
         | `Null, `Null -> true, `Null
@@ -2382,12 +2382,12 @@ module MyDomain : Madil.DOMAIN =
            let data_seq = map2 (fun maked dargs -> maked dargs) l_maked dargs_seq in
            `Seq data_seq) *)
 
-    let rec parseur_any t bindings input =
+    let rec parseur_any t input =
       match t, input with
       | _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments TODO: this is dirty *)
       | _, `Seq [] -> Myseq.empty (* no more elements *)
       | _, `Seq (i::l) ->
-         let* dx, i = parseur_any t bindings i in
+         let* dx, i = parseur_any t i in
          let input =
            match i with
            | `Null -> `Seq l
@@ -2414,12 +2414,12 @@ module MyDomain : Madil.DOMAIN =
          pp xp_typ t;
          assert false
     
-    let rec parseur_pat t c parse_args bindings input =
+    let rec parseur_pat t c parse_args input =
       match t, c, parse_args, input with
       | _, _, _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments *)
       | _, _, _, `Seq [] -> Myseq.empty (* no more elements *)
       | _, _, _, `Seq (i::l) ->
-         let* dx, i = parseur_pat t c parse_args bindings i in
+         let* dx, i = parseur_pat t c parse_args i in
          let input =
            match i with
            | `Null -> `Seq l
@@ -2427,8 +2427,8 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (dx,input)
 
       | _, Vec, [|parse_i; parse_j|], `Vec (in_i, in_j) ->
-         let* di, _ = parse_i bindings in_i in
-         let* dj, _ = parse_j bindings in_j in
+         let* di, _ = parse_i in_i in
+         let* dj, _ = parse_j in_j in
          Myseq.return (make_dvec di dj, `Null)
       | _, Obj, [|parse_pos; parse_g1|], `Objects (h, w, nc, nb_consumed_objs, objs) ->
          myseq_bind_list_interleave
@@ -2438,12 +2438,12 @@ module MyDomain : Madil.DOMAIN =
             else 1)
            objs
            (fun ((i,j,g1), other_objs) ->
-             let* dg1, _ = parse_g1 bindings
+             let* dg1, _ = parse_g1
                              (`GridDimsCols (g1,
                                              Range.make_closed 1 (h-i),
                                              Range.make_closed 1 (w-j),
                                              nc)) in
-             let* dpos, _ = parse_pos bindings
+             let* dpos, _ = parse_pos
                               (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
                                      `IntRange (j, Range.make_closed 0 (w-1)))) in
              Myseq.return (make_dobj dpos dg1, `Objects (h,w,nc, nb_consumed_objs-1, other_objs)))
@@ -2453,7 +2453,7 @@ module MyDomain : Madil.DOMAIN =
          if m_keys = keys
          then
            let vals = List.map snd pairs in
-           let* dvals, input = parse_vals bindings
+           let* dvals, input = parse_vals
                                  (`Seq (List.map (input_of_value tb) vals)) in
            Myseq.return (make_ddommap keys dvals, `Null)
          else Myseq.empty
@@ -2461,30 +2461,30 @@ module MyDomain : Madil.DOMAIN =
          let m_diff = Mymap.filter (fun a b -> a <> b) m in
          (match Mymap.bindings m_diff with
           | [a, b] ->
-             let* da, _ = parse_a bindings (input_of_value ta a) in
-             let* db, _ = parse_b bindings (input_of_value ta b) in
+             let* da, _ = parse_a (input_of_value ta a) in
+             let* db, _ = parse_b (input_of_value ta b) in
              Myseq.return (make_dreplace dom da db, `Null)
           | _ -> Myseq.empty)
       | MAP (ta,tb), Swap, [|parse_a; parse_b|], `MapDomain (m,dom) when ta=tb ->
          let m_diff = Mymap.filter (fun a b -> a <> b) m in
          (match Mymap.bindings m_diff with
           | [a, b; c, d] when a=d && b=c ->
-             let* da, _ = parse_a bindings (input_of_value ta a) in
-             let* db, _ = parse_b bindings (input_of_value ta b) in
+             let* da, _ = parse_a (input_of_value ta a) in
+             let* db, _ = parse_b (input_of_value ta b) in
              Myseq.return (make_dswap dom da db, `Null)
           | _ -> Myseq.empty)
       | _, BgColor, [|parse_col; parse_g1|], `GridDimsCols (g,rh,rw,nc) ->
          if Grid.is_full g
          then
            let* bc = Myseq.from_list (Segment.background_colors g) in
-           let* dcol, _ = parse_col bindings (`Color bc) in
+           let* dcol, _ = parse_col (`Color bc) in
            let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
            let nc1 = if nc > 1 && g.Grid.color_count.(bc) > 0 then nc-1 else nc in
-           let* dg1, _ = parse_g1 bindings (`GridDimsCols (g1,rh,rw,nc1)) in
+           let* dg1, _ = parse_g1 (`GridDimsCols (g1,rh,rw,nc1)) in
            Myseq.return (make_dbgcolor dcol dg1, `Null)
          else Myseq.empty
       | _, IsFull, [|parse_g1|], _ ->
-         let* dg1, _ = parse_g1 bindings input in
+         let* dg1, _ = parse_g1 input in
          let g1 = get_grid dg1 in
          if Grid.is_full g1
          then Myseq.return (make_disfull dg1, `Null)
@@ -2492,10 +2492,10 @@ module MyDomain : Madil.DOMAIN =
       | _, Crop, [|parse_g; parse_pos; parse_size|], `GridDimsCols (g1,rh1,rw1,nc1) ->
          let h1, w1 = Grid.dims g1 in
          let* dsize, _ =
-           parse_size bindings
+           parse_size
              (`Vec (`IntRange (h1, rh1),
                     `IntRange (w1, rw1))) in
-         let* dg, _ = parse_g bindings `Null in (* expression *)
+         let* dg, _ = parse_g `Null in (* expression *)
          let* g =
            match Data.value dg with
            | `Grid g -> Myseq.return g
@@ -2504,7 +2504,7 @@ module MyDomain : Madil.DOMAIN =
          let h, w = Grid.dims g in
          let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
          let* dpos, _ =
-           parse_pos bindings
+           parse_pos
              (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
                     `IntRange (j, Range.make_closed 0 (w-w1)))) in
          let* dg1 = Myseq.from_result (make_dcrop dg dpos dsize) in
@@ -2512,10 +2512,10 @@ module MyDomain : Madil.DOMAIN =
       | _, Objects (nmax), [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|],
         `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
-         let* dsize, _ = parse_size bindings
+         let* dsize, _ = parse_size
                            (`Vec (`IntRange (h, rh),
                                   `IntRange (w, rw))) in
-         let* dseg, _ = parse_seg bindings `SegAny in
+         let* dseg, _ = parse_seg `SegAny in
          let seg = match Data.value dseg with `Seg seg -> seg | _ -> assert false in
          let* objs = Grid_patterns.Objects.parse seg g in
          let card = List.length objs in
@@ -2525,14 +2525,14 @@ module MyDomain : Madil.DOMAIN =
            match seg with
            | OneColor | ConnectedOneColor -> 1
            | Connected -> nc in*)
-         let* dcard, _ = parse_card bindings (`IntRange (card, Range.make_closed 0 nmax)) in
-         let* dobjs, _ = parse_objs bindings (`Objects (h,w,nc,0,objs)) in
+         let* dcard, _ = parse_card (`IntRange (card, Range.make_closed 0 nmax)) in
+         let* dobjs, _ = parse_objs (`Objects (h,w,nc,0,objs)) in
          Myseq.return (make_dobjects nmax dsize dseg dcard dobjs, `Null)
       | _, ColorPartition, [|parse_size; parse_grids|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
          let rh1 = Range.make_exact h in
          let rw1 = Range.make_exact w in
-         let* dsize, _ = parse_size bindings
+         let* dsize, _ = parse_size
                            (`Vec (`IntRange (h, rh),
                                   `IntRange (w, rw))) in
          let lg1s = Grid_patterns.partition_by_color g in
@@ -2541,20 +2541,20 @@ module MyDomain : Madil.DOMAIN =
            List.map
              (fun g1 -> `GridDimsCols (g1,rh1,rw1,nc)) (* h/w known, keeping nc>1 for supporting Monocolor *)
              lg1s in
-         let* dgrids, _ = parse_grids bindings (`Seq g1s) in
+         let* dgrids, _ = parse_grids (`Seq g1s) in
          let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
          Myseq.return (data, `Null)
       | _, Monocolor, [|parse_col; parse_mask|], `GridDimsCols (g,rh,rw,nc) ->
          if Grid.color_count Grid.transparent g = 1
          then
            let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
-           let* dcol, _ = parse_col bindings (`Color c) in
+           let* dcol, _ = parse_col (`Color c) in
            let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.Mask.one) in
-           let* dmask, _ = parse_mask bindings (`GridDimsCols (mask,rh,rw,1)) in
+           let* dmask, _ = parse_mask (`GridDimsCols (mask,rh,rw,1)) in
            Myseq.return (make_dmonocolor dcol dmask, `Null)
          else Myseq.empty
       | _, Recoloring, [|parse_grid; parse_map|], `GridDimsCols (g,rh,rw,nc) ->
-         let* dg1, _ = parse_grid bindings `Null in (* expression expected *)
+         let* dg1, _ = parse_grid `Null in (* expression expected *)
          let g1 = get_grid dg1 in
          (match Grid_patterns.parse_recoloring g g1 with
           | Some mcol ->
@@ -2564,20 +2564,20 @@ module MyDomain : Madil.DOMAIN =
                    Mymap.add (`Color c1) (`Color c2) res)
                  mcol (Mymap.empty : (value,value) Mymap.t) in
              let dom = mymap_keys m in
-             let* dmap, _ = parse_map bindings (`MapDomain (m,dom)) in
+             let* dmap, _ = parse_map (`MapDomain (m,dom)) in
              Myseq.return (make_drecoloring dg1 dmap, `Null)
           | None -> Myseq.empty)
       | _, Motif partial, [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|],
         `GridDimsCols (g,rh,rw,nc) ->
          let bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* mot, ru, rv, g_core, mask_opt, g_noise = Myseq.from_list (GPat.Motif.from_grid bgcolor g) in
-         let* dmot, _ = parse_mot bindings (`Motif mot) in
-         let* dcore, _ = parse_core bindings (`GridDimsCols (g_core,ru,rv,nc)) in
-         let* dmask_opt, _ = parse_mask_opt bindings
+         let* dmot, _ = parse_mot (`Motif mot) in
+         let* dcore, _ = parse_core (`GridDimsCols (g_core,ru,rv,nc)) in
+         let* dmask_opt, _ = parse_mask_opt
                                (match partial, mask_opt with
                                 | true, Some mask -> `GridDimsCols (mask,rh,rw,1)
                                 | _ -> `Null) in
-         let* dnoise, _ = parse_noise bindings (`GridDimsCols (g_noise,rh,rw,nc)) in
+         let* dnoise, _ = parse_noise (`GridDimsCols (g_noise,rh,rw,nc)) in
          let* data = Myseq.from_result (make_dmotif partial dmot dcore dmask_opt dnoise) in
          Myseq.return (data, `Null)
       | _, Metagrid, [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|], `GridDimsCols (g,rh,rw,nc) ->
@@ -2614,20 +2614,20 @@ module MyDomain : Madil.DOMAIN =
            let offset c = if c = Grid.Mask.one then 1 else 0 in
            offset b.{0,0}, offset b.{0,1},
            offset b.{1,0}, offset b.{1,1} in
-         let* dsepcolor, _ = parse_sepcolor bindings (`Color mg.sepcolor) in
-         let* dborders, _ = parse_borders bindings
+         let* dsepcolor, _ = parse_sepcolor (`Color mg.sepcolor) in
+         let* dborders, _ = parse_borders
                               (`GridDimsCols (mg.borders,
                                               Range.make_exact 2,
                                               Range.make_exact 2,
                                               1)) in
-         let* ddims, _ = parse_dims bindings
+         let* ddims, _ = parse_dims
                            (`Vec (make_input_dim k rh,
                                   make_input_dim l rw)) in
-         let* dheights, _ = parse_heights bindings
+         let* dheights, _ = parse_heights
                               (make_input_sizes top bot k rh mg.part_heights) in
-         let* dwidths, _ = parse_widths bindings
+         let* dwidths, _ = parse_widths
                              (make_input_sizes left right l rw mg.part_widths) in
-         let* dgridss, _ = parse_gridss bindings
+         let* dgridss, _ = parse_gridss
                              (`Seq (Array.to_list
                                       (Array.map
                                          (fun row ->
@@ -2670,15 +2670,15 @@ module MyDomain : Madil.DOMAIN =
          let* dnis, _ =
            let min = min_h in
            let max_opt = Option.map (fun m -> m - h1 + 1) max_h_opt in
-           parse_nis bindings (`Seq (aux_inputs min max_opt nis)) in
+           parse_nis (`Seq (aux_inputs min max_opt nis)) in
          let* dnjs, _ =
            let min = min_w in
            let max_opt = Option.map (fun m -> m - w1 + 1) max_w_opt in
-           parse_njs bindings (`Seq (aux_inputs min max_opt njs)) in
+           parse_njs (`Seq (aux_inputs min max_opt njs)) in
          let* dgrid, _ =
            let rh1 = Range.make_exact h1 in (* encoded as sequence length of nis *)
            let rw1 = Range.make_exact w1 in (* encoded as sequence length of njs *)
-           parse_grid bindings (`GridDimsCols (g1,rh1,rw1,nc)) in
+           parse_grid (`GridDimsCols (g1,rh1,rw1,nc)) in
          let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
          Myseq.return (data, `Null)
       | _, (Empty | Full as c), [|parse_size|],  `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
@@ -2691,7 +2691,7 @@ module MyDomain : Madil.DOMAIN =
          let pred, maked = pred_maked h w c in
          if Grid.for_all_pixels pred mask
          then
-           let* dsize, _ = parse_size bindings
+           let* dsize, _ = parse_size
                              (`Vec (`IntRange (h, rh),
                                     `IntRange (w, rw))) in
            Myseq.return (maked dsize, `Null)
@@ -2704,9 +2704,9 @@ module MyDomain : Madil.DOMAIN =
       | _, Line, [|parse_len; parse_dir|], `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
          (match GPat.parse_line mask with
           | Some (len, (di,dj)) ->
-             let* dlen, _ = parse_len bindings
+             let* dlen, _ = parse_len
                               (`IntRange (len, Range.union rh rw)) in
-             let* ddir, _ = parse_dir bindings
+             let* ddir, _ = parse_dir
                               (`Vec (`IntRange (di, Range.make_closed 0 1),
                                      `IntRange (dj, Range.make_closed (-1) 1))) in
              let* data = Myseq.from_result (make_dline dlen ddir) in
@@ -2717,20 +2717,20 @@ module MyDomain : Madil.DOMAIN =
          (match dir with
           | `H ->
              let* () = Myseq.from_bool (h = 1 && w > 1) in
-             let* dsize, _ = parse_size bindings
+             let* dsize, _ = parse_size
                                (`IntRange (w, Range.inter rw (Range.make_open 2))) in
              let* dcolors, _ =
-               parse_colors bindings
+               parse_colors
                  (`Seq (Array.to_list
                           (Array.init w
                              (fun j -> `Color (Grid.get_pixel g 0 j))))) in
              Myseq.return (make_dcolorseq dir dsize dcolors, `Null)
           | `V ->
              let* () = Myseq.from_bool (w = 1 && h > 1) in
-             let* dsize, _ = parse_size bindings
+             let* dsize, _ = parse_size
                                (`IntRange (h, Range.inter rh (Range.make_open 2))) in
              let* dcolors, _ =
-               parse_colors bindings
+               parse_colors
                  (`Seq (Array.to_list
                           (Array.init h
                              (fun i -> `Color (Grid.get_pixel g i 0))))) in
@@ -2739,11 +2739,11 @@ module MyDomain : Madil.DOMAIN =
          let h, w = Grid.dims g in
          let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in
          let* dsize, _ =
-           parse_size bindings
+           parse_size
              (`Vec (`IntRange (h, Range.inter rh (Range.make_closed 2 3)),
                     `IntRange (w, Range.inter rw (Range.make_closed 2 3)))) in
          let* dcolorss, _ =
-           parse_colorss bindings
+           parse_colorss
              (`Seq
                 (Array.to_list
                    (Array.init h
