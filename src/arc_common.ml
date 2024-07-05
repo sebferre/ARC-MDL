@@ -57,10 +57,33 @@ let list_mins (cmp : 'a -> 'a -> int) (l : 'a list) : 'a list =
   | [] -> []
   | x::l -> aux x [x] l
 
+let list_rotate (l : 'a list) (shift : int) : 'a list =
+  let n = List.length l in
+  let rec aux2 shift rev_xs ys =
+    if shift = 0
+    then ys @ List.rev rev_xs
+    else
+      match ys with
+      | [] -> aux2 shift [] (List.rev rev_xs)
+      | y::ys1 -> aux2 (shift-1) (y::rev_xs) ys1 in
+  let rec aux shift l =
+    if shift = 0 then l
+    else if shift > 0 then aux2 shift [] l
+    else (* shift < 0 *) aux (shift+n) l
+  in
+  if n <= 1 then l
+  else aux shift l
+
+
 (* mymap *)
 
-let mymap_keys (m : ('a,'b) Mymap.t) : 'a array =
-  m |> Mymap.bindings |> List.map fst |> Array.of_list
+let mymap_keys (m : ('a,'b) Mymap.t) : 'a list =
+  m |> Mymap.bindings |> List.map fst
+
+let mymap_of_list (l : ('a * 'b) list) : ('a,'b) Mymap.t =
+  List.fold_left
+    (fun res (k,v) -> Mymap.add k v res)
+    Mymap.empty l
 
 (* myseq *)
 
