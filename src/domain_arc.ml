@@ -2929,8 +2929,8 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v c [|di; dj|], input)
     
       | _, Obj, [|parse_pos; parse_g1|] ->
-         let* xx =
-           Ndseq.bind_myseq ~depth [] input 0
+         let* in_pos, in_g1, v =
+           Ndseq.mapi_tup_myseq ~depth (1,1,1)
              (fun rev_path -> function
               | `Objects (h, w, nc, nb_consumed_objs, objs) ->
                  assert (nb_consumed_objs = 0);
@@ -2964,28 +2964,11 @@ module MyDomain : Madil.DOMAIN =
                          Myseq.return (in_pos::l_in_pos, in_g1::l_in_g1, vobj::l_vobj))
                  in
                  let* l_in_pos, l_in_g1, l_vobj = aux 0 objs in
-                 Myseq.return (`X (Ndseq.seq 0 l_in_pos,
-                                   Ndseq.seq 0 l_in_g1,
-                                   Ndseq.seq 0 l_vobj))
-              | _ -> assert false) in
-         let in_pos =
-           Ndseq.map 1
-             (function
-              | `X (seq_in_pos,_,_) -> seq_in_pos
+                 Myseq.return (Ndseq.seq 0 l_in_pos,
+                               Ndseq.seq 0 l_in_g1,
+                               Ndseq.seq 0 l_vobj)
               | _ -> assert false)
-             xx in
-         let in_g1 =
-           Ndseq.map 1
-             (function
-              | `X (_,seq_in_g1,_) -> seq_in_g1
-              | _ -> assert false)
-             xx in
-         let v =
-           Ndseq.map 1
-             (function
-              | `X (_,_,seq_v) -> seq_v
-              | _ -> assert false)
-             xx in
+             (tup1 input) in
          let* dg1, _ = parse_g1 in_g1 in
          let* dpos, _ = parse_pos in_pos in
          let input = Ndseq.const `Null input in
