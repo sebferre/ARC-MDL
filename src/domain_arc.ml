@@ -107,6 +107,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Int of int
       | `IntRange of int * Range.t (* INT of some range *)
       | `Vec of int * int
+      | `VecRange of int * int * Range.t * Range.t
       | `Color of Grid.color
       | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
       | `Seg of GPat.Objects.segmentation
@@ -122,7 +123,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Null -> print#string "null"
       | `Bool b -> xp_bool ~html print b
       | `Int i | `IntRange (i,_) -> xp_int ~html print i
-      | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
+      | `Vec (i,j) | `VecRange (i,j,_,_) -> xp_vec xp_int xp_int ~html print i j
       | `Color c | `ColorTyp (c,_) -> Grid.xp_color ~html print c
       | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
       | `Motif motif -> GPat.Motif.xp ~html print motif
@@ -1029,7 +1030,7 @@ module MyDomain : Madil.DOMAIN =
       let v, merger =
         Ndseq.map_tup ~depth (0,0)
           (function
-           | `Vec (h,w), `Seg seg, `Int card, seq_objs ->
+           | `Vec (h, w), `Seg seg, `Int card, seq_objs ->
               let objs =
                 match Ndseq.as_seq seq_objs with
                 | Some (_,objs) ->
@@ -1120,7 +1121,7 @@ module MyDomain : Madil.DOMAIN =
        `Vec (`Int i', `Int j')
     | _ -> assert false in *)
           let sym_size = function
-            | `Vec (h, w) ->
+            | `Vec (h,w) ->
                let h', w' =
                  match sym with
                  | `Id | `FlipHeight | `FlipWidth | `Rotate180 -> h, w
@@ -1832,6 +1833,12 @@ module MyDomain : Madil.DOMAIN =
                let range = Range.make_closed a b in
                let* n = Myseq.range a b in
                Myseq.return (`Int n, `IntRange (n,range))
+            | VEC tv, `Vec (`Int (i1,i2), `Int (j1,j2)) ->
+               let ri = Range.make_closed i1 i2 in
+               let rj = Range.make_closed j1 j2 in
+               let* i = Myseq.range i1 i2 in
+               let* j = Myseq.range j1 j2 in
+               Myseq.return (`Vec (i,j), `VecRange (i,j,ri,rj))
             | COLOR tc, `Color lc ->
                let* c = Myseq.from_list lc in
                Myseq.return (`Color c, `ColorTyp (c,tc))
@@ -2594,6 +2601,8 @@ module MyDomain : Madil.DOMAIN =
             | _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments TODO: this is dirty *)
             | INT _, `IntRange (ij,range) ->
                Myseq.return (`Int ij, `IntRange (ij,range))
+            | VEC tv, `Vec (`IntRange (i,ri), `IntRange (j,rj)) ->
+               Myseq.return (`Vec (i,j), `VecRange (i,j,ri,rj))
             | COLOR tc, `Color c ->
                Myseq.return (`Color c, `ColorTyp (c,tc))
             | SEG, `Seg seg ->
@@ -3339,6 +3348,7 @@ module MyDomain : Madil.DOMAIN =
         (fun dl vr ->
           match vr with
           | `IntRange (ij,range) -> dl +. Range.dl ij range
+          | `VecRange (i,j,ri,rj) -> dl +. Range.dl i ri +. Range.dl j rj
           | `ColorTyp (c,tc) -> dl +. dl_color c tc
           | `Seg seg -> dl +. dl_seg seg
           | `Motif m -> dl +. dl_motif m
@@ -3913,10 +3923,62 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
+    let decompositions (t : typ) (varseq : varseq) (valuess : value list list) : (model * varseq) list =
+      let depth =
+        try Ndseq.depth (List.hd (List.hd valuess))
+        with _ -> assert false in
+      let rs = [] in
+      let rs = (* adding SeqCons *)
+        if depth = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
+        then
+          let xhd, varseq = Refining.new_var varseq in
+          let xtl, varseq = Refining.new_var varseq in
+          let$ rs, dep = rs, List.init depth (fun i -> i) in
+          if List.for_all (* TODO: not necessary, check if more efficient *)
+               (fun vs ->
+                 List.exists
+                   (fun v ->
+                     Ndseq.for_all ~depth:dep
+                       (fun v ->
+                         match Ndseq.as_seq v with
+                         | Some (_,l) -> l <> []
+                         | _ -> assert false)
+                       v)
+                   vs)
+               valuess
+          then
+            (make_seqcons t dep
+               (Model.make_def xhd (Model.make_any t))
+               (Model.make_def xtl (Model.make_any t)),
+             varseq) :: rs
+          else rs
+        else rs in
+      let rs = (* adding Vec *)
+        match t with
+        | VEC tv ->
+           let xi, varseq = Refining.new_var varseq in
+           let xj, varseq = Refining.new_var varseq in
+           (make_vec tv
+              (Model.make_def xi (Model.make_any (INT (COORD (I, tv)))))
+              (Model.make_def xj (Model.make_any (INT (COORD (J, tv))))),
+            varseq) :: rs
+        | _ -> rs in
+(*      let rs = (* adding Obj *)
+        match t with
+        | OBJ tg ->
+           let xpos, varseq = Refining.new_var varseq in
+           let xg1, varseq = Refining.new_var varseq in
+           (make_obj tg
+              (Model.make_def xpos (Model.make_any (VEC POS)))
+              (Model.make_def xg1 (Model.make_any (GRID tg))),
+            varseq) :: rs
+        | _ -> rs in *)
+      rs
+    
     let refinements_any ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       let depth = Ndseq.depth value in
       let rs = [] in
-      let rs = (* adding SeqCons *)
+(* REM      let rs = (* adding SeqCons *)
         if depth > 0
         then
           let xhd, varseq = Refining.new_var varseq in
@@ -3926,12 +3988,12 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_def xhd (Model.make_any t))
              (Model.make_def xtl (Model.make_any t)),
            varseq) :: rs
-        else rs in
+        else rs in *)
       let rs = (* adding SeqRepeat *)
         if depth > 0
         then
           let xe, varseq = Refining.new_var varseq in
-          let$ rs, depth = rs, List.init (Ndseq.depth value) (fun i -> i) in
+          let$ rs, depth = rs, List.init depth (fun i -> i) in
           (make_seqrepeat t depth
              (Model.make_def xe (Model.make_any t)),
            varseq) :: rs
@@ -3949,6 +4011,7 @@ module MyDomain : Madil.DOMAIN =
               varseq) :: rs
            else rs in
          rs
+      | VEC tv -> rs
       | COLOR tc -> rs
       | SEG -> rs
       | MOTIF -> rs
@@ -4061,14 +4124,14 @@ module MyDomain : Madil.DOMAIN =
            let$ refs, gvar = refs, cropable_vars in
            (make_crop tg
               (Model.make_expr (GRID tg) (Expr.Ref (GRID tg, gvar)))
-              (Model.make_def xpos
-                 (make_vec POS
+              (Model.make_def xpos (Model.make_any (VEC POS)))
+(* XX                 (make_vec POS
                     (Model.make_def xpos_i (make_anycoord I POS))
-                    (Model.make_def xpos_j (make_anycoord J POS))))
-                (Model.make_def xsize
-                   (make_vec SIZE
-                      (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE)))),
+                    (Model.make_def xpos_j (make_anycoord J POS)))) *)
+              (Model.make_def xsize (Model.make_any (VEC SIZE))),
+(* XX                 (make_vec SIZE
+                    (Model.make_def xsize_i (make_anycoord I SIZE))
+                    (Model.make_def xsize_j (make_anycoord J SIZE)))), *)
             varseq)
            :: refs in
          let refs = (* Objects *)
@@ -4087,19 +4150,19 @@ module MyDomain : Madil.DOMAIN =
              let xmerger, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
              (make_objects nmax
-                (Model.make_def xsize
-                   (make_vec SIZE
+                (Model.make_def xsize (Model.make_any (VEC SIZE)))
+(* XX                   (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                      (Model.make_def xsize_j (make_anycoord J SIZE)))) *)
                 (Model.make_def xseg (make_anyseg))
                 (Model.make_def xcard make_anycard)
                 ((* XX Model.make_loop xloop *)
-                   (Model.make_def xobj
+                 (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
-                         (Model.make_def xpos
-                            (make_vec POS
+                         (Model.make_def xpos (Model.make_any (VEC POS)))
+(* XX                            (make_vec POS
                                (Model.make_def xpos_i (make_anycoord I POS))
-                               (Model.make_def xpos_j (make_anycoord J POS))))
+                               (Model.make_def xpos_j (make_anycoord J POS)))) *)
                          (Model.make_def xg1
                             (make_anygrid (`Sprite,nocolor))))))
                 (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
@@ -4123,19 +4186,19 @@ module MyDomain : Madil.DOMAIN =
              let xmerger, varseq = Refining.new_var varseq in
              let nmax = 9 in
              (make_objects nmax
-                (Model.make_def xsize
-                   (make_vec SIZE
+                (Model.make_def xsize (Model.make_any (VEC SIZE)))
+(* XX                   (make_vec SIZE
                       (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE))))
+                      (Model.make_def xsize_j (make_anycoord J SIZE)))) *)
                 (Model.make_expr SEG (Expr.Const (SEG, `Seg GPat.Objects.SameColor)))
                 (Model.make_def xcard make_anycard)
                 ((* XX Model.make_loop xloop *)
                    (Model.make_def xobj
                       (make_obj (`Sprite,nocolor)
-                         (Model.make_def xpos
-                            (make_vec POS
+                         (Model.make_def xpos (Model.make_any (VEC POS)))
+(* XX                            (make_vec POS
                                (Model.make_def xpos_i (make_anycoord I POS))
-                               (Model.make_def xpos_j (make_anycoord J POS))))
+                               (Model.make_def xpos_j (make_anycoord J POS)))) *)
                          (Model.make_def xg1
                             (make_monocolor
                                (Model.make_def xg1_color (make_anycolor C_OBJ))
@@ -4177,10 +4240,10 @@ module MyDomain : Madil.DOMAIN =
                    let xsize, varseq = Refining.new_var varseq in
                    let xsize_i, varseq = Refining.new_var varseq in
                    let xsize_j, varseq = Refining.new_var varseq in
-                   Model.make_def xsize
-                     (make_vec SIZE
+                   Model.make_def xsize (Model.make_any (VEC SIZE)),
+(* XX                     (make_vec SIZE
                         (Model.make_def xsize_i (make_anycoord I SIZE))
-                        (Model.make_def xsize_j (make_anycoord J SIZE))),
+                        (Model.make_def xsize_j (make_anycoord J SIZE))), *)
                    varseq in
                  make_full msize, varseq
                else
@@ -4265,10 +4328,10 @@ module MyDomain : Madil.DOMAIN =
            (make_metagrid tg
               (Model.make_def xsepcolor (make_anycolor (C_BG (filling = `Full))))
               (Model.make_def xborders (make_anygrid (`Sprite,true)))
-              (Model.make_def xdims
-                 (make_vec SIZE
+              (Model.make_def xdims (Model.make_any (VEC SIZE)))
+(* XX                 (make_vec SIZE
                     (Model.make_def xk (make_anycoord I SIZE))
-                    (Model.make_def xl (make_anycoord J SIZE))))
+                    (Model.make_def xl (make_anycoord J SIZE)))) *)
               ((* XX Model.make_loop xl_heights *)
                  (Model.make_def xheight
                     (make_anycoord I SIZE)))
@@ -4300,10 +4363,10 @@ module MyDomain : Madil.DOMAIN =
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
-             Model.make_def xsize
-               (make_vec SIZE
+             Model.make_def xsize (Model.make_any (VEC SIZE)),
+(* XX               (make_vec SIZE
                   (Model.make_def xsize_i (make_anycoord I SIZE))
-                  (Model.make_def xsize_j (make_anycoord J SIZE))),
+                  (Model.make_def xsize_j (make_anycoord J SIZE))), *)
              varseq in
            (make_empty msize, varseq_msize)
            :: (if nocolor then
@@ -4319,10 +4382,10 @@ module MyDomain : Madil.DOMAIN =
              let xdir_j, varseq = Refining.new_var varseq in
              (make_line
                 (Model.make_def xlen (make_anycoord I SIZE))
-                (Model.make_def xdir
-                   (make_vec MOVE
+                (Model.make_def xdir (Model.make_any (VEC MOVE))),
+(* XX                   (make_vec MOVE
                       (Model.make_def xdir_i (make_anycoord I MOVE))
-                      (Model.make_def xdir_j (make_anycoord J MOVE)))),
+                      (Model.make_def xdir_j (make_anycoord J MOVE)))), *)
               varseq)
              ::refs
            else refs in
@@ -4348,10 +4411,10 @@ module MyDomain : Madil.DOMAIN =
              let xloop2, varseq = Refining.new_var varseq in
              let xcol, varseq = Refining.new_var varseq in
              (make_colormat
-                (Model.make_def xsize
-                   (make_vec SIZE
+                (Model.make_def xsize (Model.make_any (VEC SIZE)))
+(* XX                   (make_vec SIZE
                       (Model.make_def xh (make_anycoord I SIZE))
-                      (Model.make_def xw (make_anycoord J SIZE))))
+                      (Model.make_def xw (make_anycoord J SIZE)))) *)
                 ((* XX Model.make_loop xloop1 *)
                  ((* XX Model.make_loop xloop2 *)
                       (Model.make_def xcol (make_anycolor C_OBJ)))),
@@ -4375,9 +4438,10 @@ module MyDomain : Madil.DOMAIN =
       | VEC tv, _ ->
          let x, varseq = Refining.new_var varseq in
          let y, varseq = Refining.new_var varseq in
-         [ make_vec tv
+         [ Model.make_any t, varseq ] 
+(* XX         [ make_vec tv
              (Model.make_def x (make_anycoord I tv))
-             (Model.make_def y (make_anycoord J tv)), varseq ]
+             (Model.make_def y (make_anycoord J tv)), varseq ] *)
       | COLOR tc, _ ->
          [ make_anycolor tc, varseq ]
       | SEG, _ ->
@@ -4392,10 +4456,10 @@ module MyDomain : Madil.DOMAIN =
          let xj, varseq = Refining.new_var varseq in
          let xg1, varseq = Refining.new_var varseq in
          [ make_obj tg
-             (Model.make_def xpos
-                (make_vec POS
+             (Model.make_def xpos (Model.make_any (VEC POS)))
+(* XX                (make_vec POS
                    (Model.make_def xi (make_anycoord I POS))
-                   (Model.make_def xj (make_anycoord J POS))))
+                   (Model.make_def xj (make_anycoord J POS)))) *)
              (Model.make_def xg1 (make_anygrid tg)),
            varseq ]
       | MAP (ta,tb), _ ->
