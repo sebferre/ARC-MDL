@@ -107,7 +107,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Int of int
       | `IntRange of int * Range.t (* INT of some range *)
       | `Vec of int * int
-      | `VecRange of int * int * Range.t * Range.t
+      | `VecRange of int * int * Range.t * Range.t (* TODO: make it more modular *)
       | `Color of Grid.color
       | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
       | `Seg of GPat.Objects.segmentation
@@ -1829,6 +1829,9 @@ module MyDomain : Madil.DOMAIN =
         Ndseq.map_tup_myseq ~depth (0,0)
           (fun info ->
             match t, info with
+            | _, `Null ->
+               Myseq.return (`Null, `Null)
+            | BOOL, _ -> assert false
             | INT _, `Int (a,b) ->
                let range = Range.make_closed a b in
                let* n = Myseq.range a b in
@@ -1861,6 +1864,7 @@ module MyDomain : Madil.DOMAIN =
                    let g = Grid.make h w c in
                    Myseq.return (`Grid g, `GridRange (g,tg,range_h,range_w,nc))
                 | _ -> assert false)
+            | OBJ _, _ -> assert false
             | MAP (ta,tb), `Map (info_a, info_b) ->
                let m = Mymap.empty in
                Myseq.return (`Map m, `MapTyp (m,ta,tb)) (* empty map = identity map *)
@@ -2443,12 +2447,12 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v c [|dhd;dtl|], info)
     
       | _, SeqRepeat dep, [|gen_e|] ->
-         let xe =
-           Ndseq.map ~depth:dep (-1)
+         let* xe =
+           Ndseq.map_myseq ~depth:dep (-1)
              (Ndseq.item_of_seq
                 (function
-                 | [] -> `Null
-                 | x::_ -> x))
+                 | [] -> Myseq.empty
+                 | x::_ -> Myseq.return x))
              info in
          let* de, _ = gen_e xe in
          let v : value =
