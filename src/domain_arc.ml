@@ -3957,6 +3957,29 @@ module MyDomain : Madil.DOMAIN =
              varseq) :: rs
           else rs
         else rs in
+      let rs = (* adding SeqRepeat, to better reach repeated values *)
+        if depth = 1 (* TODO: generalize to > 0 *)
+        then
+          let xe, varseq = Refining.new_var varseq in
+          let$ rs, dep = rs, List.init depth (fun i -> i) in
+          if List.for_all (* TODO: see above *)
+               (fun vs ->
+                 List.exists
+                   (fun v ->
+                     Ndseq.for_all ~depth:dep
+                       (fun v ->
+                         match Ndseq.as_seq v with
+                         | Some (_,l) -> l <> []
+                         | _ -> assert false)
+                       v)
+                   vs)
+               valuess
+          then 
+            (make_seqrepeat t dep
+               (Model.make_def xe (Model.make_any t)),
+             varseq) :: rs
+          else rs
+        else rs in
       let rs = (* adding Vec *)
         match t with
         | VEC tv ->
