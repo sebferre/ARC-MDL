@@ -435,16 +435,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqIndex, _ -> assert false
     
     (* functions *)
-        
-    type func =
-      [ `Index_1 of int option list (* X^k -> X^0..k *)
-      | `Tail_1 (* X^k -> X^k *)
-      | `Reverse_1 (* X^k -> X^k *)
-      | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
-      | `Transpose_1 (* X^k -> X^k *)
-      | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
-      | `Cardinal_1 (* X^k -> Int *)
-      | `Plus_2 (* on Int, Vec *)
+
+    type symmetry =
+      [ `Id
+      | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
+      | `Rotate180 | `Rotate90 | `Rotate270
+      ]
+
+    type func_itemwise =
+      [ `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
       | `Modulo_2 (* on Int *)
       | `ScaleUp_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
@@ -464,10 +463,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
-      | `Min_1 (* Int^k -> Int *)
-      | `Max_1 (* Int^k -> Int *)
-      | `ArgMin_1 (* Int^k -> Index^1 *)
-      | `ArgMax_1 (* Int^k -> Index^1 *)
       | `Average_n (* on Int, Vec *)
       | `Span_2 (* on Vec *)
       | `Norm_1 (* Vec -> Int *)
@@ -513,10 +508,21 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Coloring_2 (* Shape/Obj, Color -> Shape/Obj *)
       | `SwapColors_3 (* Grid, Color, Color -> Grid *)
       ]
-    and symmetry = [
-      | `Id
-      | `FlipHeight | `FlipWidth | `FlipDiag1 | `FlipDiag2
-      | `Rotate180 | `Rotate90 | `Rotate270 ]
+
+    type func =
+      [ `Index_1 of int option list (* X^k -> X^0..k *)
+      | `Tail_1 (* X^k -> X^k *)
+      | `Reverse_1 (* X^k -> X^k *)
+      | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
+      | `Transpose_1 (* X^k -> X^k *)
+      | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
+      | `Cardinal_1 (* X^k -> Int *)
+      | `Min_1 (* Int^k -> Int *)
+      | `Max_1 (* Int^k -> Int *)
+      | `ArgMin_1 (* Int^k -> Index^1 *)
+      | `ArgMax_1 (* Int^k -> Index^1 *)
+      | func_itemwise
+      ]
 
     let all_symmetry = [
         `Id;
@@ -1256,20 +1262,9 @@ module MyDomain : Madil.DOMAIN =
   
       end
 
-    let compile_scalar_func : func -> (value array -> value result) =
+    let eval_func_itemwise : func_itemwise -> (value array -> value result) =
       let e = "" in
       function
-      | `Index_1 _ -> assert false (* not a scalar function *)
-      | `Tail_1 -> assert false
-      | `Reverse_1 -> assert false
-      | `Rotate_1 _ -> assert false
-      | `Transpose_1 -> assert false
-      | `Flatten_1 _ -> assert false
-      | `Cardinal_1 -> assert false
-      | `Min_1 -> assert false (* TODO: improve type func to distinguish scalar subset *)
-      | `Max_1 -> assert false (* TODO: improve type func to distinguish scalar subset *)
-      | `ArgMin_1 -> assert false
-      | `ArgMax_1 -> assert false
       | `Plus_2 ->
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
@@ -1742,108 +1737,141 @@ module MyDomain : Madil.DOMAIN =
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
 
-    let rec eval_func (f : func) (args : value array) : value result = (* QUICK *)
-      match f, args with
-      | `Index_1 is, [|v1|] ->
-         Option.to_result
-           ~none:(Undefined_result "index: undefined")
-           (Ndseq.index_list v1 is)
-      | `Tail_1, [|v1|] ->
-         Option.to_result
-           ~none:(Undefined_result "tail: undefined on the empty sequence")
-           (Ndseq.tail ~depth:0 v1)
-      | `Reverse_1, [|v1|] ->
-         if Ndseq.depth v1 >= 1
-         then
-           Result.Ok (Ndseq.map ~depth:0 0
-                        (Ndseq.seq_of_seq List.rev)
-                        v1)
-         else Result.Error (Undefined_result "reverse: not defined on scalars")
-      | `Rotate_1 shift, [|v1|] ->
-         if Ndseq.depth v1 >= 1
-         then
-           Result.Ok (Ndseq.map ~depth:0 0
-                        (Ndseq.seq_of_seq
-                           (fun l -> list_rotate l shift))
-                        v1)
-         else Result.Error (Undefined_result "rotate: not defined on scalars")
-      | `Transpose_1, [|v1|] ->
-         Option.to_result
-           ~none:(Undefined_result "transpose: rows have different lengths")
-           (Ndseq.transpose v1)
-      | `Flatten_1 (rows,snake), [|v1|] ->
-         Option.to_result
-           ~none:(Undefined_result "flatten: less than 2 dims")
-           (if rows
-            then Ndseq.flatten_by_rows ~snake v1
-            else Ndseq.flatten_by_cols ~snake v1)
-      | `Cardinal_1, [|v1|] ->
-         if Ndseq.depth v1 >= 1
-         then
-           Result.Ok (Ndseq.map ~depth:0 (- Ndseq.depth v1)
-                        (Ndseq.item_of_seq
-                           (fun l -> `Int (List.length l)))
-                        v1)
-         else Result.Error (Undefined_result "cardinal: not a sequence")
-      | `Min_1, [|v1|] ->
-         let min_opt =
-           Ndseq.fold_left
-             (fun res v ->
-               match res, v with
-               | None, `Int i -> Some i
-               | Some m, `Int i -> Some (min m i)
-               | _ -> res)
-             None v1 in
-         (match min_opt with
-          | Some m -> Result.Ok (`Int m)
-          | None -> Result.Error (Undefined_result "min: no values"))
-      | `Max_1, [|v1|] ->
-         let max_opt =
-           Ndseq.fold_left
-             (fun res v ->
-               match res, v with
-               | None, `Int i -> Some i
-               | Some m, `Int i -> Some (max m i)
-               | _ -> res)
-             None v1 in
-         (match max_opt with
-          | Some m -> Result.Ok (`Int m)
-          | None -> Result.Error (Undefined_result "max: no values"))
-      | `ArgMin_1, [|v1|] -> (* returns first index if multiple *)
-         let res =
-           Ndseq.foldi_left
-             (fun res revpath v ->
-               match res, v with
-               | None, `Int i -> Some (revpath, i)
-               | Some (min_revpath, min_i), `Int i ->
-                  if i < min_i
-                  then Some (revpath, i)
-                  else res
-               | _ -> res)
-             None v1 in
-         (match res with
-          | Some (revpath, min_i) ->
-             Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
-          | None -> Result.Error (Undefined_result "argmin: no values"))
-      | `ArgMax_1, [|v1|] -> (* returns first index if multiple *)
-         let res =
-           Ndseq.foldi_left
-             (fun res revpath v ->
-               match res, v with
-               | None, `Int i -> Some (revpath, i)
-               | Some (max_revpath, max_i), `Int i ->
-                  if i > max_i
-                  then Some (revpath, i)
-                  else res
-               | _ -> res)
-             None v1 in
-         (match res with
-          | Some (revpath, max_i) ->
-             Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
-          | None -> Result.Error (Undefined_result "argmax: no values"))
-      | _ ->
-         let scalar_f = compile_scalar_func f in
-         Ndseq.broadcast_result scalar_f args
+    let rec eval_func (f : func) : value array -> value result = (* QUICK *)
+      match f with
+      | `Index_1 is ->
+         (function
+          | [|v1|] ->
+             Option.to_result
+               ~none:(Undefined_result "index: undefined")
+               (Ndseq.index_list v1 is)
+          | _ -> assert false)
+      | `Tail_1 ->
+         (function
+          | [|v1|] ->
+             Option.to_result
+               ~none:(Undefined_result "tail: undefined on the empty sequence")
+               (Ndseq.tail ~depth:0 v1)
+          | _ -> assert false)
+      | `Reverse_1 ->
+         (function
+          | [|v1|] ->
+             if Ndseq.depth v1 >= 1
+             then
+               Result.Ok (Ndseq.map ~depth:0 0
+                            (Ndseq.seq_of_seq List.rev)
+                            v1)
+             else Result.Error (Undefined_result "reverse: not defined on scalars")
+          | _ -> assert false)
+      | `Rotate_1 shift ->
+         (function
+          | [|v1|] ->
+             if Ndseq.depth v1 >= 1
+             then
+               Result.Ok (Ndseq.map ~depth:0 0
+                            (Ndseq.seq_of_seq
+                               (fun l -> list_rotate l shift))
+                            v1)
+             else Result.Error (Undefined_result "rotate: not defined on scalars")
+          | _ -> assert false)
+      | `Transpose_1 ->
+         (function
+          | [|v1|] ->
+             Option.to_result
+               ~none:(Undefined_result "transpose: rows have different lengths")
+               (Ndseq.transpose v1)
+          | _ -> assert false)
+      | `Flatten_1 (rows,snake) ->
+         (function
+          | [|v1|] ->
+             Option.to_result
+               ~none:(Undefined_result "flatten: less than 2 dims")
+               (if rows
+                then Ndseq.flatten_by_rows ~snake v1
+                else Ndseq.flatten_by_cols ~snake v1)
+          | _ -> assert false)
+      | `Cardinal_1 ->
+         (function
+          | [|v1|] ->
+             if Ndseq.depth v1 >= 1
+             then
+               Result.Ok (Ndseq.map ~depth:0 (- Ndseq.depth v1)
+                            (Ndseq.item_of_seq
+                               (fun l -> `Int (List.length l)))
+                            v1)
+             else Result.Error (Undefined_result "cardinal: not a sequence")
+          | _ -> assert false)
+      | `Min_1 ->
+         (function
+          | [|v1|] ->
+             let min_opt =
+               Ndseq.fold_left
+                 (fun res v ->
+                   match res, v with
+                   | None, `Int i -> Some i
+                   | Some m, `Int i -> Some (min m i)
+                   | _ -> res)
+                 None v1 in
+             (match min_opt with
+              | Some m -> Result.Ok (`Int m)
+              | None -> Result.Error (Undefined_result "min: no values"))
+          | _ -> assert false)
+      | `Max_1 ->
+         (function
+          | [|v1|] ->
+             let max_opt =
+               Ndseq.fold_left
+                 (fun res v ->
+                   match res, v with
+                   | None, `Int i -> Some i
+                   | Some m, `Int i -> Some (max m i)
+                   | _ -> res)
+                 None v1 in
+             (match max_opt with
+              | Some m -> Result.Ok (`Int m)
+              | None -> Result.Error (Undefined_result "max: no values"))
+          | _ -> assert false)
+      | `ArgMin_1 ->
+         (function
+          | [|v1|] -> (* returns first index if multiple *)
+             let res =
+               Ndseq.foldi_left
+                 (fun res revpath v ->
+                   match res, v with
+                   | None, `Int i -> Some (revpath, i)
+                   | Some (min_revpath, min_i), `Int i ->
+                      if i < min_i
+                      then Some (revpath, i)
+                      else res
+                   | _ -> res)
+                 None v1 in
+             (match res with
+              | Some (revpath, min_i) ->
+                 Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
+              | None -> Result.Error (Undefined_result "argmin: no values"))
+          | _ -> assert false)
+      | `ArgMax_1 ->
+         (function
+          | [|v1|] -> (* returns first index if multiple *)
+             let res =
+               Ndseq.foldi_left
+                 (fun res revpath v ->
+                   match res, v with
+                   | None, `Int i -> Some (revpath, i)
+                   | Some (max_revpath, max_i), `Int i ->
+                      if i > max_i
+                      then Some (revpath, i)
+                      else res
+                   | _ -> res)
+                 None v1 in
+             (match res with
+              | Some (revpath, max_i) ->
+                 Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
+              | None -> Result.Error (Undefined_result "argmax: no values"))
+          | _ -> assert false)
+      | #func_itemwise as f ->
+         let f_item = eval_func_itemwise f in
+         (fun args -> Ndseq.broadcast_result f_item args)
 
     let eval_unbound_var x = Result.Error (Failure ("eval: unbound var $" ^ string_of_int x)) (* Result.Ok `Null *)
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
