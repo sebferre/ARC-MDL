@@ -437,13 +437,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     (* functions *)
         
     type func =
-      [ `Index_1 of int option list (* on any Ndseq.t *)
-      | `Tail_1 (* Seq -> Seq *)
-      | `Reverse_1 (* Seq -> Seq *)
-      | `Rotate_1 of int (* shift *) (* Seq -> Seq *)
-      | `Transpose_1 (* SeqSeq -> SeqSeq *)
-      | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* SeqSeq -> Seq *)
-      | `Cardinal_1 (* Seq -> Int *)
+      [ `Index_1 of int option list (* X^k -> X^0..k *)
+      | `Tail_1 (* X^k -> X^k *)
+      | `Reverse_1 (* X^k -> X^k *)
+      | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
+      | `Transpose_1 (* X^k -> X^k *)
+      | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
+      | `Cardinal_1 (* X^k -> Int *)
       | `Plus_2 (* on Int, Vec *)
       | `Minus_2 (* on Int, Vec *)
       | `Modulo_2 (* on Int *)
@@ -464,8 +464,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
-      | `Min_n (* on Int, Vec *)
-      | `Max_n (* on Int, Vec *)
+      | `Min_1 (* Int^k -> Int *)
+      | `Max_1 (* Int^k -> Int *)
+      | `ArgMin_1 (* Int^k -> Index^1 *)
+      | `ArgMax_1 (* Int^k -> Index^1 *)
       | `Average_n (* on Int, Vec *)
       | `Span_2 (* on Vec *)
       | `Norm_1 (* Vec -> Int *)
@@ -585,8 +587,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 -> print#string "crop"
       | `Strip_1 -> print#string "strip"
       | `Corner_2 -> print#string "corner"
-      | `Min_n -> print#string "min"
-      | `Max_n -> print#string "max"
+      | `Min_1 -> print#string "min"
+      | `Max_1 -> print#string "max"
+      | `ArgMin_1 -> print#string "argmin"
+      | `ArgMax_1 -> print#string "argmax"
       | `Average_n -> print#string "average"
       | `Span_2 -> print#string "span"
       | `Norm_1 -> print#string "norm"
@@ -770,11 +774,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Minus_2, [|k; k|])
              ::(`Area_1, [|GRID (`Sprite,false)|])
              ::(`ColorCount_1, [|GRID (`Sprite,false)|]) (* also for `Noise? *)
-             ::(`Min_n, [|k; k|])
-             ::(`Max_n, [|k; k|])
+             ::(`Min_1, [|k|])
+             ::(`Max_1, [|k|])
              ::(`Average_n, [|k; k|])
              ::res
-          | INT INDEX -> res
+          | INT INDEX ->
+             (`Min_1, [|k|])
+             ::(`Max_1, [|k|])
+             ::(`ArgMin_1, [|INT CARD|]) (* TODO: should be any INT, except maybe INDEX *)
+             ::(`ArgMax_1, [|INT CARD|]) (* TODO: should be any INT, except maybe INDEX *)
+             ::res
           | INT (COORD (axis,tv)) ->
              (`I_1, [|VEC tv|])
              ::(`J_1, [|VEC tv|])
@@ -790,8 +799,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`ScaleUp_2, [|k; INT CARD|])
              ::(`ScaleDown_2, [|k; INT CARD|])
              ::(`Span_2, [|k; k|]) (* only on same axis POS *)
-             ::(`Min_n, [|k; k|])
-             ::(`Max_n, [|k; k|])
+             ::(`Min_1, [|k|])
+             ::(`Max_1, [|k|])
              ::(`Average_n, [|k; k|])
              ::res
           | VEC tv ->
@@ -809,8 +818,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`AsTVec_1 tv, [|VEC tv|]) (* should be any other tv *)
              ::(`Corner_2, [|k; k|]) (* only on POS *)
              ::(`Span_2, [|k; k|]) (* only on POS *)
-             ::(`Min_n, [|k; k|])
-             ::(`Max_n, [|k; k|])
              ::(`Average_n, [|k; k|])
              ::(`TranslationOnto_2, [|OBJ (`Sprite,false); OBJ (`Sprite,false)|])
              ::(`TranslationSym_2 `Id, [|OBJ (`Sprite,false); GRID (`Sprite,false)|])
@@ -1259,6 +1266,10 @@ module MyDomain : Madil.DOMAIN =
       | `Transpose_1 -> assert false
       | `Flatten_1 _ -> assert false
       | `Cardinal_1 -> assert false
+      | `Min_1 -> assert false (* TODO: improve type func to distinguish scalar subset *)
+      | `Max_1 -> assert false (* TODO: improve type func to distinguish scalar subset *)
+      | `ArgMin_1 -> assert false
+      | `ArgMax_1 -> assert false
       | `Plus_2 ->
          (function
           | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
@@ -1404,38 +1415,6 @@ module MyDomain : Madil.DOMAIN =
              then Result.Ok (`Vec (i1, j2))
              else Result.Error (Undefined_result "Corner: vectors on same row/column")
           | _ -> Result.Error (Invalid_expr e))
-      | `Min_n ->
-         (fun ds ->
-           let| is_int, is_vec, mini, minj =
-             ds
-             |> Array.fold_left
-                  (fun res t ->
-                    let| is_int,is_vec,mini,minj = res in
-                    match t with
-                    | `Int i -> Result.Ok (true, is_vec, min i mini, minj)
-                    | `Vec (i, j) -> Result.Ok (is_int, true, min i mini, min j minj)
-                    | _ -> Result.Error (Invalid_expr e))
-                  (Result.Ok (false, false, max_int, max_int)) in
-           (match is_int, is_vec with
-            | true, false -> Result.Ok (`Int mini)
-            | false, true -> Result.Ok (`Vec (mini, minj))
-            | _ -> assert false))
-      | `Max_n ->
-         (fun ds ->
-           let| is_int,is_vec,maxi,maxj =
-             ds
-             |> Array.fold_left
-                  (fun res t ->
-                    let| is_int,is_vec,maxi,maxj = res in
-                    match t with
-                    | `Int i -> Result.Ok (true, is_vec, max i maxi, maxj)
-                    | `Vec (i, j) -> Result.Ok (is_int, true, max i maxi, max j maxj)
-                    | _ -> Result.Error (Invalid_expr e))
-                  (Result.Ok (false, false, min_int, min_int)) in
-           (match is_int, is_vec with
-            | true, false -> Result.Ok (`Int maxi)
-            | false, true -> Result.Ok (`Vec (maxi, maxj))
-            | _ -> assert false))
       | `Average_n ->
          (fun ds ->
            let| is_int,is_vec,n,sumi,sumj =
@@ -1806,6 +1785,62 @@ module MyDomain : Madil.DOMAIN =
                            (fun l -> `Int (List.length l)))
                         v1)
          else Result.Error (Undefined_result "cardinal: not a sequence")
+      | `Min_1, [|v1|] ->
+         let min_opt =
+           Ndseq.fold_left
+             (fun res v ->
+               match res, v with
+               | None, `Int i -> Some i
+               | Some m, `Int i -> Some (min m i)
+               | _ -> res)
+             None v1 in
+         (match min_opt with
+          | Some m -> Result.Ok (`Int m)
+          | None -> Result.Error (Undefined_result "min: no values"))
+      | `Max_1, [|v1|] ->
+         let max_opt =
+           Ndseq.fold_left
+             (fun res v ->
+               match res, v with
+               | None, `Int i -> Some i
+               | Some m, `Int i -> Some (max m i)
+               | _ -> res)
+             None v1 in
+         (match max_opt with
+          | Some m -> Result.Ok (`Int m)
+          | None -> Result.Error (Undefined_result "max: no values"))
+      | `ArgMin_1, [|v1|] -> (* returns first index if multiple *)
+         let res =
+           Ndseq.foldi_left
+             (fun res revpath v ->
+               match res, v with
+               | None, `Int i -> Some (revpath, i)
+               | Some (min_revpath, min_i), `Int i ->
+                  if i < min_i
+                  then Some (revpath, i)
+                  else res
+               | _ -> res)
+             None v1 in
+         (match res with
+          | Some (revpath, min_i) ->
+             Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
+          | None -> Result.Error (Undefined_result "argmin: no values"))
+      | `ArgMax_1, [|v1|] -> (* returns first index if multiple *)
+         let res =
+           Ndseq.foldi_left
+             (fun res revpath v ->
+               match res, v with
+               | None, `Int i -> Some (revpath, i)
+               | Some (max_revpath, max_i), `Int i ->
+                  if i > max_i
+                  then Some (revpath, i)
+                  else res
+               | _ -> res)
+             None v1 in
+         (match res with
+          | Some (revpath, max_i) ->
+             Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
+          | None -> Result.Error (Undefined_result "argmax: no values"))
       | _ ->
          let scalar_f = compile_scalar_func f in
          Ndseq.broadcast_result scalar_f args
@@ -3552,8 +3587,10 @@ module MyDomain : Madil.DOMAIN =
       | `Crop_2 -> 0.
       | `Strip_1 -> 0.
       | `Corner_2 -> 0.
-      | `Min_n -> 0.
-      | `Max_n -> 0.
+      | `Min_1 -> 0.
+      | `Max_1 -> 0.
+      | `ArgMin_1 -> 0.
+      | `ArgMax_1 -> 0.
       | `Average_n -> 0.
       | `Span_2 -> 0.
       | `Norm_1 -> 0.
@@ -3687,7 +3724,7 @@ module MyDomain : Madil.DOMAIN =
                  ::(INT (COORD (I, SIZE)), `Height_1, `Default)
                  ::(INT (COORD (J, SIZE)), `Width_1, `Default)
                  ::(INT CARD, `Area_1, `Default)
-                 ::(INT (COORD (I, SIZE)), `Area_1, `Default)
+                 ::(INT (COORD (I, SIZE)), `Area_1, `Default) (* TODO: add conversion function from CARD to COORD *)
                  ::(INT (COORD (J, SIZE)), `Area_1, `Default)
                  ::res
               | _ -> res in
@@ -3766,13 +3803,6 @@ module MyDomain : Madil.DOMAIN =
                  (INT (COORD (axis1,POS)), `Span_2, `Default)::res
               | [|VEC POS; VEC POS|] -> (VEC POS, `Span_2, `Default)::res
               | _ -> res in
-            (*let res = (* Min, Max, Average *) TODO: as vectorized op
-              match t_args with
-              | [|INT (COORD (axis1,tv1)) as t1; t2|] when t2=t1 ->
-                 (t1, `Min_n)::(t1, `Max_n)::(t1, `Average_n)::res
-              | [|VEC tv1 as t1; t2|] when t2=t1 ->
-                 (t1, `Min_n)::(t1, `Max_n)::(t1, `Average_n)::res
-              | _ -> res in *)
             let res = (* translation = pos - pos *)
               match t_args with
               | [|INT (COORD (axis1,POS)); INT (COORD (axis2,POS))|] when axis1=axis2 ->
@@ -3914,6 +3944,15 @@ module MyDomain : Madil.DOMAIN =
                  (t1, `Minus_2, args_spec)::res
               | [|VEC tv1 as t1; VEC (SIZE|MOVE)|] when tv1 <> MOVE ->
                  (t1, `Minus_2, `Default)::res
+              | _ -> res in
+            let res = (* Min, Max, ArgMin, ArgMax *)
+              match t_args, v_args with
+              | [|INT _ as t1|], [|v1|] when Ndseq.depth v1 > 0 ->
+                 (t1, `Min_1, `Default)
+                 ::(t1, `Max_1, `Default)
+                 ::(INT INDEX, `ArgMin_1, `Default)
+                 ::(INT INDEX, `ArgMax_1, `Default)
+                 ::res
               | _ -> res in
             let res = (* And, Or, XOr, AndNOt *)
               match t_args with
