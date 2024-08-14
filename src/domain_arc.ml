@@ -4513,7 +4513,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else refs in
          let refs = (* IsFull *)
-           if filling = `Sprite then
+           if filling = `Sprite && not nocolor then (* nocolor isfull covered by full mask *)
              let xgrid1, varseq = Refining.new_var varseq in
              (make_isfull
                 (Model.make_def xgrid1 (make_anygrid (`Full,nocolor))),
