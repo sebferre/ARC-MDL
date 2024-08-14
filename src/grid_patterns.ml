@@ -1017,7 +1017,7 @@ let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * R
     List.map (fun (_,mot,ru,rv,core,mask_opt,noise) -> (mot,ru,rv,core,mask_opt,noise)) res in
   res)
 let from_grid, reset_from_grid =
-  Memo.memoize2 ~size:Grid.memoize_size from_grid
+  Memo.memoize3 ~size:Grid.memoize_size from_grid
 
 (*let _ = (* TEST *)
   let u, v = 2, 1 in
