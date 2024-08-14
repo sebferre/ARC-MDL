@@ -369,8 +369,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string ("Cons[" ^ string_of_int depth ^ "]");
          xp_tuple2 xp_hd xp_tl ~html print ((),())
       | SeqRepeat depth, [|xp_e|] ->
-         print#string ("Repeat[" ^ string_of_int depth ^ "]");
-         xp_e ~html print ()
+         print#string ("Repeat[" ^ string_of_int depth ^ "](");
+         xp_e ~html print (); print#string ")"
       | SeqRange, [|xp_start; xp_step|] ->
          print#string "Range";
          xp_tuple2 xp_start xp_step ~html print ((),())
@@ -3044,6 +3044,10 @@ module MyDomain : Madil.DOMAIN =
     
       | _, Crop, [|parse_g; parse_pos; parse_size|] ->
          let v = value_of_input t input in
+         let depth = Ndseq.depth v in
+         let* dg, _ = parse_g `Null in (* expression *)
+         let vg = Data.value dg in
+         let* () = Myseq.from_bool (Ndseq.depth vg = depth) in
          let in_size =
            Ndseq.map ~depth 0
              (function
@@ -3054,7 +3058,6 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              input in
          let* dsize, _ = parse_size in_size in
-         let* dg, _ = parse_g `Null in (* expression *)
          let* in_pos =
            try
              Ndseq.map_tup_myseq ~name:"parse/Crop/in_pos" ~depth 0
@@ -3068,7 +3071,7 @@ module MyDomain : Madil.DOMAIN =
                             `IntRange (j, Range.make_closed 0 (w-w1))))
                 | _, `Null, _ -> Myseq.empty (* failed computation for source grid *)
                 | _ -> assert false)
-               (v, Data.value dg, Data.value dsize)
+               (v, vg, Data.value dsize)
            with Invalid_argument _ -> Myseq.empty in (* dg may have an inconsistent structure *)
          let* dpos, _ = parse_pos in_pos in
          let input = Ndseq.const `Null input in
@@ -3148,7 +3151,10 @@ module MyDomain : Madil.DOMAIN =
 
       | _, Recoloring, [|parse_grid; parse_map|] ->
          let v = value_of_input t input in
+         let depth = Ndseq.depth v in
          let* dg1, _ = parse_grid `Null in (* expression expected *)
+         let vg1 = Data.value dg1 in
+         let* () = Myseq.from_bool (Ndseq.depth vg1 = depth) in
          let* in_map =
            try
              Ndseq.map_tup_myseq ~depth 0
@@ -3164,8 +3170,11 @@ module MyDomain : Madil.DOMAIN =
                        let dom = mymap_keys m in
                        Myseq.return (`MapDomain (m,dom))
                     | None -> Myseq.empty)
-                | _ -> assert false)
-               (input, Data.value dg1)
+                | input, vg1 ->
+                   pp_endline xp_input input;
+                   pp_endline xp_value vg1;
+                   assert false)
+               (input, vg1)
            with Invalid_argument _ -> Myseq.empty in (* dg1 is not guaranteed to have a consistent structure *)
          let* dmap, _ = parse_map in_map in
          let input = Ndseq.const `Null input in
@@ -3544,31 +3553,29 @@ module MyDomain : Madil.DOMAIN =
          let* dseq, _ = parse_seq `Null in (* expression only *)
          let vseq = Data.value dseq in
          let depth_seq = Ndseq.depth vseq in
-         if depth < depth_seq (* v must be an element or proper substructure of vseq *)
-         then
-           let* in_index =
-             let rec aux rev_path depseq vseq = (* iterating over substructures, searching v *)
-               if depseq = depth
+         let* () = Myseq.from_bool (depth < depth_seq) in (* v must be an element or proper substructure of vseq *)
+         let* in_index =
+           let rec aux rev_path depseq vseq = (* iterating over substructures, searching v *)
+             if depseq = depth
+             then
+               if vseq = v
                then
-                 if vseq = v
-                 then
-                   let in_index = Ndseq.seq 0 (List.rev rev_path) in
-                   Myseq.return in_index
-                 else Myseq.empty
-               else
-                 match Ndseq.as_seq vseq with
-                 | Some (d, l) ->
-                    let n = List.length l in
-                    let range = Range.make_closed 0 (n-1) in
-                    let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
-                    aux (`IntRange (i, range) :: rev_path) d vi
-                 | None -> assert false
-             in
-             aux [] depth_seq vseq in
-           let* dindex, _ = parse_index in_index in
-           let input = Ndseq.const `Null input in
-           Myseq.return (Data.make_dpat v c [|dseq; dindex|], input)
-         else Myseq.empty
+                 let in_index = Ndseq.seq 0 (List.rev rev_path) in
+                 Myseq.return in_index
+               else Myseq.empty
+             else
+               match Ndseq.as_seq vseq with
+               | Some (d, l) ->
+                  let n = List.length l in
+                  let range = Range.make_closed 0 (n-1) in
+                  let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
+                  aux (`IntRange (i, range) :: rev_path) d vi
+               | None -> assert false
+           in
+           aux [] depth_seq vseq in
+         let* dindex, _ = parse_index in_index in
+         let input = Ndseq.const `Null input in
+         Myseq.return (Data.make_dpat v c [|dseq; dindex|], input)
 
       | _, SeqIndexOf tvalue, [|parse_seq; parse_value|] ->
          let v = value_of_input t input in
@@ -3584,16 +3591,14 @@ module MyDomain : Madil.DOMAIN =
                 l
            | _ -> assert false in
          let len = List.length index in
-         if len > 0 && len <= Ndseq.depth vseq
-         then
-           match Ndseq.index_list vseq index with
-           | Some value ->
-              let in_value = input_of_value tvalue value in
-              let* dvalue, _ = parse_value in_value in
-              let input = Ndseq.const `Null input in
-              Myseq.return (Data.make_dpat v c [|dseq; dvalue|], input)
-           | None -> Myseq.empty
-         else Myseq.empty
+         let* () = Myseq.from_bool (len > 0 && len <= Ndseq.depth vseq) in
+         (match Ndseq.index_list vseq index with
+          | Some value ->
+             let in_value = input_of_value tvalue value in
+             let* dvalue, _ = parse_value in_value in
+             let input = Ndseq.const `Null input in
+             Myseq.return (Data.make_dpat v c [|dseq; dvalue|], input)
+          | None -> Myseq.empty)
     
       | _ -> assert false
     
