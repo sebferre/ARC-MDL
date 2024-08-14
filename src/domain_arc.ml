@@ -34,7 +34,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | VEC of typ_vec
       | COLOR of typ_color
       | SEG (* object segmentation *)
-      | MOTIF
+      | MOTIF of typ_motif
       | GRID of typ_grid
       | OBJ of typ_grid
       | MAP of typ * typ
@@ -53,6 +53,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     and typ_color =
       | C_BG of bool (* full *) (* background color *)
       | C_OBJ (* object color *)
+    and typ_motif =
+      | MULTI
+      | BI
     and typ_grid =
       [`Full | `Sprite | `Noise]
       * bool (* no-color, i.e. black and transparent *)
@@ -73,7 +76,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | VEC tv -> xp_typ_vec ~html print tv
       | COLOR tc -> print#string "COLOR"; xp_typ_color ~html print tc
       | SEG -> print#string "SEG"
-      | MOTIF -> print#string "MOTIF"
+      | MOTIF tm -> print#string "MOTIF"; xp_typ_motif ~html print tm
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
       | MAP (ta,tb) -> xp_typ ~html print ta; print#string " -> "; xp_typ ~html print tb
@@ -90,6 +93,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     and xp_typ_color ~html print = function
       | C_BG full -> print#string "_BG"; if not full then print#string "_TR"
       | C_OBJ -> print#string "_OBJ"
+    and xp_typ_motif ~html print = function
+      | MULTI -> print#string "_MULTI"
+      | BI -> print#string "_BI"
     and xp_typ_grid ~html print (filling,nocolor) =
       print#string
         (match filling, nocolor with
@@ -112,6 +118,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
       | `Seg of GPat.Objects.segmentation
       | `Motif of GPat.Motif.t
+      | `MotifTyp of GPat.Motif.t * typ_motif (* MOTIF of some type *)
       | `Grid of Grid.t
       | `GridRange of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
       | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
@@ -126,7 +133,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec (i,j) | `VecRange (i,j,_,_) -> xp_vec xp_int xp_int ~html print i j
       | `Color c | `ColorTyp (c,_) -> Grid.xp_color ~html print c
       | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
-      | `Motif motif -> GPat.Motif.xp ~html print motif
+      | `Motif motif | `MotifTyp (motif,_) -> GPat.Motif.xp ~html print motif
       | `Grid g | `GridRange (g,_,_,_,_) -> Grid.xp_grid ~html print g
       | `Obj (i,j,g) -> xp_obj ~html print i j g
       | `Map m | `MapTyp (m,_,_) ->
@@ -206,7 +213,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE expr; MAP(COLOR,COLOR) : SPRITE *)
-      | Motif of bool (* partial *) (* MOTIF, SPRITE (core), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
+      | MotifMulti of bool (* partial *) (* MOTIF MULTI, SPRITE (core), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
+      | MotifBi of bool (* partial *) (* MOTIF BI, COLOR (bg), COLOR (obj), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
       | Metagrid (* COLOR, MASK, VEC SIZE, SIZE+, SIZE+, GRID++ : GRID *)
       | Repeat (* SPRITE, INT+, INT+ : SPRITE *)
       | Empty (* SIZE : MASK *)
@@ -288,12 +296,27 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "a recoloring of "; xp_grid ~html print ();
          xp_newline ~html print ();
          print#string "where "; xp_map ~html print ()
-      | Motif partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
+      | MotifMulti partial, [|xp_mot; xp_core; xp_pure; xp_mask_opt; xp_noise|] ->
          print#string (if partial then "a grid with partial motif " else "a grid with motif ");
          xp_mot ~html print ();
          print#string "  and with core:";
          xp_newline ~html print ();
          xp_core ~html print ();
+         print#string "  that equals the pure grid: ";
+         xp_pure ~html print ();
+         if partial then (
+           print#string "  filtered by the mask: ";
+           xp_mask_opt ~html print ()
+         );
+         print#string "  plus the noise:";
+         xp_newline ~html print ();
+         xp_noise ~html print ()
+      | MotifBi partial, [|xp_mot; xp_bgcolor; xp_color; xp_pure; xp_mask_opt; xp_noise|] ->
+         print#string (if partial then "a grid with partial bicolor motif " else "a grid with bicolor motif ");
+         xp_mot ~html print ();
+         print#string "  and with bgcolor:"; xp_bgcolor ~html print ();
+         print#string ", and with color:"; xp_color ~html print ();
+         xp_newline ~html print ();
          print#string "  that equals the pure grid: ";
          xp_pure ~html print ();
          if partial then (
@@ -397,12 +420,19 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Recoloring, 0 -> print#string "grid"
       | Recoloring, 1 -> print#string "colormap"
       | Recoloring, _ -> assert false
-      | Motif _, 0 -> print#string "motif"
-      | Motif _, 1 -> print#string "core"
-      | Motif _, 2 -> print#string "pure"
-      | Motif _, 3 -> print#string "mask"
-      | Motif _, 4 -> print#string "noise"
-      | Motif _, _ -> assert false
+      | MotifMulti _, 0 -> print#string "motif"
+      | MotifMulti _, 1 -> print#string "core"
+      | MotifMulti _, 2 -> print#string "pure"
+      | MotifMulti _, 3 -> print#string "mask"
+      | MotifMulti _, 4 -> print#string "noise"
+      | MotifMulti _, _ -> assert false
+      | MotifBi _, 0 -> print#string "motif"
+      | MotifBi _, 1 -> print#string "bgcolor"
+      | MotifBi _, 2 -> print#string "color"
+      | MotifBi _, 3 -> print#string "pure"
+      | MotifBi _, 4 -> print#string "mask"
+      | MotifBi _, 5 -> print#string "noise"
+      | MotifBi _, _ -> assert false
       | Metagrid, 0 -> print#string "sepcolor"
       | Metagrid, 1 -> print#string "borders"
       | Metagrid, 2 -> print#string "dims"
@@ -718,7 +748,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              None, res
           | SEG ->
              None, res
-          | MOTIF ->
+          | MOTIF tm ->
              None, res
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
@@ -736,9 +766,18 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  (*not nocolor, (ColorPartition, [|VEC SIZE; GRID (`Sprite,false)|]);*)
                  not nocolor, (Monocolor, [|COLOR C_OBJ; GRID (filling,true)|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor); MAP (COLOR C_OBJ, COLOR C_OBJ)|]);
-                 true, (Motif false,
-                        [|MOTIF;
+                 true, (MotifMulti false,
+                        [|MOTIF MULTI;
                           GRID ((if filling = `Noise then `Sprite else filling), nocolor);
+                          (* derived pure, not counting *)
+                          GRID (`Sprite,true); (* TODO: encode optional *)
+                          GRID (`Noise,nocolor)|]);
+                 (*true, (Repeat, [|GRID (filling,nocolor);
+                                  INT (COORD (I, SIZE));
+                                  INT (COORD (J, SIZE))|]);*)
+                 true, (MotifBi false,
+                        [|MOTIF BI;
+                          COLOR (C_BG full); COLOR C_OBJ;
                           (* derived pure, not counting *)
                           GRID (`Sprite,true); (* TODO: encode optional *)
                           GRID (`Noise,nocolor)|]);
@@ -845,7 +884,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`MinorityColor_1, [|GRID (`Sprite,false)|]) (* also `Full and `Noise *)
              ::res
           | SEG -> res
-          | MOTIF -> res
+          | MOTIF tm -> res
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              (`Grid_1, [|OBJ (filling,nocolor)|])
@@ -894,7 +933,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | COLOR (C_BG true) -> true, [k; COLOR C_OBJ]
           | COLOR (C_BG false) -> true, [k; COLOR (C_BG true); COLOR C_OBJ]
           | SEG -> true, [k]
-          | MOTIF -> true, [k]
+          | MOTIF tm -> true, [k]
           | GRID tg -> true, List.map (fun tg -> GRID tg) (expand_grid tg)
           | OBJ tg -> true, List.map (fun tg -> OBJ tg) (expand_grid tg)
           | MAP _ -> true, [k]
@@ -1000,7 +1039,7 @@ module MyDomain : Madil.DOMAIN =
     let make_anycoord axis tv : model = make_anyint (COORD (axis,tv))
     let make_anycolor tc : model = Model.make_any (COLOR tc)
     let make_anyseg : model = Model.make_any SEG
-    let make_anymotif : model = Model.make_any MOTIF
+    let make_anymotif tmot : model = Model.make_any (MOTIF tmot)
     let make_anygrid tg : model = Model.make_any (GRID tg)
     let make_anymap ta tb : model = Model.make_any (MAP (ta,tb))
     
@@ -1016,7 +1055,8 @@ module MyDomain : Madil.DOMAIN =
     let make_colorpartition filling msize mgrids : model = Model.make_pat (GRID (filling,false)) ColorPartition [|msize; mgrids|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
-    let make_motif tg partial mmotif mcore mpure mmask_opt mnoise : model = Model.make_pat (GRID tg) (Motif partial) [|mmotif; mcore; mpure; mmask_opt; mnoise|]
+    let make_motifmulti tg partial mmotif mcore mpure mmask_opt mnoise : model = Model.make_pat (GRID tg) (MotifMulti partial) [|mmotif; mcore; mpure; mmask_opt; mnoise|]
+    let make_motifbi tg partial mmotif mbgcolor mcolor mpure mmask_opt mnoise : model = Model.make_pat (GRID tg) (MotifBi partial) [|mmotif; mbgcolor; mcolor; mpure; mmask_opt; mnoise|]
     let make_metagrid tg msepcolor mborders mdims mheights mwidths mgridss : model = Model.make_pat (GRID tg) Metagrid [|msepcolor; mborders; mdims; mheights; mwidths; mgridss|]
     let make_repeat tg mgrid mnis mnjs : model = Model.make_pat (GRID tg) Repeat [|mgrid; mnis; mnjs|]
     let make_empty msize : model = Model.make_pat (GRID (`Sprite,false)) Empty [|msize|]
@@ -1099,7 +1139,7 @@ module MyDomain : Madil.DOMAIN =
           (vsize, Data.value dseg, Data.value dcard, Data.value dobjs) in
       v, Data.make_dexpr merger
 
-    let make_motif_dpure dmot dcore dnoise : data Myseq.t =
+    let make_motif_dpure dmot vcore dnoise : data Myseq.t =
       let vmot = Data.value dmot in
       let depth = Ndseq.depth vmot in
       let* vpure =
@@ -1110,8 +1150,23 @@ module MyDomain : Madil.DOMAIN =
               let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
               Myseq.return (`Grid g_pure)
            | _ -> assert false)
-          (vmot, Data.value dcore, Data.value dnoise) in
+          (vmot, vcore, Data.value dnoise) in
       Myseq.return (Data.make_dexpr vpure)
+    let make_motif_multi_dpure dmot dcore dnoise =
+      make_motif_dpure dmot (Data.value dcore) dnoise
+    let make_motif_bi_dpure dmot dbgcolor dcolor dnoise =
+      let vbgcolor, vcolor = Data.value dbgcolor, Data.value dcolor in
+      let depth = Ndseq.depth vbgcolor in
+      assert (Ndseq.depth vcolor = depth);
+      let vcore =
+        Ndseq.map_tup ~depth 0
+          (function
+           | `Color bgcolor, `Color color ->
+              `Grid (GPat.Motif.make_core_bi bgcolor color)
+           | _ -> assert false)
+          (vbgcolor, vcolor) in
+      assert (Ndseq.depth vcore = depth);
+      make_motif_dpure dmot vcore dnoise
     
     (* evaluation *)
 
@@ -1934,9 +1989,9 @@ module MyDomain : Madil.DOMAIN =
             | SEG, `Seg lseg ->
                let* seg = Myseq.from_list lseg in
                Myseq.return (`Seg seg, `Seg seg)
-            | MOTIF, `Motif lmot ->
+            | MOTIF tmot, `Motif lmot ->
                let* mot = Myseq.from_list lmot in
-               Myseq.return (`Motif mot, `Motif mot)
+               Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
             | GRID tg, `Grid ((minh,maxh),(minw,maxw),lc) ->
                let range_h = Range.make_closed minh maxh in
                let range_w = Range.make_closed minw maxw in
@@ -2137,7 +2192,7 @@ module MyDomain : Madil.DOMAIN =
                Ndseq.map_tup ~depth 1
                  (function
                   | `Int card, `Grid ((minh,maxh),(minw,maxw),lc) ->
-                     let info_obj = `Obj (`Vec (`Int (0,0), `Int (0,0)), `Grid ((2,2),(2,2),lc)) in
+                     let info_obj = `Obj (`Vec (`Int (0,0), `Int (0,0)), `Grid ((1,3),(1,3),lc)) in
                      Ndseq.seq 0 (List.init card (fun _ -> info_obj))
                   | _ -> assert false)
                  (vcard, info) in
@@ -2227,12 +2282,13 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (Data.make_dpat v c [|dgrid; dmap|], info)
           | _ -> assert false)
     
-      | GRID _, Motif partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|] ->
+      | GRID _, MotifMulti partial, [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|] ->
          let info_mot, info_noise =
            Ndseq.map_tup ~depth (0,0)
              (function
               | `Grid ((minh,maxh),(minw,maxw),lc) ->
-                 `Motif GPat.Motif.candidates, `Grid ((minh,maxh),(minw,maxw),lc)
+                 `Motif GPat.Motif.candidates_multi,
+                 `Grid ((minh,maxh),(minw,maxw), [Grid.transparent])
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair [gen_mot info_mot;
@@ -2240,14 +2296,14 @@ module MyDomain : Madil.DOMAIN =
          (match l with
           | [dmot, _; dnoise, _] ->
              let* info_mask_opt, info_core =
-               Ndseq.map_tup_myseq ~name:"gen/Motif/info_res" ~depth (0,0)
+               Ndseq.map_tup_myseq ~name:"gen/MotifMulti/info_res" ~depth (0,0)
                  (function
                   | `Grid ((minh,maxh),(minw,maxw),lc), `Motif mot, `Grid gnoise ->
                      let h, w = Grid.dims gnoise in
                      let _, _, luv = GPat.Motif.all_coredims_of_motif mot h w in
                      let* u, v = Myseq.from_list luv in
                      Myseq.return
-                       (`Grid ((h,h),(w,w),[Grid.Mask.one]),
+                       ((if partial then `Grid ((h,h),(w,w),[Grid.Mask.one]) else `Null),
                         `Grid ((u,u),(v,v),lc))
                   | _ -> assert false)
                  (info, Data.value dmot, Data.value dnoise) in
@@ -2275,6 +2331,71 @@ module MyDomain : Madil.DOMAIN =
                  (Data.value dmot, Data.value dcore, Data.value dmask_opt, Data.value dnoise) in
              let dpure = Data.make_dexpr pure in (* computed data *)
              Myseq.return (Data.make_dpat v c [|dmot; dcore; dpure; dmask_opt; dnoise|], info)
+          | _ -> assert false)
+
+      | GRID (filling,nocolor), MotifBi partial, [|gen_mot; gen_bgcolor; gen_color; _gen_pure; gen_mask_opt; gen_noise|] ->
+         let* info_mot, info_noise =
+           Ndseq.map_tup_myseq ~depth (0,0)
+             (function
+              | `Grid ((minh,maxh),(minw,maxw),lc) ->
+                 if maxh >= 3 && maxw >= 3 (* bicolor motifs have size at least 3x3 *)
+                 then
+                   Myseq.return
+                     (`Motif GPat.Motif.candidates_bi,
+                      `Grid ((max 3 minh, maxh),(max 3 minw, maxw), [Grid.transparent]))
+                 else Myseq.empty
+              | _ -> assert false)
+             (tup1 info) in
+         let* l = Myseq.product_fair [gen_mot info_mot;
+                                      gen_noise info_noise] in
+         (match l with
+          | [dmot, _; dnoise, _] ->
+             let* info_mask_opt, info_bgcolor =
+               Ndseq.map_tup_myseq ~name:"gen/Motif/info_res" ~depth (0,0)
+                 (function
+                  | `Grid ((minh,maxh),(minw,maxw),lc), `Motif mot, `Grid gnoise ->
+                     let h, w = Grid.dims gnoise in
+                     let lbgcolor =
+                       if filling = `Full
+                       then lc
+                       else Grid.transparent :: lc in
+                     Myseq.return
+                       ((if partial then `Grid ((h,h),(w,w),[Grid.Mask.one]) else `Null),
+                        `Color lbgcolor)
+                  | _ -> assert false)
+                 (info, Data.value dmot, Data.value dnoise) in
+             let* dbgcolor, _ = gen_bgcolor info_bgcolor in
+             let info_color =
+               Ndseq.map_tup ~depth 0
+                 (function
+                  | `Grid (_,_,lc), `Color bgcolor -> `Color (list_remove bgcolor lc)
+                  | _ -> assert false)
+                 (info, Data.value dbgcolor) in
+             let* dcolor, _ = gen_color info_color in
+             let* dmask_opt, _ = gen_mask_opt info_mask_opt in
+             let* v, pure =
+               Ndseq.map_tup_myseq ~name:"gen/Motif" ~depth (0,0)
+                 (function
+                  | `Motif mot, `Color bgcolor, `Color color, vmask_opt, `Grid g_noise ->
+                     let mask_opt =
+                       match partial, vmask_opt with
+                       | true, `Grid mask -> Some mask
+                       | _ -> None in
+                     let h, w = Grid.dims g_noise in
+                     let g_core = GPat.Motif.make_core_bi bgcolor color in
+                     let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
+                     let* g =
+                       match mask_opt with
+                       | None -> Myseq.return (Grid.Do.copy g_pure)
+                       | Some m ->
+                          let g_bgcolor = if partial then Grid.transparent else assert false in
+                          Myseq.from_result (Grid.Mask.crop g_bgcolor m g_pure) in
+                     Grid.add_grid_at g 0 0 g_noise;
+                     Myseq.return (`Grid g, `Grid g_pure)
+                  | _ -> assert false)
+                 (Data.value dmot, Data.value dbgcolor, Data.value dcolor, Data.value dmask_opt, Data.value dnoise) in
+             let dpure = Data.make_dexpr pure in (* computed data *)
+             Myseq.return (Data.make_dpat v c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|], info)
           | _ -> assert false)
 
       | GRID _, Metagrid, [|gen_sepcolor; gen_borders; gen_dims; gen_heights; gen_widths; gen_gridss|] ->
@@ -2633,7 +2754,6 @@ module MyDomain : Madil.DOMAIN =
          pp_endline (xp_pat c (Array.map (fun _ -> fun ~html print _ -> print#string "_") gen_args)) ();
          (if info = `Null then print_endline "info = NULL");
          assert false
-
     
     (* model-based parsing *)
            
@@ -2660,7 +2780,7 @@ module MyDomain : Madil.DOMAIN =
              `Vec (`IntRange (i,range), `IntRange (j,range)) 
           | COLOR tc, `Color c -> `Color c
           | SEG, `Seg seg -> `Seg seg
-          | MOTIF, `Motif mot -> `Motif mot
+          | MOTIF tmot, `Motif mot -> `Motif mot
           | GRID (filling,nocolor), `Grid g -> `GridDimsCols (g, Range.make_open 1, Range.make_open 1, Grid.nb_color)
           | OBJ (filling,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, Grid.nb_color, 0, [obj])
           | MAP _, `Map m ->
@@ -2754,8 +2874,8 @@ module MyDomain : Madil.DOMAIN =
             | SEG, `SegAny ->
                let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
                Myseq.return (`Seg seg, `Seg seg)
-            | MOTIF, `Motif mot ->
-               Myseq.return (`Motif mot, `Motif mot)
+            | MOTIF tmot, `Motif mot ->
+               Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
             | GRID tg, `GridDimsCols (g,rh,rw,nc) ->
                Myseq.return (`Grid g, `GridRange (g,tg,rh,rw,nc))
             | MAP (ta,tb), `MapDomain (m,dom) ->
@@ -3051,15 +3171,15 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dg1; dmap|], input)
     
-      | _, Motif partial, [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
+      | _, MotifMulti partial, [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
          let v = value_of_input t input in
-         let bgcolor = if partial then Grid.transparent else Grid.undefined in
+         let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* in_mot, in_core, in_mask_opt, in_noise =
            Ndseq.map_tup_myseq ~name:"parse/Motif/in_res" ~depth (0,0,0,0)
              (function
               | `GridDimsCols (g,rh,rw,nc) ->
                  let* mot, ru, rv, g_core, mask_opt, g_noise =
-                   Myseq.from_list (GPat.Motif.from_grid bgcolor g) in
+                   Myseq.from_list (GPat.Motif.from_grid GPat.Motif.candidates_multi g_bgcolor g) in
                  Myseq.return
                    (`Motif mot,
                     `GridDimsCols (g_core,ru,rv,nc),
@@ -3077,8 +3197,42 @@ module MyDomain : Madil.DOMAIN =
            else Myseq.empty in
          let* dnoise, _ = parse_noise in_noise in
          let input = Ndseq.const `Null input in
-         let* dpure = make_motif_dpure dmot dcore dnoise in
+         let* dpure = make_motif_multi_dpure dmot dcore dnoise in
          Myseq.return (Data.make_dpat v c [|dmot; dcore; dpure; dmask_opt; dnoise|], input)
+    
+      | _, MotifBi partial, [|parse_mot; parse_bgcolor; parse_color; _parse_pure; parse_mask_opt; parse_noise|] ->
+         let v = value_of_input t input in
+         let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
+         let* in_mot, in_bgcolor, in_color, in_mask_opt, in_noise =
+           Ndseq.map_tup_myseq ~name:"parse/MotifBi/in_res" ~depth (0,0,0,0,0)
+             (function
+              | `GridDimsCols (g,rh,rw,nc) ->
+                 let* mot, _ru, _rv, g_core, mask_opt, g_noise =
+                   Myseq.from_list (GPat.Motif.from_grid GPat.Motif.candidates_bi g_bgcolor g) in
+                 assert (Grid.dims g_core = (2,1));
+                 let bgcolor = Grid.get_pixel ~source:"parse MotifBi bgcolor" g_core 0 0 in
+                 let color = Grid.get_pixel ~source:"parse MotifBi color" g_core 1 0 in
+                 Myseq.return
+                   (`Motif mot,
+                    `Color bgcolor,
+                    `Color color,
+                    (match partial, mask_opt with
+                     | true, Some mask -> `GridDimsCols (mask,rh,rw,1)
+                     | _ -> `Null), (* TODO: revise handling of optional, ugly *)
+                    `GridDimsCols (g_noise,rh,rw,nc))
+              | _ -> assert false)
+             (tup1 input) in
+         let* dmot, _ = parse_mot in_mot in
+         let* dbgcolor, _ = parse_bgcolor in_bgcolor in
+         let* dcolor, _ = parse_color in_color in
+         let* dmask_opt, _ =
+           if not partial || Ndseq.for_all (fun x -> x <> `Null) in_mask_opt
+           then parse_mask_opt in_mask_opt
+           else Myseq.empty in
+         let* dnoise, _ = parse_noise in_noise in
+         let input = Ndseq.const `Null input in
+         let* dpure = make_motif_bi_dpure dmot dbgcolor dcolor dnoise in
+         Myseq.return (Data.make_dpat v c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|], input)
     
       | _, Metagrid, [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|] ->
          let v = value_of_input t input in
@@ -3471,8 +3625,12 @@ module MyDomain : Madil.DOMAIN =
     let dl_seg (seg : GPat.Objects.segmentation) : dl =
       Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations
          
-    let dl_motif (m : GPat.Motif.t) : dl =
-      Mdl.Code.uniform GPat.Motif.nb_candidates
+    let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
+      let nb =
+        match tmot with
+        | MULTI -> GPat.Motif.nb_candidates_multi
+        | BI -> GPat.Motif.nb_candidates_bi in
+      Mdl.Code.uniform nb
          
     let dl_grid g (filling,nocolor) rh rw nc : dl = (* too efficient a coding for being useful? *)
       (* nc is nb of colors, not including transparent or undefined, nocolor implies nc=1 *)
@@ -3528,7 +3686,7 @@ module MyDomain : Madil.DOMAIN =
              +. dl_value (INT (COORD (J,tv))) (`Int j)
           | COLOR tc, `Color c -> dl+. dl_color c tc
           | SEG, `Seg seg -> dl +. dl_seg seg
-          | MOTIF, `Motif m -> dl +. dl_motif m
+          | MOTIF tmot, `Motif m -> dl +. dl_motif tmot m
           | GRID tg, `Grid g ->
              let rmax = Range.make_closed 1 Grid.max_size in
              dl
@@ -3551,7 +3709,7 @@ module MyDomain : Madil.DOMAIN =
           | `VecRange (i,j,ri,rj) -> dl +. Range.dl i ri +. Range.dl j rj
           | `ColorTyp (c,tc) -> dl +. dl_color c tc
           | `Seg seg -> dl +. dl_seg seg
-          | `Motif m -> dl +. dl_motif m
+          | `MotifTyp (m,tm) -> dl +. dl_motif tm m
           | `GridRange (g,tg,rh,rw,nc) -> dl +. dl_grid g tg rh rw nc
           | `MapTyp (m,ta,tb) -> dl +. dl_map (dl_value ta) (dl_value tb) m
           | _ -> assert false)
@@ -3571,8 +3729,10 @@ module MyDomain : Madil.DOMAIN =
       | ColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_grid; enc_map|] -> assert (enc_grid = 0.); enc_grid +. enc_map
-      | Motif partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
+      | MotifMulti partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
          enc_motif +. enc_core +. enc_mask_opt +. enc_noise
+      | MotifBi partial, [|enc_motif; enc_bgcolor; enc_color; _enc_pure; enc_mask_opt; enc_noise|] ->
+         enc_motif +. enc_bgcolor +. enc_color +. enc_mask_opt +. enc_noise
       | Metagrid, [|enc_sepcolor; enc_borders; enc_dims; enc_heights; enc_widths; enc_gridss|] ->
          enc_sepcolor +. enc_borders +. enc_dims +. enc_heights +. enc_widths +. enc_gridss
       | Repeat, [|enc_grid; enc_nis; enc_njs|] -> enc_grid +. enc_nis +. enc_njs
@@ -3621,7 +3781,8 @@ module MyDomain : Madil.DOMAIN =
       | _, ColorPartition -> 0.
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
-      | _, Motif partial -> 1.
+      | _, MotifMulti partial -> 1.
+      | _, MotifBi partial -> 1.
       | _, Metagrid -> 0.
       | _, Repeat -> 0.
       | _, Empty -> 0.
@@ -4266,7 +4427,7 @@ module MyDomain : Madil.DOMAIN =
       | VEC tv -> rs
       | COLOR tc -> rs
       | SEG -> rs
-      | MOTIF -> rs
+      | MOTIF tmot -> rs
       | MAP (ta,tb) ->
          let refs : (model * varseq) list = rs in
 (* TODO(needs Cons)         let refs = (* DomMap *)
@@ -4544,7 +4705,7 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         let refs = (* Motif *)
+         let refs = (* MotifMulti *)
            let tg_mask = (`Noise,true) in
            let xmot, varseq = Refining.new_var varseq in
            let xcore, varseq = Refining.new_var varseq in
@@ -4554,9 +4715,31 @@ module MyDomain : Madil.DOMAIN =
            let$ refs, partial = refs, (match filling with
                                        | `Full -> [false]
                                        | _ -> [false; true]) in
-           (make_motif (filling,nocolor) partial
-             (Model.make_def xmot (make_anymotif))
+           (make_motifmulti (filling,nocolor) partial
+             (Model.make_def xmot (make_anymotif MULTI))
              (Model.make_def xcore (make_anygrid ((if filling = `Noise then `Sprite else filling), nocolor)))
+             (Model.make_def xpure (Model.make_derived (GRID tg)))
+             (if partial
+              then Model.make_def xmask (make_anygrid tg_mask)
+              else Model.make_expr (GRID tg_mask) (Expr.Const (GRID tg_mask, `Null)))
+             (Model.make_def xnoise (make_anygrid (`Noise,nocolor))),
+            varseq)
+           :: refs in
+         let refs = (* MotifBi *)
+           let tg_mask = (`Noise,true) in
+           let xmot, varseq = Refining.new_var varseq in
+           let xbgcolor, varseq = Refining.new_var varseq in
+           let xcolor, varseq = Refining.new_var varseq in
+           let xpure, varseq = Refining.new_var varseq in
+           let xmask, varseq = Refining.new_var varseq in
+           let xnoise, varseq = Refining.new_var varseq in
+           let$ refs, partial = refs, (match filling with
+                                       | `Full -> [false]
+                                       | _ -> [false; true]) in
+           (make_motifbi (filling,nocolor) partial
+             (Model.make_def xmot (make_anymotif BI))
+             (Model.make_def xbgcolor (make_anycolor (C_BG (filling = `Full))))
+             (Model.make_def xcolor (make_anycolor C_OBJ))
              (Model.make_def xpure (Model.make_derived (GRID tg)))
              (if partial
               then Model.make_def xmask (make_anygrid tg_mask)
@@ -4698,8 +4881,8 @@ module MyDomain : Madil.DOMAIN =
          [ make_anycolor tc, varseq ]
       | SEG, _ ->
          [ make_anyseg, varseq ]
-      | MOTIF, _ ->
-         [ make_anymotif, varseq ]
+      | MOTIF tmot, _ ->
+         [ make_anymotif tmot, varseq ]
       | GRID tg, _ ->
          [ make_anygrid tg, varseq ]
       | OBJ tg, _ ->

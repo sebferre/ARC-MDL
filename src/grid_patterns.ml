@@ -795,7 +795,10 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        Range.make_open 0, (* dummy *)
        []            
-  
+
+let make_core_bi bgcolor color =
+  Grid.init 2 1 (fun i j -> if i = 0 then bgcolor else color)
+
 let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (* QUICK *)
   let u, v = Grid.dims core in
   let ru, rv, luv = all_coredims_of_motif mot h w in
@@ -819,14 +822,13 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (*
 
 (* discovering motifs in grids *)
   
-let candidates =
+let candidates_multi = (* multicolor motifs *)
   let open Grid.Transf in
   [ Scale;
     FlipH; FlipW; FlipHW;
     FlipD1; FlipD2; FlipD12;
     Rotate180; Rotate90;
     FullSym;
-    Corners; Border; CrossPlus; CrossTimes; Diamond; Star;
     Periodic (I, J);
     Periodic (I, PlusIJ);
     Periodic (PlusIJ, J);
@@ -837,9 +839,15 @@ let candidates =
     Periodic (DiffIJ, Zero);
     Periodic (MaxIJ, Zero);
     Periodic (MinIJ, Zero) ]
-let nb_candidates = List.length candidates
+let nb_candidates_multi = List.length candidates_multi
 
-let from_grid (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
+let candidates_bi = (* bicolor shape-like motifs *)
+  let open Grid.Transf in
+  [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
+let nb_candidates_bi = List.length candidates_bi
+
+
+let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
   (* bgcolor is the color to be ignored *)
   Common.prof "Grid_patterns.from_grid" (fun () ->
   let h, w = Grid.dims g in
