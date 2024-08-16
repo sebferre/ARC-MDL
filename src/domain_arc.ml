@@ -3212,6 +3212,7 @@ module MyDomain : Madil.DOMAIN =
                  assert (Grid.dims g_core = (2,1));
                  let bgcolor = Grid.get_pixel ~source:"parse MotifBi bgcolor" g_core 0 0 in
                  let color = Grid.get_pixel ~source:"parse MotifBi color" g_core 1 0 in
+                 let* () = Myseq.from_bool (color <> Grid.transparent) in
                  Myseq.return
                    (`Motif mot,
                     `Color bgcolor,
