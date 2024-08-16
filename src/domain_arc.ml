@@ -961,7 +961,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec of input * input
       | `Color of Grid.color
       | `Seg of GPat.Objects.segmentation
-      | `SegAny
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       (* | `Obj of input (* pos *) * input (* grid *) *)
@@ -982,8 +981,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "Color"
       | `Seg seg ->
          print#string "Seg"
-      | `SegAny ->
-         print#string "SegAny"
       | `Motif mot ->
          print#string "Motif"
       | `GridDimsCols (g,rh,rw,nc) ->
@@ -2798,7 +2795,6 @@ module MyDomain : Madil.DOMAIN =
           | `Vec (`IntRange (i,_), `IntRange (j,_)) -> `Vec (i,j)
           | `Color c -> `Color c
           | `Seg seg -> `Seg seg
-          | `SegAny -> assert false
           | `Motif mot -> `Motif mot
           | `GridDimsCols (g,rh,rw,nc) -> `Grid g
           | `Objects _ -> assert false
@@ -2828,8 +2824,6 @@ module MyDomain : Madil.DOMAIN =
                  if c = c0
                  then Myseq.return (v, `Null)
                  else Myseq.empty
-              | `Seg seg0, `SegAny ->
-                 Myseq.return (v, `Null)
               | `Seg seg0, `Seg seg ->
                  if seg = seg0
                  then Myseq.return (v, `Null)
@@ -2870,9 +2864,6 @@ module MyDomain : Madil.DOMAIN =
             | COLOR tc, `Color c ->
                Myseq.return (`Color c, `ColorTyp (c,tc))
             | SEG, `Seg seg ->
-               Myseq.return (`Seg seg, `Seg seg)
-            | SEG, `SegAny ->
-               let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in
                Myseq.return (`Seg seg, `Seg seg)
             | MOTIF tmot, `Motif mot ->
                Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
@@ -3079,16 +3070,24 @@ module MyDomain : Madil.DOMAIN =
     
       | _, Objects (nmax), [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|] ->
          let v = value_of_input t input in
-         let in_seg, in_size =
-           Ndseq.map_tup ~depth (0,0)
+         let in_size =
+           Ndseq.map ~depth 0
              (function
               | `GridDimsCols (g,rh,rw,nc) ->
                  let h, w = Grid.dims g in
-                 `SegAny, `Vec (`IntRange (h, rh),
-                                `IntRange (w, rw))
+                 `Vec (`IntRange (h, rh),
+                       `IntRange (w, rw))
               | _ -> assert false)
-             (tup1 input) in
+             input in
          let* dsize, _ = parse_size in_size in
+         let* in_seg =
+           let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in (* common choice for all sequence items *)
+           Myseq.return
+             (Ndseq.map ~depth 0
+                (function
+                 | `GridDimsCols (g,rh,rw,nc) -> `Seg seg
+                 | _ -> assert false)
+                input) in
          let* dseg, _ = parse_seg in_seg in
          let* in_card, in_objs =
            Ndseq.map_tup_myseq ~name:"parse/Objects/in_res" ~depth (0,0)
@@ -3493,7 +3492,7 @@ module MyDomain : Madil.DOMAIN =
                       if List.for_all (fun x1 -> value_of_input t x1 = v) l1 (* all elts should be the same value *)
                       then Myseq.return x
                       else Myseq.empty
-                     with _ -> Myseq.empty) (* undefined value for input: `SegAny, `Objects *)
+                     with _ -> Myseq.empty) (* undefined value for input: `Objects *)
                  | None -> assert false)
                input in
            let* de, xe = parse_e xe in
@@ -4384,17 +4383,6 @@ module MyDomain : Madil.DOMAIN =
     let refinements_any ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       let depth = Ndseq.depth value in
       let rs = [] in
-(* REM      let rs = (* adding SeqCons *)
-        if depth > 0
-        then
-          let xhd, varseq = Refining.new_var varseq in
-          let xtl, varseq = Refining.new_var varseq in
-          let$ rs, depth = rs, List.init (Ndseq.depth value) (fun i -> i) in
-          (make_seqcons t depth
-             (Model.make_def xhd (Model.make_any t))
-             (Model.make_def xtl (Model.make_any t)),
-           varseq) :: rs
-        else rs in *)
       let rs = (* adding SeqRepeat *)
         if depth > 0
         then
