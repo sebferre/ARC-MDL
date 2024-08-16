@@ -963,8 +963,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Seg of GPat.Objects.segmentation
       | `Motif of GPat.Motif.t
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
-      (* | `Obj of input (* pos *) * input (* grid *) *)
-      | `Objects of int (* height ctx *) * int (* width ctx *) * int (* nb colors *) * int (* consumed objects *) * (int * int * Grid.t) list (* objects *) (* TODO: merge with Seq *)
+      | `Obj of input (* pos *) * input (* grid *)
       | `MapDomain of (value,value) Mymap.t * value list (* domain *)
       | input Ndseq.seq ]
 
@@ -985,8 +984,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "Motif"
       | `GridDimsCols (g,rh,rw,nc) ->
          print#string "GridDimsCols"
-      | `Objects (h,w,nc,nb_consumed_objects,objs) ->
-         print#string "Objects"
+      | `Obj (in_pos,in_grid) ->
+         print#string "Obj"
       | `MapDomain (m,dom) ->
          print#string "MapDomain"
       | #Ndseq.seq as x -> Ndseq.xp_seq xp_input ~html print x
@@ -2778,8 +2777,18 @@ module MyDomain : Madil.DOMAIN =
           | COLOR tc, `Color c -> `Color c
           | SEG, `Seg seg -> `Seg seg
           | MOTIF tmot, `Motif mot -> `Motif mot
-          | GRID (filling,nocolor), `Grid g -> `GridDimsCols (g, Range.make_open 1, Range.make_open 1, Grid.nb_color)
-          | OBJ (filling,nocolor), `Obj obj -> `Objects (Grid.max_size, Grid.max_size, Grid.nb_color, 0, [obj])
+          | GRID (filling,nocolor), `Grid g ->
+             let rh = Range.make_open 1 in
+             let rw = Range.make_open 1 in
+             let nc = if nocolor then 1 else Grid.nb_color in
+             `GridDimsCols (g, rh, rw, nc)
+          | OBJ (filling,nocolor), `Obj (i,j,g) ->
+             let rh = Range.make_open 1 in
+             let rw = Range.make_open 1 in
+             let nc = if nocolor then 1 else Grid.nb_color in
+             `Obj (`Vec (`IntRange (i, Range.make_closed 0 Grid.max_size),
+                         `IntRange (j, Range.make_closed 0 Grid.max_size)),
+                   `GridDimsCols (g, rh, rw, nc))
           | MAP _, `Map m ->
              let domain = mymap_keys m in
              `MapDomain (m, domain)
@@ -2797,7 +2806,7 @@ module MyDomain : Madil.DOMAIN =
           | `Seg seg -> `Seg seg
           | `Motif mot -> `Motif mot
           | `GridDimsCols (g,rh,rw,nc) -> `Grid g
-          | `Objects _ -> assert false
+          | `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g1,_,_,_)) -> `Obj (i,j,g1)
           | `MapDomain (m,dom) -> `Map m
           | _ -> assert false)
         input
@@ -2836,9 +2845,10 @@ module MyDomain : Madil.DOMAIN =
                  if g = g0
                  then Myseq.return (v, `Null)
                  else Myseq.empty
-              | `Obj obj0, `Objects(h,w,nc,nb_consumed_objs,objs) ->
-                 if List.mem obj0 objs
-                 then Myseq.return (v, `Objects (h, w, nc, nb_consumed_objs-1, List.filter ((<>) obj0) objs))
+              | `Obj (i0,j0,g0), `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)),
+                                       `GridDimsCols (g, _, _, _)) ->
+                 if i = i0 && j = j0 && g = g0
+                 then Myseq.return (v, `Null)
                  else Myseq.empty
               | `Map m0, `MapDomain (m,dom) ->
                  if m0 = m
@@ -2896,53 +2906,20 @@ module MyDomain : Madil.DOMAIN =
          let* dj, _ = parse_j in_j in
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|di; dj|], input)
-    
+
       | _, Obj, [|parse_pos; parse_g1|] ->
-         let* in_pos, in_g1, v =
-           Ndseq.mapi_tup_myseq ~depth (1,1,1)
-             (fun rev_path -> function
-              | `Objects (h, w, nc, nb_consumed_objs, objs) ->
-                 assert (nb_consumed_objs = 0);
-                 let rec aux nb_consumed_objs objs =
-                   if objs = []
-                   then Myseq.return ([], [], [])
-                   else
-                     let rev_path = nb_consumed_objs :: rev_path in
-                     myseq_bind_list_interleave
-                       (let k = !max_interleave_parse_obj in
-                        if nb_consumed_objs < k 
-                        then k - nb_consumed_objs
-                        else 1)
-                       objs
-                       (fun ((i,j,g1), other_objs) ->
-                         let in_pos = `Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                            `IntRange (j, Range.make_closed 0 (w-1))) in
-                         let in_g1 = `GridDimsCols (g1,
-                                                    Range.make_closed 1 (h-i),
-                                                    Range.make_closed 1 (w-j),
-                                                    nc) in
-                         (* checking that this choice of object matches constraints *)
-                         let* _ =
-                           Ndseq.parseur_item parse_pos rev_path in_pos
-                           |> Myseq.slice ~limit:1 in
-                         let* _ =
-                           Ndseq.parseur_item parse_g1 rev_path in_g1
-                           |> Myseq.slice ~limit:1 in
-                         let vobj = `Obj (i,j,g1) in
-                         let* l_in_pos, l_in_g1, l_vobj = aux (nb_consumed_objs+1) other_objs in 
-                         Myseq.return (in_pos::l_in_pos, in_g1::l_in_g1, vobj::l_vobj))
-                 in
-                 let* l_in_pos, l_in_g1, l_vobj = aux 0 objs in
-                 Myseq.return (Ndseq.seq 0 l_in_pos,
-                               Ndseq.seq 0 l_in_g1,
-                               Ndseq.seq 0 l_vobj)
+         let v = value_of_input t input in
+         let in_pos, in_g1 =
+           Ndseq.map_tup ~depth (0,0)
+             (function
+              | `Obj (in_pos, in_g1) -> in_pos, in_g1
               | _ -> assert false)
              (tup1 input) in
-         let* dg1, _ = parse_g1 in_g1 in
          let* dpos, _ = parse_pos in_pos in
+         let* dg1, _ = parse_g1 in_g1 in
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dpos; dg1|], input)
-    
+
       | MAP (ta,tb), DomMap keys, [|parse_vals|] ->
          let v = value_of_input t input in
          let* in_vals =
@@ -3090,20 +3067,35 @@ module MyDomain : Madil.DOMAIN =
                 input) in
          let* dseg, _ = parse_seg in_seg in
          let* in_card, in_objs =
-           Ndseq.map_tup_myseq ~name:"parse/Objects/in_res" ~depth (0,0)
+           Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1)
              (function
               | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Vec (h,w) ->
-                 let* objs = Grid_patterns.Objects.parse seg g in
+                 let* objs = GPat.Objects.parse seg g in
                  let card = List.length objs in
+                 let* objs = (* swapping two objets among first three *)
+                   match objs with
+                   | [] -> Myseq.return objs
+                   | [o1] -> Myseq.return objs
+                   | [o1;o2] -> Myseq.cons objs (Myseq.return [o2;o1])
+                   | o1::o2::o3::os ->
+                      Myseq.cons objs
+                        (Myseq.cons (o2::o1::o3::os)
+                           (Myseq.cons (o3::o2::o1::os)
+                              (Myseq.return (o1::o3::o2::os)))) in
                  let* () = Myseq.from_bool (card <= nmax) in
-                 (*let* dseg, _ = parse_seg (`Seg seg) in*)
-                 (*let nc = (* TODO: need to encode which color *)
-                   match seg with
-                   | OneColor | ConnectedOneColor -> 1
-                   | Connected -> nc in*)
+                 (* TODO : some permutations of objs *)
                  Myseq.return
                    (`IntRange (card, Range.make_closed 0 nmax),
-                    `Objects (h,w,nc,0,objs))
+                    Ndseq.seq 0
+                      (List.map
+                         (fun (i,j,g1) ->
+                           `Obj (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
+                                       `IntRange (j, Range.make_closed 0 (w-1))),
+                                 `GridDimsCols (g1,
+                                                Range.make_closed 1 (h-i),
+                                                Range.make_closed 1 (w-j),
+                                                nc)))
+                         objs))
               | _ -> assert false)
              (input, Data.value dseg, Data.value dsize) in
          let* dcard, _ = parse_card in_card in
@@ -3492,7 +3484,7 @@ module MyDomain : Madil.DOMAIN =
                       if List.for_all (fun x1 -> value_of_input t x1 = v) l1 (* all elts should be the same value *)
                       then Myseq.return x
                       else Myseq.empty
-                     with _ -> Myseq.empty) (* undefined value for input: `Objects *)
+                     with _ -> Myseq.empty)
                  | None -> assert false)
                input in
            let* de, xe = parse_e xe in
