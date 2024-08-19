@@ -22,10 +22,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let xp_vec xp_i xp_j ~html print i j =
       xp_tuple2 xp_i xp_j ~html print (i,j) 
 
-    let xp_obj ~html print i j g =
-      print#string "an object "; Grid.xp_grid ~html print g;
-      print#string " at position "; xp_vec xp_int xp_int ~html print i j
-      
     (* model types *)
 
     type typ =
@@ -121,7 +117,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `MotifTyp of GPat.Motif.t * typ_motif (* MOTIF of some type *)
       | `Grid of Grid.t
       | `GridRange of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
-      | `Obj of int * int * Grid.t (* position at (i,j) of the subgrid *)
+      | `Obj of value * value (* position at (i,j) of the subgrid *)
       | `Map of (value,value) Mymap.t
       | `MapTyp of (value,value) Mymap.t * typ (* domain type *) * typ (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
       | value Ndseq.seq ]
@@ -135,7 +131,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
       | `Motif motif | `MotifTyp (motif,_) -> GPat.Motif.xp ~html print motif
       | `Grid g | `GridRange (g,_,_,_,_) -> Grid.xp_grid ~html print g
-      | `Obj (i,j,g) -> xp_obj ~html print i j g
+      | `Obj (pos,g1) ->
+         print#string "an object "; xp_value ~html print g1;
+         print#string " at position "; xp_value ~html print pos
       | `Map m | `MapTyp (m,_,_) ->
          print#string "{";
          let _ =
@@ -209,7 +207,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* SPRITE expr ; POS, SIZE : SPRITE *)
-      | Objects of int (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length *)
+      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length, mode constrains SEG *)
       | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* SPRITE expr; MAP(COLOR,COLOR) : SPRITE *)
@@ -269,7 +267,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            print#string " that contains at position "; xp_pos ~html print ();
            xp_newline ~html print ();
            xp_sprite ~html print ()*)
-      | Objects (nmax), [|xp_size; xp_seg; xp_card; xp_objs; xp_merger|] ->
+      | Objects (nmax,_mode), [|xp_size; xp_seg; xp_card; xp_objs; xp_merger|] ->
          print#string "a grid of size "; xp_size ~html print ();
          print#string " that contains "; xp_card ~html print ();
          print#string " <= "; print#int nmax;
@@ -762,7 +760,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                [ full, (BgColor, [|COLOR (C_BG full); GRID (`Sprite,nocolor)|]);
                  not full, (IsFull, [|GRID (`Full,nocolor)|]);
                  true, (Crop, [|GRID (filling,nocolor); VEC POS; VEC SIZE|]);
-                 not full, (Objects (1), [|VEC SIZE; SEG; INT CARD; OBJ (`Sprite,nocolor); (* derived merger, not counting *)|]);
+                 not full, (Objects (1,`Connected), [|VEC SIZE; SEG; INT CARD; OBJ (`Sprite,nocolor); (* derived merger, not counting *)|]);
                  (*not nocolor, (ColorPartition, [|VEC SIZE; GRID (`Sprite,false)|]);*)
                  not nocolor, (Monocolor, [|COLOR C_OBJ; GRID (filling,true)|]);
                  not nocolor, (Recoloring, [|GRID (filling,nocolor); MAP (COLOR C_OBJ, COLOR C_OBJ)|]);
@@ -959,9 +957,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       [ `Null
       | `IntRange of int * Range.t
       | `Vec of input * input
-      | `Color of Grid.color
-      | `Seg of GPat.Objects.segmentation
-      | `Motif of GPat.Motif.t
+      | `Color of Grid.color (* TODO: add range: nb colors *)
+      | `Seg of GPat.Objects.segmentation (* TODO: add range: nb segs *)
+      | `Motif of GPat.Motif.t (* TODO: add range: nb motifs *)
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       | `Obj of input (* pos *) * input (* grid *)
       | `MapDomain of (value,value) Mymap.t * value list (* domain *)
@@ -1021,22 +1019,24 @@ module MyDomain : Madil.DOMAIN =
     let get_pos : value -> (int * int) option =
       function
       | `Grid _ -> Some (0,0)
-      | `Obj (i, j, _) -> Some (i,j)
+      | `Obj (`Vec (i, j), _) -> Some (i,j)
       | _ -> None
           
     let get_size : value -> (int * int) option =
       function
       | `Grid g -> Some (Grid.dims g)
-      | `Obj (_, _, shape) -> Some (Grid.dims shape)
+      | `Obj (_, `Grid g1) -> Some (Grid.dims g1)
       | _ -> None
 
     let make_anyint ti : model = Model.make_any (INT ti)
     let make_anycard : model = make_anyint CARD
     let make_anycoord axis tv : model = make_anyint (COORD (axis,tv))
+    let make_anyvec tv : model = Model.make_any (VEC tv)
     let make_anycolor tc : model = Model.make_any (COLOR tc)
     let make_anyseg : model = Model.make_any SEG
     let make_anymotif tmot : model = Model.make_any (MOTIF tmot)
     let make_anygrid tg : model = Model.make_any (GRID tg)
+    let make_anyobj tg : model = Model.make_any (OBJ tg)
     let make_anymap ta tb : model = Model.make_any (MAP (ta,tb))
     
     let make_vec tv mi mj : model = Model.make_pat (VEC tv) Vec [|mi;mj|]
@@ -1047,7 +1047,7 @@ module MyDomain : Madil.DOMAIN =
     let make_bgcolor mcol mg1 : model = Model.make_pat (GRID (`Full,false)) BgColor [|mcol; mg1|]
     let make_isfull mg1 : model = Model.make_pat (GRID (`Sprite,false)) IsFull [|mg1|]
     let make_crop tg mg1 mpos msize : model = Model.make_pat (GRID tg) Crop [|mg1; mpos; msize|]
-    let make_objects nmax msize mseg mcard mobjs mmerger : model = Model.make_pat (GRID (`Sprite,false)) (Objects (nmax)) [|msize; mseg; mcard; mobjs; mmerger|]
+    let make_objects nmax mode msize mseg mcard mobjs mmerger : model = Model.make_pat (GRID (`Sprite,false)) (Objects (nmax,mode)) [|msize; mseg; mcard; mobjs; mmerger|]
     let make_colorpartition filling msize mgrids : model = Model.make_pat (GRID (filling,false)) ColorPartition [|msize; mgrids|]
     let make_monocolor mcol mmask : model = Model.make_pat (GRID (`Sprite,false)) Monocolor [|mcol; mmask|]
     let make_recoloring tg mgrid mmap : model = Model.make_pat (GRID tg) Recoloring [|mgrid; mmap|]
@@ -1105,7 +1105,7 @@ module MyDomain : Madil.DOMAIN =
                 | Some (_,objs) ->
                    List.map
                      (function
-                      | `Obj (i,j,g1) -> (i,j,g1)
+                      | `Obj (`Vec (i,j), `Grid g1) -> (i,j,g1)
                       | _ -> assert false)
                      objs
                 | None -> assert false in
@@ -1130,7 +1130,7 @@ module MyDomain : Madil.DOMAIN =
                   Grid.add_grid_at g i j g1;
                   Grid.add_grid_at g0 (i-i0) (j-j0) g1)
                 objs;
-              (`Grid g, `Obj (i0,j0,g0))
+              (`Grid g, `Obj (`Vec (i0,j0), `Grid g0))
            | _ -> assert false)
           (vsize, Data.value dseg, Data.value dcard, Data.value dobjs) in
       v, Data.make_dexpr merger
@@ -1235,9 +1235,9 @@ module MyDomain : Madil.DOMAIN =
         
         let apply_symmetry_grid (sym : symmetry) e (d1 : value) : value result =
           match d1 with
-          | `Obj (i, j, g1) ->
+          | `Obj (`Vec (i, j), `Grid g1) ->
              let g1' = grid_sym sym g1 in
-             Result.Ok (`Obj (i, j, g1')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
+             Result.Ok (`Obj (`Vec (i, j), `Grid g1')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
           | `Grid g ->
              let g' = grid_sym sym g in
              Result.Ok (`Grid g')
@@ -1281,9 +1281,9 @@ module MyDomain : Madil.DOMAIN =
           | `Grid g ->
              let| g' = unfold_grid sym_matrix g in
              Result.Ok (`Grid g')
-          | `Obj (i, j, g1) ->
+          | `Obj (`Vec (i, j), `Grid g1) ->
              let| g1 = unfold_grid sym_matrix g1 in
-             Result.Ok (`Obj (i, j, g1))
+             Result.Ok (`Obj (`Vec (i, j), `Grid g1))
           | _ -> Result.Error (Invalid_expr e)
 
         let close_any
@@ -1313,9 +1313,9 @@ module MyDomain : Madil.DOMAIN =
           | `Grid g ->
              let| g' = close_grid sym_seq bgcolor g in
              Result.Ok (`Grid g')
-          | `Obj (i, j, g1) ->
+          | `Obj (`Vec (i, j), `Grid g1) ->
              let| g1 = close_grid sym_seq bgcolor g1 in
-             Result.Ok (`Obj (i, j, g1))
+             Result.Ok (`Obj (`Vec (i, j), `Grid g1))
           | _ -> Result.Error (Invalid_expr e)
 
         let reset_memoized_functions_apply () =
@@ -1422,11 +1422,11 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Pos_1 ->
          (function
-          | [| `Obj (i,j,g)|] -> Result.Ok (`Vec (i,j))
+          | [| `Obj (pos, _)|] -> Result.Ok pos
           | _ -> Result.Error (Invalid_expr e))
       | `Grid_1 ->
          (function
-          | [| `Obj (i,j,g)|] -> Result.Ok (`Grid g)
+          | [| `Obj (pos,g1)|] -> Result.Ok g1
           | _ -> Result.Error (Invalid_expr e))    
       | `Size_1 ->
          (function
@@ -1448,7 +1448,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Crop_2 ->
          (function
-          | [| `Grid g; `Obj (ri, rj, shape)|] ->
+          | [| `Grid g; `Obj (`Vec (ri, rj), `Grid shape)|] ->
              let| c = Grid.majority_color Grid.transparent shape in
              if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
              then
@@ -1559,17 +1559,17 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Left_1 ->
          (function
-          | [| `Obj (_, j, _)|] -> Result.Ok (`Int j)
+          | [| `Obj (`Vec (_, j), _)|] -> Result.Ok (`Int j)
           | _ -> Result.Error (Invalid_expr e))
       | `Right_1 ->
          (function
-          | [| `Obj (_, j, shape)|] ->
+          | [| `Obj (`Vec (_, j), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (j+w-1))
           | _ -> Result.Error (Invalid_expr e))
       | `Center_1 ->
          (function
-          | [| `Obj (_, j, shape)|] ->
+          | [| `Obj (`Vec (_, j), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              if w mod 2 = 0
              then Result.Error (Undefined_result "Center: no center, even width")
@@ -1577,17 +1577,17 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Top_1 ->
          (function
-          | [| `Obj (i, _, _)|] -> Result.Ok (`Int i)
+          | [| `Obj (`Vec (i, _), _)|] -> Result.Ok (`Int i)
           | _ -> Result.Error (Invalid_expr e))
       | `Bottom_1 ->
          (function
-          | [| `Obj (i, _, shape)|] ->
+          | [| `Obj (`Vec (i, _), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (i+h-1))
           | _ -> Result.Error (Invalid_expr e))
       | `Middle_1 ->
          (function
-          | [| `Obj (i, _, shape)|] ->
+          | [| `Obj (`Vec (i, _), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              if h mod 2 = 0
              then Result.Error (Undefined_result "Middle: no middle, even height")
@@ -1644,7 +1644,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `TranslationOnto_2 ->
          (function
-          | [| `Obj (mini1,minj1,g1); `Obj (mini2,minj2,g2)|] ->
+          | [| `Obj (`Vec (mini1,minj1), `Grid g1); `Obj (`Vec (mini2,minj2), `Grid g2)|] ->
              let h1, w1 = Grid.dims g1 in
              let h2, w2 = Grid.dims g2 in
              let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
@@ -1680,9 +1680,9 @@ module MyDomain : Madil.DOMAIN =
               | `Grid g ->
                  let| g' = Grid.Transf.periodic_factor mode bgcolor g in
                  Result.Ok (`Grid g')
-              | `Obj (i, j, shape) ->
+              | `Obj (pos, `Grid shape) ->
                  let| shape' = Grid.Transf.periodic_factor mode bgcolor shape in
-                 Result.Ok (`Obj (i, j, shape'))
+                 Result.Ok (`Obj (pos, `Grid shape'))
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
       | `FillResizeAlike_3 mode ->
@@ -1693,9 +1693,9 @@ module MyDomain : Madil.DOMAIN =
               | `Grid g ->
                  let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size g in
                  Result.Ok (`Grid g')
-              | `Obj (i, j, shape) ->
+              | `Obj (pos, `Grid shape) ->
                  let| shape' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size shape in
-                 Result.Ok (`Obj (i, j, shape'))
+                 Result.Ok (`Obj (pos, `Grid shape'))
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
       | `SelfCompose_3 ->
@@ -1787,9 +1787,6 @@ module MyDomain : Madil.DOMAIN =
                  let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
                  let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
                  Result.Ok (`Grid g')
-              (* | `Obj (i, j, shape) ->
-                 let| shape =  shape in
-                 Result.Ok (`PosShape (pos, shape)) *)
               | _ -> Result.Error (Invalid_expr e))
           | _ -> Result.Error (Invalid_expr e))
       | `SwapColors_3 ->
@@ -1962,9 +1959,7 @@ module MyDomain : Madil.DOMAIN =
 
     let rec generator_any t info =
       let depth = Ndseq.depth info in
-      let* v, vr =
-        Ndseq.map_tup_myseq ~depth (0,0)
-          (fun info ->
+      let rec aux t info =
             match t, info with
             | _, `Null ->
                Myseq.return (`Null, `Null)
@@ -1979,6 +1974,7 @@ module MyDomain : Madil.DOMAIN =
                let* i = Myseq.range i1 i2 in
                let* j = Myseq.range j1 j2 in
                Myseq.return (`Vec (i,j), `VecRange (i,j,ri,rj))
+            | VEC _, `Vec _ -> assert false
             | COLOR tc, `Color lc ->
                let* c = Myseq.from_list lc in
                Myseq.return (`Color c, `ColorTyp (c,tc))
@@ -2001,11 +1997,18 @@ module MyDomain : Madil.DOMAIN =
                    let g = Grid.make h w c in
                    Myseq.return (`Grid g, `GridRange (g,tg,range_h,range_w,nc))
                 | _ -> assert false)
-            | OBJ _, _ -> assert false
+            | OBJ tg, `Obj (info_pos,info_g1) ->
+               let* vpos, vpos_r = aux (VEC POS) info_pos in
+               let* vg1, vg1_r = aux (GRID tg) info_g1 in
+               Myseq.return (`Obj (vpos,vg1), `Obj (vpos_r, vg1_r))
             | MAP (ta,tb), `Map (info_a, info_b) ->
                let m = Mymap.empty in
                Myseq.return (`Map m, `MapTyp (m,ta,tb)) (* empty map = identity map *)
-            | _ -> assert false)
+            | _ -> assert false
+      in
+      let* v, vr =
+        Ndseq.map_tup_myseq ~depth (0,0)
+          (fun info -> aux t info)
           (tup1 info) in
       let info = Ndseq.const `Null info in
       Myseq.return (Data.make_dany v vr, info)
@@ -2046,9 +2049,7 @@ module MyDomain : Madil.DOMAIN =
           | [dpos, _; dg1, _] ->
              let v : value =
                Ndseq.map_tup ~depth 0
-                 (function
-                  | `Vec (i,j), `Grid g1 -> `Obj (i,j,g1)
-                  | _ -> assert false)
+                 (fun (vpos,vg1) -> `Obj (vpos,vg1))
                  (Data.value dpos, Data.value dg1) in
              Myseq.return (Data.make_dpat v c [|dpos; dg1|], info)
           | _ -> assert false)
@@ -2165,11 +2166,13 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (Data.make_dpat v c [|dg; dpos; dsize|], info)
           | _ -> assert false)
     
-      | GRID _, Objects (nmax), [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|] ->
+      | GRID _, Objects (nmax,mode), [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|] ->
          let info_seg, info_card =
            Ndseq.map_tup ~depth (0,0)
              (fun _ ->
-               `Seg [GPat.Objects.(Connected (Connect8,false))],
+               `Seg [ match mode with
+                      | `Connected -> GPat.Objects.(Connected (Connect8,false))
+                      | `SameColor -> GPat.Objects.SameColor ],
                `Int (1,nmax))
              (tup1 info) in
          let* l = Myseq.product_fair
@@ -2178,7 +2181,7 @@ module MyDomain : Madil.DOMAIN =
          (match l with
           | [dseg, _; dcard, _] ->
              let vcard = Data.value dcard in
-             (* REM let* () = Myseq.from_bool
+             (* let* () = Myseq.from_bool
                          (Ndseq.for_all
                             (function
                              | `Int card -> card <= nmax
@@ -2202,7 +2205,7 @@ module MyDomain : Madil.DOMAIN =
                         List.fold_left
                           (fun (minh,minw) obj ->
                             match obj with
-                            | `Obj (i,j,g1) ->
+                            | `Obj (`Vec (i,j), `Grid g1) ->
                                let h1, w1 = Grid.dims g1 in
                                max minh (i+h1), max minw (j+w1)
                             | _ -> assert false)
@@ -2782,7 +2785,7 @@ module MyDomain : Madil.DOMAIN =
              let rw = Range.make_open 1 in
              let nc = if nocolor then 1 else Grid.nb_color in
              `GridDimsCols (g, rh, rw, nc)
-          | OBJ (filling,nocolor), `Obj (i,j,g) ->
+          | OBJ (filling,nocolor), `Obj (`Vec (i,j), `Grid g) ->
              let rh = Range.make_open 1 in
              let rw = Range.make_open 1 in
              let nc = if nocolor then 1 else Grid.nb_color in
@@ -2806,7 +2809,7 @@ module MyDomain : Madil.DOMAIN =
           | `Seg seg -> `Seg seg
           | `Motif mot -> `Motif mot
           | `GridDimsCols (g,rh,rw,nc) -> `Grid g
-          | `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g1,_,_,_)) -> `Obj (i,j,g1)
+          | `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g1,_,_,_)) -> `Obj (`Vec (i,j), `Grid g1)
           | `MapDomain (m,dom) -> `Map m
           | _ -> assert false)
         input
@@ -2845,8 +2848,8 @@ module MyDomain : Madil.DOMAIN =
                  if g = g0
                  then Myseq.return (v, `Null)
                  else Myseq.empty
-              | `Obj (i0,j0,g0), `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)),
-                                       `GridDimsCols (g, _, _, _)) ->
+              | `Obj (`Vec (i0,j0), `Grid g0),
+                `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g, _, _, _)) ->
                  if i = i0 && j = j0 && g = g0
                  then Myseq.return (v, `Null)
                  else Myseq.empty
@@ -2879,6 +2882,10 @@ module MyDomain : Madil.DOMAIN =
                Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
             | GRID tg, `GridDimsCols (g,rh,rw,nc) ->
                Myseq.return (`Grid g, `GridRange (g,tg,rh,rw,nc))
+            | OBJ tg, `Obj (`Vec (`IntRange (i,ri), `IntRange (j,rj)),
+                            `GridDimsCols (g,rh,rw,nc)) ->
+               Myseq.return (`Obj (`Vec (i,j), `Grid g),
+                             `Obj (`VecRange (i,j,ri,rj), `GridRange (g,tg,rh,rw,nc)))
             | MAP (ta,tb), `MapDomain (m,dom) ->
                Myseq.return (`Map m, `MapTyp (m,ta,tb))
             | _ ->
@@ -3045,7 +3052,7 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dg; dpos; dsize|], input)
     
-      | _, Objects (nmax), [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|] ->
+      | _, Objects (nmax,mode), [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|] ->
          let v = value_of_input t input in
          let in_size =
            Ndseq.map ~depth 0
@@ -3058,7 +3065,11 @@ module MyDomain : Madil.DOMAIN =
              input in
          let* dsize, _ = parse_size in_size in
          let* in_seg =
-           let* seg = Myseq.from_list GPat.Objects.candidate_segmentations in (* common choice for all sequence items *)
+           let* seg = (* common choice for all sequence items *)
+             Myseq.from_list
+               (match mode with
+                | `Connected -> GPat.Objects.candidate_segmentations_connected
+                | `SameColor -> [GPat.Objects.SameColor]) in
            Myseq.return
              (Ndseq.map ~depth 0
                 (function
@@ -3070,20 +3081,26 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1)
              (function
               | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Vec (h,w) ->
+                 let nc1 = nc in
+                 (* PB: not robust segmentation choice, and makes monocolor non-compresive
+                   match seg with
+                   | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
+                   | _ -> nc in *)
                  let* objs = GPat.Objects.parse seg g in
                  let card = List.length objs in
-                 let* objs = (* swapping two objets among first three *)
+                 let* () = Myseq.from_bool (card <= nmax) in
+                 let* objs = (* permutations of first three objects *)
                    match objs with
                    | [] -> Myseq.return objs
                    | [o1] -> Myseq.return objs
                    | [o1;o2] -> Myseq.cons objs (Myseq.return [o2;o1])
                    | o1::o2::o3::os ->
                       Myseq.cons objs
-                        (Myseq.cons (o2::o1::o3::os)
-                           (Myseq.cons (o3::o2::o1::os)
-                              (Myseq.return (o1::o3::o2::os)))) in
-                 let* () = Myseq.from_bool (card <= nmax) in
-                 (* TODO : some permutations of objs *)
+                        (Myseq.cons (o1::o3::o2::os)
+                           (Myseq.cons (o2::o1::o3::os)
+                              (Myseq.cons (o2::o3::o1::os)
+                                 (Myseq.cons (o3::o2::o1::os)
+                                    (Myseq.return (o3::o1::o2::os)))))) in
                  Myseq.return
                    (`IntRange (card, Range.make_closed 0 nmax),
                     Ndseq.seq 0
@@ -3094,7 +3111,7 @@ module MyDomain : Madil.DOMAIN =
                                  `GridDimsCols (g1,
                                                 Range.make_closed 1 (h-i),
                                                 Range.make_closed 1 (w-j),
-                                                nc)))
+                                                nc1)))
                          objs))
               | _ -> assert false)
              (input, Data.value dseg, Data.value dsize) in
@@ -3620,7 +3637,7 @@ module MyDomain : Madil.DOMAIN =
            else invalid_arg ("dl_background_color: Unexpected color: " ^ Grid.name_of_color c)
 
     let dl_seg (seg : GPat.Objects.segmentation) : dl =
-      Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations
+      Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations_connected
          
     let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
       let nb =
@@ -3688,7 +3705,7 @@ module MyDomain : Madil.DOMAIN =
              let rmax = Range.make_closed 1 Grid.max_size in
              dl
              +. dl_grid g tg rmax rmax Grid.nb_color
-          | _, `Obj (i,j,g) ->
+          | OBJ tg, `Obj (`Vec (i,j), `Grid g) ->
              dl
              +. dl_value (INT (COORD (I, POS))) (`Int i)
              +. dl_value (INT (COORD (J, POS))) (`Int j)
@@ -3699,18 +3716,18 @@ module MyDomain : Madil.DOMAIN =
         0. v
 
     let encoding_dany vr =
-      Ndseq.fold_left
-        (fun dl vr ->
-          match vr with
-          | `IntRange (ij,range) -> dl +. Range.dl ij range
-          | `VecRange (i,j,ri,rj) -> dl +. Range.dl i ri +. Range.dl j rj
-          | `ColorTyp (c,tc) -> dl +. dl_color c tc
-          | `Seg seg -> dl +. dl_seg seg
-          | `MotifTyp (m,tm) -> dl +. dl_motif tm m
-          | `GridRange (g,tg,rh,rw,nc) -> dl +. dl_grid g tg rh rw nc
-          | `MapTyp (m,ta,tb) -> dl +. dl_map (dl_value ta) (dl_value tb) m
-          | _ -> assert false)
-        0. vr
+      let rec aux = function
+        | `IntRange (ij,range) -> Range.dl ij range
+        | `VecRange (i,j,ri,rj) -> Range.dl i ri +. Range.dl j rj
+        | `ColorTyp (c,tc) -> dl_color c tc
+        | `Seg seg -> dl_seg seg
+        | `MotifTyp (m,tm) -> dl_motif tm m
+        | `GridRange (g,tg,rh,rw,nc) -> dl_grid g tg rh rw nc
+        | `Obj (pos,g1) -> aux pos +. aux g1
+        | `MapTyp (m,ta,tb) -> dl_map (dl_value ta) (dl_value tb) m
+        | _ -> assert false
+      in
+      Ndseq.fold_left (fun dl vr -> dl +. aux vr) 0. vr
     
     let encoding_dpat dc encs =
       match dc, encs with
@@ -3722,7 +3739,7 @@ module MyDomain : Madil.DOMAIN =
       | BgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | IsFull, [|enc_g1|] -> enc_g1
       | Crop, [|enc_g; enc_pos; enc_size|] -> assert (enc_g = 0.); enc_g +. enc_pos +. enc_size
-      | Objects (nmax), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_card +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | Objects (nmax,mode), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_card +. enc_objs (* TODO: take seg into account for encoding objects *)
       | ColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_grid; enc_map|] -> assert (enc_grid = 0.); enc_grid +. enc_map
@@ -3768,13 +3785,13 @@ module MyDomain : Madil.DOMAIN =
       | _, BgColor -> 0.
       | _, IsFull -> 0.
       | _, Crop -> 0.
-      | _, Objects (nmax) ->
+      | _, Objects (nmax,mode) ->
          (*Mdl.Code.usage
            (match seg with
             | `Connected -> 0.33
             | `ConnectedSameColor -> 0.33
             | `SameColor -> 0.33)
-         +. *) Mdl.Code.universal_int_plus nmax
+         +. *) 1. +. Mdl.Code.universal_int_plus nmax
       | _, ColorPartition -> 0.
       | _, Monocolor -> 0.
       | _, Recoloring -> 0.
@@ -4357,19 +4374,42 @@ module MyDomain : Madil.DOMAIN =
            let xi, varseq = Refining.new_var varseq in
            let xj, varseq = Refining.new_var varseq in
            (make_vec tv
-              (Model.make_def xi (Model.make_any (INT (COORD (I, tv)))))
-              (Model.make_def xj (Model.make_any (INT (COORD (J, tv))))),
+              (Model.make_def xi (make_anycoord I tv))
+              (Model.make_def xj (make_anycoord J tv)),
             varseq) :: rs
         | _ -> rs in
-(*      let rs = (* adding Obj *)
+(*      let rs = (* adding Obj: implicit with Objects *)
         match t with
         | OBJ tg ->
            let xpos, varseq = Refining.new_var varseq in
            let xg1, varseq = Refining.new_var varseq in
            (make_obj tg
-              (Model.make_def xpos (Model.make_any (VEC POS)))
-              (Model.make_def xg1 (Model.make_any (GRID tg))),
+              (Model.make_def xpos (make_anyvec POS))
+              (Model.make_def xg1 (make_anygrid tg)),
             varseq) :: rs
+        | _ -> rs in *)
+(*      let rs = (* Monocolor when always single color. Because of SameColor segmentations... *)
+        match t with
+        | GRID (filling,false) ->
+           if List.for_all
+                (fun vs ->
+                  List.exists
+                    (fun v ->
+                      Ndseq.for_all ~depth
+                        (function
+                         | `Grid g -> Grid.color_count Grid.transparent g = 1
+                         | v -> pp_endline xp_value v; assert false)
+                        v)
+                    vs)
+                valuess
+           then
+             let xg1_color, varseq = Refining.new_var varseq in
+             let xg1_mask, varseq = Refining.new_var varseq in
+             (make_monocolor
+                (Model.make_def xg1_color (make_anycolor C_OBJ))
+                (Model.make_def xg1_mask (make_anygrid (filling,true))),
+              varseq) :: rs
+           else rs
         | _ -> rs in *)
       rs
     
@@ -4406,7 +4446,7 @@ module MyDomain : Madil.DOMAIN =
              let xstep, varseq = Refining.new_var varseq in
              (make_seqrange t
                 (Model.make_def xstart (Model.make_any t))
-                (Model.make_def xstep (Model.make_any (INT (COORD (I, MOVE))))),
+                (Model.make_def xstep (make_anycoord I MOVE)),
               varseq) :: rs
            else rs in
          rs
@@ -4523,17 +4563,11 @@ module MyDomain : Madil.DOMAIN =
            let$ refs, gvar = refs, cropable_vars in
            (make_crop tg
               (Model.make_expr (GRID tg) (Expr.Ref (GRID tg, gvar)))
-              (Model.make_def xpos (Model.make_any (VEC POS)))
-(* XX                 (make_vec POS
-                    (Model.make_def xpos_i (make_anycoord I POS))
-                    (Model.make_def xpos_j (make_anycoord J POS)))) *)
-              (Model.make_def xsize (Model.make_any (VEC SIZE))),
-(* XX                 (make_vec SIZE
-                    (Model.make_def xsize_i (make_anycoord I SIZE))
-                    (Model.make_def xsize_j (make_anycoord J SIZE)))), *)
+              (Model.make_def xpos (make_anyvec POS))
+              (Model.make_def xsize (make_anyvec SIZE)),
             varseq)
            :: refs in
-         let refs = (* Objects *)
+         let refs = (* Objects - Connected *)
            if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
@@ -4548,27 +4582,20 @@ module MyDomain : Madil.DOMAIN =
              let xg1, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
-             (make_objects nmax
-                (Model.make_def xsize (Model.make_any (VEC SIZE)))
-(* XX                   (make_vec SIZE
-                      (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE)))) *)
+             (make_objects nmax `Connected
+                (Model.make_def xsize (make_anyvec SIZE))
                 (Model.make_def xseg (make_anyseg))
                 (Model.make_def xcard make_anycard)
-                ((* XX Model.make_loop xloop *)
-                 (Model.make_def xobj
-                      (make_obj (`Sprite,nocolor)
-                         (Model.make_def xpos (Model.make_any (VEC POS)))
-(* XX                            (make_vec POS
-                               (Model.make_def xpos_i (make_anycoord I POS))
-                               (Model.make_def xpos_j (make_anycoord J POS)))) *)
-                         (Model.make_def xg1
-                            (make_anygrid (`Sprite,nocolor))))))
+                (Model.make_def xobj
+                    (* (Model.make_anyobj (`Sprite,nocolor))) *)
+                   (make_obj (`Sprite,nocolor) (* inserted here for efficiency *)
+                      (Model.make_def xpos (make_anyvec POS))
+                      (Model.make_def xg1 (make_anygrid (`Sprite,nocolor)))))
                 (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
               varseq)
              :: refs
            else refs in
-         let refs = (* Objects/SameColor *)
+         let refs = (* Objects - SameColor *)
            if filling <> `Full && not nocolor then
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
@@ -4584,24 +4611,18 @@ module MyDomain : Madil.DOMAIN =
              let xg1_mask, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let nmax = 9 in
-             (make_objects nmax
-                (Model.make_def xsize (Model.make_any (VEC SIZE)))
-(* XX                   (make_vec SIZE
-                      (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE)))) *)
+             (make_objects nmax `SameColor
+                (Model.make_def xsize (make_anyvec SIZE))
                 (Model.make_expr SEG (Expr.Const (SEG, `Seg GPat.Objects.SameColor)))
                 (Model.make_def xcard make_anycard)
-                ((* XX Model.make_loop xloop *)
-                   (Model.make_def xobj
-                      (make_obj (`Sprite,nocolor)
-                         (Model.make_def xpos (Model.make_any (VEC POS)))
-(* XX                            (make_vec POS
-                               (Model.make_def xpos_i (make_anycoord I POS))
-                               (Model.make_def xpos_j (make_anycoord J POS)))) *)
-                         (Model.make_def xg1
-                            (make_monocolor
-                               (Model.make_def xg1_color (make_anycolor C_OBJ))
-                               (Model.make_def xg1_mask (make_anygrid (filling,true))))))))
+                (Model.make_def xobj
+                   (* (make_anygrid (`Sprite,nocolor)) *)
+                   (make_obj (`Sprite,nocolor) (* inserted here for efficiency *)
+                      (Model.make_def xpos (make_anyvec POS))
+                      (Model.make_def xg1
+                         (make_monocolor
+                            (Model.make_def xg1_color (make_anycolor C_OBJ))
+                            (Model.make_def xg1_mask (make_anygrid (filling,true)))))))
                 (Model.make_def xmerger (Model.make_derived (OBJ (`Sprite,nocolor)))),
               varseq)
              :: refs
@@ -4639,10 +4660,7 @@ module MyDomain : Madil.DOMAIN =
                    let xsize, varseq = Refining.new_var varseq in
                    let xsize_i, varseq = Refining.new_var varseq in
                    let xsize_j, varseq = Refining.new_var varseq in
-                   Model.make_def xsize (Model.make_any (VEC SIZE)),
-(* XX                     (make_vec SIZE
-                        (Model.make_def xsize_i (make_anycoord I SIZE))
-                        (Model.make_def xsize_j (make_anycoord J SIZE))), *)
+                   Model.make_def xsize (make_anyvec SIZE),
                    varseq in
                  make_full msize, varseq
                else
@@ -4749,20 +4767,10 @@ module MyDomain : Madil.DOMAIN =
            (make_metagrid tg
               (Model.make_def xsepcolor (make_anycolor (C_BG (filling = `Full))))
               (Model.make_def xborders (make_anygrid (`Sprite,true)))
-              (Model.make_def xdims (Model.make_any (VEC SIZE)))
-(* XX                 (make_vec SIZE
-                    (Model.make_def xk (make_anycoord I SIZE))
-                    (Model.make_def xl (make_anycoord J SIZE)))) *)
-              ((* XX Model.make_loop xl_heights *)
-                 (Model.make_def xheight
-                    (make_anycoord I SIZE)))
-              ((* XX Model.make_loop xl_widths *)
-                 (Model.make_def xwidth
-                    (make_anycoord J SIZE)))
-              ((* XX Model.make_loop xl_i *)
-               ((* XX Model.make_loop xl_j *)
-                    (Model.make_def xg1
-                       (make_anygrid tg)))),
+              (Model.make_def xdims (make_anyvec SIZE))
+              (Model.make_def xheight (make_anycoord I SIZE))
+              (Model.make_def xwidth (make_anycoord J SIZE))
+              (Model.make_def xg1 (make_anygrid tg)),
             varseq)
            :: refs in
          (* let refs = (* Repeat - too catchy, replaced by function *)
@@ -4784,10 +4792,7 @@ module MyDomain : Madil.DOMAIN =
              let xsize, varseq = Refining.new_var varseq in
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
-             Model.make_def xsize (Model.make_any (VEC SIZE)),
-(* XX               (make_vec SIZE
-                  (Model.make_def xsize_i (make_anycoord I SIZE))
-                  (Model.make_def xsize_j (make_anycoord J SIZE))), *)
+             Model.make_def xsize (make_anyvec SIZE),
              varseq in
            (make_empty msize, varseq_msize)
            :: (if nocolor then
@@ -4803,10 +4808,7 @@ module MyDomain : Madil.DOMAIN =
              let xdir_j, varseq = Refining.new_var varseq in
              (make_line
                 (Model.make_def xlen (make_anycoord I SIZE))
-                (Model.make_def xdir (Model.make_any (VEC MOVE))),
-(* XX                   (make_vec MOVE
-                      (Model.make_def xdir_i (make_anycoord I MOVE))
-                      (Model.make_def xdir_j (make_anycoord J MOVE)))), *)
+                (Model.make_def xdir (make_anyvec MOVE)),
               varseq)
              ::refs
            else refs in
@@ -4818,8 +4820,7 @@ module MyDomain : Madil.DOMAIN =
              let$ refs, (dir,axis) = refs, [`H, J; `V, I] in
              (make_colorseq dir
                 (Model.make_def xsize (make_anycoord axis SIZE))
-                ((* XX Model.make_loop xloop *)
-                   (Model.make_def xcol (make_anycolor C_OBJ))),
+                (Model.make_def xcol (make_anycolor C_OBJ)),
               varseq)
              ::refs
            else refs in
@@ -4832,17 +4833,13 @@ module MyDomain : Madil.DOMAIN =
              let xloop2, varseq = Refining.new_var varseq in
              let xcol, varseq = Refining.new_var varseq in
              (make_colormat
-                (Model.make_def xsize (Model.make_any (VEC SIZE)))
-(* XX                   (make_vec SIZE
-                      (Model.make_def xh (make_anycoord I SIZE))
-                      (Model.make_def xw (make_anycoord J SIZE)))) *)
-                ((* XX Model.make_loop xloop1 *)
-                 ((* XX Model.make_loop xloop2 *)
-                      (Model.make_def xcol (make_anycolor C_OBJ)))),
+                (Model.make_def xsize (make_anyvec SIZE))
+                (Model.make_def xcol (make_anycolor C_OBJ)),
               varseq)
              ::refs
            else refs in
          refs
+      | OBJ _ -> rs
       | _ -> assert false    
     let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       []
@@ -4860,9 +4857,6 @@ module MyDomain : Madil.DOMAIN =
          let x, varseq = Refining.new_var varseq in
          let y, varseq = Refining.new_var varseq in
          [ Model.make_any t, varseq ] 
-(* XX         [ make_vec tv
-             (Model.make_def x (make_anycoord I tv))
-             (Model.make_def y (make_anycoord J tv)), varseq ] *)
       | COLOR tc, _ ->
          [ make_anycolor tc, varseq ]
       | SEG, _ ->
@@ -4872,15 +4866,13 @@ module MyDomain : Madil.DOMAIN =
       | GRID tg, _ ->
          [ make_anygrid tg, varseq ]
       | OBJ tg, _ ->
+      (*         [ make_anygrid tg, varseq ] *)
          let xpos, varseq = Refining.new_var varseq in
          let xi, varseq = Refining.new_var varseq in
          let xj, varseq = Refining.new_var varseq in
          let xg1, varseq = Refining.new_var varseq in
          [ make_obj tg
-             (Model.make_def xpos (Model.make_any (VEC POS)))
-(* XX                (make_vec POS
-                   (Model.make_def xi (make_anycoord I POS))
-                   (Model.make_def xj (make_anycoord J POS)))) *)
+             (Model.make_def xpos (make_anyvec POS))
              (Model.make_def xg1 (make_anygrid tg)),
            varseq ]
       | MAP (ta,tb), _ ->

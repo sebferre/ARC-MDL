@@ -320,16 +320,15 @@ and connectedness =
   | Connect2_row
   | Connect2_col
 
-let candidate_segmentations =
+let candidate_segmentations_connected =
   [ Connected (Connect8,true);
     Connected (Connect8,false);
     Connected (Connect4,true);
     Connected (Connect4,false);
     Connected (Connect2_row,true);
-    Connected (Connect2_col,true);
-    (*SameColor*) ]
-let nb_candidate_segmentations =
-  List.length candidate_segmentations
+    Connected (Connect2_col,true) ]
+let nb_candidate_segmentations_connected =
+  List.length candidate_segmentations_connected
 
 let rec xp_segmentation ~html print = function
   | Connected (conn,mono) ->
