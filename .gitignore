@@ -6,6 +6,9 @@
 *.cma
 *.cmxa
 *.byte
+*.out
+*.zip
+*.backup
 old/
 main
 test
