@@ -3286,6 +3286,7 @@ module MyDomain : Madil.DOMAIN =
                  assert (Range.mem w rw);
                  let* mg : GPat.Metagrid.t = Myseq.from_list (GPat.Metagrid.parse g) in
                  let k, l = mg.k, mg.l in
+                 let* () = Myseq.from_bool (k > 1 || l > 1) in (* avoiding degenerate metagrids *)
                  let top, bot, left, right =
                    let b = mg.borders.matrix in
                    let offset c = if c = Grid.Mask.one then 1 else 0 in
@@ -4921,8 +4922,8 @@ module MyDomain : Madil.DOMAIN =
       pp_endline xp_task_model m;
       flush stdout;*)
       ()
-    let log_refining r m prs dl =
-      Printf.printf "REF  %.3f  " dl;
+    let log_refining r m prs lmd lrido =
+      Printf.printf "REF  %.3f  %.3f  " lmd lrido;
       pp_endline xp_refinement r;
       (*pp_endline xp_task_model m;*)
       ()
