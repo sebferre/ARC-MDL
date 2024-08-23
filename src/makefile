@@ -24,10 +24,12 @@ lis: $(SRC) lis_arc.ml
 
 arcathon: $(SRC:.cmo=.cmx) arcathon.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o arcathon $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) arcathon.ml
+arcprize: $(SRC:.cmo=.cmx) arcprize.ml
+	ocamlfind ocamlopt $(FLAGS) -linkpkg -o arcprize $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) arcprize.ml
 
-docker: arcathon
-	sudo docker build -t sferre/arcathon .  # add ferre to dockergroup to avoid sudo
-	sudo docker save sferre/arcathon > docker_madil.tar
+docker: arcprize
+	sudo docker build -t sferre/arcprize .  # add ferre to dockergroup to avoid sudo
+# sudo docker save sferre/arcprize > docker_madil.tar
 
 test_common_subgrid: $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
 	ocamlfind ocamlopt $(FLAGS) -linkpkg -o test_common_subgrid $(OBJ:.cmo=.cmx) $(SRC:.cmo=.cmx) common_subgrid.ml test_common_subgrid.ml
