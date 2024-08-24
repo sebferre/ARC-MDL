@@ -6,36 +6,15 @@ module MadilArc = Madil.Make(Domain_arc.MyDomain)
 (* local *)
 (*let tasks_path = "/local/ferre/prog/ocaml/arc/arcprize/arc-agi_test_challenges_sample.json"
 let solution_path = "/local/ferre/prog/ocaml/arc/arcprize/submission.json"*)
-(* docker / Kaggle *)
-let tasks_path = "/data/arc-agi_test_challenges.json" (* mount /kaggle/input/arc-prize-2024/ *)
-let solution_path = "/etc/submission.json" (* mount /kaggle/working/ *)
+(* Kaggle *)
+let tasks_path = "/kaggle/input/arc-prize-2024/arc-agi_test_challenges.json"
+let solution_path = "/kaggle/working/submission.json"
 
 let memout = 10000
 (* 12h in total max, so max 432s/task overall *)
-let timeout_refine = 30 (* 300 (* 120 *) *)
+let timeout_refine = 180 (* 300 (* 120 *) *)
 let timeout_prune = 30
 let timeout_predict = 30
-
-(* copied from madil/task.ml *)
-(*let value_of_json (* : Yojson.Safe.t -> value *) = function
-  | `List (`List row::_ as rows) ->
-     let height = List.length rows in
-     let width = List.length row in
-     let grid : Grid.t = Grid.make height width 0 in
-     List.iteri
-       (fun i ->
-	 function
-	 | `List cells ->
-	    List.iteri
-	      (fun j ->
-	        function
-	        | `Int col -> Grid.Do.set_pixel grid i j col
-	        | _ -> invalid_arg "Invalid JSON grid color")
-	      cells
-	 | _ -> invalid_arg "Invalid JSON grid row")
-       rows;
-     (`Grid grid : MadilArc.value)
-  | _ -> invalid_arg "Invalid JSON grid" *)
 
 let dummy_grid = Grid.make 1 1 Grid.black
 let dummy_json_grid = `List [`List [`Int 0]]
@@ -166,7 +145,6 @@ let store_solution json_solution =
   let ch_out = open_out solution_path in
   Yojson.Safe.pretty_to_channel ~std:true ch_out json_solution;
   close_out ch_out
-(*  Yojson.Safe.to_file solution_path json_solution *)
   
 let _ =
   let count, name_tasks = load_tasks () in
