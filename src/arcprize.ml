@@ -10,11 +10,11 @@ let solution_path = "/local/ferre/prog/ocaml/arc/arcprize/submission.json"*)
 let tasks_path = "/kaggle/input/arc-prize-2024/arc-agi_test_challenges.json"
 let solution_path = "/kaggle/working/submission.json"
 
-let memout = 10000
+let memout = 5000 (* 10000 *)
 (* 12h in total max, so max 432s/task overall *)
-let timeout_refine = 180 (* 300 (* 120 *) *)
-let timeout_prune = 30
-let timeout_predict = 30
+let timeout_refine = 120 (* 300 (* 120 *) *)
+let timeout_prune = 20 (* 30 *)
+let timeout_predict = 20 (* 30 *)
 
 let dummy_grid = Grid.make 1 1 Grid.black
 let dummy_json_grid = `List [`List [`Int 0]]
