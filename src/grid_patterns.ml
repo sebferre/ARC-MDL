@@ -683,6 +683,7 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        1 h []
   | Periodic (phi,psi) ->
      let h', w' = Grid.Transf.bound_axis phi h w, Grid.Transf.bound_axis psi h w in
+     let h', w' = min h' Grid.max_size, min w' max_size in (* bounding core size *)
      Range.make_closed 1 h',
      Range.make_closed 1 w',
      Common.fold_for
@@ -710,9 +711,9 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
      Range.make_exact v,
      [u, v]
   | FlipD1 ->
-     if h = w
+     let hw' = h+w-1 in (* projected dim, diagonal size *)
+     if h = w && hw' <= Grid.max_size
      then
-       let hw' = h+w-1 in (* projected dim, diagonal size *)
        let u, v = (hw'+1)/2, hw' in (* only half is used *)
        Range.make_exact u,
        Range.make_exact v,
@@ -722,9 +723,9 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        []
   | FlipD2 ->
-     if h = w
+     let hw' = h+w-1 in
+     if h = w && hw' <= Grid.max_size
      then
-       let hw' = h+w-1 in
        let u, v = hw', (hw'+1)/2 in
        Range.make_exact u,
        Range.make_exact v,
@@ -734,9 +735,9 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        []
   | FlipD12 ->
-     if h = w
+     let hw' = h+w-1 in
+     if h = w && hw' <= Grid.max_size
      then
-       let hw' = h+w-1 in
        let u, v = (hw'+1)/2, (hw'+1)/2 in
        Range.make_exact u,
        Range.make_exact v,

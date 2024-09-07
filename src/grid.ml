@@ -165,6 +165,12 @@ let is_well_formed (g : t) : bool =
   if not !ok then print_endline "wrong color count";
   !ok
 
+let has_valid_size (g : t) : bool =
+  let h = Array2.dim1 g.matrix in
+  let w = Array2.dim2 g.matrix in
+  h > 0 && h <= max_size
+  && w > 0 && w <= max_size
+
 module Do =
   struct
     let alloc (height : int) (width : int) : t =
@@ -231,7 +237,7 @@ let make h w c =
   Do.fill g c;
   g
 
-let dummy = make 0 0 0
+let dummy = make 1 1 0
 
 let init h w f =
   let g = Do.alloc h w in

@@ -3200,6 +3200,7 @@ module MyDomain : Madil.DOMAIN =
               | `GridDimsCols (g,rh,rw,nc) ->
                  let* mot, ru, rv, g_core, mask_opt, g_noise =
                    Myseq.from_list (GPat.Motif.from_grid GPat.Motif.candidates_multi g_bgcolor g) in
+                 assert (Grid.has_valid_size g_core); (* to make sure oversized grids are pruned out *)
                  Myseq.return
                    (`Motif mot,
                     `GridDimsCols (g_core,ru,rv,nc),
