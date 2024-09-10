@@ -1853,7 +1853,7 @@ by the parser.
 
 \begin{table}[t]
   \centering
-  \caption{Performance on training and evaluation tasks as the number of tasks solved, per version ($\alpha = 10$)}
+  \caption{Performance on training and evaluation tasks as the number of tasks solved, per version ($\alpha = 10$ until v3.2 then $100$)}
   \begin{tabular}{|c|c|c|c|c|c|c|c|c|}
     \hline
      & & & \multicolumn{3}{c|}{training} & \multicolumn{3}{c|}{evaluation} \\
@@ -1898,6 +1898,8 @@ by the parser.
     v3.2 & 2024-03-26 & 60s & 36s & ~111 / 114.3~ & ~99 / 100.0~ & 44s & ~47 / 53.5~ & ~41 / 42.0~ \\
     \hline
     v3.3 & 2024-05-05 & 60s & 42s & ~125 / 127.7~ & ~112 / 113.3~ & 48s & ~63 / 68.0~ & ~56 / 57.0~ \\
+    \hline
+    v3.4 & 2024-09-04 & 60s & 44s & ~134 / 141.4~ & ~117 / 118.8~ & 54s & ~64 / 74.3~ & ~53 / 55~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2237,7 +2239,9 @@ tasks, from 52 to 94 training tasks (23.5\%), and from 9 to 23 evaluation tasks 
 \paragraph{Version 3.0} Restart with the MADIL framework. New models:
 lost incremental object addition and object overlapping; gained
 sequences (of objects and other things); lifted a number of functions
-as patterns for better incrementality and findability (motifs).
+as patterns for better incrementality and findability (motifs). Kind
+of DFS search, considering up to top-3 refinements at the same path at
+each step.
 
 \paragraph{Version 3.1}
 \begin{itemize}
@@ -2264,6 +2268,16 @@ as patterns for better incrementality and findability (motifs).
 \item alpha increased from 10 to 100
 \item patterns: Monocolor includes pattern FullMask for full grids; Metagrid for grids of grids and one-color frontiers; partial motifs (adding a mask); new motif Corners for four-corner-dots objects
 \item functions: selfCompose can use color expression
+\end{itemize}
+
+\paragraph{Version 3.4}
+\begin{itemize}
+\item MADIL: handling of sequences delegated to the domain (no more loops), simpler pattern semantics (pure data decompositions). This allows for custom sequence matching and computation. Utilities for element-wise computations on sequences of sequences, etc.
+\item notion of Decompositions: patterns that do not compress but split into parts. They must be further refined until made compressive. Subset of patterns: Vec, Obj.
+\item patterns: Motif split into two patterns, Multicolor and Bicolor;
+\item patterns on sequences: Cons (decomposition), Repeat, Index, Range
+\item functions on sequences: min, max, argmin, argmax
+\item MCTS search through model refinement tree (search space)
 \end{itemize}
 
 %%%
