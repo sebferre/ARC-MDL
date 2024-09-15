@@ -12,7 +12,7 @@ let solution_path = "/kaggle/working/submission.json"
 
 let memout = 5000 (* 10000 *)
 (* 12h in total max, so max 432s/task overall *)
-let timeout_refine = 120 (* 300 (* 120 *) *)
+let timeout_refine = 180 (* max 300 *)
 let timeout_prune = 20 (* 30 *)
 let timeout_predict = 20 (* 30 *)
 
@@ -107,6 +107,7 @@ let process_task name task =
       ~timeout_prune
       ~jump_width:(!MadilArc.jump_width)
       ~refine_degree:(!MadilArc.max_refinements)
+      ~search_temperature:(!MadilArc.search_temperature)
       ~env
       ~init_task_model
       task.Task.train in
