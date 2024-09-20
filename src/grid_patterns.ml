@@ -664,8 +664,8 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
   (* range and list of core dimensions (u,v) given a motif and grid dims *)
   match mot with
   | Scale ->
-     Range.make_closed 1 h,
-     Range.make_closed 1 w,
+     Range.make_open 1 (* closed 1 h *), (* favoring small cores *)
+     Range.make_open 1 (* closed 1 w *),
      Common.fold_for
        (fun u res ->
          if h mod u = 0 (* congruent vertical scale *)
@@ -684,8 +684,8 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
   | Periodic (phi,psi) ->
      let h', w' = Grid.Transf.bound_axis phi h w, Grid.Transf.bound_axis psi h w in
      let h', w' = min h' Grid.max_size, min w' max_size in (* bounding core size *)
-     Range.make_closed 1 h',
-     Range.make_closed 1 w',
+     Range.make_open 1 (* closed 1 h' *),
+     Range.make_open 1 (* closed 1 w' *),
      Common.fold_for
        (fun u res ->
          Common.fold_for
@@ -840,6 +840,40 @@ let candidates_multi = (* multicolor motifs *)
     Periodic (MaxIJ, Zero);
     Periodic (MinIJ, Zero) ]
 let nb_candidates_multi = List.length candidates_multi
+
+let prob_multi : t -> float = function
+  | Scale -> 0.3
+
+  (* 0.4 *)
+  | FullSym -> 0.4 *. 0.35
+
+  | FlipHW -> 0.4 *. 0.2
+  | FlipH -> 0.4 *. 0.05
+  | FlipW -> 0.4 *. 0.05
+
+  | FlipD12 -> 0.4 *. 0.1
+  | FlipD1 -> 0.4 *. 0.05
+  | FlipD2 -> 0.4 *. 0.05
+
+  | Rotate90 -> 0.4 *. 0.1
+  | Rotate180 -> 0.4 *. 0.05
+
+  (* 0.3 *)
+  | Periodic (a,b) ->
+     0.3 *.
+     (match a, b with
+      | I, J -> 0.2
+      | I, PlusIJ -> 0.04
+      | PlusIJ, J -> 0.04
+      | PlusIJ, DiffIJ -> 0.04
+      | I, Zero -> 0.2
+      | J, Zero -> 0.2
+      | PlusIJ, Zero -> 0.1
+      | DiffIJ, Zero -> 0.1
+      | MaxIJ, Zero -> 0.04
+      | MinIJ, Zero -> 0.04
+      | _ -> assert false)
+  | _ -> assert false
 
 let candidates_bi = (* bicolor shape-like motifs *)
   let open Grid.Transf in

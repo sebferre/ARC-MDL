@@ -3205,7 +3205,10 @@ module MyDomain : Madil.DOMAIN =
                    (`Motif mot,
                     `GridDimsCols (g_core,ru,rv,nc),
                     (match partial, mask_opt with
-                     | true, Some mask -> `GridDimsCols (mask,rh,rw,1)
+                     | true, Some mask ->
+                        let h, w = Grid.dims mask in (* same as grid and noise *)
+                        let rh, rw = Range.make_exact h, Range.make_exact w in (* already encoded in noise *) 
+                        `GridDimsCols (mask,rh,rw,1)
                      | _ -> `Null), (* TODO: revise handling of optional, ugly *)
                     `GridDimsCols (g_noise,rh,rw,nc))
               | _ -> assert false)
@@ -3580,10 +3583,13 @@ module MyDomain : Madil.DOMAIN =
              else
                match Ndseq.as_seq vseq with
                | Some (d, l) ->
-                  let n = List.length l in
-                  let range = Range.make_closed 0 (n-1) in
-                  let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
-                  aux (`IntRange (i, range) :: rev_path) d vi
+                  if l = []
+                  then Myseq.empty
+                  else
+                    let n = List.length l in
+                    let range = Range.make_closed 0 (n-1) in
+                    let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
+                    aux (`IntRange (i, range) :: rev_path) d vi
                | None -> assert false
            in
            aux [] depth_seq vseq in
@@ -3645,11 +3651,11 @@ module MyDomain : Madil.DOMAIN =
       Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations_connected
          
     let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
-      let nb =
-        match tmot with
-        | MULTI -> GPat.Motif.nb_candidates_multi
-        | BI -> GPat.Motif.nb_candidates_bi in
-      Mdl.Code.uniform nb
+      match tmot with
+      | MULTI ->
+         (* Mdl.Code.uniform GPat.Motif.nb_candidates_multi *)
+         Mdl.Code.usage (GPat.Motif.prob_multi m)
+      | BI -> Mdl.Code.uniform GPat.Motif.nb_candidates_bi
          
     let dl_grid g (filling,nocolor) rh rw nc : dl = (* too efficient a coding for being useful? *)
       (* nc is nb of colors, not including transparent or undefined, nocolor implies nc=1 *)
@@ -4715,7 +4721,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else refs in
          let refs = (* MotifMulti *)
-           let tg_mask = (`Noise,true) in
+           let tg_mask = (`Sprite,true) in
            let xmot, varseq = Refining.new_var varseq in
            let xcore, varseq = Refining.new_var varseq in
            let xpure, varseq = Refining.new_var varseq in
@@ -4735,7 +4741,7 @@ module MyDomain : Madil.DOMAIN =
             varseq)
            :: refs in
          let refs = (* MotifBi *)
-           let tg_mask = (`Noise,true) in
+           let tg_mask = (`Sprite,true) in
            let xmot, varseq = Refining.new_var varseq in
            let xbgcolor, varseq = Refining.new_var varseq in
            let xcolor, varseq = Refining.new_var varseq in
