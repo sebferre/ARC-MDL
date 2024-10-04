@@ -731,26 +731,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       object
         inherit [typ,typ,constr,func] Model.asd
         method abstract t = {t with ndim = 0} (* ignoring ndim to avoid infinite recursion *)
-        method is_default_constr = function
-          | _ -> false
-        method default_and_other_pats t (* abstract *) =
+        method pats t (* abstract *) =
           (* synchronize with is_default_constr *)
           assert (t.ndim = 0);
           let res =
             [ SeqCons 0, [|t; t|];
               SeqRepeat 0, [|t|];
               SeqIndex, [|t; scalar (INT INDEX)|] ] in
-(* XX          let res =
-            if t.ndim > 0
-            then
-              let t_1 = {t with ndim = t.ndim - 1} in
-              [ SeqCons 0, [|t_1; t|];
-                SeqRepeat 0, [|t_1|] ]
-            else
-              let$ res, ndim = [], [1; 2] in
-              (SeqIndex, [| {t with ndim}; typ_index |])::res in *)
           match t.kind with
-          | BOOL -> None, res
+          | BOOL -> res
           | INT ti ->
              let res =
                (SeqRange, [|t; {t with kind = INT (COORD (I, MOVE))} |]) :: res in
@@ -760,21 +749,16 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                   let$ res, kind = res, [BOOL] in (* TODO: should be polymorphic, for every type *)
                   (SeqIndexOf kind, [|scalar kind; scalar kind|]) :: res
                | _ -> res in
-             None, res
+             res
           | VEC tv ->
-             None,
              (Vec, [| {t with kind = INT (COORD (I, tv))};
                       {t with kind = INT (COORD (J, tv))} |])
              :: res
-          | COLOR tc ->
-             None, res
-          | SEG ->
-             None, res
-          | MOTIF tm ->
-             None, res
+          | COLOR tc -> res
+          | SEG -> res
+          | MOTIF tm -> res
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
-             None,
              List.fold_left
                (fun res (cond,c_args) ->
                  if cond
@@ -840,12 +824,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                        [| {t with kind = VEC SIZE};
                                           {t with kind = COLOR C_OBJ} |]) ]
           | OBJ tg ->
-             None,
              (Obj, [| {t with kind = VEC POS};
                       {t with kind = GRID tg} |])
              :: res
           | MAP (ka,kb) ->
-             None,
              List.fold_left
                (fun res (cond,c_args) ->
                  if cond
@@ -866,36 +848,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
               `Reverse_1, [|t|];
               `Rotate_1 1, [|t|];
               `Transpose_1, [|t|] ] in
-(* XX          let res =
-            if t.ndim+1 <= max_ndim
-            then
-              (`Index_1 [Some 0], [| {t with ndim = t.ndim+1} |])::res
-            else res in
-          let res =
-            if t.ndim+2 <= max_ndim
-            then
-              (`Index_1 [Some 0; Some 0], [| {t with ndim = t.ndim+2} |])::res
-            else res in
-          let res =
-            if t.ndim >= 1 && t.ndim+1 <= max_ndim
-            then
-              (`Flatten_1 (true,false), [| {t with ndim = t.ndim+1} |])
-              ::res
-            else res in
-          let res =
-            if t.ndim >= 1
-            then
-              (`Tail_1, [|t|])
-              ::(`Reverse_1, [|t|])
-              ::(`Rotate_1 1, [|t|])
-              ::res
-            else res in
-          let res =
-            if t.ndim >= 2
-            then
-              (`Transpose_1, [|t|])
-              ::res
-            else res in *)
           match t.kind with
           | BOOL -> res
           | INT CARD ->
