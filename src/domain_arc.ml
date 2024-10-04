@@ -963,7 +963,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::res
           | MAP (ka,kb) -> res
         
-        method expr_opt t = true, [t]
+        method expr_opt t = true
         method alt_opt t = false (* LATER *)
       end
 
