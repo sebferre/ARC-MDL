@@ -555,7 +555,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       ]
 
     type func =
-      [ `Index_1 of int option list (* X^k -> X^0..k *)
+      [ `Cast_1 of typ_kind * typ_kind (* k -> k' cast *)
+      | `Index_1 of int option list (* X^k -> X^0..k *)
       | `Tail_1 (* X^k -> X^k *)
       | `Reverse_1 (* X^k -> X^k *)
       | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
@@ -602,6 +603,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let rec xp_func : func html_xp =
       fun ~html print f ->
       match f with
+      | `Cast_1 (k,k') ->
+         print#string "cast["; xp_typ_kind ~html print k;
+         print#string " > "; xp_typ_kind ~html print k';
+         print#string "]"
       | `Index_1 is ->
          print#string "index";
          xp_list
@@ -743,12 +748,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | INT ti ->
              let res =
                (SeqRange, [|t; {t with kind = INT (COORD (I, MOVE))} |]) :: res in
-             let res =
+             (* let res =
                match ti with
                | INDEX ->
                   let$ res, kind = res, [BOOL] in (* TODO: should be polymorphic, for every type *)
                   (SeqIndexOf kind, [|scalar kind; scalar kind|]) :: res
-               | _ -> res in
+               | _ -> res in *)
              res
           | VEC tv ->
              (Vec, [| {t with kind = INT (COORD (I, tv))};
@@ -842,7 +847,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
         method funcs t (* abstract *) =
           assert (t.ndim = 0);
           let res =
-            [ `Index_1 [], [|t|];
+            [ `Cast_1 (t.kind,t.kind), [|t|];
+              `Index_1 [], [|t|];
               `Flatten_1 (true,false), [|t|];
               `Tail_1, [|t|];
               `Reverse_1, [|t|];
@@ -957,27 +963,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::res
           | MAP (ka,kb) -> res
         
-        method expr_opt t =
-          let expand_grid (filling, nocolor) =
-            [(`Sprite, nocolor); (`Full, nocolor); (`Noise, nocolor)] in
-          match t.kind with (* what type can be used to define t *)
-          | BOOL -> true, [t]
-          | INT CARD -> true, [t]
-          | INT INDEX -> true, [t; {t with kind = INT CARD}]
-          | INT (COORD (axis,tv)) -> true, [t]
-          | VEC _ -> true, [t]
-          | COLOR C_OBJ -> true, [t; {t with kind = COLOR (C_BG true)}]
-          | COLOR (C_BG true) -> true, [t; {t with kind = COLOR C_OBJ}]
-          | COLOR (C_BG false) -> true, [t;
-                                         {t with kind = COLOR (C_BG true)};
-                                         {t with kind = COLOR C_OBJ}]
-          | SEG -> true, [t]
-          | MOTIF tm -> true, [t]
-          | GRID tg -> true, List.map (fun tg -> {t with kind = GRID tg}) (expand_grid tg)
-          | OBJ tg -> true, List.map (fun tg -> {t with kind = OBJ tg}) (expand_grid tg)
-          | MAP _ -> true, [t]
-        method alt_opt = function
-          | _ -> false (* LATER *)
+        method expr_opt t = true, [t]
+        method alt_opt t = false (* LATER *)
       end
 
     (* model processing *)
@@ -1842,6 +1829,10 @@ module MyDomain : Madil.DOMAIN =
 
     let rec eval_func (f : func) : value array -> value result = (* QUICK *)
       match f with
+      | `Cast_1 (k,k') ->
+         (function
+          | [|v1|] -> Result.Ok v1
+          | _ -> assert false)         
       | `Index_1 is ->
          (function
           | [|v1|] ->
@@ -3874,8 +3865,35 @@ module MyDomain : Madil.DOMAIN =
       | `Total -> Mdl.Code.usage 0.25
       | `Strict -> Mdl.Code.usage 0.25
       | `TradeOff -> Mdl.Code.usage 0.5
-           
+
+    let dl_cast_kind k k' =
+      (* encoding k' given k *)
+      match k with
+      | INT CARD ->
+         (match k' with
+          | INT INDEX -> 0.
+          | _ -> assert false)
+      | COLOR C_OBJ ->
+         (match k' with
+          | COLOR (C_BG full) -> 1. (* encoding full *)
+          | _ -> assert false)
+      | COLOR (C_BG true) ->
+         (match k' with
+          | COLOR C_OBJ -> Mdl.Code.usage 0.4
+          | COLOR (C_BG false) -> Mdl.Code.usage 0.6
+          | _ -> assert false)
+      | GRID (filling,nocolor) ->
+         (match k' with
+          | GRID (filling', nocolor') when filling' <> filling && nocolor' = nocolor -> 1. (* one of the two other fillings *)
+          | _ -> assert false)
+      | OBJ (filling,nocolor) ->
+         (match k' with
+          | OBJ (filling', nocolor') when filling' <> filling && nocolor' = nocolor -> 1.
+          | _ -> assert false)
+      | _ -> assert false
+    
     let dl_func_params (t : typ) : func -> dl = function
+      | `Cast_1 (k,k') -> dl_cast_kind k k'
       | `Index_1 is ->
          assert (is <> []);
          Mdl.Code.universal_int_plus (List.length is)
@@ -4389,6 +4407,33 @@ module MyDomain : Madil.DOMAIN =
               | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, `Default)::res
               | _ -> res in*)
             (* Stack *)
+            res) in
+      (*test "TEST LEVEL 4" index;*)
+      let index = (* LEVEL 4 *)
+        Expr.index_apply_functions
+          ~eval_func
+          index 1
+          (fun (t_args,v_args) ->
+            let res : (typ * func * _ Expr.args_spec) list = [] in
+            let res = (* Cast *)
+              match t_args with
+              | [| {kind} as t1 |] ->
+                 let lk' =
+                   match kind with
+                   | INT CARD -> [INT INDEX]
+                   | COLOR C_OBJ -> [COLOR (C_BG true); COLOR (C_BG false)]
+                   | COLOR (C_BG true) -> [COLOR C_OBJ; COLOR (C_BG false)]
+                   | GRID (filling,nocolor) ->
+                      let$ res, filling' = [], [`Full; `Sprite; `Noise] in
+                      if filling' = filling then res else GRID (filling',nocolor)::res
+                   | OBJ (filling,nocolor) ->
+                      let$ res, filling' = [], [`Full; `Sprite; `Noise] in
+                      if filling' = filling then res else OBJ (filling',nocolor)::res
+                   | _ -> [] in
+                 let$ res, k' = res, lk' in
+                 assert (k' <> kind);
+                 ({t1 with kind = k'}, `Cast_1 (kind,k'), `Default)::res
+              | _ -> res in
             res) in
       (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
       index
