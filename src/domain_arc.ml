@@ -877,6 +877,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Max_1, [|t|])
              ::(`I_1, [| {t with kind = VEC tv} |])
              ::(`J_1, [| {t with kind = VEC tv} |])
+             ::(`Right_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`Center_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`Bottom_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`Middle_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`IJTranspose_1, [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
              ::(`Direction_1, [|t|])
              ::(`Abs_1, [|t|])
@@ -911,7 +915,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                        {t with kind = OBJ (`Sprite,false)} |])
              ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |])
-             ::(`ApplySymVec_1 (`Id,tv), [|t|])
+             (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
              ::(`Tiling_1 (2,2), [|t|])
              ::res
           | COLOR tc ->
@@ -923,27 +927,32 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
+             ::(`TopHalf_1, [|t|])
+             ::(`BottomHalf_1, [|t|])
+             ::(`LeftHalf_1, [|t|])
+             ::(`RightHalf_1, [|t|])
+             ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
              ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
              ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |])
                (*::(`Strip_1, [|GRID (false,false)|])*)
-             ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|])
-             ::(`Crop_2, [| {t with kind = GRID (`Full,false)};
-                            {t with kind = OBJ (`Sprite,false)} |])
+             (* ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|]) *)
+             (* ::(`Crop_2, [| {t with kind = GRID (`Full,false)};
+                            {t with kind = OBJ (`Sprite,false)} |]) *)
              ::(`ApplySymGrid_1 `Id, [|t|])
              ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |])
-             ::(`Tiling_1 (2,2), [|t|])
+             (* ::(`Tiling_1 (2,2), [|t|]) *)
              ::(`Unrepeat_1, [|t|])
-             ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
+             (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
-                                                 t |])
+                                                 t |]) *)
              ::(`SelfCompose_3, [| {t with kind = COLOR (C_BG full)};
                                    {t with kind = COLOR C_OBJ};
                                    t |])
-             ::(`UnfoldSym_1 [], [|t|])
+             (* ::(`UnfoldSym_1 [], [|t|]) *)
              ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t|])
-             ::(`SwapColors_3, [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |])
-             ::(`Stack_n, [|t; t|])
+             (* ::(`SwapColors_3, [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |]) *)
+             (* ::(`Stack_n, [|t; t|]) *)
              (* on masks *)
              ::(`LogNot_1, [|t|])
              ::(`LogAnd_2, [|t; t|])
@@ -952,15 +961,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`LogXOr_2, [|t; t|])
              ::res
           | OBJ (filling,nocolor) ->
-             let full = (filling = `Full) in
-             (`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t |])
-             ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
+             (*let full = (filling = `Full) in*)
+             (* (`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t |]) *)
+             (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
-                                                 t |])
-             ::(`ApplySymGrid_1 `Id, [|t|])
-             ::(`UnfoldSym_1 [], [|t|])
-             ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t |])
-             ::res
+                                                 t |]) *)
+             (* ::(`ApplySymGrid_1 `Id, [|t|]) *)
+             (* ::(`UnfoldSym_1 [], [|t|]) *)
+             (* ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t |]) *)
+             res
           | MAP (ka,kb) -> res
         
         method expr_opt t = true
@@ -4437,6 +4446,393 @@ module MyDomain : Madil.DOMAIN =
             res) in
       (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
       index
+
+    let affine_params = [
+        `ScaleUp_2, 1, `Plus_2, 1;
+        `ScaleUp_2, 1, `Plus_2, 2;
+        `ScaleUp_2, 1, `Plus_2, 3;
+        `ScaleUp_2, 1, `Minus_2, 1;
+        `ScaleUp_2, 1, `Minus_2, 2;
+        `ScaleUp_2, 1, `Minus_2, 3;
+        `ScaleUp_2, 2, `Plus_2, 0;
+        `ScaleUp_2, 2, `Plus_2, 1;
+        `ScaleUp_2, 2, `Minus_2, 1;
+        `ScaleDown_2, 2, `Plus_2, 0;
+        `ScaleDown_2, 2, `Plus_2, 1;
+        `ScaleDown_2, 2, `Minus_2, 1;
+        `ScaleUp_2, 3, `Plus_2, 0;
+        `ScaleUp_2, 3, `Plus_2, 1;
+        `ScaleUp_2, 3, `Minus_2, 1;
+        `ScaleDown_2, 3, `Plus_2, 0;
+        `ScaleDown_2, 3, `Plus_2, 1;
+        `ScaleDown_2, 3, `Minus_2, 1;
+      ]
+    
+    let make_index (bindings : bindings) : expr_index = (* NEW VERSION *)
+      Common.prof "make_index" (fun () ->
+      let bgcolors full =
+        Grid.black :: if full then [] else [Grid.transparent] in
+      let index = Expr.Index.empty in
+      let index = Expr.index_add_bindings index bindings in
+      let index = (* LEVEL: Grid features *)
+        Common.prof "make_index/grid_features" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* Grid_1 *)
+              match t1.kind with
+              | OBJ tg ->
+                 ({t1 with kind = GRID tg}, `Grid_1, `Default)
+                 ::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: Color features, Vec features *)
+        Common.prof "make_index/color_vec_features" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res =  (* MajorityColor_1, MinorityColor_1 *)
+              match t1.kind with
+              | GRID (filling,false) ->
+                 let full = (filling = `Full) in
+                 let$ res, tc = res, [C_BG full; C_OBJ] in
+                 let tres = {t1 with kind = COLOR tc} in
+                 (tres, `MajorityColor_1, `Default)
+                 ::(tres, `MinorityColor_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* Size_1 *)
+              match t1.kind with
+              | GRID (filling,nocolor) ->
+                 ({t1 with kind = VEC SIZE}, `Size_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* Pos_1 *)
+              match t1.kind with
+              | OBJ tg ->
+                 ({t1 with kind = VEC POS}, `Pos_1, `Default)
+                 ::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: inter-object features *)
+        Common.prof "make_index/inter_obj_feature" (fun () ->
+        Expr.index_apply_functions_2
+          ~eval_func
+          index
+          (function ({kind = OBJ _}, _) -> true | _ -> false)
+          (fun t1 v1 t2 v2 ->
+            let res = [] in
+            let res = (* TranslationOnto *)
+              match t1.kind, t2.kind with
+              | OBJ _, OBJ _ ->
+                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationOnto_2, `Default)::res
+              | _ -> res in
+            let res = (* TranslationSym *)
+              match t1.kind, t2.kind with
+              | OBJ _, (OBJ _ | GRID _) ->
+                 let$ res, sym =
+                   res,
+                   [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
+                    `Rotate180; `Rotate90; `Rotate270] in
+                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationSym_2 sym, `Default)::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: Int features *)
+        Common.prof "make_index/int_features" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* I_1, J_1, Norm_1 *)
+              match t1.kind with
+              | VEC tv ->
+                 ({t1 with kind = INT (COORD (I, tv))}, `I_1, `Default)
+                 ::({t1 with kind = INT (COORD (J, tv))}, `J_1, `Default)
+                 ::({t1 with kind = INT CARD}, `Norm_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* Area_1 *)
+              match t1.kind with
+              | GRID (filling,nocolor) ->
+                 ({t1 with kind = INT CARD}, `Area_1, `Default)
+                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default) (* TODO: add cast from CARD to COORD? *)
+                 ::({t1 with kind = INT (COORD (J, SIZE))}, `Area_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* ColorCount_1 *)
+              match t1.kind with
+              | GRID (filling,false) ->
+                 ({t1 with kind = INT CARD}, `ColorCount_1, `Default)::res
+              | _ -> res in
+            let res = (* Right, Center, Bottom, Middle *)
+              match t1.kind with
+              | OBJ tg ->
+                 ({t1 with kind = INT (COORD (J,POS))}, `Right_1, `Default)
+                 ::({t1 with kind = INT (COORD (J,POS))}, `Center_1, `Default)
+                 ::({t1 with kind = INT (COORD (I,POS))}, `Bottom_1, `Default)
+                 ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
+                 ::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: Int+Vec bin *)
+        Common.prof "make_index/int_vec_bin" (fun () ->
+        Expr.index_apply_functions_2
+          ~eval_func
+          index
+          (function ({kind = (INT _ | VEC _)}, _) -> true | _ -> false)
+          (fun t1 v1 t2 v2 ->
+            let res = [] in
+            let res = (* x + y, x - y, abs(x-y), direction(x-y) *)
+              match t1.kind, t2.kind with
+              | INT ti1, INT ti2 ->
+                 let tres = {t1 with ndim = max t1.ndim t2.ndim} in
+                 let res =
+                   (tres, `Plus_2, `Default)
+                   ::(tres, `Minus_2, `Default)
+                   ::res in
+                 let res =
+                   if ti1 = ti2
+                   then
+                     (tres, `Abs_1, `Custom [| `Apply (tres, `Minus_2, [|`Pos 0; `Pos 1|]) |])
+                     ::(tres, `Direction_1, `Custom [| `Apply (tres, `Minus_2, [|`Pos 0; `Pos 1|]) |])
+                     ::res
+                   else res in
+                 res
+              | VEC tv1, VEC tv2 ->
+                 let tres = {t1 with ndim = max t1.ndim t2.ndim} in
+                 let res =
+                   (tres, `Plus_2, `Default)
+                   ::(tres, `Minus_2, `Default)
+                   ::res in
+                 let res =
+                   if tv1 = tv2
+                   then
+                     (tres, `Abs_1, `Custom [| `Apply (tres, `Minus_2, [|`Pos 0; `Pos 1|]) |])
+                     ::(tres, `Direction_1, `Custom [| `Apply (tres, `Minus_2, [|`Pos 0; `Pos 1|]) |])
+                     ::res
+                   else res in
+                 res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: INT+VEC affine, GRID derived *)
+        Common.prof "make_index/int_vec_affine" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* ax + b, for x : INT | VEC *)
+              match t1.kind with
+              | INT _ ->
+                 let$ res, (opmult,a,opadd,b) = res, affine_params in
+                 let f, spec_args =
+                   let tconst = scalar t1.kind in
+                   if b = 0 then opmult, `Custom [| `Pos 0; `Val (tconst, `Int a) |]
+                   else if a = 1 then opadd, `Custom [| `Pos 0; `Val (tconst, `Int b) |]
+                   else opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (tconst, `Int a) |]);
+                                          `Val (tconst, `Int b) |] in
+                 (t1, f, spec_args)::res
+              | VEC _ ->
+                 let$ res, (opmult,a,opadd,b) = res, affine_params in
+                 let$ res, (a1,a2) = res, if a = 1 then [(1,1)] else [(a,a); (1,a); (a,1)] in
+                 let$ res, (b1,b2) = res, if b = 0 then [(0,0)] else [(b,b); (0,b); (b,0)] in
+                 let f, spec_args =
+                   let tconst = scalar t1.kind in
+                   if b = 0 then
+                     opmult, `Custom [| `Pos 0; `Val (tconst, `Vec (a1,a2)) |]
+                   else if a = 1 then
+                     opadd, `Custom [| `Pos 0; `Val (tconst, `Vec (b1,b2)) |]
+                   else
+                     opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (tconst, `Vec (a1,a2)) |]);
+                                       `Val (tconst, `Vec (b1,b2)) |] in
+                 (t1, f, spec_args)::res
+              | _ -> res in
+            let res = (* Unrepeat *)
+              match t1.kind with
+              | GRID _ ->
+                 (t1, `Unrepeat_1, `Default)::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: INT+VEC transpose *)
+        Common.prof "make_index/int_vec_transpose" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* IJTranspose *)
+              match t1.kind with
+              | INT (COORD (axis,tv)) ->
+                 ({t1 with kind = INT (COORD (axis_transpose axis, tv))}, `Transpose_1, `Default)::res
+              | VEC tv ->
+                 ({t1 with kind = VEC tv}, `IJTranspose_1, `Default)::res
+              | _ -> res in
+            let res = (* ApplySymGrid *)
+              match t1.kind with
+              | GRID _ ->
+                 let$ res, sym = res, all_symmetry in
+                 (t1, `ApplySymGrid_1 sym, `Default)::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: GRID part+compose *)
+        Common.prof "make_index/grid_part_compose" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
+              match t1.kind with
+              | GRID tg ->
+                 ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
+                 ::({t1 with kind = GRID tg}, `BottomHalf_1, `Default)
+                 ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
+                 ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* CloseSym *)
+              match t1.kind with
+              | GRID (filling,_) ->
+                 let full = (filling = `Full) in
+                 let$ res, bgcolor = res, bgcolors full in
+                 let args_spec = `Custom [|`Val (scalar (COLOR (C_BG full)), `Color bgcolor); `Pos 0|] in
+                 let$ res, sym_seq = res, all_symmetry_close in
+                 (t1, `CloseSym_2 sym_seq, args_spec)::res
+              | _ -> res in
+            let res = (* SelfCompose *)
+              match t1.kind with
+              | GRID (filling,nocolor) ->
+                 let full = filling = `Full in
+                 let bgcolor = if full then Grid.black else Grid.transparent in 
+                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
+                 let args_spec = `Custom [| `Val (scalar (COLOR (C_BG full)), `Color bgcolor);
+                                            `Val (scalar (COLOR C_OBJ), `Color color);
+                                            `Pos 0|] in
+                 (t1, `SelfCompose_3, args_spec)::res
+              | _ -> res in
+(* TODO            let res = (* SelfCompose/2 - TODO: should be added with unary SelfCompose but avoid full binary fold *)
+              match t_args with
+              | [| {kind = COLOR C_OBJ} as t1;
+                   {kind = GRID (filling,nocolor)} as t2 |] ->
+                 let full = filling = `Full in
+                 let bgcolor = if full then Grid.black else Grid.transparent in
+                 let args_spec = `Custom [| `Val (scalar (COLOR (C_BG full)), `Color bgcolor);
+                                            `Pos 0;
+                                            `Pos 1|] in                 
+                                            ({t2 with ndim = max t1.ndim t2.ndim}, `SelfCompose_3, args_spec)::res
+                                            | _ -> res in *)
+            res)) in
+      let index = (* LEVEL: GRID mask *)
+        Common.prof "make_index/grid_mask" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* MaskOfGrid *)
+              match t1.kind with
+              | GRID ((`Sprite|`Noise as filling), false) ->
+                 let tres = {t1 with kind = GRID (filling, true)} in
+                 (tres, `MaskOfGrid_1, `Default)
+                 ::(tres, `LogNot_1, `Custom [| `Apply (tres, `MaskOfGrid_1, [|`Pos 0|]) |])
+                 ::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: GRID bool *)
+        Common.prof "make_index/grid_bool" (fun () ->
+        Expr.index_apply_functions_2
+          ~eval_func
+          index
+          (function ({kind = GRID (`Sprite,true)}, _) -> true | _ -> false)
+          (fun t1 v1 t2 v2 ->
+            let res = [] in
+            let res = (* And, Or, XOr *)
+              match t1.kind, t2.kind with
+              | GRID (`Sprite,true), GRID (`Sprite,true) ->
+                 let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2] in
+                 ({t1 with ndim = max t1.ndim t2.ndim}, f, `Default)::res
+              | _ -> res in
+            res)) in
+      let index = (* LEVEL: collection-wise *)
+        Common.prof "make_index/collection" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let ndim = t1.ndim in
+            let res = [] in
+            if ndim > 0
+            then
+              let res = (* Index_1[i], Tail_1 *)
+                let$ res, i = res, [0; 1; 2; -2; -1] in
+                ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)
+                ::(t1, `Tail_1, `Default)
+                ::res in
+              let res = (* Index_1[i,j] *)
+                if ndim >= 2
+                then
+                  let res =
+                    let$ res, j = res, [0; 1; 2; -2; -1] in
+                    ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
+                  let res =
+                    let$ res, i = res, [0; 1; -1] in
+                    let$ res, j = res, [0; 1; -1] in
+                    ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
+                  res
+                else res in
+              let res = (* Reverse, Rotate *)
+                let res = (t1, `Reverse_1, `Default)::res in
+                let$ res, shift = res, [-1; 1] in
+                (t1, `Rotate_1 shift, `Default)::res in
+              let res = (* Transpose, Flatten *)
+                if ndim >= 2 (* only defined on sequences of sequences *)
+                then
+                  let res = (t1, `Transpose_1, `Default)::res in
+                  let$ res, rows = res, [true; false] in
+                  let$ res, snake = res, [false; true] in
+                  (t1, `Flatten_1 (rows,snake), `Default)::res
+                else res in
+              let res = (* Min, Max, ArgMin, ArgMax *)
+                match t1.kind with
+                | INT _ ->
+                   ({t1 with ndim = 0}, `Min_1, `Default)
+                   ::({t1 with ndim = 0}, `Max_1, `Default)
+                   ::(typ_index, `ArgMin_1, `Default)
+                   ::(typ_index, `ArgMax_1, `Default)
+                   ::res
+                | _ -> res in
+              res
+            else res)) in
+      let index = (* LEVEL: cast *)
+        Common.prof "make_index/cast" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let kind = t1.kind in
+            let res = [] in
+            let lk' =
+              match kind with
+              | INT CARD -> [INT INDEX]
+              | COLOR C_OBJ -> [COLOR (C_BG true); COLOR (C_BG false)]
+              | COLOR (C_BG true) -> [COLOR C_OBJ; COLOR (C_BG false)]
+              | GRID (filling,nocolor) ->
+                 let$ res, filling' = [], [`Full; `Sprite; `Noise] in
+                 if filling' = filling then res else GRID (filling',nocolor)::res
+              | OBJ (filling,nocolor) ->
+                 let$ res, filling' = [], [`Full; `Sprite; `Noise] in
+                 if filling' = filling then res else OBJ (filling',nocolor)::res
+              | _ -> [] in
+            let$ res, k' = res, lk' in
+            assert (k' <> kind);
+            ({t1 with kind = k'}, `Cast_1 (kind,k'), `Default)::res)) in
+      index)
+
     let make_index, reset_make_index =
       Memo.memoize ~size:103 make_index
 
