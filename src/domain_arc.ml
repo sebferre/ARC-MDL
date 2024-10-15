@@ -3880,7 +3880,8 @@ module MyDomain : Madil.DOMAIN =
       match k with
       | INT CARD ->
          (match k' with
-          | INT INDEX -> 0.
+          | INT INDEX -> Mdl.Code.usage 0.5
+          | INT (COORD (axis,tv)) -> Mdl.Code.usage 0.5 +. Mdl.Code.uniform 2 (* axis *) +. Mdl.Code.uniform 3 (* tv *)
           | _ -> assert false)
       | COLOR C_OBJ ->
          (match k' with
@@ -4518,7 +4519,7 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: inter-object features *)
+(* TODO      let index = (* LEVEL: inter-object features *) (* TODO: define as unary function on collections *)
         Common.prof "make_index/inter_obj_feature" (fun () ->
         Expr.index_apply_functions_2
           ~eval_func
@@ -4540,7 +4541,7 @@ module MyDomain : Madil.DOMAIN =
                     `Rotate180; `Rotate90; `Rotate270] in
                  ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationSym_2 sym, `Default)::res
               | _ -> res in
-            res)) in
+            res)) in *)
       let index = (* LEVEL: Int features *)
         Common.prof "make_index/int_features" (fun () ->
         Expr.index_apply_functions_1
@@ -4579,8 +4580,36 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
+      let index = (* LEVEL: ALL elements and slices *)
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let ndim = t1.ndim in
+            let res = [] in
+            let res = (* Index_1[i], Tail_1 *)
+              if ndim >= 1
+              then
+                let$ res, i = res, [0; 1; 2; -2; -1] in
+                ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)
+                ::(t1, `Tail_1, `Default)
+                ::res
+              else res in
+            let res = (* Index_1[i,j] *)
+              if ndim >= 2
+              then
+                let res =
+                  let$ res, j = res, [0; 1; 2; -2; -1] in
+                  ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
+                let res =
+                  let$ res, i = res, [0; 1; -1] in
+                  let$ res, j = res, [0; 1; -1] in
+                  ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
+                res
+              else res in
+            res) in
       let index = (* LEVEL: Int+Vec bin *)
-        Common.prof "make_index/int_vec_bin" (fun () ->
+        Common.prof "make_index/int_vec_obj_bin" (fun () ->
         Expr.index_apply_functions_2
           ~eval_func
           index
@@ -4628,28 +4657,33 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             let res = (* ax + b, for x : INT | VEC *)
               match t1.kind with
-              | INT _ ->
+              | INT ti ->
+                 let ta = scalar (INT CARD) in
+                 let tb = scalar (INT (match ti with
+                                       | COORD (axis,_) -> COORD (axis,MOVE)
+                                       | CARD -> INDEX
+                                       | INDEX -> INDEX)) in
                  let$ res, (opmult,a,opadd,b) = res, affine_params in
                  let f, spec_args =
-                   let tconst = scalar t1.kind in
-                   if b = 0 then opmult, `Custom [| `Pos 0; `Val (tconst, `Int a) |]
-                   else if a = 1 then opadd, `Custom [| `Pos 0; `Val (tconst, `Int b) |]
-                   else opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (tconst, `Int a) |]);
-                                          `Val (tconst, `Int b) |] in
+                   if b = 0 then opmult, `Custom [| `Pos 0; `Val (ta, `Int a) |]
+                   else if a = 1 then opadd, `Custom [| `Pos 0; `Val (tb, `Int b) |]
+                   else opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (ta, `Int a) |]);
+                                          `Val (tb, `Int b) |] in
                  (t1, f, spec_args)::res
-              | VEC _ ->
+              | VEC tv ->
+                 let ta = scalar (VEC SIZE) in (* should be CARD *)
+                 let tb = scalar (VEC MOVE) in
                  let$ res, (opmult,a,opadd,b) = res, affine_params in
                  let$ res, (a1,a2) = res, if a = 1 then [(1,1)] else [(a,a); (1,a); (a,1)] in
                  let$ res, (b1,b2) = res, if b = 0 then [(0,0)] else [(b,b); (0,b); (b,0)] in
                  let f, spec_args =
-                   let tconst = scalar t1.kind in
                    if b = 0 then
-                     opmult, `Custom [| `Pos 0; `Val (tconst, `Vec (a1,a2)) |]
+                     opmult, `Custom [| `Pos 0; `Val (ta, `Vec (a1,a2)) |]
                    else if a = 1 then
-                     opadd, `Custom [| `Pos 0; `Val (tconst, `Vec (b1,b2)) |]
+                     opadd, `Custom [| `Pos 0; `Val (tb, `Vec (b1,b2)) |]
                    else
-                     opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (tconst, `Vec (a1,a2)) |]);
-                                       `Val (tconst, `Vec (b1,b2)) |] in
+                     opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (ta, `Vec (a1,a2)) |]);
+                                       `Val (tb, `Vec (b1,b2)) |] in
                  (t1, f, spec_args)::res
               | _ -> res in
             let res = (* Unrepeat *)
@@ -4708,10 +4742,20 @@ module MyDomain : Madil.DOMAIN =
               match t1.kind with
               | GRID (filling,nocolor) ->
                  let full = filling = `Full in
-                 let bgcolor = if full then Grid.black else Grid.transparent in 
-                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
+                 let bgcolor = if full then Grid.black else Grid.transparent in
+                 let$ res, color_arg =
+                   let tcol = scalar (COLOR C_OBJ) in
+                   res,
+                   if nocolor
+                   then [`Val (tcol, `Color Grid.black)]
+                   else
+                     let colors =
+                       [ `Apply (tcol, `MajorityColor_1, [|`Pos 0|]);
+                         `Apply (tcol, `MinorityColor_1, [|`Pos 0|]) ] in
+                     let$ colors, color = colors, Grid.all_colors in
+                     `Val (tcol, `Color color)::colors in
                  let args_spec = `Custom [| `Val (scalar (COLOR (C_BG full)), `Color bgcolor);
-                                            `Val (scalar (COLOR C_OBJ), `Color color);
+                                            color_arg;
                                             `Pos 0|] in
                  (t1, `SelfCompose_3, args_spec)::res
               | _ -> res in
@@ -4768,23 +4812,6 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             if ndim > 0
             then
-              let res = (* Index_1[i], Tail_1 *)
-                let$ res, i = res, [0; 1; 2; -2; -1] in
-                ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)
-                ::(t1, `Tail_1, `Default)
-                ::res in
-              let res = (* Index_1[i,j] *)
-                if ndim >= 2
-                then
-                  let res =
-                    let$ res, j = res, [0; 1; 2; -2; -1] in
-                    ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
-                  let res =
-                    let$ res, i = res, [0; 1; -1] in
-                    let$ res, j = res, [0; 1; -1] in
-                    ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
-                  res
-                else res in
               let res = (* Reverse, Rotate *)
                 let res = (t1, `Reverse_1, `Default)::res in
                 let$ res, shift = res, [-1; 1] in
@@ -4818,7 +4845,11 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             let lk' =
               match kind with
-              | INT CARD -> [INT INDEX]
+              | INT CARD ->
+                 let res = [INT INDEX] in
+                 let$ res, tv = res, [SIZE; POS; MOVE] in
+                 let$ res, axis = res, [I; J] in
+                 INT (COORD (axis,tv))::res
               | COLOR C_OBJ -> [COLOR (C_BG true); COLOR (C_BG false)]
               | COLOR (C_BG true) -> [COLOR C_OBJ; COLOR (C_BG false)]
               | GRID (filling,nocolor) ->
