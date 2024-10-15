@@ -513,10 +513,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Norm_1 (* Vec -> Int *)
       | `Diag1_1 of int (* Vec -> Int *)
       | `Diag2_1 of int (* Vec -> Int *)
-      | `LogAnd_2 (* on Mask *)
-      | `LogOr_2 (* on Mask *)
-      | `LogXOr_2 (* on Mask *)
-      | `LogAndNot_2 (* on Mask *)
       | `LogNot_1 (* on Mask *)
       | `Stack_n (* on Grids *)
       | `Area_1 (* on Shape *)
@@ -567,6 +563,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Max_1 (* Int^k -> Int *)
       | `ArgMin_1 (* Int^k -> Index^1 *)
       | `ArgMax_1 (* Int^k -> Index^1 *)
+      | `LogAnd_1 (* Mask^k -> Mask *)
+      | `LogOr_1 (* Mask^k -> Mask *)
+      | `LogXOr_1 (* Mask^k -> Mask *)
       | func_itemwise
       ]
 
@@ -652,10 +651,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Norm_1 -> print#string "norm"
       | `Diag1_1 k -> print#string "diag1"
       | `Diag2_1 k -> print#string "diag2"
-      | `LogAnd_2 -> print#string "and"
-      | `LogOr_2 -> print#string "or"
-      | `LogXOr_2 -> print#string "xor"
-      | `LogAndNot_2 -> print#string "and_ not"
+      | `LogAnd_1 -> print#string "and"
+      | `LogOr_1 -> print#string "or"
+      | `LogXOr_1 -> print#string "xor"
       | `LogNot_1 -> print#string "not"
       | `Stack_n -> print#string "stack"
       | `Area_1 -> print#string "area"
@@ -955,10 +953,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`Stack_n, [|t; t|]) *)
              (* on masks *)
              ::(`LogNot_1, [|t|])
-             ::(`LogAnd_2, [|t; t|])
-             ::(`LogOr_2, [|t; t|])
-             ::(`LogAndNot_2, [|t; t|])
-             ::(`LogXOr_2, [|t; t|])
+             ::(`LogAnd_1, [|t|])
+             ::(`LogOr_1, [|t|])
+             ::(`LogXOr_1, [|t|])
              ::res
           | OBJ (filling,nocolor) ->
              (*let full = (filling = `Full) in*)
@@ -1557,36 +1554,12 @@ module MyDomain : Madil.DOMAIN =
          (function
           | [| `Vec (i, j)|] -> Result.Ok (`Int ((i-j) mod k))
           | _ -> Result.Error (Invalid_expr e))
-      | `LogAnd_2 ->
-         (function
-          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 -> (* TODO: generalize Mask logics to grids transfs *)
-             let m = Grid.Mask.inter m1 m2 in
-             Result.Ok (`Grid m)
-          | _ -> Result.Error (Invalid_expr e))
-      | `LogOr_2 ->
-         (function
-          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
-             let m = Grid.Mask.union m1 m2 in
-             Result.Ok (`Grid m)
-          | _ -> Result.Error (Invalid_expr e))
-      | `LogXOr_2 ->
-         (function
-          | [|`Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
-             let m = Grid.Mask.diff_sym m1 m2 in
-             Result.Ok (`Grid m)
-          | _ -> Result.Error (Invalid_expr e))
-      | `LogAndNot_2 ->
-         (function
-          | [| `Grid m1; `Grid m2|] when Grid.dims m1 = Grid.dims m2 ->
-             let m = Grid.Mask.diff m1 m2 in
-             Result.Ok (`Grid m)
-          | _ -> Result.Error (Invalid_expr e))
       | `LogNot_1 ->
          (function
           | [| `Grid m1|] ->
              let m = Grid.Mask.compl m1 in
              Result.Ok (`Grid m)
-          | _ -> Result.Error (Invalid_expr e))
+             | _ -> Result.Error (Invalid_expr e))
       | `Stack_n ->
          (fun ds ->
            let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) ds in
@@ -1836,6 +1809,36 @@ module MyDomain : Madil.DOMAIN =
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
 
+    let eval_aggreg (name : string) (init : value -> 'a option) (g_item : 'a * value -> 'a option) (v1 : value) : 'a result =
+      (* v1 is usually a sequence *)
+      let acc_opt =
+        Ndseq.fold_left
+          (fun res v ->
+            match res with
+            | None -> init v
+            | Some acc -> g_item (acc, v))
+          None v1 in
+      match acc_opt with
+      | Some acc -> Result.Ok acc
+      | None -> Result.Error (Undefined_result (name ^ ": no values"))
+
+    let eval_arg_best (name : string) (proj : value -> 'a option) (better : 'a -> 'a -> bool) (v1 : value) : value result (* index *) =
+      let res =
+        Ndseq.foldi_left
+          (fun res revpath v ->
+            match res, proj v with
+            | _, None -> None
+            | None, Some x -> Some (revpath, x)
+            | Some (best_revpath, best), Some x ->
+               if better x best
+               then Some (revpath, x)
+               else res)
+          None v1 in
+      match res with
+      | Some (best_revpath, _best) ->
+         Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) best_revpath))
+      | None -> Result.Error (Undefined_result (name ^ ": no values"))
+
     let rec eval_func (f : func) : value array -> value result = (* QUICK *)
       match f with
       | `Cast_1 (k,k') ->
@@ -1907,70 +1910,77 @@ module MyDomain : Madil.DOMAIN =
       | `Min_1 ->
          (function
           | [|v1|] ->
-             let min_opt =
-               Ndseq.fold_left
-                 (fun res v ->
-                   match res, v with
-                   | None, `Int i -> Some i
-                   | Some m, `Int i -> Some (min m i)
-                   | _ -> res)
-                 None v1 in
-             (match min_opt with
-              | Some m -> Result.Ok (`Int m)
-              | None -> Result.Error (Undefined_result "min: no values"))
+             let| m =
+               eval_aggreg "min"
+                 (function `Int i -> Some i | _ -> None)
+                 (function (m, `Int i) -> Some (min m i) | _ -> None)
+                 v1 in
+             Result.Ok (`Int m)
           | _ -> assert false)
       | `Max_1 ->
          (function
           | [|v1|] ->
-             let max_opt =
-               Ndseq.fold_left
-                 (fun res v ->
-                   match res, v with
-                   | None, `Int i -> Some i
-                   | Some m, `Int i -> Some (max m i)
-                   | _ -> res)
-                 None v1 in
-             (match max_opt with
-              | Some m -> Result.Ok (`Int m)
-              | None -> Result.Error (Undefined_result "max: no values"))
+             let| m =
+               eval_aggreg "max"
+                 (function `Int i -> Some i | _ -> None)
+                 (function (m, `Int i) -> Some (max m i) | _ -> None)
+                 v1 in
+             Result.Ok (`Int m)
           | _ -> assert false)
       | `ArgMin_1 ->
          (function
           | [|v1|] -> (* returns first index if multiple *)
-             let res =
-               Ndseq.foldi_left
-                 (fun res revpath v ->
-                   match res, v with
-                   | None, `Int i -> Some (revpath, i)
-                   | Some (min_revpath, min_i), `Int i ->
-                      if i < min_i
-                      then Some (revpath, i)
-                      else res
-                   | _ -> res)
-                 None v1 in
-             (match res with
-              | Some (revpath, min_i) ->
-                 Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
-              | None -> Result.Error (Undefined_result "argmin: no values"))
+             eval_arg_best "argmin"
+               (function `Int i -> Some i | _ -> None)
+               (fun i best -> i < best)
+               v1
           | _ -> assert false)
       | `ArgMax_1 ->
          (function
           | [|v1|] -> (* returns first index if multiple *)
-             let res =
-               Ndseq.foldi_left
-                 (fun res revpath v ->
-                   match res, v with
-                   | None, `Int i -> Some (revpath, i)
-                   | Some (max_revpath, max_i), `Int i ->
-                      if i > max_i
-                      then Some (revpath, i)
-                      else res
-                   | _ -> res)
-                 None v1 in
-             (match res with
-              | Some (revpath, max_i) ->
-                 Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) revpath))
-              | None -> Result.Error (Undefined_result "argmax: no values"))
+             eval_arg_best "argmax"
+               (function `Int i -> Some i | _ -> None)
+               (fun i best -> i > best)
+               v1
+          | _ -> assert false)
+      | `LogAnd_1 ->
+         (function
+          | [|v1|] ->
+             let| m =
+               eval_aggreg "and"
+                 (function `Grid m -> Some m | _ -> None)
+                 (function
+                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                     Some (Grid.Mask.inter m1 m2)
+                  | _ -> None)
+                 v1 in
+             Result.Ok (`Grid m)
+          | _ -> assert false)
+      | `LogOr_1 ->
+         (function
+          | [|v1|] ->
+             let| m =
+               eval_aggreg "or"
+                 (function `Grid m -> Some m | _ -> None)
+                 (function
+                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                     Some (Grid.Mask.union m1 m2)
+                  | _ -> None)
+                 v1 in
+             Result.Ok (`Grid m)
+          | _ -> assert false)
+      | `LogXOr_1 ->
+         (function
+          | [|v1|] ->
+             let| m =
+               eval_aggreg "xor"
+                 (function `Grid m -> Some m | _ -> None)
+                 (function
+                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                     Some (Grid.Mask.diff_sym m1 m2)
+                  | _ -> None)
+                 v1 in
+             Result.Ok (`Grid m)
           | _ -> assert false)
       | #func_itemwise as f ->
          let f_item = eval_func_itemwise f in
@@ -3951,7 +3961,7 @@ module MyDomain : Madil.DOMAIN =
       | `Norm_1 -> 0.
       | `Diag1_1 k -> Mdl.Code.universal_int_star k
       | `Diag2_1 k -> Mdl.Code.universal_int_star k
-      | `LogAnd_2 | `LogOr_2 | `LogXOr_2 | `LogAndNot_2 | `LogNot_1 -> 0.
+      | `LogAnd_1 | `LogOr_1 | `LogXOr_1 | `LogNot_1 -> 0.
       | `Stack_n -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
@@ -4341,12 +4351,12 @@ module MyDomain : Madil.DOMAIN =
                  ::(typ_index, `ArgMax_1, `Default)
                  ::res
               | _ -> res in
-            let res = (* And, Or, XOr, AndNOt *)
+(*            let res = (* And, Or, XOr, AndNOt *)
               match t_args with
               | [| {kind = GRID (`Sprite,true)} as t1; t2 |] when t2.kind = t1.kind ->
                  let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
                  ({t1 with ndim = max t1.ndim t2.ndim}, f, `Default)::res
-              | _ -> res in
+              | _ -> res in *)
             res) in
       (*test "TEST LEVEL 2" index;*)
       let index = (* LEVEL 3 *)
@@ -4789,17 +4799,16 @@ module MyDomain : Madil.DOMAIN =
             res)) in
       let index = (* LEVEL: GRID bool *)
         Common.prof "make_index/grid_bool" (fun () ->
-        Expr.index_apply_functions_2
+        Expr.index_apply_functions_1
           ~eval_func
           index
-          (function ({kind = GRID (`Sprite,true)}, _) -> true | _ -> false)
-          (fun t1 v1 t2 v2 ->
+          (fun t1 v1 ->
             let res = [] in
             let res = (* And, Or, XOr *)
-              match t1.kind, t2.kind with
-              | GRID (`Sprite,true), GRID (`Sprite,true) ->
-                 let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2] in
-                 ({t1 with ndim = max t1.ndim t2.ndim}, f, `Default)::res
+              match t1.kind with
+              | GRID (`Sprite,true) when t1.ndim > 0 ->
+                 let$ res, f = res, [`LogAnd_1; `LogOr_1; `LogXOr_1] in
+                 ({t1 with ndim = 0}, f, `Default)::res
               | _ -> res in
             res)) in
       let index = (* LEVEL: collection-wise *)
