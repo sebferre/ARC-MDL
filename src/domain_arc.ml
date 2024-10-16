@@ -530,7 +530,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
       | `GridOfMask_2 (* Mask, Color -> Grid *)
-      | `TranslationOnto_2 (* Obj, Obj -> Vec *)
+      (* REM      | `TranslationOnto_2 (* Obj, Obj -> Vec *) *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
       | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
@@ -567,6 +567,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
+      | `TranslationOnto_1 (* Obj^k -> Vec^(k+1) *)
       | func_itemwise
       ]
 
@@ -673,7 +674,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
       | `GridOfMask_2 -> print#string "gridOfMask"
-      | `TranslationOnto_2 -> print#string "translationOnto"
+      (* REM      | `TranslationOnto_2 -> print#string "translationOnto" *)
+      | `TranslationOnto_1 -> print#string "translationOnto"
       | `Tiling_1 (k,l) ->
          print#string "tiling";
          xp_tuple2 ~delims:("[","]") xp_int xp_int ~html print (k,l)
@@ -913,8 +915,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Corner_2, [|t; t|]) (* only on POS *)
              ::(`Span_2, [|t; t|]) (* only on POS *)
              ::(`Average_n, [|t; t|])
-             ::(`TranslationOnto_2, [| {t with kind = OBJ (`Sprite,false)};
-                                       {t with kind = OBJ (`Sprite,false)} |])
+(* REM             ::(`TranslationOnto_2, [| {t with kind = OBJ (`Sprite,false)};
+                                       {t with kind = OBJ (`Sprite,false)} |]) *)
+             ::(`TranslationOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |])
              (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
@@ -1660,7 +1663,7 @@ module MyDomain : Madil.DOMAIN =
           | [| `Grid m; `Color c|] ->
              Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
           | _ -> Result.Error (Invalid_expr e))
-      | `TranslationOnto_2 ->
+(* REM      | `TranslationOnto_2 ->
          (function
           | [| `Obj (`Vec (mini1,minj1), `Grid g1); `Obj (`Vec (mini2,minj2), `Grid g2)|] ->
              let h1, w1 = Grid.dims g1 in
@@ -1676,7 +1679,7 @@ module MyDomain : Madil.DOMAIN =
                else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
                else 0 in
              Result.Ok (`Vec (ti, tj))
-          | _ -> Result.Error (Invalid_expr e))
+          | _ -> Result.Error (Invalid_expr e)) *)
       | `Tiling_1 (k,l) ->
          (function
           | [| `Vec (h, w)|] -> Result.Ok (`Vec (h*k, w*l))
@@ -2010,6 +2013,48 @@ module MyDomain : Madil.DOMAIN =
                 | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
                v1
           | _ -> assert false)
+      | `TranslationOnto_1 ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.depth v1 in
+             if ndim > 0
+             then
+               Result.Ok
+               (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
+                 (fun seq_objs ->
+                   match Ndseq.as_seq seq_objs with
+                   | Some (d, objs) ->
+                      assert (d = 0);
+                      Ndseq.seq 1
+                        (List.map
+                           (fun obj1 ->
+                             Ndseq.seq 0
+                               (List.map
+                                  (fun obj2 ->
+                                    match obj1, obj2 with
+                                    | `Obj (`Vec (mini1,minj1), `Grid g1),
+                                      `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                                       let h1, w1 = Grid.dims g1 in
+                                       let h2, w2 = Grid.dims g2 in
+                                       let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
+                                       let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
+                                       let ti =
+                                         if maxi1 < mini2 then mini2 - maxi1 - 1
+                                         else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
+                                         else 0 in
+                                       let tj =
+                                         if maxj1 < minj2 then minj2 - maxj1 - 1
+                                         else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
+                                         else 0 in
+                                       `Vec (ti, tj)
+                                    | _ -> assert false)
+                                  objs))
+                           objs)
+                   | None -> assert false)
+                 v1)
+             else Result.Error (Undefined_result "translationOnto_1: not a sequence")
+          | _ -> assert false)
+    
       | #func_itemwise as f ->
          let f_item = eval_func_itemwise f in
          (fun args -> Ndseq.broadcast_result f_item args)
@@ -3997,7 +4042,8 @@ module MyDomain : Madil.DOMAIN =
       | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
-      | `TranslationOnto_2 -> 0.
+      (* REM      | `TranslationOnto_2 -> 0. *)
+      | `TranslationOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
       | `Unrepeat_1 -> 0.
       | `PeriodicFactor_2 p -> dl_periodicity_mode p
@@ -4223,12 +4269,12 @@ module MyDomain : Madil.DOMAIN =
                    {kind = VEC POS} as t2 |] ->
                  ({kind = VEC POS; ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
               | _ -> res in
-            let res = (* TranslationOnto *)
+(* REM            let res = (* TranslationOnto *)
               match t_args with
               | [| {kind = OBJ _} as t1;
                    {kind = OBJ _} as t2 |] ->
                  ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationOnto_2, `Default)::res
-              | _ -> res in
+              | _ -> res in *)
             let res = (* TranslationSym *)
               match t_args with
               | [| {kind = OBJ _} as t1;
@@ -4564,6 +4610,11 @@ module MyDomain : Madil.DOMAIN =
                  ({t1 with kind = VEC POS}, `Pos_1, `Default)
                  ::res
               | _ -> res in
+            let res = (* TranslationOnto_1 *)
+              match t1.kind with
+              | OBJ _ when t1.ndim > 0 ->
+                 ({kind = VEC MOVE; ndim = t1.ndim + 1}, `TranslationOnto_1, `Default)::res
+              | _ -> res in
             res)) in
 (* TODO      let index = (* LEVEL: inter-object features *) (* TODO: define as unary function on collections *)
         Common.prof "make_index/inter_obj_feature" (fun () ->
@@ -4573,11 +4624,6 @@ module MyDomain : Madil.DOMAIN =
           (function ({kind = OBJ _}, _) -> true | _ -> false)
           (fun t1 v1 t2 v2 ->
             let res = [] in
-            let res = (* TranslationOnto *)
-              match t1.kind, t2.kind with
-              | OBJ _, OBJ _ ->
-                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationOnto_2, `Default)::res
-              | _ -> res in
             let res = (* TranslationSym *)
               match t1.kind, t2.kind with
               | OBJ _, (OBJ _ | GRID _) ->
@@ -4658,7 +4704,7 @@ module MyDomain : Madil.DOMAIN =
               else res in
             res)) in
       let index = (* LEVEL: Int+Vec bin *)
-        Common.prof "make_index/int_vec_obj_bin" (fun () ->
+        Common.prof "make_index/int_vec_bin" (fun () ->
         Expr.index_apply_functions_2
           ~eval_func
           index
