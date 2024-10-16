@@ -522,10 +522,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 (* on Layer *)
       | `Bottom_1 (* on Layer *)
       | `Middle_1 (* on Layer *)
-      | `TopHalf_1 (* Grid -> Grid *)
+(* REM      | `TopHalf_1 (* Grid -> Grid *)
       | `BottomHalf_1 (* Grid -> Grid *)
       | `LeftHalf_1 (* Grid -> Grid *)
-      | `RightHalf_1 (* Grid -> Grid *)
+      | `RightHalf_1 (* Grid -> Grid *) *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
@@ -566,6 +566,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogAnd_1 (* Mask^k -> Mask *)
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
+      | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
       | func_itemwise
       ]
 
@@ -663,10 +664,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 -> print#string "top"
       | `Bottom_1 -> print#string "bottom"
       | `Middle_1 -> print#string "middle"
-      | `TopHalf_1 -> print#string "topHalf"
+(* REM      | `TopHalf_1 -> print#string "topHalf"
       | `BottomHalf_1 -> print#string "bottomHalf"
       | `LeftHalf_1 -> print#string "leftHalf"
-      | `RightHalf_1 -> print#string "rightHalf"
+      | `RightHalf_1 -> print#string "rightHalf" *)
+      | `Halves_1 dir -> print#string "halves"; print#string (match dir with `H -> "H" | `V -> "V")
       | `ProjI_1 -> print#string "projI"
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
@@ -925,10 +927,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
-             ::(`TopHalf_1, [|t|])
+(* REM             ::(`TopHalf_1, [|t|])
              ::(`BottomHalf_1, [|t|])
              ::(`LeftHalf_1, [|t|])
-             ::(`RightHalf_1, [|t|])
+             ::(`RightHalf_1, [|t|]) *)
+             ::(`Halves_1 `H, [|t|])
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
              ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
@@ -1606,7 +1609,7 @@ module MyDomain : Madil.DOMAIN =
              then Result.Error (Undefined_result "Middle: no middle, even height")
              else Result.Ok (`Int (i + h/2 + 1))
           | _ -> Result.Error (Invalid_expr e))
-      | `TopHalf_1 ->
+(* REM      | `TopHalf_1 ->
          (function
           | [| `Grid g|] ->
              let h, w = Grid.dims g in
@@ -1637,7 +1640,7 @@ module MyDomain : Madil.DOMAIN =
              let w' = w / 2 in
              let| g1 = Grid.Transf.crop g 0 (w - w') h w' in
              Result.Ok (`Grid g1)
-          | _ -> Result.Error (Invalid_expr e))
+          | _ -> Result.Error (Invalid_expr e)) *)
       | `ProjI_1 ->
          (function
           | [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
@@ -1981,6 +1984,29 @@ module MyDomain : Madil.DOMAIN =
                   | _ -> None)
                  v1 in
              Result.Ok (`Grid m)
+          | _ -> assert false)
+      | `Halves_1 dir ->
+         (function
+          | [|v1|] ->
+             Ndseq.map_result 1
+               (function
+                | `Grid g ->
+                   let h, w = Grid.dims g in
+                   let| g1, g2 =
+                     match dir with
+                     | `H ->
+                        let w' = w / 2 in
+                        let| g1 = Grid.Transf.crop g 0 0 h w' in
+                        let| g2 = Grid.Transf.crop g 0 (w-w') h w' in
+                        Result.Ok (g1,g2)
+                     | `V ->
+                        let h' = h / 2 in
+                        let| g1 = Grid.Transf.crop g 0 0 h' w in
+                        let| g2 = Grid.Transf.crop g (h - h') 0 h' w in
+                        Result.Ok (g1,g2) in
+                   Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
+                | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
+               v1
           | _ -> assert false)
       | #func_itemwise as f ->
          let f_item = eval_func_itemwise f in
@@ -3965,7 +3991,8 @@ module MyDomain : Madil.DOMAIN =
       | `Stack_n -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
-      | `TopHalf_1 | `BottomHalf_1 | `LeftHalf_1 | `RightHalf_1 -> 0.
+      (* REM      | `TopHalf_1 | `BottomHalf_1 | `LeftHalf_1 | `RightHalf_1 -> 0. *)
+      | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
       | `TranslationOnto_2 -> 0.
@@ -4102,7 +4129,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
                  ::res
               | _ -> res in
-            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
+(* REM            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
               match t_args with
               | [| {kind = GRID tg} as t1 |] ->
                  ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
@@ -4110,7 +4137,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
                  ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
                  ::res
-              | _ -> res in
+              | _ -> res in *)
             let res = (* ProjI/J_1 *)
               match t_args with
               | [| {kind = VEC tv} as t1|] ->
@@ -4498,6 +4525,13 @@ module MyDomain : Madil.DOMAIN =
                  ({t1 with kind = GRID tg}, `Grid_1, `Default)
                  ::res
               | _ -> res in
+            let res = (* Halves_1 *)
+              match t1.kind with
+              | GRID tg ->
+                 ({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `H, `Default)
+                 ::({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `V, `Default)
+                 ::res
+              | _ -> res in
             res)) in
       let index = (* LEVEL: Color features, Vec features *)
         Common.prof "make_index/color_vec_features" (fun () ->
@@ -4730,7 +4764,7 @@ module MyDomain : Madil.DOMAIN =
           index
           (fun t1 v1 ->
             let res = [] in
-            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
+            (* REM let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
               match t1.kind with
               | GRID tg ->
                  ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
@@ -4738,7 +4772,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
                  ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
                  ::res
-              | _ -> res in
+              | _ -> res in *)
             let res = (* CloseSym *)
               match t1.kind with
               | GRID (filling,_) ->
