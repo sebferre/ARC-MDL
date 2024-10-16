@@ -877,8 +877,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Max_1, [|t|])
              ::(`I_1, [| {t with kind = VEC tv} |])
              ::(`J_1, [| {t with kind = VEC tv} |])
+             ::(`Left_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Right_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Center_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`Top_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Bottom_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Middle_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`IJTranspose_1, [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
@@ -4614,17 +4616,20 @@ module MyDomain : Madil.DOMAIN =
               | GRID (filling,false) ->
                  ({t1 with kind = INT CARD}, `ColorCount_1, `Default)::res
               | _ -> res in
-            let res = (* Right, Center, Bottom, Middle *)
+            let res = (* Left, Right, Center, Top, Bottom, Middle *)
               match t1.kind with
               | OBJ tg ->
-                 ({t1 with kind = INT (COORD (J,POS))}, `Right_1, `Default)
+                 ({t1 with kind = INT (COORD (J,POS))}, `Left_1, `Default)
+                 ::({t1 with kind = INT (COORD (J,POS))}, `Right_1, `Default)
                  ::({t1 with kind = INT (COORD (J,POS))}, `Center_1, `Default)
+                 ::({t1 with kind = INT (COORD (I,POS))}, `Top_1, `Default)
                  ::({t1 with kind = INT (COORD (I,POS))}, `Bottom_1, `Default)
                  ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: ALL elements and slices *)
+      let index = (* LEVEL: ALL items and slices *)
+        Common.prof "make_index/items_slices" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
           index
@@ -4651,7 +4656,7 @@ module MyDomain : Madil.DOMAIN =
                   ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
                 res
               else res in
-            res) in
+            res)) in
       let index = (* LEVEL: Int+Vec bin *)
         Common.prof "make_index/int_vec_obj_bin" (fun () ->
         Expr.index_apply_functions_2
@@ -4831,20 +4836,6 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: GRID bool *)
-        Common.prof "make_index/grid_bool" (fun () ->
-        Expr.index_apply_functions_1
-          ~eval_func
-          index
-          (fun t1 v1 ->
-            let res = [] in
-            let res = (* And, Or, XOr *)
-              match t1.kind with
-              | GRID (`Sprite,true) when t1.ndim > 0 ->
-                 let$ res, f = res, [`LogAnd_1; `LogOr_1; `LogXOr_1] in
-                 ({t1 with ndim = 0}, f, `Default)::res
-              | _ -> res in
-            res)) in
       let index = (* LEVEL: collection-wise *)
         Common.prof "make_index/collection" (fun () ->
         Expr.index_apply_functions_1
@@ -4855,6 +4846,7 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             if ndim > 0
             then
+              let t1_scalar = {t1 with ndim = 0} in
               let res = (* Reverse, Rotate *)
                 let res = (t1, `Reverse_1, `Default)::res in
                 let$ res, shift = res, [-1; 1] in
@@ -4865,15 +4857,23 @@ module MyDomain : Madil.DOMAIN =
                   let res = (t1, `Transpose_1, `Default)::res in
                   let$ res, rows = res, [true; false] in
                   let$ res, snake = res, [false; true] in
-                  (t1, `Flatten_1 (rows,snake), `Default)::res
+                  ({t1 with ndim = t1.ndim - 1}, `Flatten_1 (rows,snake), `Default)::res
                 else res in
               let res = (* Min, Max, ArgMin, ArgMax *)
                 match t1.kind with
                 | INT _ ->
-                   ({t1 with ndim = 0}, `Min_1, `Default)
-                   ::({t1 with ndim = 0}, `Max_1, `Default)
+                   (t1_scalar, `Min_1, `Default)
+                   ::(t1_scalar, `Max_1, `Default)
                    ::(typ_index, `ArgMin_1, `Default)
                    ::(typ_index, `ArgMax_1, `Default)
+                   ::res
+                | _ -> res in
+              let res = (* And, Or, XOr *)
+                match t1.kind with
+                | GRID (`Sprite,true) ->
+                   (t1_scalar, `LogAnd_1, `Default)
+                   ::(t1_scalar, `LogOr_1, `Default)
+                   ::(t1_scalar, `LogXOr_1, `Default)
                    ::res
                 | _ -> res in
               res
