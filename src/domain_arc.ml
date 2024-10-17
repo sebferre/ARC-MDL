@@ -567,7 +567,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
-      | `TranslationOnto_1 (* Obj^k -> Vec^(k+1) *)
+      | `TranslatedOnto_1 (* Obj^k -> Pos^(k+1) *)
       | func_itemwise
       ]
 
@@ -675,7 +675,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
       | `GridOfMask_2 -> print#string "gridOfMask"
       (* REM      | `TranslationOnto_2 -> print#string "translationOnto" *)
-      | `TranslationOnto_1 -> print#string "translationOnto"
+      | `TranslatedOnto_1 -> print#string "translatedOnto"
       | `Tiling_1 (k,l) ->
          print#string "tiling";
          xp_tuple2 ~delims:("[","]") xp_int xp_int ~html print (k,l)
@@ -917,7 +917,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Average_n, [|t; t|])
 (* REM             ::(`TranslationOnto_2, [| {t with kind = OBJ (`Sprite,false)};
                                        {t with kind = OBJ (`Sprite,false)} |]) *)
-             ::(`TranslationOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
+             ::(`TranslatedOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |])
              (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
@@ -2013,7 +2013,7 @@ module MyDomain : Madil.DOMAIN =
                 | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
                v1
           | _ -> assert false)
-      | `TranslationOnto_1 ->
+      | `TranslatedOnto_1 ->
          (function
           | [|v1|] ->
              let ndim = Ndseq.depth v1 in
@@ -2046,13 +2046,13 @@ module MyDomain : Madil.DOMAIN =
                                          if maxj1 < minj2 then minj2 - maxj1 - 1
                                          else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
                                          else 0 in
-                                       `Vec (ti, tj)
+                                       `Vec (mini1 + ti, minj1 + tj)
                                     | _ -> assert false)
                                   objs))
                            objs)
                    | None -> assert false)
                  v1)
-             else Result.Error (Undefined_result "translationOnto_1: not a sequence")
+             else Result.Error (Undefined_result "translatedOnto_1: not a sequence")
           | _ -> assert false)
     
       | #func_itemwise as f ->
@@ -4043,7 +4043,7 @@ module MyDomain : Madil.DOMAIN =
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
       (* REM      | `TranslationOnto_2 -> 0. *)
-      | `TranslationOnto_1 -> 0.
+      | `TranslatedOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
       | `Unrepeat_1 -> 0.
       | `PeriodicFactor_2 p -> dl_periodicity_mode p
@@ -4610,30 +4610,13 @@ module MyDomain : Madil.DOMAIN =
                  ({t1 with kind = VEC POS}, `Pos_1, `Default)
                  ::res
               | _ -> res in
-            let res = (* TranslationOnto_1 *)
+            let res = (* TranslatedOnto_1 *)
               match t1.kind with
               | OBJ _ when t1.ndim > 0 ->
-                 ({kind = VEC MOVE; ndim = t1.ndim + 1}, `TranslationOnto_1, `Default)::res
+                 ({kind = VEC POS; ndim = t1.ndim + 1}, `TranslatedOnto_1, `Default)::res
               | _ -> res in
+            (* TODO: TranslationSym, only inter objects, handle against GRID with negative object positions *)
             res)) in
-(* TODO      let index = (* LEVEL: inter-object features *) (* TODO: define as unary function on collections *)
-        Common.prof "make_index/inter_obj_feature" (fun () ->
-        Expr.index_apply_functions_2
-          ~eval_func
-          index
-          (function ({kind = OBJ _}, _) -> true | _ -> false)
-          (fun t1 v1 t2 v2 ->
-            let res = [] in
-            let res = (* TranslationSym *)
-              match t1.kind, t2.kind with
-              | OBJ _, (OBJ _ | GRID _) ->
-                 let$ res, sym =
-                   res,
-                   [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
-                    `Rotate180; `Rotate90; `Rotate270] in
-                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationSym_2 sym, `Default)::res
-              | _ -> res in
-            res)) in *)
       let index = (* LEVEL: Int features *)
         Common.prof "make_index/int_features" (fun () ->
         Expr.index_apply_functions_1
@@ -4674,44 +4657,17 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: ALL items and slices *)
-        Common.prof "make_index/items_slices" (fun () ->
-        Expr.index_apply_functions_1
-          ~eval_func
-          index
-          (fun t1 v1 ->
-            let ndim = t1.ndim in
-            let res = [] in
-            let res = (* Index_1[i], Tail_1 *)
-              if ndim >= 1
-              then
-                let$ res, i = res, [0; 1; 2; -2; -1] in
-                ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)
-                ::(t1, `Tail_1, `Default)
-                ::res
-              else res in
-            let res = (* Index_1[i,j] *)
-              if ndim >= 2
-              then
-                let res =
-                  let$ res, j = res, [0; 1; 2; -2; -1] in
-                  ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
-                let res =
-                  let$ res, i = res, [0; 1; -1] in
-                  let$ res, j = res, [0; 1; -1] in
-                  ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
-                res
-              else res in
-            res)) in
+  (* TODO: binary exprs too costly
       let index = (* LEVEL: Int+Vec bin *)
         Common.prof "make_index/int_vec_bin" (fun () ->
         Expr.index_apply_functions_2
           ~eval_func
           index
-          (function ({kind = (INT _ | VEC _)}, _) -> true | _ -> false)
+          (function ({kind = (INT _ | VEC _); ndim}, _) -> ndim <= 1 | _ -> false)
           (fun t1 v1 t2 v2 ->
             let res = [] in
             let res = (* x + y, x - y, abs(x-y), direction(x-y) *)
+              if t1.ndim <= 1 && t1.ndim = t2.ndim then (* TODO: ideally, only when v1 and v2 derive from same sequence axis *)
               match t1.kind, t2.kind with
               | INT ti1, INT ti2 ->
                  let tres = {t1 with ndim = max t1.ndim t2.ndim} in
@@ -4741,8 +4697,9 @@ module MyDomain : Madil.DOMAIN =
                      ::res
                    else res in
                  res
-              | _ -> res in
-            res)) in
+              | _ -> res
+              else res in
+            res)) in *)
       let index = (* LEVEL: INT+VEC affine, GRID derived *)
         Common.prof "make_index/int_vec_affine" (fun () ->
         Expr.index_apply_functions_1
@@ -4752,6 +4709,7 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             let res = (* ax + b, for x : INT | VEC *)
               match t1.kind with
+              | INT (COORD (_, MOVE)) -> res
               | INT ti ->
                  let ta = scalar (INT CARD) in
                  let tb = scalar (INT (match ti with
@@ -4765,6 +4723,7 @@ module MyDomain : Madil.DOMAIN =
                    else opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (ta, `Int a) |]);
                                           `Val (tb, `Int b) |] in
                  (t1, f, spec_args)::res
+              | VEC MOVE -> res
               | VEC tv ->
                  let ta = scalar (VEC SIZE) in (* should be CARD *)
                  let tb = scalar (VEC MOVE) in
@@ -4881,6 +4840,35 @@ module MyDomain : Madil.DOMAIN =
                  ::(tres, `LogNot_1, `Custom [| `Apply (tres, `MaskOfGrid_1, [|`Pos 0|]) |])
                  ::res
               | _ -> res in
+            res)) in
+      let index = (* LEVEL: ALL items and slices *)
+        Common.prof "make_index/items_slices" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let ndim = t1.ndim in
+            let res = [] in
+            let res = (* Index_1[i], Tail_1 *)
+              if ndim >= 1
+              then
+                let$ res, i = res, [0; 1; 2; -2; -1] in
+                ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)
+                ::(t1, `Tail_1, `Default)
+                ::res
+              else res in
+            let res = (* Index_1[i,j] *)
+              if ndim >= 2
+              then
+                let res =
+                  let$ res, j = res, [0; 1; 2; -2; -1] in
+                  ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
+                let res =
+                  let$ res, i = res, [0; 1; -1] in
+                  let$ res, j = res, [0; 1; -1] in
+                  ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
+                res
+              else res in
             res)) in
       let index = (* LEVEL: collection-wise *)
         Common.prof "make_index/collection" (fun () ->
