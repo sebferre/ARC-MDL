@@ -553,6 +553,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Transpose_1 (* X^k -> X^k *)
       | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
       | `Cardinal_1 (* X^k -> Int *)
+      | `Sum_1 (* Int^k -> Int *)
       | `Min_1 (* Int^k -> Int *)
       | `Max_1 (* Int^k -> Int *)
       | `ArgMin_1 (* Int^k -> Index^1 *)
@@ -636,6 +637,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 -> print#string "crop"
       | `Strip_1 -> print#string "strip"
       | `Corner_2 -> print#string "corner"
+      | `Sum_1 -> print#string "sum"
       | `Min_1 -> print#string "min"
       | `Max_1 -> print#string "max"
       | `ArgMin_1 -> print#string "argmin"
@@ -848,6 +850,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | BOOL -> res
           | INT CARD ->
              (`Cardinal_1, [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *)
+             ::(`Sum_1, [|t|])
              ::(`Min_1, [|t|])
              ::(`Max_1, [|t|])
              ::(`Plus_2, [|t; t|])
@@ -857,13 +860,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Average_n, [|t; t|])
              ::res
           | INT INDEX ->
-             (`Min_1, [|t|])
+             (`Sum_1, [|t|])
+             ::(`Min_1, [|t|])
              ::(`Max_1, [|t|])
              ::(`ArgMin_1, [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
              ::(`ArgMax_1, [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
              ::res
           | INT (COORD (axis,tv)) ->
-             (`Min_1, [|t|])
+             (`Sum_1, [|t|])
+             ::(`Min_1, [|t|])
              ::(`Max_1, [|t|])
              ::(`I_1, [| {t with kind = VEC tv} |])
              ::(`J_1, [| {t with kind = VEC tv} |])
@@ -1841,6 +1846,16 @@ module MyDomain : Madil.DOMAIN =
                                (fun l -> `Int (List.length l)))
                             v1)
              else Result.Error (Undefined_result "cardinal: not a sequence")
+          | _ -> assert false)
+      | `Sum_1 ->
+         (function
+          | [|v1|] ->
+             let| sum =
+               eval_aggreg "sum"
+                 (function `Int i -> Some i | _ -> None)
+                 (function (sum, `Int i) -> Some (sum + i) | _ -> None)
+                 v1 in
+             Result.Ok (`Int sum)
           | _ -> assert false)
       | `Min_1 ->
          (function
@@ -3950,6 +3965,7 @@ module MyDomain : Madil.DOMAIN =
       | `Crop_2 -> 0.
       | `Strip_1 -> 0.
       | `Corner_2 -> 0.
+      | `Sum_1 -> 0.
       | `Min_1 -> 0.
       | `Max_1 -> 0.
       | `ArgMin_1 -> 0.
@@ -4809,10 +4825,11 @@ module MyDomain : Madil.DOMAIN =
                   let$ res, snake = res, [false; true] in
                   ({t1 with ndim = t1.ndim - 1}, `Flatten_1 (rows,snake), `Default)::res
                 else res in
-              let res = (* Min, Max, ArgMin, ArgMax *)
+              let res = (* Sum, Min, Max, ArgMin, ArgMax *)
                 match t1.kind with
                 | INT _ ->
-                   (t1_scalar, `Min_1, `Default)
+                   (t1_scalar, `Sum_1, `Default)
+                   ::(t1_scalar, `Min_1, `Default)
                    ::(t1_scalar, `Max_1, `Default)
                    ::(typ_index, `ArgMin_1, `Default)
                    ::(typ_index, `ArgMax_1, `Default)
