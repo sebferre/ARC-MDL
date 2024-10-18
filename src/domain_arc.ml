@@ -514,12 +514,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogNot_1 (* on Mask *)
       | `Stack_n (* on Grids *)
       | `Area_1 (* on Shape *)
-      | `Left_1 (* on Layer *)
-      | `Right_1 (* on Layer *)
-      | `Center_1 (* on Layer *)
-      | `Top_1 (* on Layer *)
-      | `Bottom_1 (* on Layer *)
-      | `Middle_1 (* on Layer *)
+      | `Left_1 (* on Obj *)
+      | `Right_1 (* on Obj *)
+      | `Center_1 (* on Obj *)
+      | `Top_1 (* on Obj *)
+      | `Bottom_1 (* on Obj *)
+      | `Middle_1 (* on Obj *)
+      | `MiddleCenter_1 (* on Obj *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
@@ -656,6 +657,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 -> print#string "top"
       | `Bottom_1 -> print#string "bottom"
       | `Middle_1 -> print#string "middle"
+      | `MiddleCenter_1 -> print#string "middle_center"
       | `Halves_1 dir -> print#string "halves"; print#string (match dir with `H -> "H" | `V -> "V")
       | `ProjI_1 -> print#string "projI"
       | `ProjJ_1 -> print#string "projJ"
@@ -885,6 +887,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::res
           | VEC tv ->
              (`Pos_1, [| {t with kind = OBJ (`Sprite,false)} |])
+             ::(`MiddleCenter_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Size_1, [| {t with kind = GRID (`Sprite,false)} |])
              ::(`Plus_2, [|t; t|])
              ::(`Minus_2, [|t; t|])
@@ -1559,7 +1562,7 @@ module MyDomain : Madil.DOMAIN =
              let h, w = Grid.dims shape in
              if w mod 2 = 0
              then Result.Error (Undefined_result "Center: no center, even width")
-             else Result.Ok (`Int (j + w/2 + 1))
+             else Result.Ok (`Int (j + w/2))
           | _ -> Result.Error (Invalid_expr e))
       | `Top_1 ->
          (function
@@ -1577,7 +1580,15 @@ module MyDomain : Madil.DOMAIN =
              let h, w = Grid.dims shape in
              if h mod 2 = 0
              then Result.Error (Undefined_result "Middle: no middle, even height")
-             else Result.Ok (`Int (i + h/2 + 1))
+             else Result.Ok (`Int (i + h/2))
+          | _ -> Result.Error (Invalid_expr e))
+      | `MiddleCenter_1 ->
+         (function
+          | [| `Obj (`Vec (i, j), `Grid shape)|] ->
+             let h, w = Grid.dims shape in
+             if h mod 2 = 0 || w mod 2 = 0
+             then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
+             else Result.Ok (`Vec (i + h/2, j + w/2))
           | _ -> Result.Error (Invalid_expr e))
       | `ProjI_1 ->
          (function
@@ -3952,6 +3963,7 @@ module MyDomain : Madil.DOMAIN =
       | `Stack_n -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
+      | `MiddleCenter_1 -> 0.
       | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
@@ -4557,7 +4569,7 @@ module MyDomain : Madil.DOMAIN =
               | GRID (filling,false) ->
                  ({t1 with kind = INT CARD}, `ColorCount_1, `Default)::res
               | _ -> res in
-            let res = (* Left, Right, Center, Top, Bottom, Middle *)
+            let res = (* Left, Right, Center, Top, Bottom, Middle, MiddleCenter *)
               match t1.kind with
               | OBJ tg ->
                  ({t1 with kind = INT (COORD (J,POS))}, `Left_1, `Default)
@@ -4566,6 +4578,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = INT (COORD (I,POS))}, `Top_1, `Default)
                  ::({t1 with kind = INT (COORD (I,POS))}, `Bottom_1, `Default)
                  ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
+                 ::({t1 with kind = VEC POS}, `MiddleCenter_1, `Default)
                  ::res
               | _ -> res in
             res)) in
