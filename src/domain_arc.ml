@@ -503,8 +503,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Pos_1 (* Obj -> Pos *)
       | `Grid_1 (* Obj -> Grid *)
       | `Size_1 (* Grid -> Vec *)
-      | `Height_1 (* Grid -> Int *)
-      | `Width_1 (* Grid -> Int *)
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
@@ -522,15 +520,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 (* on Layer *)
       | `Bottom_1 (* on Layer *)
       | `Middle_1 (* on Layer *)
-(* REM      | `TopHalf_1 (* Grid -> Grid *)
-      | `BottomHalf_1 (* Grid -> Grid *)
-      | `LeftHalf_1 (* Grid -> Grid *)
-      | `RightHalf_1 (* Grid -> Grid *) *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
       | `GridOfMask_2 (* Mask, Color -> Grid *)
-      (* REM      | `TranslationOnto_2 (* Obj, Obj -> Vec *) *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
       | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
@@ -639,8 +632,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Pos_1 -> print#string "pos"
       | `Grid_1 -> print#string "grid"
       | `Size_1 -> print#string "size"
-      | `Height_1 -> print#string "height"
-      | `Width_1 -> print#string "width"
       | `Crop_2 -> print#string "crop"
       | `Strip_1 -> print#string "strip"
       | `Corner_2 -> print#string "corner"
@@ -665,16 +656,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Top_1 -> print#string "top"
       | `Bottom_1 -> print#string "bottom"
       | `Middle_1 -> print#string "middle"
-(* REM      | `TopHalf_1 -> print#string "topHalf"
-      | `BottomHalf_1 -> print#string "bottomHalf"
-      | `LeftHalf_1 -> print#string "leftHalf"
-      | `RightHalf_1 -> print#string "rightHalf" *)
       | `Halves_1 dir -> print#string "halves"; print#string (match dir with `H -> "H" | `V -> "V")
       | `ProjI_1 -> print#string "projI"
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
       | `GridOfMask_2 -> print#string "gridOfMask"
-      (* REM      | `TranslationOnto_2 -> print#string "translationOnto" *)
       | `TranslatedOnto_1 -> print#string "translatedOnto"
       | `Tiling_1 (k,l) ->
          print#string "tiling";
@@ -889,8 +875,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Direction_1, [|t|])
              ::(`Abs_1, [|t|])
              ::(`AsTVec_1 tv, [| {t with kind = INT (COORD (axis, tv))} |]) (* should be any other tv *)
-             ::(`Height_1, [| {t with kind = GRID (`Sprite,false)} |]) (* if axis=I *)
-             ::(`Width_1, [| {t with kind = GRID (`Sprite,false)} |]) (* if axis=J *)
              ::(`Area_1, [| {t with kind = GRID (`Sprite,false)} |])
              ::(`Plus_2, [|t; t|])
              ::(`Minus_2, [|t; t|])
@@ -915,8 +899,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Corner_2, [|t; t|]) (* only on POS *)
              ::(`Span_2, [|t; t|]) (* only on POS *)
              ::(`Average_n, [|t; t|])
-(* REM             ::(`TranslationOnto_2, [| {t with kind = OBJ (`Sprite,false)};
-                                       {t with kind = OBJ (`Sprite,false)} |]) *)
              ::(`TranslatedOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |])
@@ -932,10 +914,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
-(* REM             ::(`TopHalf_1, [|t|])
-             ::(`BottomHalf_1, [|t|])
-             ::(`LeftHalf_1, [|t|])
-             ::(`RightHalf_1, [|t|]) *)
              ::(`Halves_1 `H, [|t|])
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
@@ -947,7 +925,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                             {t with kind = OBJ (`Sprite,false)} |]) *)
              ::(`ApplySymGrid_1 `Id, [|t|])
              ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |])
-             (* ::(`Tiling_1 (2,2), [|t|]) *)
              ::(`Unrepeat_1, [|t|])
              (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
@@ -1479,18 +1456,6 @@ module MyDomain : Madil.DOMAIN =
              let h, w = Grid.dims g in
              Result.Ok (`Vec (h, w))
           | _ -> Result.Error (Invalid_expr e))
-      | `Height_1 ->
-         (function
-          | [|`Grid g|] ->
-             let h, _ = Grid.dims g in
-             Result.Ok (`Int h)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Width_1 ->
-         (function
-          | [|`Grid g|] ->
-             let _, w = Grid.dims g in
-             Result.Ok (`Int w)
-          | _ -> Result.Error (Invalid_expr e))
       | `Crop_2 ->
          (function
           | [| `Grid g; `Obj (`Vec (ri, rj), `Grid shape)|] ->
@@ -1614,38 +1579,6 @@ module MyDomain : Madil.DOMAIN =
              then Result.Error (Undefined_result "Middle: no middle, even height")
              else Result.Ok (`Int (i + h/2 + 1))
           | _ -> Result.Error (Invalid_expr e))
-(* REM      | `TopHalf_1 ->
-         (function
-          | [| `Grid g|] ->
-             let h, w = Grid.dims g in
-             let h' = h / 2 in
-             let| g1 = Grid.Transf.crop g 0 0 h' w in
-             Result.Ok (`Grid g1)
-          | _ -> Result.Error (Invalid_expr e))
-      | `BottomHalf_1 ->
-         (function
-          | [| `Grid g|] ->
-             let h, w = Grid.dims g in
-             let h' = h / 2 in
-             let| g1 = Grid.Transf.crop g (h - h') 0 h' w in
-             Result.Ok (`Grid g1)
-          | _ -> Result.Error (Invalid_expr e))
-      | `LeftHalf_1 ->
-         (function
-          | [| `Grid g|] ->
-             let h, w = Grid.dims g in
-             let w' = w / 2 in
-             let| g1 = Grid.Transf.crop g 0 0 h w' in
-             Result.Ok (`Grid g1)
-          | _ -> Result.Error (Invalid_expr e))
-      | `RightHalf_1 ->
-         (function
-          | [| `Grid g|] ->
-             let h, w = Grid.dims g in
-             let w' = w / 2 in
-             let| g1 = Grid.Transf.crop g 0 (w - w') h w' in
-             Result.Ok (`Grid g1)
-          | _ -> Result.Error (Invalid_expr e)) *)
       | `ProjI_1 ->
          (function
           | [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
@@ -1663,23 +1596,6 @@ module MyDomain : Madil.DOMAIN =
           | [| `Grid m; `Color c|] ->
              Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
           | _ -> Result.Error (Invalid_expr e))
-(* REM      | `TranslationOnto_2 ->
-         (function
-          | [| `Obj (`Vec (mini1,minj1), `Grid g1); `Obj (`Vec (mini2,minj2), `Grid g2)|] ->
-             let h1, w1 = Grid.dims g1 in
-             let h2, w2 = Grid.dims g2 in
-             let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
-             let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
-             let ti =
-               if maxi1 < mini2 then mini2 - maxi1 - 1
-               else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
-               else 0 in
-             let tj =
-               if maxj1 < minj2 then minj2 - maxj1 - 1
-               else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
-               else 0 in
-             Result.Ok (`Vec (ti, tj))
-          | _ -> Result.Error (Invalid_expr e)) *)
       | `Tiling_1 (k,l) ->
          (function
           | [| `Vec (h, w)|] -> Result.Ok (`Vec (h*k, w*l))
@@ -4020,8 +3936,6 @@ module MyDomain : Madil.DOMAIN =
       | `Pos_1 -> 0.
       | `Grid_1 -> 0.
       | `Size_1 -> 0.
-      | `Height_1 -> 0.
-      | `Width_1 -> 0.
       | `Crop_2 -> 0.
       | `Strip_1 -> 0.
       | `Corner_2 -> 0.
@@ -4038,11 +3952,9 @@ module MyDomain : Madil.DOMAIN =
       | `Stack_n -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
-      (* REM      | `TopHalf_1 | `BottomHalf_1 | `LeftHalf_1 | `RightHalf_1 -> 0. *)
       | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
-      (* REM      | `TranslationOnto_2 -> 0. *)
       | `TranslatedOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
       | `Unrepeat_1 -> 0.
@@ -4062,7 +3974,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* expression index *)
 
-    let make_index (bindings : bindings) : expr_index =
+(* XX    let make_index (bindings : bindings) : expr_index =
       (*pp xp_bindings bindings;*)
       (*let test level index = (* testing expr index[i]($21) in task a157, $21 is seq of pos of input objects *)
         match Mymap.find_opt 21 bindings with
@@ -4177,7 +4089,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
                  ::res
               | _ -> res in
-(* REM            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
+            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
               match t_args with
               | [| {kind = GRID tg} as t1 |] ->
                  ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
@@ -4185,7 +4097,7 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
                  ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
                  ::res
-              | _ -> res in *)
+              | _ -> res in
             let res = (* ProjI/J_1 *)
               match t_args with
               | [| {kind = VEC tv} as t1|] ->
@@ -4531,7 +4443,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             res) in
       (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
-      index
+      index *)
 
     let affine_params = [
         `ScaleUp_2, 1, `Plus_2, 1;
@@ -4774,15 +4686,6 @@ module MyDomain : Madil.DOMAIN =
           index
           (fun t1 v1 ->
             let res = [] in
-            (* REM let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
-              match t1.kind with
-              | GRID tg ->
-                 ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `BottomHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
-                 ::res
-              | _ -> res in *)
             let res = (* CloseSym *)
               match t1.kind with
               | GRID (filling,_) ->
