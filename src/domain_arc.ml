@@ -855,8 +855,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Sum_1, [|t|])
              ::(`Min_1, [|t|])
              ::(`Max_1, [|t|])
-             ::(`Plus_2, [|t; t|])
-             ::(`Minus_2, [|t; t|])
+             ::(`Plus_2, [|t (* const *)|])
+             ::(`Minus_2, [|t (* const *)|])
              ::(`Area_1, [| {t with kind = GRID (`Sprite,false)} |])
              ::(`ColorCount_1, [| {t with kind = GRID (`Sprite,false)} |]) (* also for `Noise? *)
              ::(`Average_n, [|t; t|])
@@ -885,19 +885,19 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Abs_1, [|t|])
              ::(`AsTVec_1 tv, [| {t with kind = INT (COORD (axis, tv))} |]) (* should be any other tv *)
              ::(`Area_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`Plus_2, [|t; t|])
-             ::(`Minus_2, [|t; t|])
-             ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
-             ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
+             ::(`Plus_2, [|t (* const *)|])
+             ::(`Minus_2, [|t (* const *)|])
+             ::(`ScaleUp_2, [|t (* const: {t with kind = INT CARD} *) |])
+             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
              ::res
           | VEC tv ->
              (`Pos_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`MiddleCenter_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Size_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`Plus_2, [|t; t|])
-             ::(`Minus_2, [|t; t|])
-             ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
-             ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
+             ::(`Plus_2, [|t (* const: t *)|])
+             ::(`Minus_2, [|t (* const: t *)|])
+             ::(`ScaleUp_2, [|t (* const: {t with kind = INT CARD} *) |])
+             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
              ::(`ProjI_1, [|t|])
              ::(`ProjJ_1, [|t|])
              ::(`IJTranspose_1, [|t|])
@@ -909,7 +909,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |]) *)
              (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
-             ::(`Tiling_1 (2,2), [|t|])
+             (* ::(`Tiling_1 (2,2), [|t|]) *)
              ::res
           | COLOR tc ->
              (`MajorityColor_1, [| {t with kind = GRID (`Sprite,false)}|]) (* also `Full and `Noise *)
@@ -918,12 +918,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | SEG -> res
           | MOTIF tm -> res
           | GRID (filling,nocolor) ->
-             let full = (filling = `Full) in
+             (*let full = (filling = `Full) in*)
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
              ::(`Halves_1 `H, [|t|])
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
-             ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
+             ::(`ScaleUp_2, [|t (* const:{t with kind = INT CARD} *) |])
+             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
              (* ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |]) *)
                (*::(`Strip_1, [|GRID (false,false)|])*)
              (* ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|]) *)
@@ -935,11 +935,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
                                                  t |]) *)
-             ::(`SelfCompose_3, [| {t with kind = COLOR (C_BG full)};
+             ::(`SelfCompose_3, [| (* const: {t with kind = COLOR (C_BG full)};*)
+                  (* const: {t with kind = COLOR C_OBJ};*)
+                                   t |])
+             ::(`SelfCompose_3, [| (* const: {t with kind = COLOR (C_BG full)};*)
                                    {t with kind = COLOR C_OBJ};
                                    t |])
              (* ::(`UnfoldSym_1 [], [|t|]) *)
-             ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t|])
+             ::(`CloseSym_2 [], [| (* const: {t with kind = COLOR (C_BG full)};*) t|])
              (* ::(`SwapColors_3, [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |]) *)
              (* ::(`Stack_n, [|t; t|]) *)
              (* on masks *)
