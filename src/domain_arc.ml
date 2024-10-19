@@ -1,4 +1,4 @@
-
+ 
 open Madil_common
 open Arc_common
 
@@ -562,6 +562,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
+      | `RelativePos_1 (* Obj^k -> Pos^(k+1) *)
       | `TranslatedOnto_1 (* Obj^k -> Pos^(k+1) *)
       | func_itemwise
       ]
@@ -665,6 +666,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
       | `GridOfMask_2 -> print#string "gridOfMask"
+      | `RelativePos_1 -> print#string "relativePos"
       | `TranslatedOnto_1 -> print#string "translatedOnto"
       | `Tiling_1 (k,l) ->
          print#string "tiling";
@@ -887,8 +889,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Minus_2, [|t; t|])
              ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
              ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
-             ::(`Span_2, [|t; t|]) (* only on same axis POS *)
-             ::(`Average_n, [|t; t|])
              ::res
           | VEC tv ->
              (`Pos_1, [| {t with kind = OBJ (`Sprite,false)} |])
@@ -904,12 +904,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Direction_1, [|t|])
              ::(`Abs_1, [|t|])
              ::(`AsTVec_1 tv, [| {t with kind = VEC tv} |]) (* should be any other tv *)
-             ::(`Corner_2, [|t; t|]) (* only on POS *)
-             ::(`Span_2, [|t; t|]) (* only on POS *)
-             ::(`Average_n, [|t; t|])
+             ::(`RelativePos_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`TranslatedOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
-                                          {t with kind = GRID (`Sprite,false)} |])
+             (* ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
+                                          {t with kind = GRID (`Sprite,false)} |]) *)
              (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
              ::(`Tiling_1 (2,2), [|t|])
              ::res
@@ -926,13 +924,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`ScaleUp_2, [|t; {t with kind = INT CARD} |])
              ::(`ScaleDown_2, [|t; {t with kind = INT CARD} |])
-             ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |])
+             (* ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |]) *)
                (*::(`Strip_1, [|GRID (false,false)|])*)
              (* ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|]) *)
              (* ::(`Crop_2, [| {t with kind = GRID (`Full,false)};
                             {t with kind = OBJ (`Sprite,false)} |]) *)
              ::(`ApplySymGrid_1 `Id, [|t|])
-             ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |])
+             (* ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |]) *)
              ::(`Unrepeat_1, [|t|])
              (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
@@ -1954,6 +1952,37 @@ module MyDomain : Madil.DOMAIN =
                    Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
                 | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
                v1
+          | _ -> assert false)
+      | `RelativePos_1 ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.depth v1 in
+             if ndim > 0
+             then
+               Result.Ok
+               (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
+                 (fun seq_objs ->
+                   match Ndseq.as_seq seq_objs with
+                   | Some (d, objs) ->
+                      assert (d = 0);
+                      Ndseq.seq 1
+                        (List.map
+                           (fun obj1 ->
+                             Ndseq.seq 0
+                               (List.map
+                                  (fun obj2 ->
+                                    match obj1, obj2 with
+                                    | `Obj (`Vec (mini1,minj1), `Grid g1),
+                                      `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                                       let i = abs (mini2 - mini1) in
+                                       let j = abs (minj2 - minj1) in
+                                       `Vec (i, j)
+                                    | _ -> assert false)
+                                  objs))
+                           objs)
+                   | None -> assert false)
+                 v1)
+             else Result.Error (Undefined_result "relativePos_1: not a sequence")
           | _ -> assert false)
       | `TranslatedOnto_1 ->
          (function
@@ -3983,6 +4012,7 @@ module MyDomain : Madil.DOMAIN =
       | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
+      | `RelativePos_1 -> 0.
       | `TranslatedOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
       | `Unrepeat_1 -> 0.
@@ -4550,10 +4580,12 @@ module MyDomain : Madil.DOMAIN =
                  ({t1 with kind = VEC POS}, `Pos_1, `Default)
                  ::res
               | _ -> res in
-            let res = (* TranslatedOnto_1 *)
+            let res = (* RelativePos_1, TranslatedOnto_1 *)
               match t1.kind with
               | OBJ _ when t1.ndim > 0 ->
-                 ({kind = VEC POS; ndim = t1.ndim + 1}, `TranslatedOnto_1, `Default)::res
+                 ({kind = VEC POS; ndim = t1.ndim + 1}, `TranslatedOnto_1, `Default)
+                 ::({kind = VEC POS; ndim = t1.ndim + 1}, `RelativePos_1, `Default)
+                 ::res
               | _ -> res in
             (* TODO: TranslationSym, only inter objects, handle against GRID with negative object positions *)
             res)) in
@@ -4653,10 +4685,7 @@ module MyDomain : Madil.DOMAIN =
               | INT (COORD (_, MOVE)) -> res
               | INT ti ->
                  let ta = scalar (INT CARD) in
-                 let tb = scalar (INT (match ti with
-                                       | COORD (axis,_) -> COORD (axis,MOVE)
-                                       | CARD -> INDEX
-                                       | INDEX -> INDEX)) in
+                 let tb = scalar (INT ti) in
                  let$ res, (opmult,a,opadd,b) = res, affine_params in
                  let f, spec_args =
                    if b = 0 then opmult, `Custom [| `Pos 0; `Val (ta, `Int a) |]
