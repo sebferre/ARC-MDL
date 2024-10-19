@@ -216,11 +216,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Swap (* A, A : MAP(A,A) *)
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
-      | Crop (* SPRITE expr ; POS, SIZE : SPRITE *)
+      | Crop (* [SPRITE] POS, SIZE : SPRITE *)
       | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length, mode constrains SEG *)
       | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
-      | Recoloring (* SPRITE expr; MAP(COLOR,COLOR) : SPRITE *)
+      | Recoloring (* [SPRITE] MAP(COLOR,COLOR) : SPRITE *)
       | MotifMulti of bool (* partial *) (* MOTIF MULTI, SPRITE (core), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
       | MotifBi of bool (* partial *) (* MOTIF BI, COLOR (bg), COLOR (obj), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
       | Metagrid (* COLOR, MASK, VEC SIZE, SIZE+, SIZE+, GRID++ : GRID *)
@@ -234,8 +234,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
       | SeqRepeat of int (* depth *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
-      | SeqIndex (* seq:X^n expr ; index:INT^1 : X^(n-k) *)
-      | SeqIndexOf of typ_kind (* X. seq:X^n expr ; value:X : INDEX^1 *)
+      | SeqIndex (* [seq:X^n] index:INT^1 : X^(n-k) *)
+      | SeqIndexOf of typ_kind (* X. [seq:X^n] value:X : INDEX^1 *)
 
     let xp_any t ~html print () =
       xp_html_elt "span" ~classe:"model-any" ~html print
@@ -409,9 +409,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor, 1 -> print#string "sprite"
       | BgColor, _ -> assert false
       | IsFull, _ -> print#string "sprite"
-      | Crop, 0 -> print#string "sprite"
-      | Crop, 1 -> print#string "pos"
-      | Crop, 2 -> print#string "size"
+      | Crop, 0 -> print#string "pos"
+      | Crop, 1 -> print#string "size"
       | Crop, _ -> assert false
       | Objects _, 0 -> print#string "size"
       | Objects _, 1 -> print#string "seg"
@@ -425,8 +424,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
       | Monocolor, _ -> assert false
-      | Recoloring, 0 -> print#string "grid"
-      | Recoloring, 1 -> print#string "colormap"
+      | Recoloring, 0 -> print#string "colormap"
       | Recoloring, _ -> assert false
       | MotifMulti _, 0 -> print#string "motif"
       | MotifMulti _, 1 -> print#string "core"
@@ -472,11 +470,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRange, 0 -> print#string "start"
       | SeqRange, 1 -> print#string "step"
       | SeqRange, _ -> assert false
-      | SeqIndex, 0 -> print#string "seq"
-      | SeqIndex, 1 -> print#string "index"
+      | SeqIndex, 0 -> print#string "index"
       | SeqIndex, _ -> assert false
-      | SeqIndexOf _, 0 -> print#string "seq"
-      | SeqIndexOf _, 1 -> print#string "value"
+      | SeqIndexOf _, 0 -> print#string "value"
       | SeqIndexOf _, _ -> assert false
     
     (* functions *)
@@ -2267,7 +2263,7 @@ module MyDomain : Madil.DOMAIN =
                      Myseq.return (`Grid g)
                   | _ -> assert false)
                  (vg, Data.value dpos, Data.value dsize) in
-             Myseq.return (Data.make_dpat v c [|dpos; dsize|], info)
+             Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], info)
           | _ -> assert false)
     
       | GRID _, Objects (nmax,mode), [||], [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|] ->
@@ -2379,7 +2375,7 @@ module MyDomain : Madil.DOMAIN =
                  `Grid g
               | _ -> assert false)
              (vgrid, Data.value dmap) in
-         Myseq.return (Data.make_dpat v c [|dmap|], info)
+         Myseq.return (Data.make_dpat v c ~src [|dmap|], info)
     
       | GRID _, MotifMulti partial, [||], [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|] ->
          let info_mot, info_noise =
@@ -2816,7 +2812,7 @@ module MyDomain : Madil.DOMAIN =
            match Ndseq.index_list vseq index with
            | Some v -> Myseq.return v
            | None -> Myseq.empty (* index undefined *) in
-         Myseq.return (Data.make_dpat v c [|dindex|], info)
+         Myseq.return (Data.make_dpat v c ~src [|dindex|], info)
 
       | INT INDEX, SeqIndexOf tvalue, [|vseq|], [|gen_value|] ->
          let depth_seq = Ndseq.depth vseq in
@@ -2842,7 +2838,7 @@ module MyDomain : Madil.DOMAIN =
                | None -> assert false
            in
            aux [] depth_seq vseq in
-         Myseq.return (Data.make_dpat v c [|dvalue|], info)
+         Myseq.return (Data.make_dpat v c ~src [|dvalue|], info)
 
       | _ ->
          pp_endline xp_typ t;
@@ -3149,7 +3145,7 @@ module MyDomain : Madil.DOMAIN =
            with Invalid_argument _ -> Myseq.empty in (* dg may have an inconsistent structure *)
          let* dpos, _ = parse_pos in_pos in
          let input = Ndseq.const `Null input in
-         Myseq.return (Data.make_dpat v c [|dpos; dsize|], input)
+         Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], input)
     
       | _, Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|] ->
          let v = value_of_input t input in
@@ -3283,7 +3279,7 @@ module MyDomain : Madil.DOMAIN =
            with Invalid_argument _ -> Myseq.empty in (* dg1 is not guaranteed to have a consistent structure *)
          let* dmap, _ = parse_map in_map in
          let input = Ndseq.const `Null input in
-         Myseq.return (Data.make_dpat v c [|dmap|], input)
+         Myseq.return (Data.make_dpat v c ~src [|dmap|], input)
     
       | _, MotifMulti partial, [||], [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
          let v = value_of_input t input in
@@ -3687,7 +3683,7 @@ module MyDomain : Madil.DOMAIN =
            aux [] depth_seq vseq in
          let* dindex, _ = parse_index in_index in
          let input = Ndseq.const `Null input in
-         Myseq.return (Data.make_dpat v c [|dindex|], input)
+         Myseq.return (Data.make_dpat v c ~src [|dindex|], input)
 
       | _, SeqIndexOf kvalue, [|vseq|], [|parse_value|] ->
          let v = value_of_input t input in
@@ -3708,7 +3704,7 @@ module MyDomain : Madil.DOMAIN =
              let in_value = input_of_value tvalue value in
              let* dvalue, _ = parse_value in_value in
              let input = Ndseq.const `Null input in
-             Myseq.return (Data.make_dpat v c [|dvalue|], input)
+             Myseq.return (Data.make_dpat v c ~src [|dvalue|], input)
           | None -> Myseq.empty)
 
       | _ -> assert false
@@ -4898,7 +4894,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* refining *)
 
-    let decompositions ~env_vars (t : typ) (varseq : varseq) (valuess : value list list) : (model * varseq) list =
+    let decompositions (t : typ) (varseq : varseq) (valuess : value list list) : (model * varseq) list =
       let ndim = t.ndim in
       (*if not (ndim = Ndseq.depth (List.hd (List.hd valuess))) then (
         pp_endline xp_typ t;
@@ -4953,16 +4949,6 @@ module MyDomain : Madil.DOMAIN =
              varseq) :: rs
           else rs
         else rs in
-(*      let rs = (* adding SeqIndexOf *) (* NOT specific enough, too many matches *)
-        match t.kind with
-        | INT INDEX ->
-           let xvalue, varseq = Refining.new_var varseq in
-           let$ rs, (x,tx) = rs, Mymap.bindings env_vars in
-           (Model.make_pat {tx with ndim = 1} (SeqIndexOf tx.kind)
-              [| Model.make_expr (Expr.Ref (tx, x));
-                 Model.make_def xvalue (Model.make_any (scalar tx)) |],
-            varseq) :: rs
-        | _ -> rs in *)
       let rs = (* adding Vec *)
         match t.kind with
         | VEC tv ->
@@ -5008,7 +4994,7 @@ module MyDomain : Madil.DOMAIN =
         | _ -> rs in *)
       rs
     
-    let refinements_any ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+    let refinements_any (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       let ndim = t.ndim in
       let rs = [] in
       let rs = (* adding SeqRepeat *)
@@ -5020,19 +5006,6 @@ module MyDomain : Madil.DOMAIN =
              [| Model.make_def xe (Model.make_any {t with ndim = ndim-1}) |],
            varseq) :: rs
         else rs in
-      let rs = (* adding SeqIndex *)
-        let xindex, varseq = Refining.new_var varseq in
-        let compatible_vars = (* same type vars from env *)
-          Mymap.fold
-            (fun x tx res ->
-              if tx.kind = t.kind && tx.ndim > t.ndim
-              then (x,tx)::res
-              else res)
-            env_vars [] in
-        let$ rs, (x,tx) = rs, compatible_vars in
-        (Model.make_pat t SeqIndex ~src:[|Expr.Ref (tx, x)|]
-           [| Model.make_def xindex (Model.make_any typ_index) |],
-         varseq) :: rs in
       match t.kind with
       | INT ti ->
          let rs = (* adding SeqRange *)
@@ -5121,7 +5094,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else refs in
          refs
-      | GRID (filling,nocolor as tg) ->
+      | GRID (filling,nocolor) ->
          let refs : (model * varseq) list = rs in
          let refs = (* BgColor *)
            if filling = `Full && not nocolor then
@@ -5141,26 +5114,6 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         let refs = (* Crop *)
-           let xpos, varseq = Refining.new_var varseq in
-           let xpos_i, varseq = Refining.new_var varseq in
-           let xpos_j, varseq = Refining.new_var varseq in
-           let xsize, varseq = Refining.new_var varseq in
-           let xsize_i, varseq = Refining.new_var varseq in
-           let xsize_j, varseq = Refining.new_var varseq in
-           let cropable_vars =
-             Mymap.fold
-               (fun x tx res ->
-                 match tx.kind with
-                 | GRID tgx when tgx = tg && tx.ndim <= ndim -> (x,tx)::res
-                 | _ -> res)
-               env_vars [] in
-           let$ refs, (gvar,tvar) = refs, cropable_vars in
-           (Model.make_pat t Crop ~src:[|Expr.Ref (tvar, gvar)|]
-              [| Model.make_def xpos (Model.make_any {t with kind = VEC POS});
-                 Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}) |],
-            varseq)
-           :: refs in
          let refs = (* Objects - Connected *)
            if filling <> `Full then
              let xsize, varseq = Refining.new_var varseq in
@@ -5261,43 +5214,6 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat t Monocolor
                 [| Model.make_def xcol (Model.make_any {t with kind = COLOR C_OBJ});
                    Model.make_def xmask mmask |],
-              varseq)
-             :: refs
-           else refs in
-         let refs = (* Recoloring *)
-           if not nocolor then
-             let xmap, varseq = Refining.new_var varseq in
-             let xg1s =
-               Mymap.fold
-                 (fun x tx res ->
-                   match tx.kind with
-                   | GRID (_,false) when tx.ndim <= ndim -> (x,tx)::res
-                   | _ -> res)
-                 env_vars [] in
-             let eg1s =
-               let vg1_res =
-                 Ndseq.map_result 0
-                   (function
-                    | `Grid g ->
-                       let| g1, _ = Grid_patterns.recoloring g in
-                       Result.Ok (`Grid g1)
-                    | _ -> Result.Error (Invalid_argument "refinement: Recoloring"))
-                   value in
-               match vg1_res with
-               | Result.Ok vg1 -> [Expr.Const (t, vg1)]
-               | _ -> [] in
-             let eg1s =
-               List.fold_left
-                 (fun res (xg1,tg1) ->
-                   let rg1 = Expr.Ref (tg1, xg1) in
-                   rg1
-                   (* :: Expr.Apply (t, `Index_1 [Some 0], [|rg1|])
-                   :: Expr.Apply (t, `Index_1 [Some (-1)], [|rg1|]) *) (* need to know var dim *)
-                   :: res)
-                 eg1s xg1s in
-             let$ refs, eg1 = refs, eg1s in
-             (Model.make_pat t Recoloring ~src:[|eg1|]
-                [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
               varseq)
              :: refs
            else refs in
@@ -5434,9 +5350,95 @@ module MyDomain : Madil.DOMAIN =
          refs
       | OBJ _ -> rs
       | _ -> assert false    
-    let refinements_pat ~env_vars (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
       []
     (* TODO: add SeqCons/SeqRepeat(m,m) but requires global change of depths for head model *) 
+    let refinements_pat_expr ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+      let ndim = t.ndim in
+      let rs = [] in
+      let rs = (* adding SeqIndex *)
+        let xindex, varseq = Refining.new_var varseq in
+        let compatible_vars = (* same type vars from env *)
+          Mymap.fold
+            (fun x tx res ->
+              if tx.kind = t.kind && tx.ndim > t.ndim
+              then (x,tx)::res
+              else res)
+            env_vars [] in
+        let$ rs, (x,tx) = rs, compatible_vars in
+        (Model.make_pat t SeqIndex ~src:[|Expr.Ref (tx, x)|]
+           [| Model.make_def xindex (Model.make_any typ_index) |],
+         varseq) :: rs in
+      match t.kind with
+(*    | INT INDEX ->
+      let rs = (* adding SeqIndexOf *) (* NOT specific enough, too many matches *)           let xvalue, varseq = Refining.new_var varseq in
+           let$ rs, (x,tx) = rs, Mymap.bindings env_vars in
+           (Model.make_pat {tx with ndim = 1} (SeqIndexOf tx.kind)
+              [| Model.make_expr (Expr.Ref (tx, x));
+                 Model.make_def xvalue (Model.make_any (scalar tx)) |],
+            varseq) :: rs
+        | _ -> rs in *)
+      | GRID (filling,nocolor as tg) ->
+         let refs = rs in
+         let refs = (* Crop *)
+           let xpos, varseq = Refining.new_var varseq in
+           let xpos_i, varseq = Refining.new_var varseq in
+           let xpos_j, varseq = Refining.new_var varseq in
+           let xsize, varseq = Refining.new_var varseq in
+           let xsize_i, varseq = Refining.new_var varseq in
+           let xsize_j, varseq = Refining.new_var varseq in
+           let cropable_vars =
+             Mymap.fold
+               (fun x tx res ->
+                 match tx.kind with
+                 | GRID tgx when tgx = tg && tx.ndim <= ndim -> (x,tx)::res
+                 | _ -> res)
+               env_vars [] in
+           let$ refs, (gvar,tvar) = refs, cropable_vars in
+           (Model.make_pat t Crop ~src:[|Expr.Ref (tvar, gvar)|]
+              [| Model.make_def xpos (Model.make_any {t with kind = VEC POS});
+                 Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}) |],
+            varseq)
+           :: refs in
+         let refs = (* Recoloring *)
+           if not nocolor then
+             let xmap, varseq = Refining.new_var varseq in
+             let xg1s =
+               Mymap.fold
+                 (fun x tx res ->
+                   match tx.kind with
+                   | GRID (_,false) when tx.ndim <= ndim -> (x,tx)::res
+                   | _ -> res)
+                 env_vars [] in
+             let eg1s =
+               let vg1_res =
+                 Ndseq.map_result 0
+                   (function
+                    | `Grid g ->
+                       let| g1, _ = Grid_patterns.recoloring g in
+                       Result.Ok (`Grid g1)
+                    | _ -> Result.Error (Invalid_argument "refinement: Recoloring"))
+                   value in
+               match vg1_res with
+               | Result.Ok vg1 -> [Expr.Const (t, vg1)]
+               | _ -> [] in
+             let eg1s =
+               List.fold_left
+                 (fun res (xg1,tg1) ->
+                   let rg1 = Expr.Ref (tg1, xg1) in
+                   rg1
+                   (* :: Expr.Apply (t, `Index_1 [Some 0], [|rg1|])
+                   :: Expr.Apply (t, `Index_1 [Some (-1)], [|rg1|]) *) (* need to know var dim *)
+                   :: res)
+                 eg1s xg1s in
+             let$ refs, eg1 = refs, eg1s in
+             (Model.make_pat t Recoloring ~src:[|eg1|]
+                [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
+              varseq)
+             :: refs
+           else refs in
+         refs
+      | _ -> rs
     let refinements_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
@@ -5471,9 +5473,9 @@ module MyDomain : Madil.DOMAIN =
       | MAP (ka,kb), _ ->
          [ Model.make_any t, varseq ]
       | _ -> pp_endline xp_typ t; pp_endline xp_value v; assert false
-    let prunings_any ~env_vars t varseq value =
+    let prunings_any t varseq value =
       []
-    let prunings_pat ~env_vars t c args varseq value =
+    let prunings_pat t c args varseq value =
       let refs =
         match c with
         | SeqCons _ ->
