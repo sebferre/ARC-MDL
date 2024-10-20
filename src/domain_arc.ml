@@ -5217,6 +5217,26 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
+         let refs = (* Recoloring-const *)
+           if not nocolor then
+             let vg1_res =
+               Ndseq.map_result 0
+                 (function
+                  | `Grid g ->
+                     let| g1, _ = Grid_patterns.recoloring g in
+                     Result.Ok (`Grid g1)
+                  | _ -> Result.Error (Invalid_argument "refinement: Recoloring"))
+                 value in
+             match vg1_res with
+             | Result.Ok vg1 ->
+                let eg1 = Expr.Const (t, vg1) in
+                let xmap, varseq = Refining.new_var varseq in
+                (Model.make_pat t Recoloring ~src:[|eg1|]
+                   [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
+                 varseq)
+                :: refs
+             | _ -> refs
+           else refs in
          let refs = (* MotifMulti *)
            let t_mask = {t with kind = GRID (`Sprite,true)} in
            let xmot, varseq = Refining.new_var varseq in
@@ -5400,37 +5420,18 @@ module MyDomain : Madil.DOMAIN =
                  Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}) |],
             varseq)
            :: refs in
-         let refs = (* Recoloring *)
+         let refs = (* Recoloring-expr *)
            if not nocolor then
              let xmap, varseq = Refining.new_var varseq in
-             let xg1s =
+             let eg1s =
                Mymap.fold
                  (fun x tx res ->
                    match tx.kind with
-                   | GRID (_,false) when tx.ndim <= ndim -> (x,tx)::res
+                   | GRID (_,false) when tx.ndim <= ndim ->
+                      let eg1 = Expr.Ref (tx, x) in
+                      eg1::res
                    | _ -> res)
                  env_vars [] in
-             let eg1s =
-               let vg1_res =
-                 Ndseq.map_result 0
-                   (function
-                    | `Grid g ->
-                       let| g1, _ = Grid_patterns.recoloring g in
-                       Result.Ok (`Grid g1)
-                    | _ -> Result.Error (Invalid_argument "refinement: Recoloring"))
-                   value in
-               match vg1_res with
-               | Result.Ok vg1 -> [Expr.Const (t, vg1)]
-               | _ -> [] in
-             let eg1s =
-               List.fold_left
-                 (fun res (xg1,tg1) ->
-                   let rg1 = Expr.Ref (tg1, xg1) in
-                   rg1
-                   (* :: Expr.Apply (t, `Index_1 [Some 0], [|rg1|])
-                   :: Expr.Apply (t, `Index_1 [Some (-1)], [|rg1|]) *) (* need to know var dim *)
-                   :: res)
-                 eg1s xg1s in
              let$ refs, eg1 = refs, eg1s in
              (Model.make_pat t Recoloring ~src:[|eg1|]
                 [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
