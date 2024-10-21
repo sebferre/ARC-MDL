@@ -240,6 +240,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let xp_any t ~html print () =
       xp_html_elt "span" ~classe:"model-any" ~html print
         (fun () -> print#string "?")
+
+    let xp_direction ~html print dir =
+      print#string (match dir with `H -> "horizontal" | `V -> "vertical")
     
     let xp_pat c xp_src xp_args ~html print () =
       match c, xp_src, xp_args with
@@ -365,7 +368,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string " and direction "; xp_dir ~html print ()
       | ColorSeq dir, [||], [|xp_size; xp_colors|] ->
          print#string "a ";
-         print#string (match dir with `H -> "horizontal" | `V -> "vertical");
+         xp_direction ~html print dir;
          print#string " 1D grid with size "; xp_size ~html print ();
          print#string " and colors: ";
          xp_colors ~html print ()
@@ -559,6 +562,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogAnd_1 (* Mask^k -> Mask *)
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
+      | `GridOfColorSeq_1 of direction (* Color^k -> Grid^(k-1) *)
+      | `GridOfColorMat_1 (* Color^k -> Grid^(k-2) *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
       | `RelativePos_1 (* Obj^k -> Pos^(k+1) *)
       | `TranslatedOnto_1 (* Obj^k -> Pos^(k+1) *)
@@ -666,6 +671,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
       | `GridOfMask_2 -> print#string "gridOfMask"
+      | `GridOfColorSeq_1 dir -> print#string "gridOfColorSeq["; xp_direction ~html print dir; print#string "]"
+      | `GridOfColorMat_1 -> print#string "gridOfColorMat"
       | `RelativePos_1 -> print#string "relativePos"
       | `TranslatedOnto_1 -> print#string "translatedOnto"
       | `Tiling_1 (k,l) ->
@@ -928,6 +935,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
              ::(`Halves_1 `H, [|t|])
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
+             ::(`GridOfColorSeq_1 `H, [| {t with kind = COLOR C_OBJ} |])
+             ::(`GridOfColorMat_1, [| {t with kind = COLOR C_OBJ} |])
              ::(`ScaleUp_2, [|t (* const:{t with kind = INT CARD} *) |])
              ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
              (* ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |]) *)
@@ -1200,6 +1209,50 @@ module MyDomain : Madil.DOMAIN =
           (vbgcolor, vcolor) in
       assert (Ndseq.depth vcore = depth);
       make_motif_dpure dmot vcore dnoise
+
+    let make_grid_from_color_seq dir vcolors =
+      let| acolors =
+        match Ndseq.as_seq vcolors with
+        | Some (0,lcolors) ->
+           let acolors = Array.of_list lcolors in
+           array_map_result
+             (function
+              | `Color c -> Result.Ok c
+              | _ -> Result.Error (Undefined_result "make_grid_from_color_seq: not a color"))
+             acolors
+        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq: not a color seq") in
+      let n = Array.length acolors in
+      let g =
+        match dir with
+        | `H -> Grid.init 1 n (fun i j -> acolors.(j))
+        | `V -> Grid.init n 1 (fun i j -> acolors.(i)) in
+      Result.Ok g
+    
+    let make_grid_from_color_seq_seq vcolorss =
+      let| acolorss : Grid.color array array =
+        match Ndseq.as_seq vcolorss with
+        | Some (1, lcolorss) ->
+           let acolorss = Array.of_list lcolorss in
+           array_map_result
+             (fun vcolors ->
+               match Ndseq.as_seq vcolors with
+               | Some (0,lcolors) ->
+                  let acolors = Array.of_list lcolors in
+                  array_map_result
+                    (function
+                     | `Color c -> Result.Ok c
+                     | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color"))
+                    acolors
+               | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color seq"))
+             acolorss
+        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color seq seq") in
+      let h = Array.length acolorss in
+      let w =
+        Array.fold_left
+          (fun res acolors -> min res (Array.length acolors))
+          max_int acolorss in
+      let g = Grid.init h w (fun i j -> acolorss.(i).(j)) in
+      Result.Ok g      
     
     (* evaluation *)
 
@@ -1964,6 +2017,32 @@ module MyDomain : Madil.DOMAIN =
                   | _ -> None)
                  v1 in
              Result.Ok (`Grid m)
+          | _ -> assert false)
+      | `GridOfColorSeq_1 dir ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.depth v1 in
+             if ndim > 0
+             then
+               Ndseq.map_result ~depth:(ndim-1) (-1)
+                 (fun vcolors ->
+                   let| g = make_grid_from_color_seq dir vcolors in
+                   Result.Ok (`Grid g))
+                 v1
+             else Result.Error (Undefined_result "gridOfColorSeq: not a sequence")
+          | _ -> assert false)
+      | `GridOfColorMat_1 ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.depth v1 in
+             if ndim > 1
+             then
+               Ndseq.map_result ~depth:(ndim-2) (-2)
+                 (fun vcolorss ->
+                   let| g = make_grid_from_color_seq_seq vcolorss in
+                   Result.Ok (`Grid g))
+                 v1
+             else Result.Error (Undefined_result "gridOfColorMat: not matrix")
           | _ -> assert false)
       | `Halves_1 dir ->
          (function
@@ -4032,6 +4111,8 @@ module MyDomain : Madil.DOMAIN =
       | `Halves_1 dir -> 1.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
+      | `GridOfColorSeq_1 dir -> 1.
+      | `GridOfColorMat_1 -> 0.
       | `RelativePos_1 -> 0.
       | `TranslatedOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
@@ -4569,6 +4650,27 @@ module MyDomain : Madil.DOMAIN =
                  ({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `H, `Default)
                  ::({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `V, `Default)
                  ::res
+              | _ -> res in
+            let res = (* GridOfColorSeq, GridOfColorMat *)
+              match t1.kind with
+              | COLOR tc ->
+                 let filling =
+                   match tc with
+                   | C_BG false -> `Sprite
+                   | _ -> `Full in
+                 let kind = GRID (filling,false) in
+                 let res =
+                   if t1.ndim >= 1
+                   then
+                     ({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `H, `Default)
+                     ::({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `V, `Default)
+                     ::res
+                   else res in
+                 let res =
+                   if t1.ndim >= 2
+                   then ({kind; ndim = t1.ndim-2}, `GridOfColorMat_1, `Default)::res
+                   else res in
+                 res
               | _ -> res in
             res)) in
       let index = (* LEVEL: Color features, Vec features *)
