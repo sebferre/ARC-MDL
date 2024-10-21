@@ -554,6 +554,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Max_1 (* Int^k -> Int *)
       | `ArgMin_1 (* Int^k -> Index^1 *)
       | `ArgMax_1 (* Int^k -> Index^1 *)
+      | `MostCommon_1 (* X^k -> X *)
+      | `LeastCommon_1 (* X^k -> X *)
       | `LogAnd_1 (* Mask^k -> Mask *)
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
@@ -639,6 +641,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Max_1 -> print#string "max"
       | `ArgMin_1 -> print#string "argmin"
       | `ArgMax_1 -> print#string "argmax"
+      | `MostCommon_1 -> print#string "most_common"
+      | `LeastCommon_1 -> print#string "least_common"
       | `Average_n -> print#string "average"
       | `Span_2 -> print#string "span"
       | `Norm_1 -> print#string "norm"
@@ -842,6 +846,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           assert (t.ndim = 0);
           let res =
             [ `Cast_1 (t.kind,t.kind), [|t|];
+              `MostCommon_1, [|t|];
+              `LeastCommon_1, [|t|];
               `Index_1 [], [|t|];
               `Flatten_1 (true,false), [|t|];
               `Tail_1, [|t|];
@@ -1893,6 +1899,32 @@ module MyDomain : Madil.DOMAIN =
                (function `Int i -> Some i | _ -> None)
                (fun i best -> i > best)
                v1
+          | _ -> assert false)
+      | `MostCommon_1 ->
+         (function
+          | [|v1|] when Ndseq.depth v1 > 0 ->
+             let cnt = new Common.counter in
+             let| () =
+               eval_aggreg "mostcommon"
+                 (fun v -> cnt#add v; Some ())
+                 (fun (res, v) -> cnt#add v; Some res)
+                 v1 in
+             (match cnt#most_frequents with
+              | _, [v] -> Result.Ok v
+              | _ -> Result.Error (Undefined_result "mostcommon: ambiguous"))
+          | _ -> assert false)
+      | `LeastCommon_1 ->
+         (function
+          | [|v1|] when Ndseq.depth v1 > 0 ->
+             let cnt = new Common.counter in
+             let| () =
+               eval_aggreg "leastcommon"
+                 (fun v -> cnt#add v; Some ())
+                 (fun (res, v) -> cnt#add v; Some res)
+                 v1 in
+             (match cnt#least_frequents with
+              | _, [v] -> Result.Ok v
+              | _ -> Result.Error (Undefined_result "leastcommon: ambiguous"))
           | _ -> assert false)
       | `LogAnd_1 ->
          (function
@@ -3985,6 +4017,8 @@ module MyDomain : Madil.DOMAIN =
       | `Max_1 -> 0.
       | `ArgMin_1 -> 0.
       | `ArgMax_1 -> 0.
+      | `MostCommon_1 -> 0.
+      | `LeastCommon_1 -> 0.
       | `Average_n -> 0.
       | `Span_2 -> 0.
       | `Norm_1 -> 0.
@@ -4723,7 +4757,7 @@ module MyDomain : Madil.DOMAIN =
                  (t1, `ApplySymGrid_1 sym, `Default)::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: GRID part+compose *)
+      let index = (* LEVEL: GRID compose *)
         Common.prof "make_index/grid_part_compose" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -4850,6 +4884,10 @@ module MyDomain : Madil.DOMAIN =
                    ::(typ_index, `ArgMax_1, `Default)
                    ::res
                 | _ -> res in
+              let res = (* MostCommon, LeastCommon *)
+                (t1_scalar, `MostCommon_1, `Default)
+                ::(t1_scalar, `LeastCommon_1, `Default)
+                ::res in
               let res = (* And, Or, XOr *)
                 match t1.kind with
                 | GRID (`Sprite,true) ->
