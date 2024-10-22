@@ -210,6 +210,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       
     type constr =
       | Vec (* COORD, COORD : VEC *)
+      | Square (* COORD : VEC *)
       | Obj (* POS, SPRITE : OBJ *)
       | DomMap of value list (* B+ : MAP(A,B) *) (* fixed set of keys, assumed known from ctx *)
       | Replace (* A, A : MAP(A,A) *)
@@ -248,6 +249,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       match c, xp_src, xp_args with
       | Vec, [||], [|xp_i; xp_j|] ->
          xp_vec xp_i xp_j ~html print () ()
+      | Square, [||], [|xp_ij|] ->
+         print#string "square("; xp_ij ~html print (); print#string ")"
       | Obj, [||], [|xp_pos; xp_sprite|] ->
          print#string "at position "; xp_pos ~html print ();
          print#string ": ";
@@ -285,7 +288,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string " that contains "; xp_card ~html print ();
          print#string " <= "; print#int nmax;
          print#string " "; xp_seg ~html print ();
-         print#string " objects like";
+         print#string " objects";
          xp_newline ~html print ();
          xp_objs ~html print ();
          print#string " forming the constellation object: ";
@@ -397,6 +400,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Vec, 0 -> print#string "i"
       | Vec, 1 -> print#string "j"
       | Vec, _ -> assert false
+      | Square, 0 -> print#string "ij"
+      | Square, _ -> assert false
       | Obj, 0 -> print#string "pos"
       | Obj, 1 -> print#string "sprite"
       | Obj, _ -> assert false
@@ -759,6 +764,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | VEC tv ->
              (Vec, [||], [| {t with kind = INT (COORD (I, tv))};
                             {t with kind = INT (COORD (J, tv))} |])
+             ::(Square, [||], [| {t with kind = INT (COORD (I, tv))} |])
              :: res
           | COLOR tc -> res
           | SEG -> res
@@ -2247,6 +2253,23 @@ module MyDomain : Madil.DOMAIN =
                  (Data.value di, Data.value dj) in
              Myseq.return (Data.make_dpat v c [|di; dj|], info)
           | _ -> assert false)
+
+      | VEC tv, Square, [||], [|gen_ij|] ->
+         let info_ij =
+           Ndseq.map ~depth 0
+             (function
+              | `Vec (`Int (mini,maxi), `Int (minj,maxj)) ->
+                 `Int (max mini minj, min maxi maxj) (* interval intersection because i = j *)
+              | _ -> assert false)
+             info in
+         let* dij, _ = gen_ij info_ij in
+         let v : value =
+           Ndseq.map ~depth 0
+             (function
+              | `Int i -> `Vec (i,i)
+              | _ -> assert false)
+             (Data.value dij) in
+         Myseq.return (Data.make_dpat v c [|dij|], info)    
     
       | OBJ _, Obj, [||], [|gen_pos; gen_g1|] ->
          let info_pos, info_g1 =
@@ -3118,6 +3141,21 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|di; dj|], input)
 
+      | _, Square, [||], [|parse_ij|] ->
+         let v = value_of_input t input in
+         let* in_ij =
+           Ndseq.map_myseq ~depth 0
+             (function
+              | `Vec (`IntRange (i, ri), `IntRange (j, rj)) ->
+                 if i = j
+                 then Myseq.return (`IntRange (i, Range.inter ri rj))
+                 else Myseq.empty
+              | x -> pp xp_input x; assert false)
+             input in
+         let* dij, _ = parse_ij in_ij in
+         let input = Ndseq.const `Null input in
+         Myseq.return (Data.make_dpat v c [|dij|], input)
+
       | _, Obj, [||], [|parse_pos; parse_g1|] ->
          let v = value_of_input t input in
          let in_pos, in_g1 =
@@ -3940,6 +3978,7 @@ module MyDomain : Madil.DOMAIN =
     let encoding_dpat dc vsrc encs =
       match dc, encs with
       | Vec, [|enc_i; enc_j|] ->  enc_i +. enc_j
+      | Square, [|enc_ij|] -> enc_ij
       | Obj, [|enc_pos; enc_g1|] -> enc_pos +. enc_g1
       | DomMap keys, [|enc_vals|] -> enc_vals (* keys encoded in model *)
       | Replace, [|enc_a; enc_b|] -> enc_a +. enc_b
@@ -3981,6 +4020,7 @@ module MyDomain : Madil.DOMAIN =
     let dl_constr_params t c =
       match c with
       | Vec -> 0.
+      | Square -> 0.
       | Obj -> 0.
       | DomMap keys -> (* 0. (* assuming keys derived from context pattern/data *) *)
          (match t.kind with
@@ -5159,7 +5199,11 @@ module MyDomain : Madil.DOMAIN =
               varseq) :: rs
            else rs in
          rs
-      | VEC tv -> rs
+      | VEC tv ->
+         let xij, varseq = Refining.new_var varseq in
+         (Model.make_pat t Square
+            [| Model.make_def xij (Model.make_any {t with kind = INT (COORD (I, tv))}) |],
+          varseq) :: rs
       | COLOR tc -> rs
       | SEG -> rs
       | MOTIF tmot -> rs
