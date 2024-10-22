@@ -1287,9 +1287,9 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
                   part_widths;
                   parts })
           !c_fs in
-      let mgs = (* sorting by decreasing meta-area *)
+      let mgs = (* sorting by increasing meta-area *)
         List.sort
-          (fun mg1 mg2 -> Stdlib.compare (mg2.k * mg2.l) (mg1.k * mg1.l))
+          (fun mg1 mg2 -> Stdlib.compare (mg1.k * mg1.l) (mg2.k * mg2.l))
           mgs in
       mgs
 

@@ -819,7 +819,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                   INT (COORD (J, SIZE))|]);*)
                  true, (Metagrid, [||],
                         [| {t with kind = COLOR (C_BG full)};
-                           {t with kind = GRID (`Sprite,true)};
+                           {t with kind = GRID (`Noise,true)};
                            {t with kind = VEC SIZE};
                            {t with kind = INT (COORD (I,SIZE))};
                            {t with kind = INT (COORD (J,SIZE))};
@@ -5478,7 +5478,7 @@ module MyDomain : Madil.DOMAIN =
            let xg1, varseq = Refining.new_var varseq in
            (Model.make_pat t Metagrid
               [| Model.make_def xsepcolor (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
-                 Model.make_def xborders (Model.make_any {t with kind = GRID (`Sprite,true)});
+                 Model.make_def xborders (Model.make_any {t with kind = GRID (`Noise,true)});
                  Model.make_def xdims (Model.make_any {t with kind = VEC SIZE});
                  Model.make_def xheight (Model.make_any {kind = INT (COORD (I, SIZE)); ndim = ndim+1});
                  Model.make_def xwidth (Model.make_any {kind = INT (COORD (J, SIZE)); ndim = ndim+1});
