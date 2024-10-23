@@ -550,6 +550,7 @@ type t =
   | FlipD1 | FlipD2 | FlipD12
   | Rotate180 | Rotate90
   | FullSym
+  | Rings
   (* special motifs *)
   | Corners
   | Border | CrossPlus | CrossTimes | Diamond
@@ -570,6 +571,7 @@ let xp ~html print = function
   | Rotate180 -> print#string "Rotate180"
   | Rotate90 -> print#string "Rotate90"
   | FullSym -> print#string "FullSym"
+  | Rings -> print#string "Rings"
   | Corners -> print#string "Corners"
   | Border -> print#string "Border"
   | CrossPlus -> print#string "Cross +"
@@ -625,6 +627,9 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
        let i_min = min i (h_1 - i) in
        let j_min = min j (w_1 - j) in
        min i_min j_min, max i_min j_min)
+  | Rings ->
+     (fun i j ->
+       min (min i (h_1 - i)) (min j (w_1 - j)), 0)
   (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
   | Corners ->
      (fun i j ->
@@ -773,6 +778,18 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        Range.make_open 0, (* dummy *)
        []
+  | Rings ->
+     let min_hw = min h w in
+     if min_hw >= 3
+     then
+       let u, v = (min_hw+1)/2, 1 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
   | Corners | Border | CrossPlus ->
      if h >= 3 && w >= 3
      then
@@ -829,6 +846,7 @@ let candidates_multi = (* multicolor motifs *)
     FlipD1; FlipD2; FlipD12;
     Rotate180; Rotate90;
     FullSym;
+    Rings;
     Periodic (I, J);
     Periodic (I, PlusIJ);
     Periodic (PlusIJ, J);
@@ -845,7 +863,8 @@ let prob_multi : t -> float = function
   | Scale -> 0.3
 
   (* 0.4 *)
-  | FullSym -> 0.4 *. 0.35
+  | FullSym -> 0.4 *. 0.25
+  | Rings -> 0.4 *. 0.10
 
   | FlipHW -> 0.4 *. 0.2
   | FlipH -> 0.4 *. 0.05
