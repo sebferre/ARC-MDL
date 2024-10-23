@@ -2390,13 +2390,15 @@ module MyDomain : Madil.DOMAIN =
          (match l with
           | [dpos, _; dsize, _] ->
              let* v =
-               Ndseq.map_tup_myseq ~name:"gen/Crop" ~depth 0
-                 (function
-                  | `Grid g, `Vec (i,j), `Vec (h1,w1) ->
-                     let* g  = Myseq.from_result (Grid.Transf.crop g i j h1 w1) in
-                     Myseq.return (`Grid g)
-                  | _ -> assert false)
-                 (vg, Data.value dpos, Data.value dsize) in
+               Ndseq.mapi_tup_myseq ~name:"gen/Crop" ~depth 0
+                 (fun is (vpos,vsize) ->
+                   match vpos, vsize, Ndseq.index_list_broadcast vg is 0 with
+                   | `Vec (i,j), `Vec (h1,w1), Some (`Grid g) ->
+                      let* g  = Myseq.from_result (Grid.Transf.crop g i j h1 w1) in
+                      Myseq.return (`Grid g)
+                   | _, _, None -> Myseq.empty
+                   | _ -> assert false)
+                 (Data.value dpos, Data.value dsize) in
              Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], info)
           | _ -> assert false)
     
@@ -2491,24 +2493,26 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              info in
          let* dmap, _ = gen_map info_map in
-         let v =
-           Ndseq.map_tup ~depth 0
-             (function
-              | `Grid g1, `Map mcol ->
-                 let g =
-                   Grid.map_pixels
-                     (fun c1 ->
-                       if Grid.is_true_color c1
-                       then
-                         match Mymap.find_opt (`Color c1) mcol with
-                         | Some (`Color c) -> c
-                         | Some _ -> assert false
-                         | None -> c1
-                       else c1)
-                     g1 in
-                 `Grid g
-              | _ -> assert false)
-             (vgrid, Data.value dmap) in
+         let* v =
+           Ndseq.mapi_tup_myseq ~depth 0
+             (fun is vmcol ->
+               match vmcol, Ndseq.index_list_broadcast vgrid is 0 with
+               | `Map mcol, Some (`Grid g1) ->
+                  let g =
+                    Grid.map_pixels
+                      (fun c1 ->
+                        if Grid.is_true_color c1
+                        then
+                          match Mymap.find_opt (`Color c1) mcol with
+                          | Some (`Color c) -> c
+                          | Some _ -> assert false
+                          | None -> c1
+                        else c1)
+                      g1 in
+                  Myseq.return (`Grid g)
+               | _, None -> Myseq.empty
+               | _ -> assert false)
+             (tup1 (Data.value dmap)) in
          Myseq.return (Data.make_dpat v c ~src [|dmap|], info)
     
       | GRID _, MotifMulti partial, [||], [|gen_mot; gen_core; _gen_pure; gen_mask_opt; gen_noise|] ->
@@ -3266,7 +3270,6 @@ module MyDomain : Madil.DOMAIN =
       | _, Crop, [|vg|], [|parse_pos; parse_size|] ->
          let v = value_of_input t input in
          let depth = Ndseq.depth v in
-         let* () = Myseq.from_bool (Ndseq.depth vg = depth) in
          let in_size =
            Ndseq.map ~depth 0
              (function
@@ -3279,18 +3282,19 @@ module MyDomain : Madil.DOMAIN =
          let* dsize, _ = parse_size in_size in
          let* in_pos =
            try
-             Ndseq.map_tup_myseq ~name:"parse/Crop/in_pos" ~depth 0
-               (function
-                | `Grid g1, `Grid g, `Vec (h1,w1) ->
-                   let h1, w1 = Grid.dims g1 in
-                   let h, w = Grid.dims g in
-                   let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
-                   Myseq.return
-                     (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
-                            `IntRange (j, Range.make_closed 0 (w-w1))))
-                | _, `Null, _ -> Myseq.empty (* failed computation for source grid *)
-                | _ -> assert false)
-               (v, vg, Data.value dsize)
+             Ndseq.mapi_tup_myseq ~name:"parse/Crop/in_pos" ~depth 0
+               (fun is (v,vsize) ->
+                 match v, vsize, Ndseq.index_list_broadcast vg is 0 with
+                 | `Grid g1, `Vec (h1,w1), Some (`Grid g) ->
+                    let h1, w1 = Grid.dims g1 in
+                    let h, w = Grid.dims g in
+                    let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
+                    Myseq.return
+                      (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
+                             `IntRange (j, Range.make_closed 0 (w-w1))))
+                 | _, _, (Some `Null | None) -> Myseq.empty (* failed computation for source grid *)
+                 | _ -> assert false)
+               (v, Data.value dsize)
            with Invalid_argument _ -> Myseq.empty in (* dg may have an inconsistent structure *)
          let* dpos, _ = parse_pos in_pos in
          let input = Ndseq.const `Null input in
@@ -3404,27 +3408,28 @@ module MyDomain : Madil.DOMAIN =
       | _, Recoloring, [|vg1|], [|parse_map|] ->
          let v = value_of_input t input in
          let depth = Ndseq.depth v in
-         let* () = Myseq.from_bool (Ndseq.depth vg1 = depth) in
          let* in_map =
            try
-             Ndseq.map_tup_myseq ~depth 0
-               (function
-                | `GridDimsCols (g,rh,rw,nc), `Grid g1 ->
-                   (match Grid_patterns.parse_recoloring g g1 with
-                    | Some mcol ->
-                       let m =
-                         Mymap.fold
-                           (fun c1 c2 res ->
-                             Mymap.add (`Color c1) (`Color c2) res)
-                           mcol (Mymap.empty : (value,value) Mymap.t) in
-                       let dom = mymap_keys m in
-                       Myseq.return (`MapDomain (m,dom))
-                    | None -> Myseq.empty)
-                | input, vg1 ->
-                   pp_endline xp_input input;
-                   pp_endline xp_value vg1;
-                   assert false)
-               (input, vg1)
+             Ndseq.mapi_tup_myseq ~depth 0
+               (fun is input ->
+                 match input, Ndseq.index_list_broadcast vg1 is 0 with
+                 | `GridDimsCols (g,rh,rw,nc), Some (`Grid g1) ->
+                    (match Grid_patterns.parse_recoloring g g1 with
+                     | Some mcol ->
+                        let m =
+                          Mymap.fold
+                            (fun c1 c2 res ->
+                              Mymap.add (`Color c1) (`Color c2) res)
+                            mcol (Mymap.empty : (value,value) Mymap.t) in
+                        let dom = mymap_keys m in
+                        Myseq.return (`MapDomain (m,dom))
+                     | None -> Myseq.empty)
+                 | _, None -> Myseq.empty
+                 | input, Some vg1 ->
+                    pp_endline xp_input input;
+                    pp_endline xp_value vg1;
+                    assert false)
+               (tup1 input)
            with Invalid_argument _ -> Myseq.empty in (* dg1 is not guaranteed to have a consistent structure *)
          let* dmap, _ = parse_map in_map in
          let input = Ndseq.const `Null input in
@@ -5611,7 +5616,7 @@ module MyDomain : Madil.DOMAIN =
                Mymap.fold
                  (fun x tx res ->
                    match tx.kind with
-                   | GRID (_,false) when tx.ndim <= ndim ->
+                   | GRID (_,false) ->
                       let eg1 = Expr.Ref (tx, x) in
                       eg1::res
                    | _ -> res)
