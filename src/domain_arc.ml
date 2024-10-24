@@ -218,7 +218,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* [SPRITE] POS, SIZE : SPRITE *)
-      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge) : SPRITE *) (* int is for max seq length, mode constrains SEG *)
+      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
       | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* [SPRITE] MAP(COLOR,COLOR) : SPRITE *)
@@ -283,7 +283,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            print#string " that contains at position "; xp_pos ~html print ();
            xp_newline ~html print ();
            xp_sprite ~html print ()*)
-      | Objects (nmax,_mode), [||], [|xp_size; xp_seg; xp_card; xp_objs; xp_merger|] ->
+      | Objects (nmax,_mode), [||], [|xp_size; xp_seg; xp_card; xp_objs; xp_merger; xp_noise|] ->
          print#string "a grid of size "; xp_size ~html print ();
          print#string " that contains "; xp_card ~html print ();
          print#string " <= "; print#int nmax;
@@ -292,7 +292,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_newline ~html print ();
          xp_objs ~html print ();
          print#string " forming the constellation object: ";
-         xp_merger ~html print ()
+         xp_merger ~html print ();
+         print#string "  plus the noise:";
+         xp_newline ~html print ();
+         xp_noise ~html print ()
       | ColorPartition, [||], [|xp_size; xp_grids|] ->
          print#string "a grid of size "; xp_size ~html print ();
          print#string " that is composed of colored layers";
@@ -425,6 +428,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Objects _, 2 -> print#string "card"
       | Objects _, 3 -> print#string "obj"
       | Objects _, 4 -> print#string "merger"
+      | Objects _, 5 -> print#string "noise"
       | Objects _, _ -> assert false
       | ColorPartition, 0 -> print#string "size"
       | ColorPartition, 1 -> print#string "layer"
@@ -790,7 +794,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                {t with kind = SEG};
                                {t with kind = INT CARD};
                                {t with kind = OBJ (`Sprite,nocolor)};
-                            (* derived merger, not counting *) |]);
+                               (* derived merger, not counting *)
+                               {t with kind = GRID (`Noise,nocolor)} |]);
                  (*not nocolor, (ColorPartition, [|VEC SIZE; GRID (`Sprite,false)|]);*)
                  not nocolor, (Monocolor, [||],
                                [| {t with kind = COLOR C_OBJ};
@@ -1145,13 +1150,13 @@ module MyDomain : Madil.DOMAIN =
       | _ -> assert false
 
 
-    let make_objects_v_dmerger dsize dseg dcard dobjs : value * data =
+    let make_objects_v_dmerger dsize dseg dcard dobjs dnoise : value * data =
       let vsize = Data.value dsize in
       let depth = Ndseq.depth vsize in
       let v, merger =
         Ndseq.map_tup ~depth (0,0)
           (function
-           | `Vec (h, w), `Seg seg, `Int card, seq_objs ->
+           | `Vec (h, w), `Seg seg, `Int card, seq_objs, `Grid g_noise ->
               let objs =
                 match Ndseq.as_seq seq_objs with
                 | Some (_,objs) ->
@@ -1182,9 +1187,10 @@ module MyDomain : Madil.DOMAIN =
                   Grid.add_grid_at g i j g1;
                   Grid.add_grid_at g0 (i-i0) (j-j0) g1)
                 objs;
+              Grid.add_grid_at g 0 0 g_noise;
               (`Grid g, `Obj (`Vec (i0,j0), `Grid g0))
            | _ -> assert false)
-          (vsize, Data.value dseg, Data.value dcard, Data.value dobjs) in
+          (vsize, Data.value dseg, Data.value dcard, Data.value dobjs, Data.value dnoise) in
       v, Data.make_dexpr merger
 
     let make_motif_dpure dmot vcore dnoise : data Myseq.t =
@@ -2402,7 +2408,7 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], info)
           | _ -> assert false)
     
-      | GRID _, Objects (nmax,mode), [||], [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger|] ->
+      | GRID _, Objects (nmax,mode), [||], [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger; gen_noise|] ->
          let info_seg, info_card =
            Ndseq.map_tup ~depth (0,0)
              (fun _ ->
@@ -2432,8 +2438,8 @@ module MyDomain : Madil.DOMAIN =
                   | _ -> assert false)
                  (vcard, info) in
              let* dobjs, _ = gen_objs info_objs in
-             let info_size =
-               Ndseq.map_tup ~depth 0
+             let info_size, info_noise =
+               Ndseq.map_tup ~depth (0,0)
                  (fun (seq_objs, info) ->
                    match Ndseq.as_seq seq_objs, info with
                    | Some (0, objs), `Grid ((minh,maxh),(minw,maxw),lc) ->
@@ -2447,12 +2453,14 @@ module MyDomain : Madil.DOMAIN =
                             | _ -> assert false)
                           (minh,minw) objs in
                       let maxh, maxw = max maxh minh, max maxw minw in
-                      `Vec (`Int (minh,maxh), `Int (minw,maxw))
+                      `Vec (`Int (minh,maxh), `Int (minw,maxw)),
+                      `Grid ((minh,maxh), (minw,maxw), [Grid.transparent])
                    | _ -> assert false)
                  (Data.value dobjs, info) in
              let* dsize, _ = gen_size info_size in
-             let v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs in
-             Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger|], info)
+             let* dnoise, _ = gen_noise info_noise in
+             let v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs dnoise in
+             Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], info)
           | _ -> assert false)
     
 (* TODO      | _, ColorPartition, [|gen_size; gen_grids|], _ ->
@@ -3300,7 +3308,7 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], input)
     
-      | _, Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger|] ->
+      | _, Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger; parse_noise|] ->
          let v = value_of_input t input in
          let in_size =
            Ndseq.map ~depth 0
@@ -3325,8 +3333,8 @@ module MyDomain : Madil.DOMAIN =
                  | _ -> assert false)
                 input) in
          let* dseg, _ = parse_seg in_seg in
-         let* in_card, in_objs =
-           Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1)
+         let* in_card, in_objs, in_noise =
+           Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1,0)
              (function
               | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Vec (h,w) ->
                  let nc1 = nc in
@@ -3334,9 +3342,8 @@ module MyDomain : Madil.DOMAIN =
                    match seg with
                    | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
                    | _ -> nc in *)
-                 let* objs = GPat.Objects.parse seg g in
+                 let* objs, g_noise = GPat.Objects.parse nmax seg g in
                  let card = List.length objs in
-                 let* () = Myseq.from_bool (card <= nmax) in
                  let* objs = (* permutations of first three objects *)
                    match objs with
                    | [] -> Myseq.return objs
@@ -3360,15 +3367,18 @@ module MyDomain : Madil.DOMAIN =
                                                 Range.make_closed 1 (h-i),
                                                 Range.make_closed 1 (w-j),
                                                 nc1)))
-                         objs))
+                         objs),
+                    `GridDimsCols (g_noise, Range.make_exact h, Range.make_exact w, nc))
+              (* TODO: remove size, as included in noise, like for Motif? *)
               | _ -> assert false)
              (input, Data.value dseg, Data.value dsize) in
          let* dcard, _ = parse_card in_card in
          let* dobjs, _ = parse_objs in_objs in
-         let _v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs in
+         let* dnoise, _ = parse_noise in_noise in
+         let _v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs dnoise in
          let input = Ndseq.const `Null input in
-         Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger|], input)
-    
+         Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], input)
+
 (*      | _, ColorPartition, [|parse_size; parse_grids|], `GridDimsCols (g,rh,rw,nc) ->
          let h, w = Grid.dims g in
          let rh1 = Range.make_exact h in
@@ -3991,7 +4001,7 @@ module MyDomain : Madil.DOMAIN =
       | BgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | IsFull, [|enc_g1|] -> enc_g1
       | Crop, [|enc_pos; enc_size|] -> enc_pos +. enc_size
-      | Objects (nmax,mode), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger|] -> enc_size +. enc_seg +. enc_card +. enc_objs (* TODO: take seg into account for encoding objects *)
+      | Objects (nmax,mode), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger; enc_noise|] -> enc_size +. enc_seg +. enc_card +. enc_objs +. enc_noise (* TODO: take seg into account for encoding objects *)
       | ColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_map|] -> enc_map
@@ -5317,6 +5327,7 @@ module MyDomain : Madil.DOMAIN =
              let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
+             let xnoise, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
              (Model.make_pat {t with kind = GRID (`Sprite,nocolor)} (Objects (nmax, `Connected))
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
@@ -5326,7 +5337,8 @@ module MyDomain : Madil.DOMAIN =
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
                         [| Model.make_def xpos (Model.make_any {kind = VEC POS; ndim = ndim+1});
                            Model.make_def xg1 (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1}) |]);
-                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)}) |],
+                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
               varseq)
              :: refs
            else refs in
@@ -5345,6 +5357,7 @@ module MyDomain : Madil.DOMAIN =
              let xg1_color, varseq = Refining.new_var varseq in
              let xg1_mask, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
+             let xnoise, varseq = Refining.new_var varseq in
              let nmax = 9 in
              (Model.make_pat t (Objects (nmax, `SameColor))
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
@@ -5358,7 +5371,8 @@ module MyDomain : Madil.DOMAIN =
                              (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
                                 [| Model.make_def xg1_color (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
                                    Model.make_def xg1_mask (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
-                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)}) |],
+                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
               varseq)
              :: refs
            else refs in

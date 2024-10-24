@@ -342,12 +342,13 @@ and xp_connectedness ~html print = function
   | Connect2_col -> print#string "same-column"
 
 type obj = int * int * Grid.t (* object *)
-type t = obj list
+type t = obj list * Grid.t (* noise *)
 
 let segment_gen
+      (nmax : int)
       (c_row, c_col, c_diag1, c_diag2, c_samecolor : bool * bool * bool * bool * bool) (* row, col, diag1, diag2, samecolor *)
       (g : Grid.t)
-    : t = (* position and subgrids of segments *)
+    : t = (* objects and noise *)
   Common.prof "Grid.segment" (fun () ->
   let h, w = Grid.dims g in
   let fm : (int * int, part) Find_merge.hashtbl =
@@ -404,7 +405,7 @@ let segment_gen
   (* collecting parts *)
   let parts =
     fm#fold
-      (fun _ part res -> (* TODO: find a way to avoid this trick *)
+      (fun _ part res ->
         let gpart = subgrid_of_part g part in
         let garea = Grid.color_area Grid.transparent gpart in
         (part.mini, part.minj, gpart, garea) :: res)
@@ -414,10 +415,28 @@ let segment_gen
       (fun (i1,j1,g1,a1) (i2,j2,g2,a2) ->
         Stdlib.compare (a2,i1,j1) (a1,i2,j2)) (* decreasing area first, then increasing i, j *)
       parts in
-  List.map (fun (i,j,g,_) -> (i,j,g)) sorted_parts)
+  let obj_parts, noise_parts = (* considering the smaller objects as noise, when too many objects *)
+    let rec aux minsize obj_parts noise_parts =
+      let n = List.length obj_parts in
+      if n <= nmax
+      then obj_parts, noise_parts
+      else
+        let l1, l2 =
+          List.partition
+            (fun (i,j,gpart,area) -> area >= minsize) (* TODO: find better, MDL-based? *)
+            obj_parts in
+        aux (minsize+1) l1 (l2 @ noise_parts) in
+    aux 1 sorted_parts [] in
+  let objs = List.map (fun (i,j,g,_) -> (i,j,g)) obj_parts in
+  let g_noise =
+    let g = Grid.make h w Grid.transparent in
+    List.iter (fun (i,j,gpart,_) -> Grid.add_grid_at g i j gpart) noise_parts;
+    g in
+  objs, g_noise)
 
-let segment_connected (conn : connectedness) (samecolor : bool) g =
+let segment_connected nmax (conn : connectedness) (samecolor : bool) g =
   segment_gen
+    nmax
     (match conn with
      | Connect8 -> (true, true, true, true, samecolor)
      | Connect4 -> (true, true, false, false, samecolor)
@@ -443,7 +462,7 @@ let segment_connected, reset_segment_connected =
       pp_endline Grid.xp_grid g1)
     objs*)
 
-let segment_by_color (g : Grid.t) : t = (* position and subgrids *)
+let segment_by_color (g : Grid.t) : t = (* objects and noise *)
   Common.prof "Grid_patterns.segment_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
@@ -481,17 +500,22 @@ let segment_by_color (g : Grid.t) : t = (* position and subgrids *)
       (fun (a1,i1,j1,g1) (a2,i2,j2,g2) ->
         Stdlib.compare (a2,i1,j1) (a1,i2,j2)) (* decreasing area first *)
       parts in
-  List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts)
+  let g_noise = Grid.make h w Grid.transparent in
+  List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts,
+  g_noise)
 
 let segment_by_color, reset_segment_by_color =
   Memo.memoize ~size:103 segment_by_color
 
-let parse seg (g : Grid.t) : t Myseq.t =
-  let objs =
+let parse (nmax : int) seg (g : Grid.t) : t Myseq.t =
+  let objs, g_noise =
     match seg with
-    | Connected (conn,samecolor) -> segment_connected conn samecolor g
+    | Connected (conn,samecolor) -> segment_connected nmax conn samecolor g
     | SameColor -> segment_by_color g in
-  Myseq.return objs
+  let n = List.length objs in
+  if n > 0 && n <= nmax
+  then Myseq.return (objs, g_noise)
+  else Myseq.empty
 
   end
 
