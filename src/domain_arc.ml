@@ -4706,27 +4706,6 @@ module MyDomain : Madil.DOMAIN =
                  ::({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `V, `Default)
                  ::res
               | _ -> res in
-            let res = (* GridOfColorSeq, GridOfColorMat *)
-              match t1.kind with
-              | COLOR tc ->
-                 let filling =
-                   match tc with
-                   | C_BG false -> `Sprite
-                   | _ -> `Full in
-                 let kind = GRID (filling,false) in
-                 let res =
-                   if t1.ndim >= 1
-                   then
-                     ({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `H, `Default)
-                     ::({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `V, `Default)
-                     ::res
-                   else res in
-                 let res =
-                   if t1.ndim >= 2
-                   then ({kind; ndim = t1.ndim-2}, `GridOfColorMat_1, `Default)::res
-                   else res in
-                 res
-              | _ -> res in
             res)) in
       let index = (* LEVEL: Color features, Vec features *)
         Common.prof "make_index/color_vec_features" (fun () ->
@@ -4766,7 +4745,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             (* TODO: TranslationSym, only inter objects, handle against GRID with negative object positions *)
             res)) in
-      let index = (* LEVEL: Int features *)
+      let index = (* LEVEL: Int features, Color to Grid *)
         Common.prof "make_index/int_features" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -4805,6 +4784,27 @@ module MyDomain : Madil.DOMAIN =
                  ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
                  ::({t1 with kind = VEC POS}, `MiddleCenter_1, `Default)
                  ::res
+              | _ -> res in
+            let res = (* GridOfColorSeq, GridOfColorMat *)
+              match t1.kind with
+              | COLOR tc ->
+                 let filling =
+                   match tc with
+                   | C_BG false -> `Sprite
+                   | _ -> `Full in
+                 let kind = GRID (filling,false) in
+                 let res =
+                   if t1.ndim >= 1
+                   then
+                     ({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `H, `Default)
+                     ::({kind; ndim = t1.ndim-1}, `GridOfColorSeq_1 `V, `Default)
+                     ::res
+                   else res in
+                 let res =
+                   if t1.ndim >= 2
+                   then ({kind; ndim = t1.ndim-2}, `GridOfColorMat_1, `Default)::res
+                   else res in
+                 res
               | _ -> res in
             res)) in
   (* TODO: binary exprs too costly
