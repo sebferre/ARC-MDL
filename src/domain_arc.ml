@@ -2382,15 +2382,18 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v c [|dg1|], info)
     
       | GRID _, Crop, [|vg|], [|gen_pos; gen_size|] ->
-         let info_pos, info_size =
-           Ndseq.map_tup ~depth (0,0)
-             (function
-              | _, `Grid g ->
-                 let h, w = Grid.dims g in
-                 `Vec (`Int (0,0), `Int (0,0)),
-                 `Vec (`Int (1, h), `Int (1, w))
-              | _ -> assert false)
-             (info, vg) in
+         let* info_pos, info_size =
+           Ndseq.mapi_tup_myseq ~depth (0,0)
+             (fun is info ->
+               match info, Ndseq.index_list_broadcast vg is 0 with
+               | _, Some (`Grid g) ->
+                  let h, w = Grid.dims g in
+                  Myseq.return
+                    (`Vec (`Int (0,0), `Int (0,0)),
+                     `Vec (`Int (1, h), `Int (1, w)))
+               | _, None -> Myseq.empty
+               | _ -> assert false)
+             (tup1 info) in
          let* l = Myseq.product_fair [gen_pos info_pos;
                                       gen_size info_size] in
          (match l with
