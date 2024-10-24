@@ -5215,10 +5215,15 @@ module MyDomain : Madil.DOMAIN =
            else rs in
          rs
       | VEC tv ->
-         let xij, varseq = Refining.new_var varseq in
-         (Model.make_pat t Square
-            [| Model.make_def xij (Model.make_any {t with kind = INT (COORD (I, tv))}) |],
-          varseq) :: rs
+         let rs = (* Square *)
+           match tv with
+           | SIZE | MOVE ->
+              let xij, varseq = Refining.new_var varseq in
+              (Model.make_pat t Square
+                 [| Model.make_def xij (Model.make_any {t with kind = INT (COORD (I, tv))}) |],
+               varseq) :: rs
+           | POS -> rs in (* not relevant for positions *)
+         rs
       | COLOR tc -> rs
       | SEG -> rs
       | MOTIF tmot -> rs
