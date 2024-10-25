@@ -232,6 +232,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
+      | MakeGrid (* GRID : COLOR++ *)
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
       | SeqRepeat of int (* depth *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
@@ -382,6 +383,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "a 2D grid with size "; xp_size ~html print ();
          print#string " and colors: ";
          xp_colorss ~html print ()
+      | MakeGrid, [||], [|xp_grid|] ->
+         print#string "as grid:";
+         xp_newline ~html print ();
+         xp_grid ~html print ()
       | SeqCons depth, [||], [|xp_hd; xp_tl|] ->
          print#string ("Cons[" ^ string_of_int depth ^ "]");
          xp_tuple2 xp_hd xp_tl ~html print ((),())
@@ -474,6 +479,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorMat, 0 -> print#string "size"
       | ColorMat, 1 -> print#string "colors"
       | ColorMat, _ -> assert false
+      | MakeGrid, 0 -> print#string "grid"
+      | MakeGrid, _ -> assert false
       | SeqCons _, 0 -> print#string "head"
       | SeqCons _, 1 -> print#string "tail"
       | SeqCons _, _ -> assert false
@@ -770,7 +777,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                             {t with kind = INT (COORD (J, tv))} |])
              ::(Square, [||], [| {t with kind = INT (COORD (I, tv))} |])
              :: res
-          | COLOR tc -> res
+          | COLOR tc ->
+             let filling =
+               match tc with
+               | C_OBJ | C_BG true -> `Full
+               | C_BG false -> `Sprite in
+             (MakeGrid, [||], [| {t with kind = GRID (filling, false)} |])
+             :: res
           | SEG -> res
           | MOTIF tm -> res
           | GRID (filling,nocolor) ->
@@ -2887,6 +2900,49 @@ module MyDomain : Madil.DOMAIN =
                | _ -> assert false)
              (Data.value dsize, Data.value dcolorss) in
          Myseq.return (Data.make_dpat v c [|dsize; dcolorss|], info)
+
+      | COLOR tc, MakeGrid, [||], [|gen_grid|] ->
+         let depth = Ndseq.depth info in
+         let* info_grid =
+           Ndseq.map_myseq ~depth:(depth - 2) (-2)
+             (fun info ->
+               let* h, w, lc =
+                 match Ndseq.as_seq info with
+                 | Some (1, row0::rows1) ->
+                    (match Ndseq.as_seq row0 with
+                     | Some (0, (`Color lc :: cells)) ->
+                        let h = 1 + List.length rows1 in
+                        let w = 1 + List.length cells in
+                        if List.for_all
+                             (fun row1 ->
+                               match Ndseq.as_seq row1 with
+                               | Some (0, cells) -> List.length cells = w
+                               | _ -> false)
+                             rows1
+                        then Myseq.return (h, w, lc)
+                        else Myseq.empty (* not rectangular *)
+                     | Some (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+                     | _ -> assert false)
+                 | Some (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+                 | _ -> assert false in
+               Myseq.return (`Grid ((h,h), (w,w), lc)))
+             info in
+         let* dgrid, _ = gen_grid info_grid in
+         let v =
+           Ndseq.map 2
+             (function
+              | `Grid g ->
+                 let h, w = Grid.dims g in
+                 Ndseq.seq 1
+                   (List.init h
+                      (fun i ->
+                        Ndseq.seq 0
+                          (List.init w
+                             (fun j ->
+                               `Color (Grid.get_pixel ~source:"gen/MakeGrid" g i j)))))
+              | _ -> assert false)
+             (Data.value dgrid) in
+         Myseq.return (Data.make_dpat v c [|dgrid|], info)
     
       | _, SeqCons depth, [||], [|gen_hd; gen_tl|] ->
          let* xhd = Myseq.from_option (Ndseq.head ~depth info) in
@@ -3740,6 +3796,23 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dsize; dcolorss|], input)
 
+      | _, MakeGrid, [||], [|parse_grid|] ->
+         let v = value_of_input t input in
+         let depth = Ndseq.depth input in
+         let* in_grid =
+           Ndseq.map_myseq ~depth:(depth - 2) (-2)
+             (fun input ->
+               let* g = Myseq.from_result (make_grid_from_color_seq_seq (value_of_input t input)) in
+               let h, w = Grid.dims g in
+               let rh = Range.make_exact h in (* grid dims known from above, patterns introducing color seq seq *)
+               let rw = Range.make_exact w in
+               let nc = Grid.nb_color in (* TODO: add nc info in input Col *)
+               Myseq.return (`GridDimsCols (g,rh,rw,nc)))    
+             input in
+         let* dgrid, _ = parse_grid in_grid in
+         let input = Ndseq.const `Null input in
+         Myseq.return (Data.make_dpat v c [|dgrid|], input)
+
       | _, SeqCons dep, [||], [|parse_hd; parse_tl|] ->
          if Ndseq.is_complete ~depth:dep input
          then
@@ -4021,6 +4094,7 @@ module MyDomain : Madil.DOMAIN =
       | Line, [|enc_len; enc_dir|] -> enc_len +. enc_dir
       | ColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
       | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
+      | MakeGrid, [|enc_grid|] -> enc_grid
       | SeqCons depth, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
       | SeqRepeat depth, [|enc_e|] -> enc_e
       | SeqRange, [|enc_start; enc_step|] -> enc_start +. enc_step
@@ -4073,6 +4147,7 @@ module MyDomain : Madil.DOMAIN =
       | Line -> 0.
       | ColorSeq dir -> 1. (* encoding direction *)
       | ColorMat -> 0.
+      | MakeGrid -> 0.
       | SeqCons depth -> Mdl.Code.universal_int_star depth
       | SeqRepeat depth -> Mdl.Code.universal_int_star depth
       | SeqRange -> 0.
@@ -5099,6 +5174,28 @@ module MyDomain : Madil.DOMAIN =
         pp_endline xp_value (List.hd (List.hd valuess))
       );*)
       let rs = [] in
+      let rs = (* adding Vec *)
+        match t.kind with
+        | VEC tv ->
+           let xi, varseq = Refining.new_var varseq in
+           let xj, varseq = Refining.new_var varseq in
+           (Model.make_pat t Vec
+              [| Model.make_def xi (Model.make_any {t with kind = INT (COORD (I, tv))});
+                 Model.make_def xj (Model.make_any {t with kind = INT (COORD (J, tv))}) |],
+            varseq) :: rs
+        | _ -> rs in
+      let rs = (* adding MakeGrid *)
+        match t.kind with
+        | COLOR tc when ndim >= 2 ->
+           let filling =
+             match tc with
+             | C_OBJ | C_BG true -> `Full
+             | C_BG false -> `Sprite in
+           let xgrid, varseq = Refining.new_var varseq in
+           (Model.make_pat t MakeGrid
+              [| Model.make_def xgrid (Model.make_any {kind = GRID (filling,false); ndim = ndim-2})|],
+            varseq) :: rs
+        | _ -> rs in
       let rs = (* adding SeqCons *)
         if ndim = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
@@ -5147,16 +5244,6 @@ module MyDomain : Madil.DOMAIN =
              varseq) :: rs
           else rs
         else rs in
-      let rs = (* adding Vec *)
-        match t.kind with
-        | VEC tv ->
-           let xi, varseq = Refining.new_var varseq in
-           let xj, varseq = Refining.new_var varseq in
-           (Model.make_pat t Vec
-              [| Model.make_def xi (Model.make_any {t with kind = INT (COORD (I, tv))});
-                 Model.make_def xj (Model.make_any {t with kind = INT (COORD (J, tv))}) |],
-            varseq) :: rs
-        | _ -> rs in
 (*      let rs = (* adding Obj: implicit with Objects *)
         match t with
         | OBJ tg ->
