@@ -529,13 +529,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogNot_1 (* on Mask *)
       | `Stack_n (* on Grids *)
       | `Area_1 (* on Shape *)
-      | `Left_1 (* on Obj *)
-      | `Right_1 (* on Obj *)
-      | `Center_1 (* on Obj *)
-      | `Top_1 (* on Obj *)
-      | `Bottom_1 (* on Obj *)
-      | `Middle_1 (* on Obj *)
-      | `MiddleCenter_1 (* on Obj *)
+      | `Left_1 (* on Obj, Grid *)
+      | `Right_1 (* on Obj, Grid *)
+      | `Center_1 (* on Obj, Grid *)
+      | `Top_1 (* on Obj, Grid *)
+      | `Bottom_1 (* on Obj, Grid *)
+      | `Middle_1 (* on Obj, Grid *)
+      | `MiddleCenter_1 (* on Obj, Grid *)
       | `ProjI_1 (* on Vec *)
       | `ProjJ_1 (* on Vec *)
       | `MaskOfGrid_1 (* Sprite -> Mask *)
@@ -917,6 +917,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`Top_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Bottom_1, [| {t with kind = OBJ (`Sprite,false) } |])
              ::(`Middle_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`Right_1, [| {t with kind = GRID (`Sprite,false) } |])
+             ::(`Center_1, [| {t with kind = GRID (`Sprite,false) } |])
+             ::(`Bottom_1, [| {t with kind = GRID (`Sprite,false) } |])
+             ::(`Middle_1, [| {t with kind = GRID (`Sprite,false) } |])
              ::(`IJTranspose_1, [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
              ::(`Direction_1, [|t|])
              ::(`Abs_1, [|t|])
@@ -930,6 +934,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           | VEC tv ->
              (`Pos_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`MiddleCenter_1, [| {t with kind = OBJ (`Sprite,false) } |])
+             ::(`MiddleCenter_1, [| {t with kind = GRID (`Sprite,false) } |])
              ::(`Size_1, [| {t with kind = GRID (`Sprite,false)} |])
              ::(`Plus_2, [|t (* const: t *)|])
              ::(`Minus_2, [|t (* const: t *)|])
@@ -1639,12 +1644,16 @@ module MyDomain : Madil.DOMAIN =
       | `Left_1 ->
          (function
           | [| `Obj (`Vec (_, j), _)|] -> Result.Ok (`Int j)
+          | [| `Grid g |] -> Result.Ok (`Int 0)
           | _ -> Result.Error (Invalid_expr e))
       | `Right_1 ->
          (function
           | [| `Obj (`Vec (_, j), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (j+w-1))
+          | [| `Grid g |] ->
+             let h, w = Grid.dims g in
+             Result.Ok (`Int (w - 1))
           | _ -> Result.Error (Invalid_expr e))
       | `Center_1 ->
          (function
@@ -1653,16 +1662,25 @@ module MyDomain : Madil.DOMAIN =
              if w mod 2 = 0
              then Result.Error (Undefined_result "Center: no center, even width")
              else Result.Ok (`Int (j + w/2))
+          | [| `Grid g |] ->
+             let h, w = Grid.dims g in
+             if w mod 2 = 0
+             then Result.Error (Undefined_result "Center: no center, even width")
+             else Result.Ok (`Int (w/2))
           | _ -> Result.Error (Invalid_expr e))
       | `Top_1 ->
          (function
-          | [| `Obj (`Vec (i, _), _)|] -> Result.Ok (`Int i)
+          | [| `Obj (`Vec (i, _), _) |] -> Result.Ok (`Int i)
+          | [| `Grid g |] -> Result.Ok (`Int 0)
           | _ -> Result.Error (Invalid_expr e))
       | `Bottom_1 ->
          (function
           | [| `Obj (`Vec (i, _), `Grid shape)|] ->
              let h, w = Grid.dims shape in
              Result.Ok (`Int (i+h-1))
+          | [| `Grid g |] ->
+             let h, w = Grid.dims g in
+             Result.Ok (`Int (h - 1))
           | _ -> Result.Error (Invalid_expr e))
       | `Middle_1 ->
          (function
@@ -1671,6 +1689,11 @@ module MyDomain : Madil.DOMAIN =
              if h mod 2 = 0
              then Result.Error (Undefined_result "Middle: no middle, even height")
              else Result.Ok (`Int (i + h/2))
+          | [| `Grid g |] ->
+             let h, w = Grid.dims g in
+             if h mod 2 = 0
+             then Result.Error (Undefined_result "Middle: no middle, even height")
+             else Result.Ok (`Int (h/2))
           | _ -> Result.Error (Invalid_expr e))
       | `MiddleCenter_1 ->
          (function
@@ -1679,6 +1702,11 @@ module MyDomain : Madil.DOMAIN =
              if h mod 2 = 0 || w mod 2 = 0
              then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
              else Result.Ok (`Vec (i + h/2, j + w/2))
+          | [| `Grid g |] ->
+             let h, w = Grid.dims g in
+             if h mod 2 = 0 || w mod 2 = 0
+             then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
+             else Result.Ok (`Vec (h/2, w/2))
           | _ -> Result.Error (Invalid_expr e))
       | `ProjI_1 ->
          (function
@@ -4853,7 +4881,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             let res = (* Left, Right, Center, Top, Bottom, Middle, MiddleCenter *)
               match t1.kind with
-              | OBJ tg ->
+              | OBJ tg | GRID tg ->
                  ({t1 with kind = INT (COORD (J,POS))}, `Left_1, `Default)
                  ::({t1 with kind = INT (COORD (J,POS))}, `Right_1, `Default)
                  ::({t1 with kind = INT (COORD (J,POS))}, `Center_1, `Default)
@@ -5775,7 +5803,8 @@ module MyDomain : Madil.DOMAIN =
     let prunings_any t varseq value =
       []
     let prunings_pat t c args varseq value =
-      let refs =
+      [Model.make_any t, varseq]
+(* REM      let refs =
         match c with
         | SeqCons _ ->
            [Model.make_any t, varseq]
@@ -5785,7 +5814,7 @@ module MyDomain : Madil.DOMAIN =
       match t.kind, c with
       | GRID tg, _ -> (Model.make_any t, varseq) :: refs
       | MAP (ka,kb), _ -> (Model.make_any t, varseq) :: refs
-      | _ -> refs (* TODO: why not pruning for all types? *)
+      | _ -> refs (* TODO: why not pruning for all types? *) *)
     let prunings_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
