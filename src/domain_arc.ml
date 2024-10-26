@@ -4,8 +4,11 @@ open Arc_common
 
 module GPat = Grid_patterns
 
-let () = Printexc.record_backtrace true
-   
+let () = (* performance and debugging flags *)
+  Printexc.record_backtrace true;
+  Common.prof_on := true;
+  Common.prof_logging := false
+
 module Basic_types (* : Madil.BASIC_TYPES *) =
   struct
 
@@ -1243,46 +1246,55 @@ module MyDomain : Madil.DOMAIN =
     let make_grid_from_color_seq dir vcolors =
       let| acolors =
         match Ndseq.as_seq vcolors with
-        | Some (0,lcolors) ->
+        | Some (0,lcolors) when lcolors <> [] ->
            let acolors = Array.of_list lcolors in
            array_map_result
              (function
               | `Color c -> Result.Ok c
               | _ -> Result.Error (Undefined_result "make_grid_from_color_seq: not a color"))
              acolors
-        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq: not a color seq") in
+        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq: not a non-empty color seq") in
       let n = Array.length acolors in
-      let g =
-        match dir with
-        | `H -> Grid.init 1 n (fun i j -> acolors.(j))
-        | `V -> Grid.init n 1 (fun i j -> acolors.(i)) in
-      Result.Ok g
+      assert (n > 0);
+      if n <= Grid.max_size
+      then
+        let g =
+          match dir with
+          | `H -> Grid.init 1 n (fun i j -> acolors.(j))
+          | `V -> Grid.init n 1 (fun i j -> acolors.(i)) in
+        Result.Ok g
+      else Result.Error (Undefined_result "make_grid_from_color_seq: too large")
     
     let make_grid_from_color_seq_seq vcolorss =
       let| acolorss : Grid.color array array =
         match Ndseq.as_seq vcolorss with
-        | Some (1, lcolorss) ->
+        | Some (1, lcolorss) when lcolorss <> [] ->
            let acolorss = Array.of_list lcolorss in
            array_map_result
              (fun vcolors ->
                match Ndseq.as_seq vcolors with
-               | Some (0,lcolors) ->
+               | Some (0,lcolors) when lcolors <> [] ->
                   let acolors = Array.of_list lcolors in
                   array_map_result
                     (function
                      | `Color c -> Result.Ok c
                      | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color"))
                     acolors
-               | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color seq"))
+               | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a non-empty color seq"))
              acolorss
-        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a color seq seq") in
+        | _ -> Result.Error (Undefined_result "make_grid_from_color_seq_seq: not a non-empty color seq seq") in
       let h = Array.length acolorss in
+      assert (h > 0);
       let w =
         Array.fold_left
           (fun res acolors -> min res (Array.length acolors))
           max_int acolorss in
-      let g = Grid.init h w (fun i j -> acolorss.(i).(j)) in
-      Result.Ok g      
+      assert (w > 0);
+      if h <= Grid.max_size && w <= Grid.max_size
+      then
+        let g = Grid.init h w (fun i j -> acolorss.(i).(j)) in
+        Result.Ok g
+      else Result.Error (Undefined_result "make_grid_from_color_seq_seq: too large")
     
     (* evaluation *)
 
@@ -2192,7 +2204,6 @@ module MyDomain : Madil.DOMAIN =
                  v1)
              else Result.Error (Undefined_result "translatedOnto_1: not a sequence")
           | _ -> assert false)
-    
       | #func_itemwise as f ->
          let f_item = eval_func_itemwise f in
          (fun args -> Ndseq.broadcast_result f_item args)
@@ -5534,7 +5545,7 @@ module MyDomain : Madil.DOMAIN =
                    let xsize_j, varseq = Refining.new_var varseq in
                    Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}),
                    varseq in
-                 Model.make_pat {t with kind = GRID (`Sprite,true)} Full [|msize|], varseq
+                 Model.make_pat {t with kind = GRID (`Full,true)} Full [|msize|], varseq
                else
                  Model.make_any {t with kind = GRID (filling,true)}, varseq in
              (Model.make_pat t Monocolor
