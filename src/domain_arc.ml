@@ -3459,11 +3459,12 @@ module MyDomain : Madil.DOMAIN =
                     Ndseq.seq 0
                       (List.map
                          (fun (i,j,g1) ->
-                           `Obj (`Vec (`IntRange (i, Range.make_closed 0 (h-1)),
-                                       `IntRange (j, Range.make_closed 0 (w-1))),
+                           let h1, w1 = Grid.dims g1 in
+                           `Obj (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)), (* (h-1)), *)
+                                       `IntRange (j, Range.make_closed 0 (w-w1))), (* (w-1))), *)
                                  `GridDimsCols (g1,
-                                                Range.make_closed 1 (h-i),
-                                                Range.make_closed 1 (w-j),
+                                                Range.make_closed 1 h, (* (h-i), *)
+                                                Range.make_closed 1 w, (* (w-j), *)
                                                 nc1)))
                          objs),
                     `GridDimsCols (g_noise, Range.make_exact h, Range.make_exact w, nc))
