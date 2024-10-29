@@ -1084,6 +1084,7 @@ module MyDomain : Madil.DOMAIN =
     let max_expr_size = def_param "max_expr_size" 9 string_of_int (* max size of candidate expressions *)
     let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 1000 string_of_int (* max nb of considered expr refinements per grid read *)
     let max_expr_refinements_per_var = def_param "max_expr_refinements_per_var" 10 string_of_int (* max nb of considered expr refinements per model var *)
+    let max_refinement_steps = def_param "max_refinement_steps" 4 string_of_int (* max nb of refinements steps into a single refined model, for decompositions *)
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let jump_width = def_param "jump_width" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
@@ -2438,11 +2439,11 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.mapi_tup_myseq ~depth (0,0)
              (fun is info ->
                match info, Ndseq.index_list_broadcast vg is 0 with
-               | _, Some (`Grid g) ->
+               | `Grid ((h1min,h1max),(w1min,w1max),lc1), Some (`Grid g) ->
                   let h, w = Grid.dims g in
                   Myseq.return
                     (`Vec (`Int (0,0), `Int (0,0)),
-                     `Vec (`Int (1, h), `Int (1, w)))
+                     `Vec (`Int (min h h1min, min h h1max), `Int (min w w1min, min w w1max)))
                | _, None -> Myseq.empty
                | _ -> assert false)
              (tup1 info) in
@@ -2857,8 +2858,8 @@ module MyDomain : Madil.DOMAIN =
              (function
               | `Grid ((minh,maxh),(minw,maxw),lc) ->
                  (match dir with
-                  | `H -> `Int (max 2 minw,maxw)
-                  | `V -> `Int (max 2 minh,maxh))
+                  | `H -> `Int (minw,maxw)
+                  | `V -> `Int (minh,maxh))
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
@@ -2892,8 +2893,8 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map ~depth 0
              (function
               | `Grid ((minh,maxh),(minw,maxw),lc) ->
-                 `Vec (`Int (max 2 minh, min 3 maxh),
-                       `Int (max 2 minw, min 3 maxw))
+                 `Vec (`Int (minh, maxh),
+                       `Int (minw, maxw))
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
@@ -3793,16 +3794,16 @@ module MyDomain : Madil.DOMAIN =
                  let h, w = Grid.dims g in
                  (match dir with
                   | `H ->
-                     let* () = Myseq.from_bool (h = 1 && w > 1) in
+                     let* () = Myseq.from_bool (h = 1) in
                      Myseq.return
-                       (`IntRange (w, Range.inter rw (Range.make_open 2)),
+                       (`IntRange (w, rw),
                         Ndseq.seq 0
                           (List.init w (fun j ->
                                `Color (Grid.get_pixel g 0 j))))
                   | `V ->
-                     let* () = Myseq.from_bool (w = 1 && h > 1) in
+                     let* () = Myseq.from_bool (w = 1) in
                      Myseq.return
-                       (`IntRange (h, Range.inter rh (Range.make_open 2)),
+                       (`IntRange (h, rh),
                         Ndseq.seq 0
                           (List.init h (fun i ->
                                `Color (Grid.get_pixel g i 0)))))
@@ -3820,10 +3821,10 @@ module MyDomain : Madil.DOMAIN =
              (function
               | `GridDimsCols (g,rh,rw,nc) ->
                  let h, w = Grid.dims g in
-                 let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in
+                 (* XX let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in *)
                  Myseq.return
-                   (`Vec (`IntRange (h, Range.inter rh (Range.make_closed 2 3)),
-                          `IntRange (w, Range.inter rw (Range.make_closed 2 3))),
+                   (`Vec (`IntRange (h, rh), (* XX Range.inter rh (Range.make_closed 2 3)), *)
+                          `IntRange (w, rw)), (* XX Range.inter rw (Range.make_closed 2 3))), *)
                     Ndseq.seq 1
                       (List.init h (fun i ->
                            Ndseq.seq 0
@@ -5224,6 +5225,60 @@ module MyDomain : Madil.DOMAIN =
                  Model.make_def xj (Model.make_any {t with kind = INT (COORD (J, tv))}) |],
             varseq) :: rs
         | _ -> rs in
+      let rs = (* ColorSeq *)
+        match t.kind with
+        | GRID (filling,nocolor) ->
+           if filling = `Full && not nocolor
+              && List.for_all
+                   (fun values ->
+                     List.for_all
+                       (function
+                        | `Grid g ->
+                           let h, w = Grid.dims g in
+                           (h = 1 && w <= 6) || (h <= 6 && w = 1)
+                        | _ -> false)
+                       values)
+                   valuess
+           then (* TODO: allow when not full, impact on color type *)
+             let xsize, varseq = Refining.new_var varseq in
+             let xloop, varseq = Refining.new_var varseq in
+             let xcol, varseq = Refining.new_var varseq in
+             let$ rs, (dir,axis) = rs, [`H, J; `V, I] in
+             (Model.make_pat t (ColorSeq dir)
+                [| Model.make_def xsize (Model.make_any {t with kind = INT (COORD (axis, SIZE))});
+                   Model.make_def xcol (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1}) |],
+              varseq)
+             ::rs
+           else rs
+        | _ -> rs in
+      let rs = (* ColorMat *)
+        match t.kind with
+        | GRID (filling,nocolor) ->
+           if filling = `Full && not nocolor
+              && List.for_all
+                   (fun values ->
+                     List.for_all
+                       (function
+                        | `Grid g ->
+                           let h, w = Grid.dims g in
+                           h <= 3 && w <= 3
+                        | _ -> false)
+                       values)
+                   valuess
+           then
+             let xsize, varseq = Refining.new_var varseq in
+             let xh, varseq = Refining.new_var varseq in
+             let xw, varseq = Refining.new_var varseq in
+             let xloop1, varseq = Refining.new_var varseq in
+             let xloop2, varseq = Refining.new_var varseq in
+             let xcol, varseq = Refining.new_var varseq in
+             (Model.make_pat t ColorMat
+                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def xcol (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+2}) |],
+              varseq)
+             ::rs
+           else rs
+        | _ -> rs in
       let rs = (* adding MakeGrid *)
         match t.kind with
         | COLOR tc when ndim >= 2 ->
@@ -5359,26 +5414,6 @@ module MyDomain : Madil.DOMAIN =
       | MOTIF tmot -> rs
       | MAP (ka,kb) ->
          let refs : (model * varseq) list = rs in
-(* TODO(needs Cons)         let refs = (* DomMap *)
-           match tb, value with
-           | COLOR tc, `Map m -> (* TODO: generalize to other types *)
-              let keys = mymap_keys m in
-              let xloop, varseq = Refining.new_var varseq in
-              let xvals, varseq = Refining.new_var varseq in
-              let mvals, varseq = (* explicit sequence of same length as keys *)
-                List.fold_right
-                  (fun _ (mvals, varseq) ->
-                    let xcol, varseq = Refining.new_var varseq in
-                    let mcol = Model.make_def xcol (make_anycolor tc) in
-                    let mvals = Model.make_cons xloop mcol mvals in
-                    mvals, varseq)
-                  keys (Model.make_nil tb, varseq) in
-              (make_dommap ta tb keys
-                 (Model.make_loop xloop
-                    (Model.make_def xvals mvals)),
-               varseq)
-              :: refs
-           | _ -> refs in *)
          let refs = (* DomMap *)
            match kb with
            | COLOR tc -> (* TODO: generalize to other types *)
@@ -5679,8 +5714,9 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              ::refs
            else refs in
-         let refs = (* ColorSeq *)
-           if filling = `Full && not nocolor then
+(* XX         let refs = (* ColorSeq *)
+           if filling = `Full && not nocolor
+           then (* TODO: allow when not full, impact on color type *)
              let xsize, varseq = Refining.new_var varseq in
              let xloop, varseq = Refining.new_var varseq in
              let xcol, varseq = Refining.new_var varseq in
@@ -5692,7 +5728,8 @@ module MyDomain : Madil.DOMAIN =
              ::refs
            else refs in
          let refs = (* ColorMat *)
-           if filling = `Full && not nocolor then
+           if filling = `Full && not nocolor
+           then
              let xsize, varseq = Refining.new_var varseq in
              let xh, varseq = Refining.new_var varseq in
              let xw, varseq = Refining.new_var varseq in
@@ -5704,7 +5741,7 @@ module MyDomain : Madil.DOMAIN =
                    Model.make_def xcol (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+2}) |],
               varseq)
              ::refs
-           else refs in
+           else refs in *)
          refs
       | OBJ _ -> rs
       | _ -> assert false    
