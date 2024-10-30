@@ -342,12 +342,13 @@ and xp_connectedness ~html print = function
   | Connect2_col -> print#string "same-column"
 
 type obj = int * int * Grid.t (* object *)
-type t = obj list
+type t = obj list * Grid.t (* noise *)
 
 let segment_gen
+      (nmax : int)
       (c_row, c_col, c_diag1, c_diag2, c_samecolor : bool * bool * bool * bool * bool) (* row, col, diag1, diag2, samecolor *)
       (g : Grid.t)
-    : t = (* position and subgrids of segments *)
+    : t = (* objects and noise *)
   Common.prof "Grid.segment" (fun () ->
   let h, w = Grid.dims g in
   let fm : (int * int, part) Find_merge.hashtbl =
@@ -404,7 +405,7 @@ let segment_gen
   (* collecting parts *)
   let parts =
     fm#fold
-      (fun _ part res -> (* TODO: find a way to avoid this trick *)
+      (fun _ part res ->
         let gpart = subgrid_of_part g part in
         let garea = Grid.color_area Grid.transparent gpart in
         (part.mini, part.minj, gpart, garea) :: res)
@@ -414,10 +415,28 @@ let segment_gen
       (fun (i1,j1,g1,a1) (i2,j2,g2,a2) ->
         Stdlib.compare (a2,i1,j1) (a1,i2,j2)) (* decreasing area first, then increasing i, j *)
       parts in
-  List.map (fun (i,j,g,_) -> (i,j,g)) sorted_parts)
+  let obj_parts, noise_parts = (* considering the smaller objects as noise, when too many objects *)
+    let rec aux minsize obj_parts noise_parts =
+      let n = List.length obj_parts in
+      if n <= nmax
+      then obj_parts, noise_parts
+      else
+        let l1, l2 =
+          List.partition
+            (fun (i,j,gpart,area) -> area >= minsize) (* TODO: find better, MDL-based? *)
+            obj_parts in
+        aux (minsize+1) l1 (l2 @ noise_parts) in
+    aux 1 sorted_parts [] in
+  let objs = List.map (fun (i,j,g,_) -> (i,j,g)) obj_parts in
+  let g_noise =
+    let g = Grid.make h w Grid.transparent in
+    List.iter (fun (i,j,gpart,_) -> Grid.add_grid_at g i j gpart) noise_parts;
+    g in
+  objs, g_noise)
 
-let segment_connected (conn : connectedness) (samecolor : bool) g =
+let segment_connected nmax (conn : connectedness) (samecolor : bool) g =
   segment_gen
+    nmax
     (match conn with
      | Connect8 -> (true, true, true, true, samecolor)
      | Connect4 -> (true, true, false, false, samecolor)
@@ -443,7 +462,7 @@ let segment_connected, reset_segment_connected =
       pp_endline Grid.xp_grid g1)
     objs*)
 
-let segment_by_color (g : Grid.t) : t = (* position and subgrids *)
+let segment_by_color (g : Grid.t) : t = (* objects and noise *)
   Common.prof "Grid_patterns.segment_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
@@ -481,17 +500,22 @@ let segment_by_color (g : Grid.t) : t = (* position and subgrids *)
       (fun (a1,i1,j1,g1) (a2,i2,j2,g2) ->
         Stdlib.compare (a2,i1,j1) (a1,i2,j2)) (* decreasing area first *)
       parts in
-  List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts)
+  let g_noise = Grid.make h w Grid.transparent in
+  List.map (fun (_,i,j,g) -> (i,j,g)) sorted_parts,
+  g_noise)
 
 let segment_by_color, reset_segment_by_color =
   Memo.memoize ~size:103 segment_by_color
 
-let parse seg (g : Grid.t) : t Myseq.t =
-  let objs =
+let parse (nmax : int) seg (g : Grid.t) : t Myseq.t =
+  let objs, g_noise =
     match seg with
-    | Connected (conn,samecolor) -> segment_connected conn samecolor g
+    | Connected (conn,samecolor) -> segment_connected nmax conn samecolor g
     | SameColor -> segment_by_color g in
-  Myseq.return objs
+  let n = List.length objs in
+  if n > 0 && n <= nmax
+  then Myseq.return (objs, g_noise)
+  else Myseq.empty
 
   end
 
@@ -550,6 +574,7 @@ type t =
   | FlipD1 | FlipD2 | FlipD12
   | Rotate180 | Rotate90
   | FullSym
+  | Rings
   (* special motifs *)
   | Corners
   | Border | CrossPlus | CrossTimes | Diamond
@@ -570,6 +595,7 @@ let xp ~html print = function
   | Rotate180 -> print#string "Rotate180"
   | Rotate90 -> print#string "Rotate90"
   | FullSym -> print#string "FullSym"
+  | Rings -> print#string "Rings"
   | Corners -> print#string "Corners"
   | Border -> print#string "Border"
   | CrossPlus -> print#string "Cross +"
@@ -625,6 +651,9 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
        let i_min = min i (h_1 - i) in
        let j_min = min j (w_1 - j) in
        min i_min j_min, max i_min j_min)
+  | Rings ->
+     (fun i j ->
+       min (min i (h_1 - i)) (min j (w_1 - j)), 0)
   (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
   | Corners ->
      (fun i j ->
@@ -664,8 +693,8 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
   (* range and list of core dimensions (u,v) given a motif and grid dims *)
   match mot with
   | Scale ->
-     Range.make_closed 1 h,
-     Range.make_closed 1 w,
+     Range.make_open 1 (* closed 1 h *), (* favoring small cores *)
+     Range.make_open 1 (* closed 1 w *),
      Common.fold_for
        (fun u res ->
          if h mod u = 0 (* congruent vertical scale *)
@@ -684,8 +713,8 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
   | Periodic (phi,psi) ->
      let h', w' = Grid.Transf.bound_axis phi h w, Grid.Transf.bound_axis psi h w in
      let h', w' = min h' Grid.max_size, min w' max_size in (* bounding core size *)
-     Range.make_closed 1 h',
-     Range.make_closed 1 w',
+     Range.make_open 1 (* closed 1 h' *),
+     Range.make_open 1 (* closed 1 w' *),
      Common.fold_for
        (fun u res ->
          Common.fold_for
@@ -773,6 +802,18 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
        Range.make_open 0, (* dummy *)
        Range.make_open 0, (* dummy *)
        []
+  | Rings ->
+     let min_hw = min h w in
+     if min_hw >= 3
+     then
+       let u, v = (min_hw+1)/2, 1 in
+       Range.make_exact u,
+       Range.make_exact v,
+       [u, v]
+     else
+       Range.make_open 0, (* dummy *)
+       Range.make_open 0, (* dummy *)
+       []
   | Corners | Border | CrossPlus ->
      if h >= 3 && w >= 3
      then
@@ -829,6 +870,7 @@ let candidates_multi = (* multicolor motifs *)
     FlipD1; FlipD2; FlipD12;
     Rotate180; Rotate90;
     FullSym;
+    Rings;
     Periodic (I, J);
     Periodic (I, PlusIJ);
     Periodic (PlusIJ, J);
@@ -840,6 +882,41 @@ let candidates_multi = (* multicolor motifs *)
     Periodic (MaxIJ, Zero);
     Periodic (MinIJ, Zero) ]
 let nb_candidates_multi = List.length candidates_multi
+
+let prob_multi : t -> float = function
+  | Scale -> 0.3
+
+  (* 0.4 *)
+  | FullSym -> 0.4 *. 0.25
+  | Rings -> 0.4 *. 0.10
+
+  | FlipHW -> 0.4 *. 0.2
+  | FlipH -> 0.4 *. 0.05
+  | FlipW -> 0.4 *. 0.05
+
+  | FlipD12 -> 0.4 *. 0.1
+  | FlipD1 -> 0.4 *. 0.05
+  | FlipD2 -> 0.4 *. 0.05
+
+  | Rotate90 -> 0.4 *. 0.1
+  | Rotate180 -> 0.4 *. 0.05
+
+  (* 0.3 *)
+  | Periodic (a,b) ->
+     0.3 *.
+     (match a, b with
+      | I, J -> 0.2
+      | I, PlusIJ -> 0.04
+      | PlusIJ, J -> 0.04
+      | PlusIJ, DiffIJ -> 0.04
+      | I, Zero -> 0.2
+      | J, Zero -> 0.2
+      | PlusIJ, Zero -> 0.1
+      | DiffIJ, Zero -> 0.1
+      | MaxIJ, Zero -> 0.04
+      | MinIJ, Zero -> 0.04
+      | _ -> assert false)
+  | _ -> assert false
 
 let candidates_bi = (* bicolor shape-like motifs *)
   let open Grid.Transf in
@@ -1253,9 +1330,9 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
                   part_widths;
                   parts })
           !c_fs in
-      let mgs = (* sorting by decreasing meta-area *)
+      let mgs = (* sorting by increasing meta-area *)
         List.sort
-          (fun mg1 mg2 -> Stdlib.compare (mg2.k * mg2.l) (mg1.k * mg1.l))
+          (fun mg1 mg2 -> Stdlib.compare (mg1.k * mg1.l) (mg2.k * mg2.l))
           mgs in
       mgs
 
