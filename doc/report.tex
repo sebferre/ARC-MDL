@@ -1859,9 +1859,11 @@ by the parser.
      & & & \multicolumn{3}{c|}{training} & \multicolumn{3}{c|}{evaluation} \\
     version & date & timeout & time & train & test & time & train & test \\
     \hline
+    \hline
     v1.0 & 2020-10-21 & 20s & 7s & ~8 / 9.5~ & ~5 / 5.5~ & 12s & ~0 / 0.3~ & ~0 / 0.0~ \\
     \hline
     v1.1 & 2021-03-01 & 2s & 1.5s & ~16 / 17.3~ & ~5 / 5.0~ & 1.5s & ~4 / 4.3~ & ~4 / 4.0~ \\
+    \hline
     \hline
 %    v2 & 2021-03-31 & 10s & 7.6s & ~14 / 19.2~ & ~14 / 14.0~ & ~2 / 3.6~ & ~2 / 2.0~ \\
 %    v2 & 2021-03-31 & 30s & 19.0s & ~16 / 25.3~ & ~18 / 18.5~ & ~2 / 4.3~ & ~3 / 3.0~ \\
@@ -1899,12 +1901,12 @@ by the parser.
     \hline
     v3.3 & 2024-05-05 & 60s & 42s & ~125 / 127.7~ & ~112 / 113.3~ & 48s & ~63 / 68.0~ & ~56 / 57.0~ \\
     \hline
-    v3.4 & 2024-09-04 & 60s & 44s & ~134 / 141.4~ & ~117 / 118.8~ & 54s & ~64 / 74.3~ & ~53 / 55.0~ \\
+    v3.4 & 2024-09-04 & 60s & 44s (7s) & ~134 / 141.4~ & ~117 / 118.8~ & 54s (15s) & ~64 / 74.3~ & ~53 / 55.0~ \\
     \hline
-    - & 2024-09-22 & 60s & 45s (6.3s) & ~139 / 146.0~ & ~122 / 123.8~ & 55s & ~63 / 73.0~ & ~55 / 56.5~ \\
-    - & 2024-10-18 & 120s & 86s (8.9s) & ~139 / 147.5~ & ~122 / 123.8~ & - & - & - \\
-    - & 2024-10-28 & 120s & 79s (12.2s) & ~140 / 148.2~ & ~126 / 127.3~ & - & - & - \\
-    - & 2024-10-29 & 180s & - & - & - & 143s (36.9s) & ~69 / 79.6~ & ~59 / 60.5~ \\
+%    - & 2024-09-22 & 60s & 45s (6.3s) & ~139 / 146.0~ & ~122 / 123.8~ & 55s & ~63 / 73.0~ & ~55 / 56.5~ \\
+%    - & 2024-10-18 & 120s & 86s (8.9s) & ~139 / 147.5~ & ~122 / 123.8~ & - & - & - \\
+%    - & 2024-10-28 & 120s & 79s (12.2s) & ~140 / 148.2~ & ~126 / 127.3~ & - & - & - \\
+    v3.5 & 2024-10-29 & 180s & 111s (18s) & ~146 / 154.4~ & ~127 / 128.2~ & 143s (37s) & ~69 / 79.6~ & ~59 / 60.5~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2283,6 +2285,15 @@ each step.
 \item patterns on sequences: Cons (decomposition), Repeat, Index, Range
 \item functions on sequences: min, max, argmin, argmax
 \item MCTS search through model refinement tree (search space)
+\end{itemize}
+
+\paragraph{Version 3.5}
+\begin{itemize}
+\item expression-only arguments (patterns Crop, Recoloring, SeqIndex) are separated from part arguments; refinements apart from patterns and expressions, a mix between;
+\item ASD: no more default constructor; binary functions can be declared as unary if only used with a constant argument;
+\item patterns: ColorSeq/ColorMat made decompositions; colors as grid decomposition; Square sizes and moves; added noise argument to Objects; new motif Rings;  
+\item functions: MiddleCenter; Top...Middle defined on grids; GridOfColorSeq and GridOfColorMat; aggregations Sum, MostCommon and LeastCommon sequence item; RelativePos and TranslationOnto for inter-object relations; Halves replaced XHalf; generic Cast function; 
+\item new version of expression index: more systematic and avoiding binary expressions, relying on inter-object functions, constant arguments, and aggregations.
 \end{itemize}
 
 %%%

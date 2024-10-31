@@ -21,3 +21,5 @@ doc/*.bst
 doc/fig/*.bak
 doc/fig/*.pdf
 results/*.txt
+results/*.csv
+results/version_logs/*_solved
