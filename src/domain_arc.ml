@@ -3549,16 +3549,21 @@ module MyDomain : Madil.DOMAIN =
       | _, MotifMulti partial, [||], [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
          let v = value_of_input t input in
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
-         let* in_mot, in_core, in_mask_opt, in_noise =
-           Ndseq.map_tup_myseq ~name:"parse/Motif/in_res" ~depth (0,0,0,0)
+         let* in_mot =
+           let* mot = (* common choice for all items *)
+             Myseq.from_list GPat.Motif.candidates_multi in
+           Myseq.return
+             (Ndseq.map ~depth 0 (fun _ -> `Motif mot) input) in
+         let* dmot, _ = parse_mot in_mot in
+         let* in_core, in_mask_opt, in_noise =
+           Ndseq.map_tup_myseq ~name:"parse/Motif/in_res" ~depth (0,0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
-                 let* mot, ru, rv, g_core, mask_opt, g_noise =
-                   Myseq.from_list (GPat.Motif.from_grid GPat.Motif.candidates_multi g_bgcolor g) in
+              | `GridDimsCols (g,rh,rw,nc), `Motif mot ->
+                 let* _mot, ru, rv, g_core, mask_opt, g_noise =
+                   Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
                  assert (Grid.has_valid_size g_core); (* to make sure oversized grids are pruned out *)
                  Myseq.return
-                   (`Motif mot,
-                    `GridDimsCols (g_core,ru,rv,nc),
+                   (`GridDimsCols (g_core,ru,rv,nc),
                     (match partial, mask_opt with
                      | true, Some mask ->
                         let h, w = Grid.dims mask in (* same as grid and noise *)
@@ -3567,8 +3572,7 @@ module MyDomain : Madil.DOMAIN =
                      | _ -> `Null), (* TODO: revise handling of optional, ugly *)
                     `GridDimsCols (g_noise,rh,rw,nc))
               | _ -> assert false)
-             (tup1 input) in
-         let* dmot, _ = parse_mot in_mot in
+             (input, Data.value dmot) in
          let* dcore, _ = parse_core in_core in
          let* dmask_opt, _ =
            if not partial || Ndseq.for_all (fun x -> x <> `Null) in_mask_opt
@@ -3582,27 +3586,31 @@ module MyDomain : Madil.DOMAIN =
       | _, MotifBi partial, [||], [|parse_mot; parse_bgcolor; parse_color; _parse_pure; parse_mask_opt; parse_noise|] ->
          let v = value_of_input t input in
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
-         let* in_mot, in_bgcolor, in_color, in_mask_opt, in_noise =
-           Ndseq.map_tup_myseq ~name:"parse/MotifBi/in_res" ~depth (0,0,0,0,0)
+         let* in_mot =
+           let* mot = (* common choice for all items *)
+             Myseq.from_list GPat.Motif.candidates_bi in
+           Myseq.return
+             (Ndseq.map ~depth 0 (fun _ -> `Motif mot) input) in
+         let* dmot, _ = parse_mot in_mot in
+         let* in_bgcolor, in_color, in_mask_opt, in_noise =
+           Ndseq.map_tup_myseq ~name:"parse/MotifBi/in_res" ~depth (0,0,0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
-                 let* mot, _ru, _rv, g_core, mask_opt, g_noise =
-                   Myseq.from_list (GPat.Motif.from_grid GPat.Motif.candidates_bi g_bgcolor g) in
+              | `GridDimsCols (g,rh,rw,nc), `Motif mot ->
+                 let* _mot, _ru, _rv, g_core, mask_opt, g_noise =
+                   Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
                  assert (Grid.dims g_core = (2,1));
                  let bgcolor = Grid.get_pixel ~source:"parse MotifBi bgcolor" g_core 0 0 in
                  let color = Grid.get_pixel ~source:"parse MotifBi color" g_core 1 0 in
                  let* () = Myseq.from_bool (color <> Grid.transparent) in
                  Myseq.return
-                   (`Motif mot,
-                    `Color bgcolor,
+                   (`Color bgcolor,
                     `Color color,
                     (match partial, mask_opt with
                      | true, Some mask -> `GridDimsCols (mask,rh,rw,1)
                      | _ -> `Null), (* TODO: revise handling of optional, ugly *)
                     `GridDimsCols (g_noise,rh,rw,nc))
               | _ -> assert false)
-             (tup1 input) in
-         let* dmot, _ = parse_mot in_mot in
+             (input, Data.value dmot) in
          let* dbgcolor, _ = parse_bgcolor in_bgcolor in
          let* dcolor, _ = parse_color in_color in
          let* dmask_opt, _ =

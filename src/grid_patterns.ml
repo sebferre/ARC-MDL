@@ -926,7 +926,7 @@ let nb_candidates_bi = List.length candidates_bi
 
 let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
   (* bgcolor is the color to be ignored *)
-  Common.prof "Grid_patterns.from_grid" (fun () ->
+  Common.prof "Grid_patterns.Motif.from_grid" (fun () ->
   let h, w = Grid.dims g in
   (* color stats: lists of (color,count) pairs *)
   let add_color c (n,n_def,cstats) =
