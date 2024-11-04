@@ -583,6 +583,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogXOr_1 (* Mask^k -> Mask *)
       | `GridOfColorSeq_1 of direction (* Color^k -> Grid^(k-1) *)
       | `GridOfColorMat_1 (* Color^k -> Grid^(k-2) *)
+      | `Colors_1 (* Grid -> Color^1, in decreasing frequency *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
       | `RelativePos_1 (* Obj^k -> Pos^(k+1) *)
       | `TranslatedOnto_1 (* Obj^k -> Pos^(k+1) *)
@@ -718,6 +719,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `TranslationSym_2 sym ->
          print#string "translationSym";
          xp_tuple1 ~delims:("[","]") xp_symmetry ~html print sym
+      | `Colors_1 -> print#string "colors"
       | `MajorityColor_1 -> print#string "majorityColor"
       | `MinorityColor_1 -> print#string "minorityColor"
       | `ColorCount_1 -> print#string "colorCount"
@@ -957,7 +959,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`Tiling_1 (2,2), [|t|]) *)
              ::res
           | COLOR tc ->
-             (`MajorityColor_1, [| {t with kind = GRID (`Sprite,false)}|]) (* also `Full and `Noise *)
+             (`Colors_1, [| {t with kind = GRID (`Sprite,false)} |])
+             ::(`MajorityColor_1, [| {t with kind = GRID (`Sprite,false)}|]) (* also `Full and `Noise *)
              ::(`MinorityColor_1, [| {t with kind = GRID (`Sprite,false)} |]) (* also `Full and `Noise *)
              ::res
           | SEG -> res
@@ -2110,6 +2113,17 @@ module MyDomain : Madil.DOMAIN =
                    Result.Ok (`Grid g))
                  v1
              else Result.Error (Undefined_result "gridOfColorMat: not matrix")
+          | _ -> assert false)
+      | `Colors_1 ->
+         (function
+          | [|v1|] ->
+             Ndseq.map_result 1
+               (function
+                | `Grid g ->
+                   let lnc = Grid.color_freq_desc g in
+                   Result.Ok (Ndseq.seq 0 (List.map (fun (n,c) -> `Color c) lnc))
+                | _ -> Result.Error (Undefined_result "colors: not a grid"))
+               v1
           | _ -> assert false)
       | `Halves_1 dir ->
          (function
@@ -4308,6 +4322,7 @@ module MyDomain : Madil.DOMAIN =
       | `UnfoldSym_1 symar -> Mdl.Code.uniform nb_symmetry_unfold
       | `CloseSym_2 symar -> Mdl.Code.uniform nb_symmetry_unfold
       | `TranslationSym_2 sym -> Mdl.Code.uniform nb_symmetry
+      | `Colors_1 -> 0.
       | `MajorityColor_1 -> 0.
       | `MinorityColor_1 -> 0.
       | `ColorCount_1 -> 0.
@@ -4842,12 +4857,18 @@ module MyDomain : Madil.DOMAIN =
           index
           (fun t1 v1 ->
             let res = [] in
+            let res = (* Colors_1 *)
+              match t1.kind with
+              | GRID (filling,false) ->
+                 ({kind = COLOR C_OBJ; ndim = t1.ndim+1}, `Colors_1, `Default)
+                 ::res
+              | _ -> res in
             let res =  (* MajorityColor_1, MinorityColor_1 *)
               match t1.kind with
               | GRID (filling,false) ->
                  let full = (filling = `Full) in
-                 let$ res, tc = res, [C_BG full; C_OBJ] in
-                 let tres = {t1 with kind = COLOR tc} in
+                 (* let$ res, tc = res, [C_BG full; C_OBJ] in *)
+                 let tres = {t1 with kind = COLOR C_OBJ} in
                  (tres, `MajorityColor_1, `Default)
                  ::(tres, `MinorityColor_1, `Default)
                  ::res
