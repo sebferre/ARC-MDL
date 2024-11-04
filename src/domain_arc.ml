@@ -544,6 +544,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `MaskOfGrid_1 (* Sprite -> Mask *)
       | `GridOfMask_2 (* Mask, Color -> Grid *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
+      | `Border_1 (* on Grid *)
+      | `Interior_1 (* on Grid *)
+      | `DNeighbors_1 (* on Grid *)
+      | `INeighbors_1 (* on Grid *)
+      | `Neighbors_1 (* on Grid *)
       | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
       | `FillResizeAlike_3 of Grid.Transf.periodicity_mode (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
@@ -698,6 +703,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tiling_1 (k,l) ->
          print#string "tiling";
          xp_tuple2 ~delims:("[","]") xp_int xp_int ~html print (k,l)
+      | `Border_1 -> print#string "border"
+      | `Interior_1 -> print#string "interior"
+      | `DNeighbors_1 -> print#string "dneighbors"
+      | `INeighbors_1 -> print#string "ineighbors"
+      | `Neighbors_1 -> print#string "neighbors"
       | `Unrepeat_1 -> print#string "unrepeat"
       | `PeriodicFactor_2 mode ->
          print#string ("periodicFactor" ^ suffix_periodicity_mode mode)
@@ -981,6 +991,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                             {t with kind = OBJ (`Sprite,false)} |]) *)
              ::(`ApplySymGrid_1 `Id, [|t|])
              (* ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |]) *)
+             ::(`Border_1, [|t|])
+             ::(`Interior_1, [|t|])
+             ::(`DNeighbors_1, [|t|])
+             ::(`INeighbors_1, [|t|])
+             ::(`Neighbors_1, [|t|])
              ::(`Unrepeat_1, [|t|])
              (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
@@ -1749,6 +1764,26 @@ module MyDomain : Madil.DOMAIN =
              let| g' = Grid.Transf.tile k l g in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
+      | `Border_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.border Grid.transparent g))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Interior_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.interior Grid.transparent g))
+          | _ -> Result.Error (Invalid_expr e))
+      | `DNeighbors_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.dneighbors Grid.transparent g))
+          | _ -> Result.Error (Invalid_expr e))
+      | `INeighbors_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.ineighbors Grid.transparent g))
+          | _ -> Result.Error (Invalid_expr e))
+      | `Neighbors_1 ->
+         (function
+          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.neighbors Grid.transparent g))
+          | _ -> Result.Error (Invalid_expr e))             
       | `Unrepeat_1 ->
          (function
           | [| `Grid g|] ->
@@ -2233,7 +2268,7 @@ module MyDomain : Madil.DOMAIN =
       match filling, nocolor with
       | `Full, _ -> Grid.make h w Grid.black
       | `Sprite, false -> Grid.make h w Grid.blue
-      | `Sprite, true -> Grid.make h w Grid.Mask.one
+      | `Sprite, true -> Grid.make h w Grid.one
       | `Noise, _ -> Grid.make h w Grid.transparent
     let default_grid, reset_default_grid =
       Memo.memoize2 ~size:103 default_grid *)
@@ -2546,7 +2581,7 @@ module MyDomain : Madil.DOMAIN =
          let info_col, info_mask =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Grid (rh,rw,lc) -> `Color lc, `Grid (rh,rw,[Grid.Mask.one])
+              | `Grid (rh,rw,lc) -> `Color lc, `Grid (rh,rw,[Grid.one])
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair [gen_col info_col;
@@ -2557,7 +2592,7 @@ module MyDomain : Madil.DOMAIN =
                Ndseq.map_tup_myseq ~name:"gen/Monocolor" ~depth 0
                  (function
                   | `Color c, `Grid g1 ->
-                     let* g = Myseq.from_result (Grid.Transf.swap_colors g1 Grid.Mask.one c) in
+                     let* g = Myseq.from_result (Grid.Transf.swap_colors g1 Grid.one c) in
                      Myseq.return (`Grid g)
                   | _ -> assert false)
                  (Data.value dcol, Data.value dmask) in
@@ -2615,7 +2650,7 @@ module MyDomain : Madil.DOMAIN =
                      let _, _, luv = GPat.Motif.all_coredims_of_motif mot h w in
                      let* u, v = Myseq.from_list luv in
                      Myseq.return
-                       ((if partial then `Grid ((h,h),(w,w),[Grid.Mask.one]) else `Null),
+                       ((if partial then `Grid ((h,h),(w,w),[Grid.one]) else `Null),
                         `Grid ((u,u),(v,v),lc))
                   | _ -> assert false)
                  (info, Data.value dmot, Data.value dnoise) in
@@ -2672,7 +2707,7 @@ module MyDomain : Madil.DOMAIN =
                        then lc
                        else Grid.transparent :: lc in
                      Myseq.return
-                       ((if partial then `Grid ((h,h),(w,w),[Grid.Mask.one]) else `Null),
+                       ((if partial then `Grid ((h,h),(w,w),[Grid.one]) else `Null),
                         `Color lbgcolor)
                   | _ -> assert false)
                  (info, Data.value dmot, Data.value dnoise) in
@@ -2716,7 +2751,7 @@ module MyDomain : Madil.DOMAIN =
              (function
               | `Grid (rh,rw,lc) ->
                  `Color lc,
-                 `Grid ((2,2), (2,2), [Grid.Mask.one]),
+                 `Grid ((2,2), (2,2), [Grid.one]),
                  `Vec (`Int (1,3), `Int (1,3))                 
               | _ -> assert false)
              (tup1 info) in
@@ -3520,7 +3555,7 @@ module MyDomain : Madil.DOMAIN =
                  if Grid.color_count Grid.transparent g = 1
                  then
                    let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
-                   let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.Mask.one) in
+                   let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.one) in
                    Myseq.return (`Color c, `GridDimsCols (mask,rh,rw,1))
                  else Myseq.empty
               | _ -> assert false)
@@ -3673,7 +3708,7 @@ module MyDomain : Madil.DOMAIN =
                  let* () = Myseq.from_bool (k > 1 || l > 1) in (* avoiding degenerate metagrids *)
                  let top, bot, left, right =
                    let b = mg.borders.matrix in
-                   let offset c = if c = Grid.Mask.one then 1 else 0 in
+                   let offset c = if c = Grid.one then 1 else 0 in
                    offset b.{0,0}, offset b.{0,1},
                    offset b.{1,0}, offset b.{1,1} in
                  Myseq.return
@@ -3755,8 +3790,8 @@ module MyDomain : Madil.DOMAIN =
          let v = value_of_input t input in
          let pred =
            match c with
-           | Empty -> (fun i j c -> c = Grid.Mask.zero)
-           | Full -> (fun i j c -> c = Grid.Mask.one)
+           | Empty -> (fun i j c -> c = Grid.zero)
+           | Full -> (fun i j c -> c = Grid.one)
            | _ -> assert false
          in
          let* in_size =
@@ -4313,6 +4348,11 @@ module MyDomain : Madil.DOMAIN =
       | `RelativePos_1 -> 0.
       | `TranslatedOnto_1 -> 0.
       | `Tiling_1 (k,l) -> Mdl.Code.universal_int_plus k +. Mdl.Code.universal_int_plus l
+      | `Border_1 -> 0.
+      | `Interior_1 -> 0.
+      | `DNeighbors_1 -> 0.
+      | `INeighbors_1 -> 0.
+      | `Neighbors_1 -> 0.
       | `Unrepeat_1 -> 0.
       | `PeriodicFactor_2 p -> dl_periodicity_mode p
       | `FillResizeAlike_3 p -> dl_periodicity_mode p
@@ -4866,7 +4906,7 @@ module MyDomain : Madil.DOMAIN =
             let res =  (* MajorityColor_1, MinorityColor_1 *)
               match t1.kind with
               | GRID (filling,false) ->
-                 let full = (filling = `Full) in
+                 (* let full = (filling = `Full) in *)
                  (* let$ res, tc = res, [C_BG full; C_OBJ] in *)
                  let tres = {t1 with kind = COLOR C_OBJ} in
                  (tres, `MajorityColor_1, `Default)
@@ -5035,6 +5075,23 @@ module MyDomain : Madil.DOMAIN =
                      opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (ta, `Vec (a1,a2)) |]);
                                        `Val (tb, `Vec (b1,b2)) |] in
                  (t1, f, spec_args)::res
+              | _ -> res in
+            let res = (* Border, Interior *)
+              match t1.kind with
+              | GRID ((`Full | `Sprite), nocolor) ->
+                 let tres = {t1 with kind = GRID (`Sprite,nocolor)} in
+                 (tres, `Border_1, `Default)
+                 ::(tres, `Interior_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* Neighbors *)
+              match t1.kind with
+              | GRID ((`Sprite | `Noise as filling), nocolor) ->
+                 let tres = {t1 with kind = GRID (filling,true)} in
+                 (tres, `DNeighbors_1, `Default)
+                 ::(tres, `INeighbors_1, `Default)
+                 ::(tres, `Neighbors_1, `Default)
+                 ::res
               | _ -> res in
             let res = (* Unrepeat *)
               match t1.kind with

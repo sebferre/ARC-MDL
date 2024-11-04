@@ -1203,7 +1203,7 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
         let k, l = mg.k, mg.l in
         let top, bot, left, right =
           let b = mg.borders.matrix in
-          let offset c = if c = Grid.Mask.one then 1 else 0 in
+          let offset c = if c = Grid.one then 1 else 0 in
           offset b.{0,0}, offset b.{0,1},
           offset b.{1,0}, offset b.{1,1} in
         let h = Array.fold_left (+) (top + k-1 + bot) mg.part_heights in (* k-1 frontiers *)
@@ -1302,7 +1302,7 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
             then None
             else
               let borders =
-                let col b = if b then Grid.Mask.one else Grid.Mask.zero [@@inline] in
+                let col b = if b then Grid.one else Grid.zero [@@inline] in
                 Grid.init 2 2
                   (fun i j ->
                     match i, j with

@@ -23,6 +23,10 @@ let brown = 9
 let transparent = 10 (* for non-covered parts, no color *)
 let undefined = 11 (* for use in special algos, hidden parts, any color *)
 
+(* color coding of Boolean values / masks *)
+let zero = transparent
+let one = black
+
 let nb_color = 10
 let last_color = 9
 
@@ -1120,7 +1124,76 @@ module Transf =
     let strip, reset_strip =
       Memo.memoize3 ~size:memoize_size strip
 
+
+    (* neighbors, border, interior *)
+
+    let cell_dneighbors (bgcolor : color) (g : t) h w i j : color list =
+      (* list of colors of direct neighbors of cell (i,j) in g *)
+      (* outside the grid is assumed bgcolor *)
+      [ (if i > 0 then g.matrix.{i-1,j} else bgcolor);
+        (if i < h-1 then g.matrix.{i+1,j} else bgcolor);
+        (if j > 0 then g.matrix.{i,j-1} else bgcolor);
+        (if j < w-1 then g.matrix.{i,j+1} else bgcolor) ]
     
+    let cell_ineighbors (bgcolor : color) (g : t) h w i j : color list =
+      (* list of colors of indirect neighbors of cell (i,j) in g *)
+      (* outside the grid is assumed bgcolor *)
+      [ (if i > 0 && j > 0 then g.matrix.{i-1,j-1} else bgcolor);
+        (if i < h-1 && j > 0 then g.matrix.{i+1,j-1} else bgcolor);
+        (if i > 0 && j < w-1 then g.matrix.{i-1,j+1} else bgcolor);
+        (if i < h-1 && j < w-1 then g.matrix.{i+1,j+1} else bgcolor) ]
+
+    let cell_neighbors bgcolor g h w i j =
+      cell_dneighbors bgcolor g h w i j
+      @ cell_ineighbors bgcolor g h w i j
+    
+    let border (bgcolor : color) (g : t) : t =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          let c = g.matrix.{i,j} in
+          if c <> bgcolor
+             && List.mem bgcolor (cell_dneighbors bgcolor g h w i j)
+          then c
+          else bgcolor)
+    
+    let interior (bgcolor : color) (g : t) : t =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          let c = g.matrix.{i,j} in
+          if c <> bgcolor
+             && not (List.mem bgcolor (cell_dneighbors bgcolor g h w i j))
+          then c
+          else bgcolor)
+
+    let dneighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_dneighbors bgcolor g h w i j)
+          then one
+          else zero)
+    
+    let ineighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_ineighbors bgcolor g h w i j)
+          then one
+          else zero)
+
+    let neighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_neighbors bgcolor g h w i j)
+          then one
+          else zero)
+
     (* concatenating *)
       
     let concatHeight g1 g2 : t result =
@@ -1331,9 +1404,6 @@ module Transf =
 
 module Mask =
   struct
-    (* color coding of Boolean values *)
-    let zero = transparent
-    let one = black
     let bool (b : bool) : color = if b then one else zero
 
     let is_well_formed m =
