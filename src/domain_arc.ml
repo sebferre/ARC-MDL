@@ -548,11 +548,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `MaskOfGrid_1 (* Sprite -> Mask *)
       | `GridOfMask_2 (* Mask, Color -> Grid *)
       | `Tiling_1 of int * int (* on Vec/Mask/Shape *)
-      | `Border_1 (* on Grid *)
-      | `Interior_1 (* on Grid *)
-      | `DNeighbors_1 (* on Grid *)
-      | `INeighbors_1 (* on Grid *)
-      | `Neighbors_1 (* on Grid *)
+      | `Border_1 (* on Grid, Object *)
+      | `Interior_1 (* on Grid, Object *)
+      | `DNeighbors_1 (* on Grid, Object *)
+      | `INeighbors_1 (* on Grid, Object *)
+      | `Neighbors_1 (* on Grid, Object *)
       | `Unrepeat_1 (* Grid -> Grid *)
       | `PeriodicFactor_2 of Grid.Transf.periodicity_mode (* on Color, Mask/Shape/Layer/Grid as T -> T *)
       | `FillResizeAlike_3 of Grid.Transf.periodicity_mode (* on Color, Vec, Mask/Shape/Layer/Grid as T -> T *)
@@ -1033,7 +1033,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`ApplySymGrid_1 `Id, [|t|]) *)
              (* ::(`UnfoldSym_1 [], [|t|]) *)
              (* ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t |]) *)
-             res
+             (`Border_1, [|t|])
+             ::(`Interior_1, [|t|])
+             ::(`DNeighbors_1, [|t|])
+             ::(`INeighbors_1, [|t|])
+             ::(`Neighbors_1, [|t|])
+             ::res
           | MAP (ka,kb) -> res
         
         method expr_opt t = true
@@ -1646,7 +1651,7 @@ module MyDomain : Madil.DOMAIN =
          (function
           | [| `Grid g|] ->
              let| bgcolor = Grid.majority_color Grid.transparent g in
-             let| _, _, g'= Grid.Transf.strip bgcolor g Grid.black in
+             let| _, _, _, _, g'= Grid.Transf.strip bgcolor g Grid.black in
              Result.Ok (`Grid g')
           | _ -> Result.Error (Invalid_expr e))
       | `Corner_2 ->
@@ -1810,23 +1815,43 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Border_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.border Grid.transparent g))
+          | [| `Grid g|] ->
+             Result.Ok (`Grid (Grid.Transf.border Grid.transparent g))
+          | [| `Obj (`Vec (i,j), `Grid g)|] ->
+             let| i, j, g = Grid.Transf.border_at_pos Grid.transparent (i,j) g in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g))
           | _ -> Result.Error (Invalid_expr e))
       | `Interior_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.interior Grid.transparent g))
+          | [| `Grid g|] ->
+             Result.Ok (`Grid (Grid.Transf.interior Grid.transparent g))
+          | [| `Obj (`Vec (i,j), `Grid g)|] ->
+             let| i, j, g = Grid.Transf.interior_at_pos Grid.transparent (i,j) g in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g))
           | _ -> Result.Error (Invalid_expr e))
       | `DNeighbors_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.dneighbors Grid.transparent g))
+          | [| `Grid g|] ->
+             Result.Ok (`Grid (Grid.Transf.dneighbors Grid.transparent g))
+          | [| `Obj (`Vec (i,j), `Grid g)|] ->
+             let| i, j, g = Grid.Transf.dneighbors_at_pos Grid.transparent (i,j) g in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g))
           | _ -> Result.Error (Invalid_expr e))
       | `INeighbors_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.ineighbors Grid.transparent g))
+          | [| `Grid g|] ->
+             Result.Ok (`Grid (Grid.Transf.ineighbors Grid.transparent g))
+          | [| `Obj (`Vec (i,j), `Grid g)|] ->
+             let| i, j, g = Grid.Transf.ineighbors_at_pos Grid.transparent (i,j) g in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g))
           | _ -> Result.Error (Invalid_expr e))
       | `Neighbors_1 ->
          (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Transf.neighbors Grid.transparent g))
+          | [| `Grid g|] ->
+             Result.Ok (`Grid (Grid.Transf.neighbors Grid.transparent g))
+          | [| `Obj (`Vec (i,j), `Grid g)|] ->
+             let| i, j, g = Grid.Transf.neighbors_at_pos Grid.transparent (i,j) g in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g))
           | _ -> Result.Error (Invalid_expr e))             
       | `Unrepeat_1 ->
          (function
@@ -4954,6 +4979,31 @@ module MyDomain : Madil.DOMAIN =
         Grid.black :: if full then [] else [Grid.transparent] in
       let index = Expr.Index.empty in
       let index = Expr.index_add_bindings index bindings in
+      let index = (* LEVEL: Obj features *)
+        Common.prof "make_index/obj_features" (fun () ->
+        Expr.index_apply_functions_1
+          ~eval_func
+          index
+          (fun t1 v1 ->
+            let res = [] in
+            let res = (* Border, Interior *)
+              match t1.kind with
+              | OBJ (filling, nocolor) ->
+                 let tres = {t1 with kind = OBJ (filling,nocolor)} in
+                 (tres, `Border_1, `Default)
+                 ::(tres, `Interior_1, `Default)
+                 ::res
+              | _ -> res in
+            let res = (* Neighbors *)
+              match t1.kind with
+              | OBJ (filling, nocolor) ->
+                 let tres = {t1 with kind = OBJ (filling,true)} in
+                 (tres, `DNeighbors_1, `Default)
+                 ::(tres, `INeighbors_1, `Default)
+                 ::(tres, `Neighbors_1, `Default)
+                 ::res
+              | _ -> res in
+            res)) in
       let index = (* LEVEL: Grid features *)
         Common.prof "make_index/grid_features" (fun () ->
         Expr.index_apply_functions_1
@@ -5160,23 +5210,6 @@ module MyDomain : Madil.DOMAIN =
                      opadd, `Custom [| `Apply (t1, opmult, [| `Pos 0; `Val (ta, `Vec (a1,a2)) |]);
                                        `Val (tb, `Vec (b1,b2)) |] in
                  (t1, f, spec_args)::res
-              | _ -> res in
-            let res = (* Border, Interior *)
-              match t1.kind with
-              | GRID ((`Full | `Sprite), nocolor) ->
-                 let tres = {t1 with kind = GRID (`Sprite,nocolor)} in
-                 (tres, `Border_1, `Default)
-                 ::(tres, `Interior_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* Neighbors *)
-              match t1.kind with
-              | GRID ((`Sprite | `Noise as filling), nocolor) ->
-                 let tres = {t1 with kind = GRID (filling,true)} in
-                 (tres, `DNeighbors_1, `Default)
-                 ::(tres, `INeighbors_1, `Default)
-                 ::(tres, `Neighbors_1, `Default)
-                 ::res
               | _ -> res in
             let res = (* Unrepeat *)
               match t1.kind with
