@@ -222,7 +222,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | IsFull (* SPRITE : GRID *)
       | Crop (* [SPRITE] POS, SIZE : SPRITE *)
       | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
-      | ColorPartition (* SIZE, SPRITE+ : SPRITE *)
+      | ColorPartition (* SIZE, INT, COLOR+, MASK+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* [SPRITE] MAP(COLOR,COLOR) : SPRITE *)
       | MotifMulti of bool (* partial *) (* MOTIF MULTI, SPRITE (core), derived SPRITE (pure), MASK? (mask), SPRITE (noise) *)
@@ -300,11 +300,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "  plus the noise:";
          xp_newline ~html print ();
          xp_noise ~html print ()
-      | ColorPartition, [||], [|xp_size; xp_grids|] ->
+      | ColorPartition, [||], [|xp_size; xp_ncol; xp_colors; xp_masks|] ->
          print#string "a grid of size "; xp_size ~html print ();
-         print#string " that is composed of colored layers";
+         print#string " that is composed of "; xp_ncol ~html print ();
+         print#string " layers with colors "; xp_colors ~html print ();
+         print#string ", and masks:";
          xp_newline ~html print ();
-         xp_grids ~html print ()
+         xp_masks ~html print ()
       | Monocolor, [||], [|xp_color; xp_mask|] ->
          print#string "a grid with only color "; xp_color ~html print ();
          print#string " and with mask"; xp_newline ~html print ();
@@ -439,7 +441,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Objects _, 5 -> print#string "noise"
       | Objects _, _ -> assert false
       | ColorPartition, 0 -> print#string "size"
-      | ColorPartition, 1 -> print#string "layer"
+      | ColorPartition, 1 -> print#string "ncol"
+      | ColorPartition, 2 -> print#string "colors"
+      | ColorPartition, 3 -> print#string "masks"
       | ColorPartition, _ -> assert false
       | Monocolor, 0 -> print#string "color"
       | Monocolor, 1 -> print#string "mask"
@@ -824,7 +828,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                {t with kind = OBJ (`Sprite,nocolor)};
                                (* derived merger, not counting *)
                                {t with kind = GRID (`Noise,nocolor)} |]);
-                 (*not nocolor, (ColorPartition, [|VEC SIZE; GRID (`Sprite,false)|]);*)
+                 (* not nocolor, (ColorPartition, [||],
+                               [| {t with kind = VEC SIZE};
+                                  {t with kind = INT CARD};
+                                  {t with kind = COLOR C_OBJ};
+                                  {t with kind = GRID (`Sprite,true)} |]); *)
                  not nocolor, (Monocolor, [||],
                                [| {t with kind = COLOR C_OBJ};
                                   {t with kind = GRID (filling,true)} |]);
@@ -1190,7 +1198,43 @@ module MyDomain : Madil.DOMAIN =
       | `Grid g -> g
       | _ -> assert false
 
-
+    let make_color_partition dsize dcolors dmasks : value Myseq.t =
+      let vsize = Data.value dsize in
+      let depth = Ndseq.depth vsize in
+      Ndseq.map_tup_myseq ~depth 0
+        (function
+         | `Vec (h,w), seq_colors, seq_masks ->
+            let colors =
+              match Ndseq.as_seq seq_colors with
+              | Some (_,colors) ->
+                 List.map
+                   (function
+                    | `Color c -> c
+                    | _ -> assert false)
+                   colors
+              | _ -> assert false in
+            let masks =
+              match Ndseq.as_seq seq_masks with
+              | Some (_,masks) ->
+                 List.map
+                   (function
+                    | `Grid m -> m
+                    | _ -> assert false)
+                   masks
+              | _ -> assert false in
+            assert (List.length colors = List.length masks);
+            if true || List.for_all (fun m -> Grid.dims m = (h,w)) masks
+            then (
+              let g = Grid.make h w Grid.transparent in
+              List.iter2
+                (fun c m ->
+                  Grid.add_grid_at g 0 0 (Grid.Mask.to_grid m Grid.transparent c))
+                colors masks;
+              Myseq.return (`Grid g))
+            else Myseq.empty
+         | _ -> assert false)
+        (vsize, Data.value dcolors, Data.value dmasks)
+    
     let make_objects_v_dmerger dsize dseg dcard dobjs dnoise : value * data =
       let vsize = Data.value dsize in
       let depth = Ndseq.depth vsize in
@@ -2275,11 +2319,11 @@ module MyDomain : Madil.DOMAIN =
 
     let generator_value v info =
       let* v', info =
-        if info = `Null (* expression-only argument *)
+        if info = `Null (* expression-only argument TODO: obsolete *)
         then Myseq.return (v, `Null)
         else
           Ndseq.match_myseq 0
-            (fun v info -> Myseq.return (v, info))
+            (fun v info -> Myseq.return (v, info)) (* TODO: should check that v agrees with info *)
             v info in
       (* Warning: v' may be different from v because of broadcasting in Ndseq.match_myseq *)
       Myseq.return (Data.make_dexpr v', info)
@@ -2568,14 +2612,36 @@ module MyDomain : Madil.DOMAIN =
              let v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs dnoise in
              Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], info)
           | _ -> assert false)
-    
-(* TODO      | _, ColorPartition, [|gen_size; gen_grids|], _ ->
-         let* l = Myseq.product_fair [gen_size info; gen_grids info] in
+
+      | _, ColorPartition, [||], [|gen_size; gen_ncol; gen_colors; gen_masks|] ->
+         let info_size, info_ncol =
+           Ndseq.map_tup ~depth (0,0)
+             (function
+              | `Grid ((hmin,hmax),(wmin,wmax),lc) ->
+                 `Vec (`Int (hmin,hmax), `Int (wmin,wmax)),
+                 `Int (1, List.length lc)
+              | _ -> assert false)
+             (tup1 info) in
+         let* l = Myseq.product_fair
+                    [gen_size info_size;
+                     gen_ncol info_ncol] in
          (match l with
-          | [dsize, _; dgrids, _] ->
-             let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
-             Myseq.return (data, `Null)
-          | _ -> assert false) *)
+          | [dsize, _; dncol, _] ->
+             let info_colors, info_masks =
+               Ndseq.map_tup ~depth (1,1)
+                 (function
+                  | `Vec (h,w), `Int ncol, `Grid (_,_,lc) ->
+                     let info_color = `Color lc in (* TODO: constrain different colors across sequence *)
+                     let info_mask = `Grid ((h,h),(w,w),[Grid.one]) in
+                     Ndseq.seq 0 (List.init ncol (fun _ -> info_color)),
+                     Ndseq.seq 0 (List.init ncol (fun _ -> info_mask))
+                  | _ -> assert false)
+                 (Data.value dsize, Data.value dncol, info) in
+             let* dcolors, _ = gen_colors info_colors in
+             let* dmasks, _ = gen_masks info_masks in
+             let* v = make_color_partition dsize dcolors dmasks in
+             Myseq.return (Data.make_dpat v c [|dsize; dncol; dcolors; dmasks|], info)
+          | _ -> assert false)
     
       | GRID _, Monocolor, [||], [|gen_col; gen_mask|] ->
          let info_col, info_mask =
@@ -3206,7 +3272,7 @@ module MyDomain : Madil.DOMAIN =
 
     let parseur_value v input =
       let* v', input =
-        if input = `Null (* for expression-only arguments *)
+        if input = `Null (* for expression-only arguments TODO: obsolete *)
         then Myseq.return (v, `Null)
         else
           Ndseq.match_myseq 0
@@ -3259,7 +3325,7 @@ module MyDomain : Madil.DOMAIN =
         Ndseq.map_tup_myseq ~name:"parse/any" ~depth (0,0)
           (fun input ->
             match t.kind, input with
-            | _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments TODO: this is dirty *)
+            | _, `Null -> Myseq.empty (* useful to avoid pruning of constant expression-only arguments TODO: this is dirty TODO: obsolete? *)
             | INT _, `IntRange (ij,range) ->
                Myseq.return (`Int ij, `IntRange (ij,range))
             | VEC tv, `Vec (`IntRange (i,ri), `IntRange (j,rj)) ->
@@ -3529,23 +3595,42 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], input)
 
-(*      | _, ColorPartition, [|parse_size; parse_grids|], `GridDimsCols (g,rh,rw,nc) ->
-         let h, w = Grid.dims g in
-         let rh1 = Range.make_exact h in
-         let rw1 = Range.make_exact w in
-         let* dsize, _ = parse_size
-                           (`Vec (`IntRange (h, rh),
-                                  `IntRange (w, rw))) in
-         let lg1s = Grid_patterns.partition_by_color g in
-         let* () = Myseq.from_bool (lg1s <> []) in
-         let g1s =
-           List.map
-             (fun g1 -> `GridDimsCols (g1,rh1,rw1,nc)) (* h/w known, keeping nc>1 for supporting Monocolor *)
-             lg1s in
-         let* dgrids, _ = parse_grids (`Seq g1s) in
-         let* data = Myseq.from_result (make_dcolorpartition dsize dgrids) in
-         Myseq.return (data, `Null) *)
-    
+      | _, ColorPartition, [||], [|parse_size; parse_ncol; parse_colors; parse_masks|] ->
+         let v = value_of_input t input in
+         let* in_size, in_ncol, in_colors, in_masks =
+           Ndseq.map_tup_myseq ~depth (0,0,1,1)
+             (function
+              | `GridDimsCols (g,rh,rw,nc) ->
+                 let h, w = Grid.dims g in
+                 let layers = Grid_patterns.partition_by_color g in
+                 let ncol = List.length layers in
+                 let* () = Myseq.from_bool (ncol > 0) in
+                 let* layers = (* permutations of first three objects *)
+                   match layers with
+                   | [] -> Myseq.return layers
+                   | [o1] -> Myseq.return layers
+                   | [o1;o2] -> Myseq.cons layers (Myseq.return [o2;o1])
+                   | o1::o2::o3::os ->
+                      Myseq.cons layers
+                        (Myseq.cons (o1::o3::o2::os)
+                           (Myseq.cons (o2::o1::o3::os)
+                              (Myseq.cons (o2::o3::o1::os)
+                                 (Myseq.cons (o3::o2::o1::os)
+                                    (Myseq.return (o3::o1::o2::os)))))) in
+                 Myseq.return
+                   (`Vec (`IntRange (h,rh), `IntRange (w,rw)),
+                    `IntRange (ncol, Range.make_closed 1 nc),
+                    Ndseq.seq 0 (List.map (fun (c,m) -> `Color c) layers),
+                    Ndseq.seq 0 (List.map (fun (c,m) -> `GridDimsCols (m, Range.make_exact h, Range.make_exact w, 1)) layers))
+              | _ -> assert false)
+             (tup1 input) in
+         let* dsize, _ = parse_size in_size in
+         let* dncol, _ = parse_ncol in_ncol in
+         let* dcolors, _ = parse_colors in_colors in
+         let* dmasks, _ = parse_masks in_masks in
+         let input = Ndseq.const `Null input in
+         Myseq.return (Data.make_dpat v c [|dsize; dncol; dcolors; dmasks|], input)         
+        
       | _, Monocolor, [||], [|parse_col; parse_mask|] ->
          let v = value_of_input t input in
          let* in_col, in_mask =
@@ -4177,7 +4262,7 @@ module MyDomain : Madil.DOMAIN =
       | IsFull, [|enc_g1|] -> enc_g1
       | Crop, [|enc_pos; enc_size|] -> enc_pos +. enc_size
       | Objects (nmax,mode), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger; enc_noise|] -> enc_size +. enc_seg +. enc_card +. enc_objs +. enc_noise (* TODO: take seg into account for encoding objects *)
-      | ColorPartition, [|enc_size; enc_grids|] -> enc_size +. enc_grids
+      | ColorPartition, [|enc_size; enc_ncol; enc_colors; enc_masks|] -> enc_size +. enc_ncol +. enc_colors +. enc_masks
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_map|] -> enc_map
       | MotifMulti partial, [|enc_motif; enc_core; _enc_pure; enc_mask_opt; enc_noise|] ->
@@ -5586,7 +5671,7 @@ module MyDomain : Madil.DOMAIN =
              let xmerger, varseq = Refining.new_var varseq in
              let xnoise, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
-             (Model.make_pat {t with kind = GRID (`Sprite,nocolor)} (Objects (nmax, `Connected))
+             (Model.make_pat t (Objects (nmax, `Connected))
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def xseg (Model.make_any {t with kind = SEG});
                    Model.make_def xcard (Model.make_any {t with kind = INT CARD});
@@ -5633,28 +5718,23 @@ module MyDomain : Madil.DOMAIN =
               varseq)
              :: refs
            else refs in
-         (*let refs = (* ColorPartition *) (* too eager *)
-           if not nocolor then
+         (* let refs = (* ColorPartition *)
+           if filling <> `Full && not nocolor then
              let xsize, varseq = Refining.new_var varseq in
-             let xsize_i, varseq = Refining.new_var varseq in
-             let xsize_j, varseq = Refining.new_var varseq in
-             let xloop, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
-             let xg1_color, varseq = Refining.new_var varseq in
-             let xg1_mask, varseq = Refining.new_var varseq in
-             (make_colorpartition filling
-                (Model.make_def xsize
-                   (make_vec SIZE
-                      (Model.make_def xsize_i (make_anycoord I SIZE))
-                      (Model.make_def xsize_j (make_anycoord J SIZE))))
-                (Model.make_loop xloop (Range.make_closed 1 Grid.nb_color)
-                   (Model.make_def xg1
-                      (make_monocolor
-                         (Model.make_def xg1_color (make_anycolor C_OBJ))
-                         (Model.make_def xg1_mask (make_anygrid (filling,true)))))),
+             let xncol, varseq = Refining.new_var varseq in
+             let xcolors, varseq = Refining.new_var varseq in
+             let xmasks, varseq = Refining.new_var varseq in
+             (Model.make_pat t ColorPartition
+                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def xncol (Model.make_any {t with kind = INT CARD});
+                   Model.make_def xcolors (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
+                   Model.make_def xmasks
+                     (Model.make_any
+                        {kind = GRID (`Noise, true);
+                         ndim = ndim+1}) |],
               varseq)
-             ::refs
-           else refs in*)
+             :: refs
+           else refs in *)
          let refs = (* Monocolor *)
            if not nocolor then
              let xcol, varseq = Refining.new_var varseq in

@@ -519,36 +519,36 @@ let parse (nmax : int) seg (g : Grid.t) : t Myseq.t =
 
   end
 
-let partition_by_color (g : Grid.t) : Grid.t list =
+let partition_by_color (g : Grid.t) : (Grid.color * Grid.t (* mask *)) list =
   Common.prof "Grid_patterns.partition_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
   let color_part =
     Array.init Grid.nb_color (* one potential grid per color *)
-      (fun c -> (Grid.make h w Grid.transparent, ref 0)) in
+      (fun c -> (Grid.make h w Grid.zero, ref 0)) in
   for i = 0 to h-1 do
     for j = 0 to w-1 do
       let c = mat.{i,j} in
       if Grid.is_true_color c then
-        let g1, area = color_part.(c) in
-        Grid.Do.set_pixel g1 i j c;
+        let m, area = color_part.(c) in
+        Grid.Do.set_pixel m i j Grid.one;
         incr area
     done
   done;
   let parts =
     let res = ref [] in
     Array.iteri
-      (fun c (g1,area) ->
+      (fun c (m,area) ->
         if !area > 0 then
-          res := (!area, c, g1) :: !res)
+          res := (!area, c, m) :: !res)
       color_part;
     !res in
   let sorted_parts =
     List.sort
-      (fun (a1,c1,g1) (a2,c2,g2) ->
-        Stdlib.compare (a2,c1) (a1,c2)) (* decreasing area first *)
+      (fun (a1,c1,m1) (a2,c2,m2) ->
+        Stdlib.compare (a2,c1) (a1,c2)) (* decreasing area *)
       parts in
-  List.map (fun (_,_,g1) -> g1) sorted_parts)
+  List.map (fun (_,c,m) -> c,m) sorted_parts)
 
 let partition_by_color, reset_partition_by_color =
   Memo.memoize ~size:103 partition_by_color
