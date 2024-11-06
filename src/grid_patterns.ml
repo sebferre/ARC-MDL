@@ -569,6 +569,7 @@ module Motif =
 type t =
   | Scale
   | Periodic of Grid.Transf.axis * Grid.Transf.axis
+  | Affine of int * int (* ax + b, same on two axes so far *) 
   (* symmetries *) (* TODO: add symmetry axis/center position *)
   | FlipH | FlipW | FlipHW
   | FlipD1 | FlipD2 | FlipD12
@@ -585,6 +586,10 @@ let xp ~html print = function
   | Periodic (phi,psi) ->
      print#string "periodic["; Grid.Transf.xp_axis print phi;
      print#string ","; Grid.Transf.xp_axis print psi;
+     print#string "]"
+  | Affine (a,b) ->
+     print#string "affine["; print#int a;
+     print#string ","; print#int b;
      print#string "]"
   | FlipH -> print#string "flipH"
   | FlipW -> print#string "flipW"
@@ -603,39 +608,51 @@ let xp ~html print = function
   | Diamond -> print#string "Diamond"
   | Star -> print#string "Star"
 
-let project (mot : t) h w u v : (int -> int -> int * int) =
+let project (mot : t) h w u v : (int -> int -> (int * int) option) =
   (* project coord (i,j) in (h,w) range to (u,v) range, according to motif *)
   let h_1, w_1 = h-1, w-1 in
   match mot with
   | Scale ->
      let k, l = h_1 / u + 1, w_1 / v + 1 in
-     (fun i j -> i / k, j / l)
+     (fun i j -> Some (i / k, j / l))
   | Periodic (phi,psi) ->
      let eval_phi = Grid.Transf.eval_axis phi in
      let eval_psi = Grid.Transf.eval_axis psi in
      (fun i j ->
        let a, b = eval_phi i j, eval_psi i j in
-       a mod u, b mod v)
+       Some (a mod u, b mod v))
+  | Affine (a,b) ->
+     let proj y = (* positive integer solution to ax + b = y *)
+       let z = y - b in
+       if z >= 0 && z mod a = 0
+       then
+         let x = z / a in
+         Some x
+       else None in
+     (fun i j ->
+       let@ i' = proj i in
+       let@ j' = proj j in
+       Some (i',j'))
   | FlipH ->
-     (fun i j -> min i (h_1 - i), j)
+     (fun i j -> Some (min i (h_1 - i), j))
   | FlipW ->
-     (fun i j -> i, min j (w_1 - j))
+     (fun i j -> Some (i, min j (w_1 - j)))
   | FlipHW ->
-     (fun i j -> min i (h_1 - i), min j (w_1 - j))
+     (fun i j -> Some (min i (h_1 - i), min j (w_1 - j)))
   | FlipD1 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       min p (h_1 + w_1 - p), m)
+       Some (min p (h_1 + w_1 - p), m))
   | FlipD2 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       p, min m (h_1 + w_1 - m))
+       Some (p, min m (h_1 + w_1 - m)))
   | FlipD12 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       min p (h_1 + w_1 - p), min m (h_1 + w_1 - m))
+       Some (min p (h_1 + w_1 - p), min m (h_1 + w_1 - m)))
   | Rotate180 ->
-     (fun i j -> min (i, j) (h_1 - i, w_1 - j))
+     (fun i j -> Some (min (i, j) (h_1 - i, w_1 - j)))
   | Rotate90 ->
      (fun i j ->
        let a, b =
@@ -644,50 +661,50 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
               (min (h_1 - i, w_1 - j)
                  (j, h_1 - i))) in
        if b >= v
-       then w_1 - b, a 
-       else a, b)
+       then Some (w_1 - b, a)
+       else Some (a, b))
   | FullSym ->
      (fun i j ->
        let i_min = min i (h_1 - i) in
        let j_min = min j (w_1 - j) in
-       min i_min j_min, max i_min j_min)
+       Some (min i_min j_min, max i_min j_min))
   | Rings ->
      (fun i j ->
-       min (min i (h_1 - i)) (min j (w_1 - j)), 0)
+       Some (min (min i (h_1 - i)) (min j (w_1 - j)), 0))
   (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
   | Corners ->
      (fun i j ->
        if (i = 0 || i = h_1) && (j = 0 || j = w_1)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Border ->
      (fun i j ->
        if i = 0 || j = 0 || i = h_1 || j = w_1
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | CrossPlus ->
      (fun i j ->
        if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | CrossTimes ->
      (fun i j ->
        if i = j || i = (w_1-j)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Star ->
      (fun i j ->
        if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2 (* CrossPlus *)
           || i = j || i = (w_1-j) (* CrossTimes *)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Diamond ->
      assert (h = w);
      (fun i j ->
        let p, m = i + j,  i + (w_1 - j) in
        if p = h_1/2 || p = h_1 + h/2 || m = h_1/2 || m = h_1 + h/2
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
              
 let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (int * int) list =
   (* range and list of core dimensions (u,v) given a motif and grid dims *)
@@ -724,6 +741,12 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
              else (u,v)::res)
            1 w' res)
        1 h' []
+  | Affine (a,b) ->
+     let u = (h - 1 - b) / a + 1 in
+     let v = (w - 1 - b) / a + 1 in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u,v]
   | FlipH ->
      let u, v = (h+1)/2, w in
      Range.make_exact u,
@@ -849,11 +872,13 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (*
     let g =
       Grid.init h w
         (fun i j ->
-          let i', j' = proj i j in
-          assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
-            (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
-            assert false); *)
-          core.Grid.matrix.{i',j'}) in
+          match proj i j with
+          | Some (i',j') ->
+             assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
+             (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
+                assert false); *)
+             core.Grid.matrix.{i',j'}
+          | None -> Grid.transparent) in
     if g.color_count.(Grid.undefined) = 0
     then Result.Ok g
     else Result.Error (Failure "Grid_patterns.Motif.make_grid: undefined cells")
@@ -880,30 +905,37 @@ let candidates_multi = (* multicolor motifs *)
     Periodic (PlusIJ, Zero);
     Periodic (DiffIJ, Zero);
     Periodic (MaxIJ, Zero);
-    Periodic (MinIJ, Zero) ]
+    Periodic (MinIJ, Zero);
+    Affine (2,0);
+    Affine (2,1);
+    Affine (3,0);
+    Affine (3,1);
+    Affine (3,2);
+  ]
 let nb_candidates_multi = List.length candidates_multi
+let nb_affine_params = 3
 
 let prob_multi : t -> float = function
   | Scale -> 0.3
 
-  (* 0.4 *)
-  | FullSym -> 0.4 *. 0.25
-  | Rings -> 0.4 *. 0.10
-
-  | FlipHW -> 0.4 *. 0.2
-  | FlipH -> 0.4 *. 0.05
-  | FlipW -> 0.4 *. 0.05
-
-  | FlipD12 -> 0.4 *. 0.1
-  | FlipD1 -> 0.4 *. 0.05
-  | FlipD2 -> 0.4 *. 0.05
-
-  | Rotate90 -> 0.4 *. 0.1
-  | Rotate180 -> 0.4 *. 0.05
-
   (* 0.3 *)
+  | FullSym -> 0.3 *. 0.25
+  | Rings -> 0.3 *. 0.10
+
+  | FlipHW -> 0.3 *. 0.2
+  | FlipH -> 0.3 *. 0.05
+  | FlipW -> 0.3 *. 0.05
+
+  | FlipD12 -> 0.3 *. 0.1
+  | FlipD1 -> 0.3 *. 0.05
+  | FlipD2 -> 0.3 *. 0.05
+
+  | Rotate90 -> 0.3 *. 0.1
+  | Rotate180 -> 0.3 *. 0.05
+
+  (* 0.4 *)
   | Periodic (a,b) ->
-     0.3 *.
+     0.2 *.
      (match a, b with
       | I, J -> 0.2
       | I, PlusIJ -> 0.04
@@ -916,6 +948,8 @@ let prob_multi : t -> float = function
       | MaxIJ, Zero -> 0.04
       | MinIJ, Zero -> 0.04
       | _ -> assert false)
+  | Affine (a,b) ->
+     0.2 /. float nb_affine_params
   | _ -> assert false
 
 let candidates_bi = (* bicolor shape-like motifs *)
@@ -965,12 +999,14 @@ let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * R
         (fun (u,v,proj,ncols) ->
           Grid.iter_pixels
             (fun i j c ->
-              let i', j' = proj i j in
-              assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
-              (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
-                pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
-                assert false);*)
-              ncols.(i').(j') <- add_color c ncols.(i').(j'))
+              match proj i j with
+              | Some (i', j') ->
+                 assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
+                 (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
+                   pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
+                   assert false);*)
+                 ncols.(i').(j') <- add_color c ncols.(i').(j')
+              | None -> ()) (* pixel at (i,j) does not contribute to core *)
             g)
         cores)
     motifs;
