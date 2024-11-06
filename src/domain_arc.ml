@@ -993,7 +993,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`ScaleUp_2, [|t (* const:{t with kind = INT CARD} *) |])
              ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
              (* ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |]) *)
-               (*::(`Strip_1, [|GRID (false,false)|])*)
              (* ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|]) *)
              (* ::(`Crop_2, [| {t with kind = GRID (`Full,false)};
                             {t with kind = OBJ (`Sprite,false)} |]) *)
@@ -1033,7 +1032,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::(`ApplySymGrid_1 `Id, [|t|]) *)
              (* ::(`UnfoldSym_1 [], [|t|]) *)
              (* ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t |]) *)
-             (`Border_1, [|t|])
+             (`Strip_1, [| {t with kind = GRID (filling,nocolor)} |])
+             ::(`Border_1, [|t|])
              ::(`Interior_1, [|t|])
              ::(`DNeighbors_1, [|t|])
              ::(`INeighbors_1, [|t|])
@@ -1611,9 +1611,9 @@ module MyDomain : Madil.DOMAIN =
       | `Strip_1 ->
          (function
           | [| `Grid g|] ->
-             let| bgcolor = Grid.majority_color Grid.transparent g in
-             let| _, _, _, _, g'= Grid.Transf.strip bgcolor g Grid.black in
-             Result.Ok (`Grid g')
+             (*let| bgcolor = Grid.majority_color Grid.transparent g in*)
+             let| i, j, _, _, g1 = Grid.Transf.strip Grid.transparent g Grid.transparent in
+             Result.Ok (`Obj (`Vec (i,j), `Grid g1))
           | _ -> Result.Error (Invalid_expr e))
       | `Corner_2 ->
          (function
@@ -4962,6 +4962,12 @@ module MyDomain : Madil.DOMAIN =
           index
           (fun t1 v1 ->
             let res = [] in
+            let res = (* Strip *)
+              match t1.kind with
+              | GRID (filling,nocolor) when filling <> `Full ->
+                 ({t1 with kind = OBJ (filling,nocolor)}, `Strip_1, `Default)
+                 ::res
+              | _ -> res in
             let res = (* Border, Interior *)
               match t1.kind with
               | OBJ (filling, nocolor) ->
