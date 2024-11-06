@@ -594,6 +594,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `GridOfColorMat_1 (* Color^k -> Grid^(k-2) *)
       | `Colors_1 (* Grid -> Color^1, in decreasing frequency *)
       | `Halves_1 of direction (* Grid^k -> Grid^(k+1) *)
+      | `Quadrants_1 (* Grid^k -> Grid^(k+2) *)
       | `RelativePos_1 (* Obj^k -> Pos^(k+1) *)
       | `TranslatedOnto_1 (* Obj^k -> Pos^(k+1) *)
       | func_itemwise
@@ -696,6 +697,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Middle_1 -> print#string "middle"
       | `MiddleCenter_1 -> print#string "middle_center"
       | `Halves_1 dir -> print#string "halves"; print#string (match dir with `H -> "H" | `V -> "V")
+      | `Quadrants_1 -> print#string "quadrants"
       | `ProjI_1 -> print#string "projI"
       | `ProjJ_1 -> print#string "projJ"
       | `MaskOfGrid_1 -> print#string "maskOfGrid"
@@ -987,6 +989,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (*let full = (filling = `Full) in*)
              (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
              ::(`Halves_1 `H, [|t|])
+             ::(`Quadrants_1, [|t|])
              ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
              ::(`GridOfColorSeq_1 `H, [| {t with kind = COLOR C_OBJ} |])
              ::(`GridOfColorMat_1, [| {t with kind = COLOR C_OBJ} |])
@@ -2213,6 +2216,26 @@ module MyDomain : Madil.DOMAIN =
                 | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
                v1
           | _ -> assert false)
+      | `Quadrants_1 ->
+         (function
+          | [|v1|] ->
+             Ndseq.map_result 2
+               (function
+                | `Grid g ->
+                   let h, w = Grid.dims g in
+                   let h' = h / 2 in
+                   let w' = w / 2 in
+                   let| g00 = Grid.Transf.crop g 0 0 h' w' in
+                   let| g01 = Grid.Transf.crop g 0 (w-w') h' w' in
+                   let| g10 = Grid.Transf.crop g (h-h') 0 h' w' in
+                   let| g11 = Grid.Transf.crop g (h-h') (w-w') h' w' in
+                   Result.Ok
+                     (Ndseq.seq 1
+                        [ Ndseq.seq 0 [`Grid g00; `Grid g01];
+                          Ndseq.seq 0 [`Grid g10; `Grid g11]])
+                | _ -> Result.Error (Undefined_result "quadrants: not a grid"))
+               v1
+          | _ -> assert false)             
       | `RelativePos_1 ->
          (function
           | [|v1|] ->
@@ -4427,6 +4450,7 @@ module MyDomain : Madil.DOMAIN =
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
       | `MiddleCenter_1 -> 0.
       | `Halves_1 dir -> 1.
+      | `Quadrants_1 -> 0.
       | `ProjI_1 | `ProjJ_1 -> 0.
       | `MaskOfGrid_1 | `GridOfMask_2 -> 0.
       | `GridOfColorSeq_1 dir -> 1.
@@ -4999,11 +5023,12 @@ module MyDomain : Madil.DOMAIN =
                  ({t1 with kind = GRID tg}, `Grid_1, `Default)
                  ::res
               | _ -> res in
-            let res = (* Halves_1 *)
+            let res = (* Halves_1, Quadrants_1 *)
               match t1.kind with
               | GRID tg ->
-                 ({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `H, `Default)
-                 ::({kind = GRID tg; ndim = t1.ndim+1}, `Halves_1 `V, `Default)
+                 ({t1 with ndim = t1.ndim+1}, `Halves_1 `H, `Default)
+                 ::({t1 with ndim = t1.ndim+1}, `Halves_1 `V, `Default)
+                 ::({t1 with ndim = t1.ndim+2}, `Quadrants_1, `Default)
                  ::res
               | _ -> res in
             res)) in
