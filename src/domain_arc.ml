@@ -1122,6 +1122,7 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let refinement_branching = def_param "refinement_branching" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let input_branching = def_param "input_branching" 10 string_of_int (* max nb of explored input models during output model learning (refining phase). min=1 *)
+    let solution_pool = def_param "solution_pool" 3 string_of_int (* max nb of solutions before choosing best one *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
 
     let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
@@ -5727,14 +5728,9 @@ module MyDomain : Madil.DOMAIN =
          let refs = (* Objects - SameColor *)
            if filling <> `Full && not nocolor then
              let xsize, varseq = Refining.new_var varseq in
-             let xsize_i, varseq = Refining.new_var varseq in
-             let xsize_j, varseq = Refining.new_var varseq in
              let xcard, varseq = Refining.new_var varseq in
-             let xloop, varseq = Refining.new_var varseq in
              let xobj, varseq = Refining.new_var varseq in
              let xpos, varseq = Refining.new_var varseq in
-             let xpos_i, varseq = Refining.new_var varseq in
-             let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              let xg1_color, varseq = Refining.new_var varseq in
              let xg1_mask, varseq = Refining.new_var varseq in
@@ -5753,6 +5749,28 @@ module MyDomain : Madil.DOMAIN =
                              (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
                                 [| Model.make_def xg1_color (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
                                    Model.make_def xg1_mask (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
+                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
+              varseq)
+             :: refs
+           else if filling <> `Full && nocolor then
+             let xsize, varseq = Refining.new_var varseq in
+             let xcard, varseq = Refining.new_var varseq in
+             let xobj, varseq = Refining.new_var varseq in
+             let xpos, varseq = Refining.new_var varseq in
+             let xg1, varseq = Refining.new_var varseq in
+             let xmerger, varseq = Refining.new_var varseq in
+             let xnoise, varseq = Refining.new_var varseq in
+             let nmax = 1 in
+             (Model.make_pat t (Objects (nmax, `SameColor))
+                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_expr
+                     (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
+                   Model.make_def xcard (Model.make_any {t with kind = INT CARD});
+                   Model.make_def xobj
+                     (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
+                        [| Model.make_def xpos (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                           Model.make_def xg1 (Model.make_any {kind = GRID (filling,nocolor); ndim = ndim+1}) |]);
                    Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
                    Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
               varseq)
