@@ -517,7 +517,50 @@ let parse (nmax : int) seg (g : Grid.t) : t Myseq.t =
   then Myseq.return (objs, g_noise)
   else Myseq.empty
 
-  end
+
+type order = Color | AreaMask | Pos
+
+let xp_order ~html print = function
+  | Color -> print#string "color"
+  | AreaMask -> print#string "area/mask"
+  | Pos -> print#string "pos"
+
+let obj_color (i,j,g1) = Grid.majority_color Grid.transparent g1 [@@inline]
+let obj_area (i,j,g1) = - (Grid.color_area Grid.transparent g1) [@@inline] (* descending area *)
+let obj_mask (i,j,g1) = Grid.Mask.from_grid_background Grid.transparent g1 [@@inline]
+let obj_posi (i,j,g1) = let h1, w1 = Grid.dims g1 in float i +. float h1 /. 2. [@@inline]
+let obj_posj (i,j,g1) = let h1, w1 = Grid.dims g1 in float j +. float w1 /. 2. [@@inline]
+let obj_color_plus obj = obj_color obj, obj_area obj, obj_mask obj
+let obj_area_mask_plus obj = obj_area obj, obj_mask obj, obj_color obj
+
+let candidate_orders nmax nocolor =
+  if nmax = 1 then [Pos]
+  else if nocolor then [AreaMask; Pos]
+  else [Color; AreaMask; Pos]
+
+let sort_gen (key : obj -> 'k) (objs : obj list) : obj list =
+  let sorted = List.sort Stdlib.compare (List.map (fun obj -> key obj, obj) objs) in
+  List.map snd sorted
+
+let sort (order : order) (objs : obj list) : obj list =
+  match order with
+  | Color -> sort_gen obj_color_plus objs
+  | AreaMask -> sort_gen obj_area_mask_plus objs
+  | Pos -> List.sort Stdlib.compare objs (* obj = (i,j,g1) *)
+
+let rec single_key (sorted : ('k * obj) list) : bool =
+  match sorted with
+  | [] -> true
+  | [(k,_)] -> true
+  | (k1,_)::((k2,_)::_ as r) -> k1 = k2 && single_key r
+
+let rec unique_keys (sorted : ('k * obj) list) : bool =
+  match sorted with
+  | [] -> true
+  | [(k,_)] -> true
+  | (k1,_)::((k2,_)::_ as r) -> k1 <> k2 && unique_keys r
+
+  end (* Objects *)
 
 let partition_by_color (g : Grid.t) : (Grid.color * Grid.t (* mask *)) list =
   Common.prof "Grid_patterns.partition_by_color" (fun () ->

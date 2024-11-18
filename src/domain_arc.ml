@@ -36,6 +36,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | VEC of typ_vec
       | COLOR of typ_color
       | SEG (* object segmentation *)
+      | ORDER of bool (* nocolor *)
       | MOTIF of typ_motif
       | GRID of typ_grid
       | OBJ of typ_grid
@@ -85,6 +86,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | VEC tv -> xp_typ_vec ~html print tv
       | COLOR tc -> print#string "COLOR"; xp_typ_color ~html print tc
       | SEG -> print#string "SEG"
+      | ORDER nocolor -> print#string "ORDER"
       | MOTIF tm -> print#string "MOTIF"; xp_typ_motif ~html print tm
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
@@ -126,6 +128,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Color of Grid.color
       | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
       | `Seg of GPat.Objects.segmentation
+      | `Order of GPat.Objects.order
+      | `OrderRange of GPat.Objects.order * GPat.Objects.order list
       | `Motif of GPat.Motif.t
       | `MotifTyp of GPat.Motif.t * typ_motif (* MOTIF of some type *)
       | `Grid of Grid.t
@@ -142,6 +146,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec (i,j) | `VecRange (i,j,_,_) -> xp_vec xp_int xp_int ~html print i j
       | `Color c | `ColorTyp (c,_) -> Grid.xp_color ~html print c
       | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
+      | `Order order -> GPat.Objects.xp_order ~html print order
+      | `OrderRange (order,lorder) -> GPat.Objects.xp_order ~html print order
       | `Motif motif | `MotifTyp (motif,_) -> GPat.Motif.xp ~html print motif
       | `Grid g | `GridRange (g,_,_,_,_) -> Grid.xp_grid ~html print g
       | `Obj (pos,g1) ->
@@ -221,7 +227,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* [SPRITE] POS, SIZE : SPRITE *)
-      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
+      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, ORDER, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
       | ColorPartition (* SIZE, INT, COLOR+, MASK+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* [SPRITE] MAP(COLOR,COLOR) : SPRITE *)
@@ -287,12 +293,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
            print#string " that contains at position "; xp_pos ~html print ();
            xp_newline ~html print ();
            xp_sprite ~html print ()*)
-      | Objects (nmax,_mode), [||], [|xp_size; xp_seg; xp_card; xp_objs; xp_merger; xp_noise|] ->
+      | Objects (nmax,_mode), [||], [|xp_size; xp_seg; xp_order; xp_card; xp_objs; xp_merger; xp_noise|] ->
          print#string "a grid of size "; xp_size ~html print ();
          print#string " that contains "; xp_card ~html print ();
          print#string " <= "; print#int nmax;
          print#string " "; xp_seg ~html print ();
-         print#string " objects";
+         print#string " objects, ordered by "; xp_order ~html print ();
          xp_newline ~html print ();
          xp_objs ~html print ();
          print#string " forming the constellation object: ";
@@ -435,10 +441,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Crop, _ -> assert false
       | Objects _, 0 -> print#string "size"
       | Objects _, 1 -> print#string "seg"
-      | Objects _, 2 -> print#string "card"
-      | Objects _, 3 -> print#string "obj"
-      | Objects _, 4 -> print#string "merger"
-      | Objects _, 5 -> print#string "noise"
+      | Objects _, 2 -> print#string "order"
+      | Objects _, 3 -> print#string "card"
+      | Objects _, 4 -> print#string "obj"
+      | Objects _, 5 -> print#string "merger"
+      | Objects _, 6 -> print#string "noise"
       | Objects _, _ -> assert false
       | ColorPartition, 0 -> print#string "size"
       | ColorPartition, 1 -> print#string "ncol"
@@ -806,6 +813,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (MakeGrid, [||], [| {t with kind = GRID (filling, false)} |])
              :: res
           | SEG -> res
+          | ORDER nocolor -> res
           | MOTIF tm -> res
           | GRID (filling,nocolor) ->
              let full = (filling = `Full) in
@@ -826,6 +834,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full, (Objects (1,`Connected), [||],
                             [| {t with kind = VEC SIZE};
                                {t with kind = SEG};
+                               {t with kind = ORDER nocolor};
                                {t with kind = INT CARD};
                                {t with kind = OBJ (`Sprite,nocolor)};
                                (* derived merger, not counting *)
@@ -984,6 +993,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::(`MinorityColor_1, [| {t with kind = GRID (`Sprite,false)} |]) (* also `Full and `Noise *)
              ::res
           | SEG -> res
+          | ORDER _ -> res
           | MOTIF tm -> res
           | GRID (filling,nocolor) ->
              (*let full = (filling = `Full) in*)
@@ -1056,6 +1066,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec of generator_info (* i *) * generator_info (* j *)
       | `Color of Grid.color list (* interval *)
       | `Seg of GPat.Objects.segmentation list
+      | `Order of GPat.Objects.order list
       | `Motif of GPat.Motif.t list
       | `Grid of (int * int) (* height *) * (int * int) (* width *) * Grid.color list (* color *)
       | `Obj of generator_info (* pos *) * generator_info (* grid *)
@@ -1068,6 +1079,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Vec of input * input
       | `Color of Grid.color (* TODO: add range: nb colors *)
       | `Seg of GPat.Objects.segmentation (* TODO: add range: nb segs *)
+      | `Order of GPat.Objects.order * GPat.Objects.order list
       | `Motif of GPat.Motif.t (* TODO: add range: nb motifs *)
       | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
       | `Obj of input (* pos *) * input (* grid *)
@@ -1087,6 +1099,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "Color"
       | `Seg seg ->
          print#string "Seg"
+      | `Order (order,lorder) ->
+         print#string "Order"
       | `Motif mot ->
          print#string "Motif"
       | `GridDimsCols (g,rh,rw,nc) ->
@@ -1159,6 +1173,10 @@ module MyDomain : Madil.DOMAIN =
       match Data.value d with
       | `Seg seg -> seg
       | _ -> assert false
+    let get_order (d : data) : GPat.Objects.order =
+      match Data.value d with
+      | `Order order -> order
+      | _ -> assert false
     let get_motif (d : data) : GPat.Motif.t =
       match Data.value d with
       | `Motif mot -> mot
@@ -1205,13 +1223,13 @@ module MyDomain : Madil.DOMAIN =
          | _ -> assert false)
         (vsize, Data.value dcolors, Data.value dmasks)
     
-    let make_objects_v_dmerger dsize dseg dcard dobjs dnoise : value * data =
+    let make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise : value * data =
       let vsize = Data.value dsize in
       let depth = Ndseq.depth vsize in
-      let v, merger =
+      let v, merger = (* TODO: use dseg and dorder *)
         Ndseq.map_tup ~depth (0,0)
           (function
-           | `Vec (h, w), `Seg seg, `Int card, seq_objs, `Grid g_noise ->
+           | `Vec (h, w), `Int card, seq_objs, `Grid g_noise ->
               let objs =
                 match Ndseq.as_seq seq_objs with
                 | Some (_,objs) ->
@@ -1245,7 +1263,7 @@ module MyDomain : Madil.DOMAIN =
               Grid.add_grid_at g 0 0 g_noise;
               (`Grid g, `Obj (`Vec (i0,j0), `Grid g0))
            | _ -> assert false)
-          (vsize, Data.value dseg, Data.value dcard, Data.value dobjs, Data.value dnoise) in
+          (vsize, Data.value dcard, Data.value dobjs, Data.value dnoise) in
       v, Data.make_dexpr merger
 
     let make_motif_dpure dmot vcore dnoise : data Myseq.t =
@@ -2328,6 +2346,7 @@ module MyDomain : Madil.DOMAIN =
          && match_value_info (`Int j) info_j
       | `Color c, `Color lc -> List.mem c lc
       | `Seg seg, `Seg lseg -> List.mem seg lseg
+      | `Order order, `Order lorder -> List.mem order lorder
       | `Motif mot, `Motif lmot -> List.mem mot lmot
       | `Grid g, `Grid ((hmin,hmax), (wmin,wmax), lc) ->
          let h, w = Grid.dims g in
@@ -2379,6 +2398,9 @@ module MyDomain : Madil.DOMAIN =
             | SEG, `Seg lseg ->
                let* seg = Myseq.from_list lseg in
                Myseq.return (`Seg seg, `Seg seg)
+            | ORDER nocolor, `Order lorder ->
+               let* order = Myseq.from_list lorder in
+               Myseq.return (`Order order, `OrderRange (order,lorder))
             | MOTIF tmot, `Motif lmot ->
                let* mot = Myseq.from_list lmot in
                Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
@@ -2585,20 +2607,22 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], info)
           | _ -> assert false)
     
-      | GRID _, Objects (nmax,mode), [||], [|gen_size; gen_seg; gen_card; gen_objs; _gen_merger; gen_noise|] ->
-         let info_seg, info_card =
-           Ndseq.map_tup ~depth (0,0)
+      | GRID _, Objects (nmax,mode), [||], [|gen_size; gen_seg; gen_order; gen_card; gen_objs; _gen_merger; gen_noise|] ->
+         let info_seg, info_order, info_card =
+           Ndseq.map_tup ~depth (0,0,0)
              (fun _ ->
                `Seg [ match mode with
                       | `Connected -> GPat.Objects.(Connected (Connect8,false))
                       | `SameColor -> GPat.Objects.SameColor ],
+               `Order [GPat.Objects.Pos], (* this will not be used when generating objects *)
                `Int (1,nmax))
              (tup1 info) in
          let* l = Myseq.product_fair
                     [gen_seg info_seg;
+                     gen_order info_order;
                      gen_card info_card] in
          (match l with
-          | [dseg, _; dcard, _] ->
+          | [dseg, _; dorder, _; dcard, _] ->
              let vcard = Data.value dcard in
              (* let* () = Myseq.from_bool
                          (Ndseq.for_all
@@ -2636,8 +2660,8 @@ module MyDomain : Madil.DOMAIN =
                  (Data.value dobjs, info) in
              let* dsize, _ = gen_size info_size in
              let* dnoise, _ = gen_noise info_noise in
-             let v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs dnoise in
-             Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], info)
+             let v, dmerger = make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise in
+             Myseq.return (Data.make_dpat v c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|], info)
           | _ -> assert false)
 
       | _, ColorPartition, [||], [|gen_size; gen_ncol; gen_colors; gen_masks|] ->
@@ -3264,6 +3288,9 @@ module MyDomain : Madil.DOMAIN =
              `Vec (`IntRange (i,range), `IntRange (j,range)) 
           | COLOR tc, `Color c -> `Color c
           | SEG, `Seg seg -> `Seg seg
+          | ORDER nocolor, `Order order ->
+             let lorder = GPat.Objects.candidate_orders 2 nocolor in
+             `Order (order, lorder)
           | MOTIF tmot, `Motif mot -> `Motif mot
           | GRID (filling,nocolor), `Grid g ->
              let rh = Range.make_open 1 in
@@ -3292,6 +3319,7 @@ module MyDomain : Madil.DOMAIN =
           | `Vec (`IntRange (i,_), `IntRange (j,_)) -> `Vec (i,j)
           | `Color c -> `Color c
           | `Seg seg -> `Seg seg
+          | `Order (order,lorder) -> `Order order
           | `Motif mot -> `Motif mot
           | `GridDimsCols (g,rh,rw,nc) -> `Grid g
           | `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g1,_,_,_)) -> `Obj (`Vec (i,j), `Grid g1)
@@ -3320,6 +3348,10 @@ module MyDomain : Madil.DOMAIN =
                else Myseq.empty
             | `Seg seg0, `Seg seg ->
                if seg = seg0
+               then Myseq.return (v, `Null)
+               else Myseq.empty
+            | `Order order0, `Order (order,lorder) ->
+               if order = order0
                then Myseq.return (v, `Null)
                else Myseq.empty
             | `Motif mot0, `Motif mot ->
@@ -3359,6 +3391,8 @@ module MyDomain : Madil.DOMAIN =
                Myseq.return (`Color c, `ColorTyp (c,tc))
             | SEG, `Seg seg ->
                Myseq.return (`Seg seg, `Seg seg)
+            | ORDER nocolor, `Order (order,lorder) ->
+               Myseq.return (`Order order, `OrderRange (order,lorder))
             | MOTIF tmot, `Motif mot ->
                Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
             | GRID tg, `GridDimsCols (g,rh,rw,nc) ->
@@ -3548,7 +3582,7 @@ module MyDomain : Madil.DOMAIN =
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], input)
     
-      | _, Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_card; parse_objs; _parse_merger; parse_noise|] ->
+      | GRID (filling,nocolor), Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_order; parse_card; parse_objs; _parse_merger; parse_noise|] ->
          let v = value_of_input t input in
          let in_size =
            Ndseq.map ~depth 0
@@ -3573,18 +3607,29 @@ module MyDomain : Madil.DOMAIN =
                  | _ -> assert false)
                 input) in
          let* dseg, _ = parse_seg in_seg in
+         let* in_order = (* common choice for all sequence items *)
+           let lorder = GPat.Objects.candidate_orders nmax nocolor in
+           let* order = Myseq.from_list lorder in
+           Myseq.return
+             (Ndseq.map ~depth 0
+                (function
+                 | `GridDimsCols (g,rh,rw,nc) -> `Order (order,lorder)
+                 | _ -> assert false)
+                input) in
+         let* dorder, _ = parse_order in_order in
          let* in_card, in_objs, in_noise =
            Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Vec (h,w) ->
+              | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Order order, `Vec (h,w) ->
                  let nc1 = nc in
                  (* PB: not robust segmentation choice, and makes monocolor non-compresive
                    match seg with
                    | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
                    | _ -> nc in *)
                  let* objs, g_noise = GPat.Objects.parse nmax seg g in
+                 let objs = GPat.Objects.sort order objs in
                  let card = List.length objs in
-                 let* objs = (* permutations of first three objects *)
+                 (* REM let* objs = (* permutations of first three objects *)
                    match objs with
                    | [] -> Myseq.return objs
                    | [o1] -> Myseq.return objs
@@ -3595,7 +3640,7 @@ module MyDomain : Madil.DOMAIN =
                            (Myseq.cons (o2::o1::o3::os)
                               (Myseq.cons (o2::o3::o1::os)
                                  (Myseq.cons (o3::o2::o1::os)
-                                    (Myseq.return (o3::o1::o2::os)))))) in
+                                    (Myseq.return (o3::o1::o2::os)))))) in *)
                  Myseq.return
                    (`IntRange (card, Range.make_closed 0 nmax),
                     Ndseq.seq 0
@@ -3612,13 +3657,13 @@ module MyDomain : Madil.DOMAIN =
                     `GridDimsCols (g_noise, Range.make_exact h, Range.make_exact w, nc))
               (* TODO: remove size, as included in noise, like for Motif? *)
               | _ -> assert false)
-             (input, Data.value dseg, Data.value dsize) in
+             (input, Data.value dseg, Data.value dorder, Data.value dsize) in
          let* dcard, _ = parse_card in_card in
          let* dobjs, _ = parse_objs in_objs in
          let* dnoise, _ = parse_noise in_noise in
-         let _v, dmerger = make_objects_v_dmerger dsize dseg dcard dobjs dnoise in
+         let _v, dmerger = make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise in
          let input = Ndseq.const `Null input in
-         Myseq.return (Data.make_dpat v c [|dsize; dseg; dcard; dobjs; dmerger; dnoise|], input)
+         Myseq.return (Data.make_dpat v c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|], input)
 
       | _, ColorPartition, [||], [|parse_size; parse_ncol; parse_colors; parse_masks|] ->
          let v = value_of_input t input in
@@ -4185,6 +4230,9 @@ module MyDomain : Madil.DOMAIN =
 
     let dl_seg (seg : GPat.Objects.segmentation) : dl =
       Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations_connected
+
+    let dl_order (order : GPat.Objects.order) lorder : dl =
+      Mdl.Code.uniform (List.length lorder)
          
     let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
       match tmot with
@@ -4249,6 +4297,8 @@ module MyDomain : Madil.DOMAIN =
          +. dl_value_scalar (INT (COORD (J,tv))) (`Int j)
       | COLOR tc, `Color c -> dl_color c tc
       | SEG, `Seg seg -> dl_seg seg
+      | ORDER nocolor, `Order order ->
+         dl_order order (GPat.Objects.candidate_orders 2 nocolor)
       | MOTIF tmot, `Motif m -> dl_motif tmot m
       | GRID tg, `Grid g ->
          let rmax = Range.make_closed 1 Grid.max_size in
@@ -4267,6 +4317,7 @@ module MyDomain : Madil.DOMAIN =
         | `VecRange (i,j,ri,rj) -> Range.dl i ri +. Range.dl j rj
         | `ColorTyp (c,tc) -> dl_color c tc
         | `Seg seg -> dl_seg seg
+        | `OrderRange (order,lorder) -> dl_order order lorder
         | `MotifTyp (m,tm) -> dl_motif tm m
         | `GridRange (g,tg,rh,rw,nc) -> dl_grid g tg rh rw nc
         | `Obj (pos,g1) -> aux pos +. aux g1
@@ -4286,7 +4337,7 @@ module MyDomain : Madil.DOMAIN =
       | BgColor, [|enc_col; enc_g1|] -> enc_col +. enc_g1
       | IsFull, [|enc_g1|] -> enc_g1
       | Crop, [|enc_pos; enc_size|] -> enc_pos +. enc_size
-      | Objects (nmax,mode), [|enc_size; enc_seg; enc_card; enc_objs; _enc_merger; enc_noise|] -> enc_size +. enc_seg +. enc_card +. enc_objs +. enc_noise (* TODO: take seg into account for encoding objects *)
+      | Objects (nmax,mode), [|enc_size; enc_seg; enc_order; enc_card; enc_objs; _enc_merger; enc_noise|] -> enc_size +. enc_seg +. enc_order +. enc_card +. enc_objs +. enc_noise (* TODO: take seg into account for encoding objects *)
       | ColorPartition, [|enc_size; enc_ncol; enc_colors; enc_masks|] -> enc_size +. enc_ncol +. enc_colors +. enc_masks
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_map|] -> enc_map
@@ -5624,6 +5675,7 @@ module MyDomain : Madil.DOMAIN =
          rs
       | COLOR tc -> rs
       | SEG -> rs
+      | ORDER _ -> rs
       | MOTIF tmot -> rs
       | MAP (ka,kb) ->
          let refs : (model * varseq) list = rs in
@@ -5702,12 +5754,10 @@ module MyDomain : Madil.DOMAIN =
              let xsize_i, varseq = Refining.new_var varseq in
              let xsize_j, varseq = Refining.new_var varseq in
              let xseg, varseq = Refining.new_var varseq in
+             let xorder, varseq = Refining.new_var varseq in
              let xcard, varseq = Refining.new_var varseq in
-             let xloop, varseq = Refining.new_var varseq in
              let xobj, varseq = Refining.new_var varseq in
              let xpos, varseq = Refining.new_var varseq in
-             let xpos_i, varseq = Refining.new_var varseq in
-             let xpos_j, varseq = Refining.new_var varseq in
              let xg1, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let xnoise, varseq = Refining.new_var varseq in
@@ -5715,6 +5765,7 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat t (Objects (nmax, `Connected))
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def xseg (Model.make_any {t with kind = SEG});
+                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
                    Model.make_def xcard (Model.make_any {t with kind = INT CARD});
                    Model.make_def xobj
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -5728,6 +5779,7 @@ module MyDomain : Madil.DOMAIN =
          let refs = (* Objects - SameColor *)
            if filling <> `Full && not nocolor then
              let xsize, varseq = Refining.new_var varseq in
+             let xorder, varseq = Refining.new_var varseq in
              let xcard, varseq = Refining.new_var varseq in
              let xobj, varseq = Refining.new_var varseq in
              let xpos, varseq = Refining.new_var varseq in
@@ -5736,11 +5788,12 @@ module MyDomain : Madil.DOMAIN =
              let xg1_mask, varseq = Refining.new_var varseq in
              let xmerger, varseq = Refining.new_var varseq in
              let xnoise, varseq = Refining.new_var varseq in
-             let nmax = 9 in
+             let$ refs, nmax = refs, [1;9] in
              (Model.make_pat t (Objects (nmax, `SameColor))
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr
                      (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
+                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
                    Model.make_def xcard (Model.make_any {t with kind = INT CARD});
                    Model.make_def xobj
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -5755,6 +5808,7 @@ module MyDomain : Madil.DOMAIN =
              :: refs
            else if filling <> `Full && nocolor then
              let xsize, varseq = Refining.new_var varseq in
+             let xorder, varseq = Refining.new_var varseq in
              let xcard, varseq = Refining.new_var varseq in
              let xobj, varseq = Refining.new_var varseq in
              let xpos, varseq = Refining.new_var varseq in
@@ -5766,6 +5820,7 @@ module MyDomain : Madil.DOMAIN =
                 [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr
                      (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
+                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
                    Model.make_def xcard (Model.make_any {t with kind = INT CARD});
                    Model.make_def xobj
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -6056,6 +6111,8 @@ module MyDomain : Madil.DOMAIN =
       | COLOR tc, _ ->
          [ Model.make_any t, varseq ]
       | SEG, _ ->
+         [ Model.make_any t, varseq ]
+      | ORDER _, _ ->
          [ Model.make_any t, varseq ]
       | MOTIF tmot, _ ->
          [ Model.make_any t, varseq ]
