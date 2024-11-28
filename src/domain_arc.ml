@@ -5468,7 +5468,7 @@ module MyDomain : Madil.DOMAIN =
       index)
 
     let make_index, reset_make_index =
-      Memo.memoize ~size:103 make_index
+      Memo.memoize ~name:"make_index" ~size:103 make_index
 
     (* refining *)
 
