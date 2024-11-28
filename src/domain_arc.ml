@@ -7,7 +7,8 @@ module GPat = Grid_patterns
 let () = (* performance and debugging flags *)
   Printexc.record_backtrace true;
   Common.prof_on := true;
-  Common.prof_logging := false
+  Common.prof_logging := false;
+  Arc_common.Memo.log_on := false (* BEWARE: true seems to neutralize timeout/memout *)
 
 module Basic_types (* : Madil.BASIC_TYPES *) =
   struct
@@ -1136,7 +1137,7 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let refinement_branching = def_param "refinement_branching" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let input_branching = def_param "input_branching" 10 string_of_int (* max nb of explored input models during output model learning (refining phase). min=1 *)
-    let solution_pool = def_param "solution_pool" 3 string_of_int (* max nb of solutions before choosing best one *)
+    let solution_pool = def_param "solution_pool" 1 string_of_int (* max nb of solutions before choosing best one *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
 
     let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
@@ -5025,13 +5026,13 @@ module MyDomain : Madil.DOMAIN =
         `ScaleDown_2, 3, `Minus_2, 1;
       ]
     
-    let make_index (bindings : bindings) : expr_index = (* NEW VERSION *)
-      Common.prof "make_index" (fun () ->
+    let make_index_bind (bindings : bindings) : expr_index = (* NEW VERSION *)
+      Common.prof "make_index_bind" (fun () ->
       let bgcolors full =
         Grid.black :: if full then [] else [Grid.transparent] in
-      let index = Expr.Index.empty in
-      let index = Expr.index_add_bindings index bindings in
-      let index = (* LEVEL: Obj features *)
+      let index = new Expr.index_bind in
+      let () = Expr.index_add_bindings index bindings in
+      let () = (* LEVEL: Obj features *)
         Common.prof "make_index/obj_features" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5062,7 +5063,7 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: Grid features *)
+      let () = (* LEVEL: Grid features *)
         Common.prof "make_index/grid_features" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5084,7 +5085,7 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: Color features, Vec features *)
+      let () = (* LEVEL: Color features, Vec features *)
         Common.prof "make_index/color_vec_features" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5128,7 +5129,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             (* TODO: TranslationSym, only inter objects, handle against GRID with negative object positions *)
             res)) in
-      let index = (* LEVEL: Int features, Color to Grid *)
+      let () = (* LEVEL: Int features, Color to Grid *)
         Common.prof "make_index/int_features" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5191,7 +5192,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res in
             res)) in
   (* TODO: binary exprs too costly
-      let index = (* LEVEL: Int+Vec bin *)
+      let () = (* LEVEL: Int+Vec bin *)
         Common.prof "make_index/int_vec_bin" (fun () ->
         Expr.index_apply_functions_2
           ~eval_func
@@ -5233,7 +5234,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> res
               else res in
             res)) in *)
-      let index = (* LEVEL: INT+VEC affine, GRID derived *)
+      let () = (* LEVEL: INT+VEC affine, GRID derived *)
         Common.prof "make_index/int_vec_affine" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5276,7 +5277,7 @@ module MyDomain : Madil.DOMAIN =
                  (t1, `Unrepeat_1, `Default)::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: INT+VEC transpose *)
+      let () = (* LEVEL: INT+VEC transpose *)
         Common.prof "make_index/int_vec_transpose" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5297,7 +5298,7 @@ module MyDomain : Madil.DOMAIN =
                  (t1, `ApplySymGrid_1 sym, `Default)::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: GRID compose *)
+      let () = (* LEVEL: GRID compose *)
         Common.prof "make_index/grid_part_compose" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5346,7 +5347,7 @@ module MyDomain : Madil.DOMAIN =
                                             ({t2 with ndim = max t1.ndim t2.ndim}, `SelfCompose_3, args_spec)::res
                                             | _ -> res in *)
             res)) in
-      let index = (* LEVEL: GRID mask *)
+      let () = (* LEVEL: GRID mask *)
         Common.prof "make_index/grid_mask" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5362,7 +5363,7 @@ module MyDomain : Madil.DOMAIN =
                  ::res
               | _ -> res in
             res)) in
-      let index = (* LEVEL: ALL items and slices *)
+      let () = (* LEVEL: ALL items and slices *)
         Common.prof "make_index/items_slices" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5391,7 +5392,7 @@ module MyDomain : Madil.DOMAIN =
                 res
               else res in
             res)) in
-      let index = (* LEVEL: collection-wise *)
+      let () = (* LEVEL: collection-wise *)
         Common.prof "make_index/collection" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5438,7 +5439,7 @@ module MyDomain : Madil.DOMAIN =
                 | _ -> res in
               res
             else res)) in
-      let index = (* LEVEL: cast *)
+      let () = (* LEVEL: cast *)
         Common.prof "make_index/cast" (fun () ->
         Expr.index_apply_functions_1
           ~eval_func
@@ -5465,11 +5466,26 @@ module MyDomain : Madil.DOMAIN =
             let$ res, k' = res, lk' in
             assert (k' <> kind);
             ({t1 with kind = k'}, `Cast_1 (kind,k'), `Default)::res)) in
-      index)
+      (index :> expr_index))
 
-    let make_index, reset_make_index =
-      Memo.memoize ~name:"make_index" ~size:103 make_index
+    let make_index_bind, reset_make_index_bind =
+      Memo.memoize ~name:"make_index_bind" ~size:103 make_index_bind
 
+    let make_index_union (bindings : bindings) : expr_index =
+      Common.prof "make_index_union" (fun () ->
+      let index = new Expr.index_union in
+      let () =
+        Mymap.iter
+          (fun x tv ->
+            index#add_index (make_index_bind (Mymap.singleton x tv)))
+          bindings in
+      (index :> expr_index))
+
+    let make_index_union, reset_make_index_union =
+      Memo.memoize ~name:"make_index_union" ~size:103 make_index_union
+
+    let make_index = make_index_union
+    
     (* refining *)
 
     let decompositions (t : typ) (varseq : varseq) (valuess : value list list) : (model * varseq) list =
@@ -6211,7 +6227,8 @@ module MyDomain : Madil.DOMAIN =
       Segment.reset_memoized_functions ();
       Funct.reset_memoized_functions_apply ();
       (*reset_default_grid ();*)
-      reset_make_index ()
+      reset_make_index_bind ();
+      reset_make_index_union ()
   end
 
 module MyMadil = Madil.Make(MyDomain)

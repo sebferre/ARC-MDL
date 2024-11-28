@@ -147,14 +147,14 @@ let memoize (type k)
   in
   memoized_f, reset
 
-let memoize2 ?equal ~size f2 =
-  let mem_f2, reset = memoize ?equal ~size (fun (x1,x2) -> f2 x1 x2) in
+let memoize2 ?name ?equal ~size f2 =
+  let mem_f2, reset = memoize ?name ?equal ~size (fun (x1,x2) -> f2 x1 x2) in
   (fun x1 x2 -> mem_f2 (x1,x2)), reset
-let memoize3 ?equal ~size f3 =
-  let mem_f3, reset = memoize ?equal ~size (fun (x1,x2,x3) -> f3 x1 x2 x3) in
+let memoize3 ?name ?equal ~size f3 =
+  let mem_f3, reset = memoize ?name ?equal ~size (fun (x1,x2,x3) -> f3 x1 x2 x3) in
   (fun x1 x2 x3 -> mem_f3 (x1,x2,x3)), reset
-let memoize4 ?equal ~size f4 =
-  let mem_f4, reset = memoize ?equal ~size (fun (x1,x2,x3,x4) -> f4 x1 x2 x3 x4) in
+let memoize4 ?name ?equal ~size f4 =
+  let mem_f4, reset = memoize ?name ?equal ~size (fun (x1,x2,x3,x4) -> f4 x1 x2 x3 x4) in
   (fun x1 x2 x3 x4 -> mem_f4 (x1,x2,x3,x4)), reset
 
   end
