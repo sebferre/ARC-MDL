@@ -1158,38 +1158,7 @@ module MyDomain : Madil.DOMAIN =
       | `Obj (_, `Grid g1) -> Some (Grid.dims g1)
       | _ -> None
 
-    let get_int (d : data) : int =
-      match Data.value d with
-      | `Int ij -> ij
-      | _ -> assert false
-    let get_vec (d : data) : int * int =
-      match Data.value d with
-      | `Vec (i,j) -> i, j
-      | _ -> assert false
-    let get_color (d : data) : Grid.color =
-      match Data.value d with
-      | `Color c -> c
-      | _ -> assert false
-    let get_seg (d : data) : GPat.Objects.segmentation =
-      match Data.value d with
-      | `Seg seg -> seg
-      | _ -> assert false
-    let get_order (d : data) : GPat.Objects.order =
-      match Data.value d with
-      | `Order order -> order
-      | _ -> assert false
-    let get_motif (d : data) : GPat.Motif.t =
-      match Data.value d with
-      | `Motif mot -> mot
-      | _ -> assert false
-    let get_grid (d : data) : Grid.t =
-      match Data.value d with
-      | `Grid g -> g
-      | _ -> assert false
-
-    let make_color_partition dsize dcolors dmasks : value Myseq.t =
-      let vsize = Data.value dsize in
-      let depth = Ndseq.depth vsize in
+    let make_color_partition ~depth vsize vcolors vmasks : value Myseq.t =
       Ndseq.map_tup_myseq ~depth 0
         (function
          | `Vec (h,w), seq_colors, seq_masks ->
@@ -1222,11 +1191,9 @@ module MyDomain : Madil.DOMAIN =
               Myseq.return (`Grid g))
             else Myseq.empty
          | _ -> assert false)
-        (vsize, Data.value dcolors, Data.value dmasks)
+        (vsize, vcolors, vmasks)
     
-    let make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise : value * data =
-      let vsize = Data.value dsize in
-      let depth = Ndseq.depth vsize in
+    let make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise : value * data =
       let v, merger = (* TODO: use dseg and dorder *)
         Ndseq.map_tup ~depth (0,0)
           (function
@@ -1264,12 +1231,10 @@ module MyDomain : Madil.DOMAIN =
               Grid.add_grid_at g 0 0 g_noise;
               (`Grid g, `Obj (`Vec (i0,j0), `Grid g0))
            | _ -> assert false)
-          (vsize, Data.value dcard, Data.value dobjs, Data.value dnoise) in
+          (Data.value dsize, Data.value dcard, Data.value dobjs, Data.value dnoise) in
       v, Data.make_dexpr merger
 
-    let make_motif_dpure dmot vcore dnoise : data Myseq.t =
-      let vmot = Data.value dmot in
-      let depth = Ndseq.depth vmot in
+    let make_motif_dpure ~depth dmot vcore dnoise : data Myseq.t =
       let* vpure =
         Ndseq.map_tup_myseq ~name:"make_motif_dpure" ~depth 0
           (function
@@ -1278,7 +1243,7 @@ module MyDomain : Madil.DOMAIN =
               let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
               Myseq.return (`Grid g_pure)
            | _ -> assert false)
-          (vmot, vcore, Data.value dnoise) in
+          (Data.value dmot, vcore, Data.value dnoise) in
       Myseq.return (Data.make_dexpr vpure)
     let make_motif_multi_dpure dmot dcore dnoise =
       make_motif_dpure dmot (Data.value dcore) dnoise
@@ -2375,8 +2340,9 @@ module MyDomain : Madil.DOMAIN =
       (* Warning: v' may be different from v because of broadcasting in Ndseq.match_myseq *)
       Myseq.return (Data.make_dexpr v', info)
 
-    let rec generator_any t info =
-      let depth = Ndseq.depth info in
+    let generator_any t info =
+      let depth = t.ndim in
+      assert (Ndseq.depth info = depth);
       let rec aux kind info =
             match kind, info with
             | _, `Null ->
@@ -2434,8 +2400,9 @@ module MyDomain : Madil.DOMAIN =
       let info = Ndseq.const `Null info in
       Myseq.return (Data.make_dany v vr, info)
     
-    let rec generator_pat t c src gen_args info =
-      let depth = Ndseq.depth info in
+    let generator_pat t c src gen_args info =
+      let depth = t.ndim in
+      assert (Ndseq.depth info = depth);
       match t.kind, c, src, gen_args with
       | _, Vec, [||], [|gen_i; gen_j|] ->
          let info_i, info_j =
@@ -2661,7 +2628,7 @@ module MyDomain : Madil.DOMAIN =
                  (Data.value dobjs, info) in
              let* dsize, _ = gen_size info_size in
              let* dnoise, _ = gen_noise info_noise in
-             let v, dmerger = make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise in
+             let v, dmerger = make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise in
              Myseq.return (Data.make_dpat v c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|], info)
           | _ -> assert false)
 
@@ -2691,7 +2658,10 @@ module MyDomain : Madil.DOMAIN =
                  (Data.value dsize, Data.value dncol, info) in
              let* dcolors, _ = gen_colors info_colors in
              let* dmasks, _ = gen_masks info_masks in
-             let* v = make_color_partition dsize dcolors dmasks in
+             let* v = make_color_partition ~depth
+                        (Data.value dsize)
+                        (Data.value dcolors)
+                        (Data.value dmasks) in
              Myseq.return (Data.make_dpat v c [|dsize; dncol; dcolors; dmasks|], info)
           | _ -> assert false)
     
@@ -3379,7 +3349,8 @@ module MyDomain : Madil.DOMAIN =
       Myseq.return (Data.make_dexpr v', input)
     
     let parseur_any t input =
-      let depth = Ndseq.depth input in
+      let depth = t.ndim in
+      assert (Ndseq.depth input = depth);
       let* v, vr =
         Ndseq.map_tup_myseq ~name:"parse/any" ~depth (0,0)
           (fun input ->
@@ -3413,7 +3384,8 @@ module MyDomain : Madil.DOMAIN =
       Myseq.return (Data.make_dany v vr, input)
     
     let parseur_pat t c src parse_args input =
-      let depth = Ndseq.depth input in
+      let depth = t.ndim in
+      assert (Ndseq.depth input = depth);
       match t.kind, c, src, parse_args with
       | _, Vec, [||], [|parse_i; parse_j|] ->
          let v = value_of_input t input in
@@ -3662,7 +3634,7 @@ module MyDomain : Madil.DOMAIN =
          let* dcard, _ = parse_card in_card in
          let* dobjs, _ = parse_objs in_objs in
          let* dnoise, _ = parse_noise in_noise in
-         let _v, dmerger = make_objects_v_dmerger dsize dseg dorder dcard dobjs dnoise in
+         let _v, dmerger = make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise in
          let input = Ndseq.const `Null input in
          Myseq.return (Data.make_dpat v c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|], input)
 
@@ -3785,7 +3757,7 @@ module MyDomain : Madil.DOMAIN =
            else Myseq.empty in
          let* dnoise, _ = parse_noise in_noise in
          let input = Ndseq.const `Null input in
-         let* dpure = make_motif_multi_dpure dmot dcore dnoise in
+         let* dpure = make_motif_multi_dpure ~depth dmot dcore dnoise in
          Myseq.return (Data.make_dpat v c [|dmot; dcore; dpure; dmask_opt; dnoise|], input)
     
       | _, MotifBi partial, [||], [|parse_mot; parse_bgcolor; parse_color; _parse_pure; parse_mask_opt; parse_noise|] ->
@@ -3824,7 +3796,7 @@ module MyDomain : Madil.DOMAIN =
            else Myseq.empty in
          let* dnoise, _ = parse_noise in_noise in
          let input = Ndseq.const `Null input in
-         let* dpure = make_motif_bi_dpure dmot dbgcolor dcolor dnoise in
+         let* dpure = make_motif_bi_dpure ~depth dmot dbgcolor dcolor dnoise in
          Myseq.return (Data.make_dpat v c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|], input)
     
       | _, Metagrid, [||], [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|] ->
