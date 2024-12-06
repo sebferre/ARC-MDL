@@ -6144,15 +6144,13 @@ module MyDomain : Madil.DOMAIN =
 
     let get_init_config name task =
       let open Task_model in
-      let env = Data.make_dany (`Color Grid.black) (`ColorTyp (Grid.black, C_BG true)) in (* dummy *)
       let varseq = varseq0 in
       let xi, varseq = Refining.new_var varseq in
       let xo, varseq = Refining.new_var varseq in
       let input_model = Model.make_def xi (Model.make_any (scalar (GRID (`Full,false)))) in
       let output_model = Model.make_def xo (Model.make_any (scalar (GRID (`Full,false)))) in
       let output_generator_info = `Grid ((1,Grid.max_size),(1,Grid.max_size),Grid.all_colors) in
-      { env;
-        varseq;
+      { varseq;
         input_model;
         output_model;
         output_generator_info }
