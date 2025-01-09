@@ -117,44 +117,86 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          | `Noise, false -> "NOISE"
          | `Noise, true -> "NOISE_MASK")
 
+    (* value ranges, distributions *)
+
+    type distrib =
+      [ `Null (* the null value *)
+      | `IntRange of Range.t
+      | `VecRange of Range.t * Range.t
+      | `ColorTyp of typ_color
+      | `ColorCount of int
+      | `ColorRange of Grid.color list
+      | `MotifTyp of typ_motif
+      | `MotifRange of GPat.Motif.t list
+      | `SegRange of GPat.Objects.segmentation list
+      | `OrderRange of GPat.Objects.order list
+      | `GridRange of typ_grid * Range.t * Range.t * distrib (* height, width, colors *) (* TODO: consider removing typ_grid *)
+      | `ObjRange of distrib * distrib (* pos, grid *)
+      | `MapTyp of typ_kind * typ_kind (* domain, range - assuming domain known from context *) (* TODO: missing range constraints *)
+      | `MapRange of distrib * distrib (* src, dst *)
+      | distrib Ndseq.seq ]
+
+    let rec xp_distrib ~html print : distrib -> unit = function
+      | `Null -> print#string "null"
+      | `IntRange ri -> print#string (Range.to_string ri)
+      | `VecRange (ri,rj) ->
+         print#string "("; print#string (Range.to_string ri);
+         print#string ","; print#string (Range.to_string rj);
+         print#string ")"
+      | `ColorTyp tc -> xp_typ_kind ~html print (COLOR tc)
+      | `ColorCount nc -> print#string "COLOR x "; print#int nc
+      | `ColorRange lc -> xp_list Grid.xp_color ~html print lc
+      | `MotifTyp tmot -> xp_typ_kind ~html print (MOTIF tmot)
+      | `MotifRange lmot -> xp_list GPat.Motif.xp ~html print lmot
+      | `SegRange lseg -> xp_list GPat.Objects.xp_segmentation ~html print lseg
+      | `OrderRange lorder -> xp_list GPat.Objects.xp_order ~html print lorder
+      | `GridRange (tg,rh,rw,rc) ->
+         xp_typ_kind ~html print (GRID tg);
+         print#string "(size ~ "; xp_distrib ~html print (`VecRange (rh,rw));
+         print#string ", colors ~ "; xp_distrib ~html print rc;
+         print#string ")"
+      | `ObjRange (rpos,rg1) ->
+         print#string "OBJ(pos ~ "; xp_distrib ~html print rpos;
+         print#string ", grid ~ "; xp_distrib ~html print rg1;
+         print#string ")"
+      | `MapTyp (ka,kb) -> xp_typ_kind ~html print (MAP (ka,kb))
+      | `MapRange (ra,rb) ->
+         print#string "MAP(src ~ "; xp_distrib ~html print ra;
+         print#string ", dst ~ "; xp_distrib ~html print rb;
+         print#string ")"
+      | #Ndseq.seq as rs -> Ndseq.xp_seq xp_distrib ~html print rs
+    
     (* values *)
 
     type value =
       [ `Null
       | `Bool of bool
       | `Int of int
-      | `IntRange of int * Range.t (* INT of some range *)
       | `Vec of int * int
-      | `VecRange of int * int * Range.t * Range.t (* TODO: make it more modular *)
       | `Color of Grid.color
-      | `ColorTyp of Grid.color * typ_color (* COLOR of some type *)
       | `Seg of GPat.Objects.segmentation
       | `Order of GPat.Objects.order
-      | `OrderRange of GPat.Objects.order * GPat.Objects.order list
       | `Motif of GPat.Motif.t
-      | `MotifTyp of GPat.Motif.t * typ_motif (* MOTIF of some type *)
       | `Grid of Grid.t
-      | `GridRange of Grid.t * typ_grid * Range.t (* height *) * Range.t (* width *) * int (* nb colors *) (* GRID of some type, with some size ranges, and some nb of concrete  colors *)
       | `Obj of value * value (* position at (i,j) of the subgrid *)
       | `Map of (value,value) Mymap.t
-      | `MapTyp of (value,value) Mymap.t * typ_kind (* domain type *) * typ_kind (* range type *) (* assuming domain known from context *) (* TODO: missing range constraints *)
+      | `VD of value * distrib (* TODO: to be removed by changing Madil.Model.Any *)
       | value Ndseq.seq ]
 
     let rec xp_value ~html (print : Xprint.t) : value -> unit = function
       | `Null -> print#string "null"
       | `Bool b -> xp_bool ~html print b
-      | `Int i | `IntRange (i,_) -> xp_int ~html print i
-      | `Vec (i,j) | `VecRange (i,j,_,_) -> xp_vec xp_int xp_int ~html print i j
-      | `Color c | `ColorTyp (c,_) -> Grid.xp_color ~html print c
+      | `Int i -> xp_int ~html print i
+      | `Vec (i,j) -> xp_vec xp_int xp_int ~html print i j
+      | `Color c -> Grid.xp_color ~html print c
       | `Seg seg -> GPat.Objects.xp_segmentation ~html print seg
       | `Order order -> GPat.Objects.xp_order ~html print order
-      | `OrderRange (order,lorder) -> GPat.Objects.xp_order ~html print order
-      | `Motif motif | `MotifTyp (motif,_) -> GPat.Motif.xp ~html print motif
-      | `Grid g | `GridRange (g,_,_,_,_) -> Grid.xp_grid ~html print g
+      | `Motif motif -> GPat.Motif.xp ~html print motif
+      | `Grid g -> Grid.xp_grid ~html print g
       | `Obj (pos,g1) ->
          print#string "an object "; xp_value ~html print g1;
          print#string " at position "; xp_value ~html print pos
-      | `Map m | `MapTyp (m,_,_) ->
+      | `Map m ->
          print#string "{";
          let _ =
            Mymap.fold
@@ -166,7 +208,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                false)
              m true in
          print#string "}"
-      | #Ndseq.seq as v -> Ndseq.xp_seq xp_value ~html print v
+      | `VD (v,_) -> xp_value ~html print v
+      | #Ndseq.seq as vs -> Ndseq.xp_seq xp_value ~html print vs
 
     let value_of_json (* : Yojson.Safe.t -> value *) = function
       | `List (`List row::_ as rows) ->
@@ -204,7 +247,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (n1 - 1) 0 [] in
          `List rows
       | _ -> invalid_arg "JSON only defined for grid values"
-           
+
     (* model vars *)
       
     type var = int
@@ -1061,55 +1104,21 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
 
     (* model processing *)
       
-    type generator_info =
-      [ `Null
-      | `Int of int * int (* interval *)
-      | `Vec of generator_info (* i *) * generator_info (* j *)
-      | `Color of Grid.color list (* interval *)
-      | `Seg of GPat.Objects.segmentation list
-      | `Order of GPat.Objects.order list
-      | `Motif of GPat.Motif.t list
-      | `Grid of (int * int) (* height *) * (int * int) (* width *) * Grid.color list (* color *)
-      | `Obj of generator_info (* pos *) * generator_info (* grid *)
-      | `Map of generator_info (* src *) * generator_info (* dst *)
-      | generator_info Ndseq.seq ]
+    type generator_info = distrib
 
     type input =
-      [ `Null
-      | `IntRange of int * Range.t
-      | `Vec of input * input
-      | `Color of Grid.color (* TODO: add range: nb colors *)
-      | `Seg of GPat.Objects.segmentation (* TODO: add range: nb segs *)
-      | `Order of GPat.Objects.order * GPat.Objects.order list
-      | `Motif of GPat.Motif.t (* TODO: add range: nb motifs *)
-      | `GridDimsCols of Grid.t * Range.t (* height range *) * Range.t (* width range *) * int (* nb cols *)
-      | `Obj of input (* pos *) * input (* grid *)
-      | `MapDomain of (value,value) Mymap.t * value list (* domain *)
+      [ `VD of value * distrib
       | input Ndseq.seq ]
 
+    let input_null = `VD (`Null, `Null)
+    
     let rec xp_input : input html_xp =
       fun ~html print ->
       function
-      | `Null ->
-         print#string "Null"
-      | `IntRange (i,r) ->
-         print#string "IntRange"
-      | `Vec (in_i,in_j) ->
-         print#string "Vec"
-      | `Color c ->
-         print#string "Color"
-      | `Seg seg ->
-         print#string "Seg"
-      | `Order (order,lorder) ->
-         print#string "Order"
-      | `Motif mot ->
-         print#string "Motif"
-      | `GridDimsCols (g,rh,rw,nc) ->
-         print#string "GridDimsCols"
-      | `Obj (in_pos,in_grid) ->
-         print#string "Obj"
-      | `MapDomain (m,dom) ->
-         print#string "MapDomain"
+      | `VD (v,r) ->
+         xp_value ~html print v;
+         print#string " ~ ";
+         xp_distrib ~html print r
       | #Ndseq.seq as x -> Ndseq.xp_seq xp_input ~html print x
     
     type encoding = dl
@@ -1137,10 +1146,8 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let refinement_branching = def_param "refinement_branching" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let input_branching = def_param "input_branching" 10 string_of_int (* max nb of explored input models during output model learning (refining phase). min=1 *)
-    let solution_pool = def_param "solution_pool" 1 string_of_int (* max nb of solutions before choosing best one *)
+    let solution_pool = def_param "solution_pool" 3 string_of_int (* max nb of solutions before choosing best one *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
-
-    let max_interleave_parse_obj = def_param "max_interleave_parse_obj" 3 string_of_int
 
     let _ = Random.init 1976
     
@@ -1572,7 +1579,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Result.Error (Invalid_expr e))
       | `Pos_1 ->
          (function
-          | [| `Obj (pos, _)|] -> Result.Ok pos
+          | [| `Obj (pos, _)|] -> Result.Ok (pos :> value)
           | _ -> Result.Error (Invalid_expr e))
       | `Grid_1 ->
          (function
@@ -2302,33 +2309,7 @@ module MyDomain : Madil.DOMAIN =
 
     (* model-based generation *)
       
-    let rec match_value_info (v : value) (info : generator_info) : bool =
-      (* no need to cover sequences *)
-      match v, info with
-      | `Null, `Null -> true
-      | `Int i, `Int (a,b) -> a <= i && i <= b
-      | `Vec (i,j), `Vec (info_i, info_j) ->
-         match_value_info (`Int i) info_i
-         && match_value_info (`Int j) info_j
-      | `Color c, `Color lc -> List.mem c lc
-      | `Seg seg, `Seg lseg -> List.mem seg lseg
-      | `Order order, `Order lorder -> List.mem order lorder
-      | `Motif mot, `Motif lmot -> List.mem mot lmot
-      | `Grid g, `Grid ((hmin,hmax), (wmin,wmax), lc) ->
-         let h, w = Grid.dims g in
-         hmin <= h && h <= hmax
-         && wmin <= w && w <= wmax
-         && Grid.color_count Grid.transparent g <= List.length lc
-      | `Obj (pos,g1), `Obj (info_pos, info_g1) ->
-         match_value_info pos info_pos
-         && match_value_info g1 info_g1
-      | `Map m, `Map (info_src, info_dst) ->
-         Mymap.for_all
-           (fun src dst -> match_value_info src info_src && match_value_info dst info_dst)
-           m
-      | _ -> assert false
-    
-    let generator_value v info =
+    let generator_value (v : value) (info : generator_info) =
       let* v', info =
         Ndseq.match_myseq 0
           (fun v info -> Myseq.return (v,info))
@@ -2340,7 +2321,7 @@ module MyDomain : Madil.DOMAIN =
       (* Warning: v' may be different from v because of broadcasting in Ndseq.match_myseq *)
       Myseq.return (Data.make_dexpr v', info)
 
-    let generator_any t info =
+    let generator_any t (info : generator_info) =
       let depth = t.ndim in
       assert (Ndseq.depth info = depth);
       let rec aux kind info =
@@ -2348,32 +2329,38 @@ module MyDomain : Madil.DOMAIN =
             | _, `Null ->
                Myseq.return (`Null, `Null)
             | BOOL, _ -> assert false
-            | INT _, `Int (a,b) ->
-               let range = Range.make_closed a b in
+            | INT _, `IntRange (Range.Closed (a,b) as range) ->
                let* n = Myseq.range a b in
-               Myseq.return (`Int n, `IntRange (n,range))
-            | VEC tv, `Vec (`Int (i1,i2), `Int (j1,j2)) ->
-               let ri = Range.make_closed i1 i2 in
-               let rj = Range.make_closed j1 j2 in
+               Myseq.return (`Int n, `IntRange range)
+            | INT _, _ -> assert false
+            | VEC tv, `VecRange ((Range.Closed (i1,i2) as ri), (Range.Closed (j1,j2) as rj)) ->
                let* i = Myseq.range i1 i2 in
                let* j = Myseq.range j1 j2 in
-               Myseq.return (`Vec (i,j), `VecRange (i,j,ri,rj))
-            | VEC _, `Vec _ -> assert false
-            | COLOR tc, `Color lc ->
+               Myseq.return (`Vec (i,j), `VecRange (ri,rj))
+            | VEC _, _ -> assert false
+            | COLOR tc, `ColorRange lc ->
                let* c = Myseq.from_list lc in
-               Myseq.return (`Color c, `ColorTyp (c,tc))
-            | SEG, `Seg lseg ->
+               Myseq.return (`Color c, `ColorTyp tc)
+            | SEG, `SegRange lseg ->
                let* seg = Myseq.from_list lseg in
-               Myseq.return (`Seg seg, `Seg seg)
-            | ORDER nocolor, `Order lorder ->
+               Myseq.return (`Seg seg, `SegRange lseg)
+            | ORDER nocolor, `OrderRange lorder ->
                let* order = Myseq.from_list lorder in
-               Myseq.return (`Order order, `OrderRange (order,lorder))
-            | MOTIF tmot, `Motif lmot ->
+               Myseq.return (`Order order, `OrderRange lorder)
+            | MOTIF _, `MotifTyp tmot ->
+               let lmot =
+                 match tmot with
+                 | MULTI -> GPat.Motif.candidates_multi
+                 | BI -> GPat.Motif.candidates_bi in
                let* mot = Myseq.from_list lmot in
-               Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
-            | GRID tg, `Grid ((minh,maxh),(minw,maxw),lc) ->
-               let range_h = Range.make_closed minh maxh in
-               let range_w = Range.make_closed minw maxw in
+               Myseq.return (`Motif mot, `MotifTyp tmot)               
+            | MOTIF tmot, `MotifRange lmot ->
+               let* mot = Myseq.from_list lmot in
+               Myseq.return (`Motif mot, `MotifTyp tmot)
+            | GRID tg, `GridRange (_,
+                                   (Range.Closed (minh,maxh) as range_h),
+                                   (Range.Closed (minw,maxw) as range_w),
+                                   `ColorRange lc) ->
                let nc = List.length lc in
                let* lhwc = Myseq.product_fair
                              [Myseq.range minh maxh;
@@ -2382,25 +2369,27 @@ module MyDomain : Madil.DOMAIN =
                (match lhwc with
                 | [h; w; c] ->
                    let g = Grid.make h w c in
-                   Myseq.return (`Grid g, `GridRange (g,tg,range_h,range_w,nc))
+                   Myseq.return (`Grid g, `GridRange (tg, range_h, range_w, `ColorCount nc))
                 | _ -> assert false)
-            | OBJ tg, `Obj (info_pos,info_g1) ->
+            | OBJ tg, `ObjRange (info_pos,info_g1) ->
                let* vpos, vpos_r = aux (VEC POS) info_pos in
                let* vg1, vg1_r = aux (GRID tg) info_g1 in
-               Myseq.return (`Obj (vpos,vg1), `Obj (vpos_r, vg1_r))
-            | MAP (ka,kb), `Map (info_a, info_b) ->
-               let m = Mymap.empty in
-               Myseq.return (`Map m, `MapTyp (m,ka,kb)) (* empty map = identity map *)
+               Myseq.return (`Obj (vpos,vg1), `ObjRange (vpos_r, vg1_r))
+            | MAP (ka,kb), `MapRange (info_a, info_b) ->
+               let m = Mymap.empty in (* TODO: use info_a, info_b ? *)
+               Myseq.return (`Map m, `MapTyp (ka,kb)) (* empty map = identity map *)
             | _ -> assert false
       in
       let* v, vr =
         Ndseq.map_tup_myseq ~depth (0,0)
-          (fun info -> aux t.kind info)
+          (fun info ->
+            let* v, r = aux t.kind info in
+            Myseq.return (v, `VD (v,r)))
           (tup1 info) in
       let info = Ndseq.const `Null info in
       Myseq.return (Data.make_dany v vr, info)
     
-    let generator_pat t c src gen_args info =
+    let generator_pat t c src gen_args (info : generator_info) =
       let depth = t.ndim in
       assert (Ndseq.depth info = depth);
       match t.kind, c, src, gen_args with
@@ -2408,7 +2397,7 @@ module MyDomain : Madil.DOMAIN =
          let info_i, info_j =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Vec (i,j) -> i, j
+              | `VecRange (ri,rj) -> `IntRange ri, `IntRange rj
               | _ -> assert false)
              (tup1 info) in
          let* lij = Myseq.product_fair [gen_i info_i;
@@ -2428,8 +2417,8 @@ module MyDomain : Madil.DOMAIN =
          let info_ij =
            Ndseq.map ~depth 0
              (function
-              | `Vec (`Int (mini,maxi), `Int (minj,maxj)) ->
-                 `Int (max mini minj, min maxi maxj) (* interval intersection because i = j *)
+              | `VecRange (Range.Closed (mini,maxi), Range.Closed (minj,maxj)) ->
+                 `IntRange (Range.Closed (max mini minj, min maxi maxj)) (* interval intersection because i = j *)
               | _ -> assert false)
              info in
          let* dij, _ = gen_ij info_ij in
@@ -2445,7 +2434,7 @@ module MyDomain : Madil.DOMAIN =
          let info_pos, info_g1 =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Obj (info_pos, info_g1) -> info_pos, info_g1
+              | `ObjRange (info_pos, info_g1) -> info_pos, info_g1
               | _ -> assert false)
              (tup1 info) in
          let* lposg1 = Myseq.product_fair [gen_pos info_pos;
@@ -2465,7 +2454,7 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map ~depth (+1)
              (Ndseq.seq_of_item
                 (function
-                 | `Map (info_a,info_b) -> List.init k (fun _ -> info_b)
+                 | `MapRange (info_a,info_b) -> List.init k (fun _ -> info_b)
                  | _ -> assert false))
              info in
          let* dvals, _ = gen_vals info_vals in
@@ -2483,7 +2472,7 @@ module MyDomain : Madil.DOMAIN =
          let info_a, info_b =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Map (info_a,info_b) -> info_a, info_b
+              | `MapRange (info_a,info_b) -> info_a, info_b
               | _ -> assert false)
              (tup1 info) in
          let* lab = Myseq.product_fair [gen_a info_a;
@@ -2501,7 +2490,7 @@ module MyDomain : Madil.DOMAIN =
          let info_a, info_b =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Map (info_a,info_b) -> info_a,info_b
+              | `MapRange (info_a,info_b) -> info_a,info_b
               | _ -> assert false)
              (tup1 info) in
          let* lab = Myseq.product_fair [gen_a info_a;
@@ -2519,16 +2508,16 @@ module MyDomain : Madil.DOMAIN =
          let info_col =
            Ndseq.map ~depth 0
              (function
-              | `Grid (rh,rw,lc) -> `Color lc
+              | `GridRange (_, rh, rw, `ColorRange lc) -> `ColorRange lc
               | _ -> assert false)
              info in
          let* dbc, _ = gen_col info_col in
          let info_g1 =
            Ndseq.map_tup ~depth 0
              (function
-              | `Color bc, `Grid (rh,rw,lc) ->
+              | `Color bc, `GridRange ((filling,nocolor), rh, rw, `ColorRange lc) ->
                  let lc1 = List.filter ((<>) bc) lc in
-                 `Grid (rh,rw,lc1)
+                 `GridRange ((`Sprite,nocolor), rh, rw, `ColorRange lc1)
               | _ -> assert false)
              (Data.value dbc, info) in
          let* dg1, _ = gen_g1 info_g1 in
@@ -2550,11 +2539,15 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.mapi_tup_myseq ~depth (0,0)
              (fun is info ->
                match info, Ndseq.index_list_broadcast vg is 0 with
-               | `Grid ((h1min,h1max),(w1min,w1max),lc1), Some (`Grid g) ->
+               | `GridRange ((filling,nocolor),
+                             Range.Closed (h1min,h1max),
+                             Range.Closed (w1min,w1max),
+                             `ColorRange lc1),
+                 Some (`Grid g) ->
                   let h, w = Grid.dims g in
                   Myseq.return
-                    (`Vec (`Int (0,0), `Int (0,0)),
-                     `Vec (`Int (min h h1min, min h h1max), `Int (min w w1min, min w w1max)))
+                    (`VecRange (Range.Closed (0,0), Range.Closed (0,0)),
+                     `VecRange (Range.Closed (min h h1min, min h h1max), Range.Closed (min w w1min, min w w1max)))
                | _, None -> Myseq.empty
                | _ -> assert false)
              (tup1 info) in
@@ -2579,11 +2572,11 @@ module MyDomain : Madil.DOMAIN =
          let info_seg, info_order, info_card =
            Ndseq.map_tup ~depth (0,0,0)
              (fun _ ->
-               `Seg [ match mode with
-                      | `Connected -> GPat.Objects.(Connected (Connect8,false))
-                      | `SameColor -> GPat.Objects.SameColor ],
-               `Order [GPat.Objects.Pos], (* this will not be used when generating objects *)
-               `Int (1,nmax))
+               `SegRange [ match mode with
+                           | `Connected -> GPat.Objects.(Connected (Connect8,false))
+                           | `SameColor -> GPat.Objects.SameColor ],
+               `OrderRange [GPat.Objects.Pos], (* this will not be used when generating objects *)
+               `IntRange (Range.Closed (1,nmax)))
              (tup1 info) in
          let* l = Myseq.product_fair
                     [gen_seg info_seg;
@@ -2601,8 +2594,16 @@ module MyDomain : Madil.DOMAIN =
              let info_objs =
                Ndseq.map_tup ~depth 1
                  (function
-                  | `Int card, `Grid ((minh,maxh),(minw,maxw),lc) ->
-                     let info_obj = `Obj (`Vec (`Int (0,0), `Int (0,0)), `Grid ((1,3),(1,3),lc)) in
+                  | `Int card, `GridRange ((filling,nocolor),
+                                           Range.Closed (minh,maxh),
+                                           Range.Closed (minw,maxw),
+                                           `ColorRange lc) ->
+                     let info_obj = `ObjRange (`VecRange (Range.Closed (0,0),
+                                                          Range.Closed (0,0)),
+                                               `GridRange ((`Sprite,nocolor),
+                                                           Range.Closed (1,3),
+                                                           Range.Closed (1,3),
+                                                           `ColorRange lc)) in
                      Ndseq.seq 0 (List.init card (fun _ -> info_obj))
                   | _ -> assert false)
                  (vcard, info) in
@@ -2611,7 +2612,10 @@ module MyDomain : Madil.DOMAIN =
                Ndseq.map_tup ~depth (0,0)
                  (fun (seq_objs, info) ->
                    match Ndseq.as_seq seq_objs, info with
-                   | Some (0, objs), `Grid ((minh,maxh),(minw,maxw),lc) ->
+                   | Some (0, objs), `GridRange ((filling,nocolor),
+                                                 Range.Closed (minh,maxh),
+                                                 Range.Closed (minw,maxw),
+                                                 `ColorRange lc) ->
                       let minh, minw =
                         List.fold_left
                           (fun (minh,minw) obj ->
@@ -2622,8 +2626,11 @@ module MyDomain : Madil.DOMAIN =
                             | _ -> assert false)
                           (minh,minw) objs in
                       let maxh, maxw = max maxh minh, max maxw minw in
-                      `Vec (`Int (minh,maxh), `Int (minw,maxw)),
-                      `Grid ((minh,maxh), (minw,maxw), [Grid.transparent])
+                      `VecRange (Range.Closed (minh,maxh), Range.Closed (minw,maxw)),
+                      `GridRange ((`Noise,nocolor),
+                                  Range.Closed (minh,maxh),
+                                  Range.Closed (minw,maxw),
+                                  `ColorRange [Grid.transparent])
                    | _ -> assert false)
                  (Data.value dobjs, info) in
              let* dsize, _ = gen_size info_size in
@@ -2636,9 +2643,12 @@ module MyDomain : Madil.DOMAIN =
          let info_size, info_ncol =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Grid ((hmin,hmax),(wmin,wmax),lc) ->
-                 `Vec (`Int (hmin,hmax), `Int (wmin,wmax)),
-                 `Int (1, List.length lc)
+              | `GridRange ((filling,nocolor),
+                            Range.Closed (hmin,hmax),
+                            Range.Closed (wmin,wmax),
+                            `ColorRange lc) ->
+                 `VecRange (Range.Closed (hmin,hmax), Range.Closed (wmin,wmax)),
+                 `IntRange (Range.Closed (1, List.length lc))
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair
@@ -2649,9 +2659,12 @@ module MyDomain : Madil.DOMAIN =
              let info_colors, info_masks =
                Ndseq.map_tup ~depth (1,1)
                  (function
-                  | `Vec (h,w), `Int ncol, `Grid (_,_,lc) ->
-                     let info_color = `Color lc in (* TODO: constrain different colors across sequence *)
-                     let info_mask = `Grid ((h,h),(w,w),[Grid.one]) in
+                  | `Vec (h,w), `Int ncol, `GridRange (_, _, _, `ColorRange lc) ->
+                     let info_color = `ColorRange lc in (* TODO: constrain different colors across sequence *)
+                     let info_mask = `GridRange ((`Sprite,true),
+                                                 Range.Closed (h,h),
+                                                 Range.Closed (w,w),
+                                                 `ColorRange [Grid.one]) in
                      Ndseq.seq 0 (List.init ncol (fun _ -> info_color)),
                      Ndseq.seq 0 (List.init ncol (fun _ -> info_mask))
                   | _ -> assert false)
@@ -2669,7 +2682,8 @@ module MyDomain : Madil.DOMAIN =
          let info_col, info_mask =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Grid (rh,rw,lc) -> `Color lc, `Grid (rh,rw,[Grid.one])
+              | `GridRange ((filling,nocolor), rh, rw, `ColorRange lc) ->
+                 `ColorRange lc, `GridRange ((filling,true), rh, rw, `ColorRange [Grid.one])
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair [gen_col info_col;
@@ -2691,7 +2705,7 @@ module MyDomain : Madil.DOMAIN =
          let info_map =
            Ndseq.map ~depth 0
              (function
-              | `Grid (rh,rw,lc) -> `Map (`Color lc, `Color lc)
+              | `GridRange (tg, rh, rw, rc) -> `MapRange (rc, rc)
               | _ -> assert false)
              info in
          let* dmap, _ = gen_map info_map in
@@ -2721,9 +2735,9 @@ module MyDomain : Madil.DOMAIN =
          let info_mot, info_noise =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc) ->
-                 `Motif GPat.Motif.candidates_multi,
-                 `Grid ((minh,maxh),(minw,maxw), [Grid.transparent])
+              | `GridRange ((filling,nocolor), rh, rw, rc) ->
+                 `MotifTyp MULTI,
+                 `GridRange ((`Noise,nocolor), rh, rw, `ColorRange [Grid.transparent])
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair [gen_mot info_mot;
@@ -2733,13 +2747,18 @@ module MyDomain : Madil.DOMAIN =
              let* info_mask_opt, info_core =
                Ndseq.map_tup_myseq ~name:"gen/MotifMulti/info_res" ~depth (0,0)
                  (function
-                  | `Grid ((minh,maxh),(minw,maxw),lc), `Motif mot, `Grid gnoise ->
+                  | `GridRange (tg, rh, rw, `ColorRange lc), `Motif mot, `Grid gnoise ->
                      let h, w = Grid.dims gnoise in
                      let _, _, luv = GPat.Motif.all_coredims_of_motif mot h w in
                      let* u, v = Myseq.from_list luv in
                      Myseq.return
-                       ((if partial then `Grid ((h,h),(w,w),[Grid.one]) else `Null),
-                        `Grid ((u,u),(v,v),lc))
+                       ((if partial
+                         then `GridRange ((`Sprite,true),
+                                          Range.Closed (h,h),
+                                          Range.Closed (w,w),
+                                          `ColorRange [Grid.one])
+                         else `Null),
+                        `GridRange (tg, Range.Closed (u,u), Range.Closed (v,v), `ColorRange lc))
                   | _ -> assert false)
                  (info, Data.value dmot, Data.value dnoise) in
              let* dcore, _ = gen_core info_core in
@@ -2772,12 +2791,15 @@ module MyDomain : Madil.DOMAIN =
          let* info_mot, info_noise =
            Ndseq.map_tup_myseq ~depth (0,0)
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc) ->
+              | `GridRange ((filling,nocolor), Range.Closed (minh,maxh), Range.Closed (minw,maxw), `ColorRange lc) ->
                  if maxh >= 3 && maxw >= 3 (* bicolor motifs have size at least 3x3 *)
                  then
                    Myseq.return
-                     (`Motif GPat.Motif.candidates_bi,
-                      `Grid ((max 3 minh, maxh),(max 3 minw, maxw), [Grid.transparent]))
+                     (`MotifTyp BI,
+                      `GridRange ((`Noise,nocolor),
+                                  Range.Closed (max 3 minh, maxh),
+                                  Range.Closed (max 3 minw, maxw),
+                                  `ColorRange [Grid.transparent]))
                  else Myseq.empty
               | _ -> assert false)
              (tup1 info) in
@@ -2788,22 +2810,28 @@ module MyDomain : Madil.DOMAIN =
              let* info_mask_opt, info_bgcolor =
                Ndseq.map_tup_myseq ~name:"gen/Motif/info_res" ~depth (0,0)
                  (function
-                  | `Grid ((minh,maxh),(minw,maxw),lc), `Motif mot, `Grid gnoise ->
+                  | `GridRange (tg, Range.Closed (minh,maxh), Range.Closed (minw,maxw), `ColorRange lc), `Motif mot, `Grid gnoise ->
                      let h, w = Grid.dims gnoise in
                      let lbgcolor =
                        if filling = `Full
                        then lc
                        else Grid.transparent :: lc in
                      Myseq.return
-                       ((if partial then `Grid ((h,h),(w,w),[Grid.one]) else `Null),
-                        `Color lbgcolor)
+                       ((if partial
+                         then `GridRange ((`Sprite,true),
+                                          Range.Closed (h,h),
+                                          Range.Closed (w,w),
+                                          `ColorRange [Grid.one])
+                         else `Null),
+                        `ColorRange lbgcolor)
                   | _ -> assert false)
                  (info, Data.value dmot, Data.value dnoise) in
              let* dbgcolor, _ = gen_bgcolor info_bgcolor in
              let info_color =
                Ndseq.map_tup ~depth 0
                  (function
-                  | `Grid (_,_,lc), `Color bgcolor -> `Color (list_remove bgcolor lc)
+                  | `GridRange (_, _, _, `ColorRange lc), `Color bgcolor ->
+                     `ColorRange (list_remove bgcolor lc)
                   | _ -> assert false)
                  (info, Data.value dbgcolor) in
              let* dcolor, _ = gen_color info_color in
@@ -2833,14 +2861,14 @@ module MyDomain : Madil.DOMAIN =
              Myseq.return (Data.make_dpat v c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|], info)
           | _ -> assert false)
 
-      | GRID _, Metagrid, [||], [|gen_sepcolor; gen_borders; gen_dims; gen_heights; gen_widths; gen_gridss|] ->
+      | GRID (filling,nocolor), Metagrid, [||], [|gen_sepcolor; gen_borders; gen_dims; gen_heights; gen_widths; gen_gridss|] ->
          let info_sepcolor, info_borders, info_dims =
            Ndseq.map_tup ~depth (0,0,0)
              (function
-              | `Grid (rh,rw,lc) ->
-                 `Color lc,
-                 `Grid ((2,2), (2,2), [Grid.one]),
-                 `Vec (`Int (1,3), `Int (1,3))                 
+              | `GridRange (tg, rh, rw, rc) ->
+                 rc,
+                 `GridRange ((`Noise,true), Range.Closed (2,2), Range.Closed (2,2), `ColorRange [Grid.one]),
+                 `VecRange (Range.Closed (1,3), Range.Closed (1,3))                 
               | _ -> assert false)
              (tup1 info) in
          let* l = Myseq.product_fair [gen_sepcolor info_sepcolor;
@@ -2852,8 +2880,8 @@ module MyDomain : Madil.DOMAIN =
                Ndseq.map_tup ~depth (1,1)
                  (function
                   | `Vec (k,l) ->
-                     Ndseq.seq 0 (List.init k (fun _ -> `Int (1,10))),
-                     Ndseq.seq 0 (List.init l (fun _ -> `Int (1,10)))
+                     Ndseq.seq 0 (List.init k (fun _ -> `IntRange (Range.Closed (1,10)))),
+                     Ndseq.seq 0 (List.init l (fun _ -> `IntRange (Range.Closed (1,10))))
                   | _ -> assert false)
                  (tup1 (Data.value ddims)) in
              let* l1 = Myseq.product_fair
@@ -2864,7 +2892,7 @@ module MyDomain : Madil.DOMAIN =
                  let info_gridss =
                    Ndseq.map_tup ~name:"gen/Metagrid/vx" ~depth 2
                      (function
-                      | `Color lc, `Color sepcolor, `Vec (k,l), vheights, vwidths ->
+                      | `ColorRange lc, `Color sepcolor, `Vec (k,l), vheights, vwidths ->
                          let heights =
                            match Ndseq.as_seq vheights with
                            | Some (_,l) -> List.map (function `Int i -> i | _ -> assert false) l
@@ -2881,7 +2909,10 @@ module MyDomain : Madil.DOMAIN =
                                   (List.init l (fun j ->
                                        let h1 = try List.nth heights i with _ -> assert false in
                                        let w1 = try List.nth widths j with _ -> assert false in
-                                       `Grid ((h1,h1),(w1,w1),lc1)))))
+                                       `GridRange ((filling,nocolor),
+                                                   Range.Closed (h1,h1),
+                                                   Range.Closed (w1,w1),
+                                                   `ColorRange lc1)))))
                       | _ -> assert false)
                      (info_sepcolor, Data.value dsepcolor, Data.value ddims, Data.value dheights, Data.value dwidths) in
                  let* dgridss, _ = gen_gridss info_gridss in
@@ -2937,7 +2968,7 @@ module MyDomain : Madil.DOMAIN =
          let info_size =
            Ndseq.map ~depth 0
              (function
-              | `Grid ((minh,maxh),(minw,maxw),_) -> `Vec (`Int (minh,maxh), `Int (minw,maxw))
+              | `GridRange (tg, rh, rw, _) -> `VecRange (rh, rw)
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
@@ -2952,7 +2983,7 @@ module MyDomain : Madil.DOMAIN =
          let info_size =
            Ndseq.map ~depth 0
              (function
-              | `Grid ((minh,maxh),(minw,maxw),_) -> `Vec (`Int (minh,maxh), `Int (minw,maxw))
+              | `GridRange (_,rh,rw,_) -> `VecRange (rh,rw)
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
@@ -2973,9 +3004,9 @@ module MyDomain : Madil.DOMAIN =
          let info_len, info_dir =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Grid ((minh,maxh),(minw,maxw),_) ->
-                 `Int (min minh minw, max maxh maxw),
-                 `Vec (`Int (0,1), `Int (-1,1))
+              | `GridRange (_, Range.Closed (minh,maxh), Range.Closed (minw,maxw), _) ->
+                 `IntRange (Range.Closed (min minh minw, max maxh maxw)),
+                 `VecRange (Range.Closed (0,1), Range.Closed (-1,1))
               | _ -> assert false)
              (tup1 info) in
          let* dlen, _ = gen_len info_len in
@@ -2994,18 +3025,18 @@ module MyDomain : Madil.DOMAIN =
          let info_size =
            Ndseq.map ~depth 0
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc) ->
+              | `GridRange (tg,rh,rw,rc) ->
                  (match dir with
-                  | `H -> `Int (minw,maxw)
-                  | `V -> `Int (minh,maxh))
+                  | `H -> `IntRange rw
+                  | `V -> `IntRange rh)
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
          let info_colors =
            Ndseq.map_tup ~depth 1
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc), `Int k ->
-                 Ndseq.seq 0 (List.init k (fun _ -> `Color lc))
+              | `GridRange (tg,rh,rw,rc), `Int k ->
+                 Ndseq.seq 0 (List.init k (fun _ -> rc))
               | _ -> assert false)
              (info,Data.value dsize) in
          let* dcolors, _ = gen_colors info_colors in
@@ -3030,21 +3061,20 @@ module MyDomain : Madil.DOMAIN =
          let info_size =
            Ndseq.map ~depth 0
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc) ->
-                 `Vec (`Int (minh, maxh),
-                       `Int (minw, maxw))
+              | `GridRange (tg,rh,rw,rc) ->
+                 `VecRange (rh,rw)
               | _ -> assert false)
              info in
          let* dsize, _ = gen_size info_size in
          let info_colorss =
            Ndseq.map_tup ~depth 2
              (function
-              | `Grid ((minh,maxh),(minw,maxw),lc), `Vec (k,l) ->
+              | `GridRange (tg,rh,rw,rc), `Vec (k,l) ->
                  Ndseq.seq 1
                    (List.init k (fun _ ->
                         Ndseq.seq 0
                           (List.init l (fun _ ->
-                               `Color lc))))
+                               rc))))
               | _ -> assert false)
              (info, Data.value dsize) in                                   
          let* dcolorss, _ = gen_colorss info_colorss in
@@ -3084,11 +3114,11 @@ module MyDomain : Madil.DOMAIN =
          let* info_grid =
            Ndseq.map_myseq ~depth:(depth - 2) (-2)
              (fun info ->
-               let* h, w, lc =
+               let* h, w, rc =
                  match Ndseq.as_seq info with
                  | Some (1, row0::rows1) ->
                     (match Ndseq.as_seq row0 with
-                     | Some (0, (`Color lc :: cells)) ->
+                     | Some (0, (rc :: cells)) ->
                         let h = 1 + List.length rows1 in
                         let w = 1 + List.length cells in
                         if List.for_all
@@ -3097,19 +3127,23 @@ module MyDomain : Madil.DOMAIN =
                                | Some (0, cells) -> List.length cells = w
                                | _ -> false)
                              rows1
-                        then Myseq.return (h, w, lc)
+                        then Myseq.return (h, w, rc)
                         else Myseq.empty (* not rectangular *)
                      | Some (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
                      | _ -> assert false)
                  | Some (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
                  | _ -> assert false in
-               Myseq.return (`Grid ((h,h), (w,w), lc)))
+               let filling =
+                 match tc with
+                 | C_OBJ | C_BG true -> `Full
+                 | C_BG false -> `Sprite in
+               Myseq.return (`GridRange ((filling,false), Range.Closed (h,h), Range.Closed (w,w), rc)))
              info in
          let* dgrid, _ = gen_grid info_grid in
          let* v =
            Ndseq.map_tup_myseq ~depth:(depth - 2) 2
              (function
-              | `Grid g, `Grid ((h,_),(w,_),_) ->
+              | `Grid g, `GridRange (_, Range.Closed (h,_), Range.Closed (w,_), _) ->
                  if Grid.dims g = (h,w)
                  then Myseq.return
                         (Ndseq.seq 1
@@ -3160,9 +3194,9 @@ module MyDomain : Madil.DOMAIN =
                match Ndseq.as_seq info with
                | Some (_,l) ->
                   (match l with
-                   | `Int (a1,b1)::`Int (a2,b2)::_ ->
-                      Myseq.return (`Int (a1,b1),
-                                    `Int (a2-b1, b2-a1))
+                   | `IntRange (Range.Closed (a1,b1))::`IntRange (Range.Closed (a2,b2))::_ ->
+                      Myseq.return (`IntRange (Range.Closed (a1,b1)),
+                                    `IntRange (Range.Closed (a2-b1, b2-a1)))
                    | _ -> Myseq.empty)
                | _ -> assert false)
              (tup1 info) in
@@ -3182,7 +3216,7 @@ module MyDomain : Madil.DOMAIN =
       | _, SeqIndex, [|vseq|], [|gen_index|] ->
          let depth_seq = Ndseq.depth vseq in
          let info_index =
-           Ndseq.seq 0 (List.init (depth_seq - depth) (fun _ -> `Int (0,2))) in (* default index *)
+           Ndseq.seq 0 (List.init (depth_seq - depth) (fun _ -> `IntRange (Range.Closed (0,2)))) in (* default index *)
          let* dindex, _ = gen_index info_index in
          let index =
            match Ndseq.as_seq (Data.value dindex) with
@@ -3240,147 +3274,82 @@ module MyDomain : Madil.DOMAIN =
       Ndseq.map 0
         (fun v ->
           match t.kind, v with
-          | _, `Null -> `Null
-          | INT CARD, `Int i -> `IntRange (i, Range.make_open 0)
-          | INT INDEX, `Int i -> `IntRange (i, Range.make_open 0)
+          | _, `Null -> `VD (`Null, `Null)
+          | INT CARD, `Int i -> `VD (`Int i, `IntRange (Range.make_open 0))
+          | INT INDEX, `Int i -> `VD (`Int i, `IntRange (Range.make_open 0))
           | INT (COORD (axis,tv)), `Int i ->
              let range =
                match tv with
                | SIZE -> Range.make_closed 1 Grid.max_size
                | POS -> Range.make_closed 0 Grid.max_size
                | MOVE -> Range.make_closed (- Grid.max_size) Grid.max_size in
-             `IntRange (i, range)
+             `VD (`Int i, `IntRange range)
           | VEC tv, `Vec (i,j) ->
              let range =
                match tv with
                | SIZE -> Range.make_closed 1 Grid.max_size
                | POS -> Range.make_closed 0 Grid.max_size
                | MOVE -> Range.make_closed (- Grid.max_size) Grid.max_size in
-             `Vec (`IntRange (i,range), `IntRange (j,range)) 
-          | COLOR tc, `Color c -> `Color c
-          | SEG, `Seg seg -> `Seg seg
+             `VD (`Vec (i,j), `VecRange (range, range)) 
+          | COLOR tc, `Color c -> `VD (`Color c, `ColorTyp tc)
+          | SEG, `Seg (GPat.Objects.SameColor as seg) -> `VD (`Seg seg, `SegRange [seg])
+          | SEG, `Seg seg -> `VD (`Seg seg, `SegRange GPat.Objects.candidate_segmentations_connected)
           | ORDER nocolor, `Order order ->
              let lorder = GPat.Objects.candidate_orders 2 nocolor in
-             `Order (order, lorder)
-          | MOTIF tmot, `Motif mot -> `Motif mot
-          | GRID (filling,nocolor), `Grid g ->
+             `VD (`Order order, `OrderRange lorder)
+          | MOTIF tmot, `Motif mot -> `VD (`Motif mot, `MotifTyp tmot)
+          | GRID (filling,nocolor as tg), `Grid g ->
              let rh = Range.make_open 1 in
              let rw = Range.make_open 1 in
              let nc = if nocolor then 1 else Grid.nb_color in
-             `GridDimsCols (g, rh, rw, nc)
-          | OBJ (filling,nocolor), `Obj (`Vec (i,j), `Grid g) ->
+             `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc))
+          | OBJ (filling,nocolor as tg), `Obj (`Vec (i,j), `Grid g) ->
              let rh = Range.make_open 1 in
              let rw = Range.make_open 1 in
              let nc = if nocolor then 1 else Grid.nb_color in
-             `Obj (`Vec (`IntRange (i, Range.make_closed 0 Grid.max_size),
-                         `IntRange (j, Range.make_closed 0 Grid.max_size)),
-                   `GridDimsCols (g, rh, rw, nc))
-          | MAP _, `Map m ->
-             let domain = mymap_keys m in
-             `MapDomain (m, domain)
+             `VD (`Obj (`Vec (i,j), `Grid g),
+                  `ObjRange (`VecRange (Range.make_closed 0 Grid.max_size,
+                                        Range.make_closed 0 Grid.max_size),
+                             `GridRange (tg, rh, rw, `ColorCount nc)))
+          | MAP (ka,kb), `Map m ->
+             `VD (`Map m, `MapTyp (ka,kb))
           | _ -> assert false)
         v
 
-    let value_of_input t input : value =
+    let value_of_input t (input : input) : value =
       Ndseq.map 0
         (fun input ->
           match input with
-          | `Null -> `Null
-          | `IntRange (i,_) -> `Int i
-          | `Vec (`IntRange (i,_), `IntRange (j,_)) -> `Vec (i,j)
-          | `Color c -> `Color c
-          | `Seg seg -> `Seg seg
-          | `Order (order,lorder) -> `Order order
-          | `Motif mot -> `Motif mot
-          | `GridDimsCols (g,rh,rw,nc) -> `Grid g
-          | `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g1,_,_,_)) -> `Obj (`Vec (i,j), `Grid g1)
-          | `MapDomain (m,dom) -> `Map m
+          | `VD (v,_) -> v
           | _ -> assert false)
         input
 
-    let parseur_value v input =
+    let parseur_value (v0 : value) (input : input) =
       let* v', input =
         Ndseq.match_myseq 0
-          (fun v input ->
-            match v, input with
-            | `Null, `Null ->
-               Myseq.return (v, `Null)
-            | `Int i0, `IntRange (i,_) ->
-               if i = i0
-               then Myseq.return (v, `Null)
+          (fun v0 input ->
+            match input with
+            | `VD (v,_) ->
+               if v = v0
+               then Myseq.return (v0, input_null)
                else Myseq.empty
-            | `Vec (i0,j0), `Vec (`IntRange (i,_), `IntRange (j,_)) ->
-               if i = i0 && j = j0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Color c0, `Color c ->
-               if c = c0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Seg seg0, `Seg seg ->
-               if seg = seg0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Order order0, `Order (order,lorder) ->
-               if order = order0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Motif mot0, `Motif mot ->
-               if mot = mot0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Grid g0, `GridDimsCols (g,_,_,_) ->
-               if g = g0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Obj (`Vec (i0,j0), `Grid g0),
-              `Obj (`Vec (`IntRange (i,_), `IntRange (j,_)), `GridDimsCols (g, _, _, _)) ->
-               if i = i0 && j = j0 && g = g0
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | `Map m0, `MapDomain (m,dom) ->
-               if m0 = m
-               then Myseq.return (v, `Null)
-               else Myseq.empty
-            | _, `Null ->
-               Myseq.return (v, `Null) (* to handle expr args *)
             | _ -> Myseq.empty)
-          v input in
+          v0 input in
       Myseq.return (Data.make_dexpr v', input)
     
-    let parseur_any t input =
+    let parseur_any t (input : input) =
       let depth = t.ndim in
       assert (Ndseq.depth input = depth);
       let* v, vr =
         Ndseq.map_tup_myseq ~name:"parse/any" ~depth (0,0)
-          (fun input ->
-            match t.kind, input with
-            | INT _, `IntRange (ij,range) ->
-               Myseq.return (`Int ij, `IntRange (ij,range))
-            | VEC tv, `Vec (`IntRange (i,ri), `IntRange (j,rj)) ->
-               Myseq.return (`Vec (i,j), `VecRange (i,j,ri,rj))
-            | COLOR tc, `Color c ->
-               Myseq.return (`Color c, `ColorTyp (c,tc))
-            | SEG, `Seg seg ->
-               Myseq.return (`Seg seg, `Seg seg)
-            | ORDER nocolor, `Order (order,lorder) ->
-               Myseq.return (`Order order, `OrderRange (order,lorder))
-            | MOTIF tmot, `Motif mot ->
-               Myseq.return (`Motif mot, `MotifTyp (mot,tmot))
-            | GRID tg, `GridDimsCols (g,rh,rw,nc) ->
-               Myseq.return (`Grid g, `GridRange (g,tg,rh,rw,nc))
-            | OBJ tg, `Obj (`Vec (`IntRange (i,ri), `IntRange (j,rj)),
-                            `GridDimsCols (g,rh,rw,nc)) ->
-               Myseq.return (`Obj (`Vec (i,j), `Grid g),
-                             `Obj (`VecRange (i,j,ri,rj), `GridRange (g,tg,rh,rw,nc)))
-            | MAP (ka,kb), `MapDomain (m,dom) ->
-               Myseq.return (`Map m, `MapTyp (m,ka,kb))
-            | _ ->
+          (function
+           | `VD (v,r) -> Myseq.return (v, `VD (v,r))
+           | _ ->
                print_string "PARSE FAILURE in parseur_any:";
                pp xp_typ t;
                assert false)
           (tup1 input) in
-      let input = Ndseq.const `Null input in
+      let input = Ndseq.const input_null input in
       Myseq.return (Data.make_dany v vr, input)
     
     let parseur_pat t c src parse_args input =
@@ -3392,12 +3361,14 @@ module MyDomain : Madil.DOMAIN =
          let in_i, in_j =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Vec (in_i, in_j) -> in_i, in_j
+              | `VD (`Vec (i,j), `VecRange (ri,rj)) ->
+                 `VD (`Int i, `IntRange ri),
+                 `VD (`Int j, `IntRange rj)
               | _ -> assert false)
              (tup1 input) in
          let* di, _ = parse_i in_i in
          let* dj, _ = parse_j in_j in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|di; dj|], input)
 
       | _, Square, [||], [|parse_ij|] ->
@@ -3405,14 +3376,14 @@ module MyDomain : Madil.DOMAIN =
          let* in_ij =
            Ndseq.map_myseq ~depth 0
              (function
-              | `Vec (`IntRange (i, ri), `IntRange (j, rj)) ->
+              | `VD (`Vec (i,j), `VecRange (ri,rj)) ->
                  if i = j
-                 then Myseq.return (`IntRange (i, Range.inter ri rj))
+                 then Myseq.return (`VD (`Int i, `IntRange (Range.inter ri rj)))
                  else Myseq.empty
               | x -> pp xp_input x; assert false)
              input in
          let* dij, _ = parse_ij in_ij in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dij|], input)
 
       | _, Obj, [||], [|parse_pos; parse_g1|] ->
@@ -3420,12 +3391,12 @@ module MyDomain : Madil.DOMAIN =
          let in_pos, in_g1 =
            Ndseq.map_tup ~depth (0,0)
              (function
-              | `Obj (in_pos, in_g1) -> in_pos, in_g1
+              | `VD (`Obj (pos,g1), `ObjRange (rpos,rg1)) -> `VD (pos, rpos), `VD (g1,rg1)
               | _ -> assert false)
              (tup1 input) in
          let* dpos, _ = parse_pos in_pos in
          let* dg1, _ = parse_g1 in_g1 in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dpos; dg1|], input)
 
       | MAP (ka,kb), DomMap keys, [||], [|parse_vals|] ->
@@ -3434,7 +3405,7 @@ module MyDomain : Madil.DOMAIN =
          let* in_vals =
            Ndseq.map_myseq ~depth 1
              (function
-              | `MapDomain (m,dom) ->
+              | `VD (`Map m, _) -> (* TODO: use MapRange *)
                  let pairs = Mymap.bindings m in
                  let m_keys = List.map fst pairs in
                  if m_keys = keys
@@ -3445,7 +3416,7 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              input in
          let* dvals, _ = parse_vals in_vals in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dvals|], input)
     
       | MAP (ka,kb), Replace, [||], [|parse_a; parse_b|] when ka=kb ->
@@ -3454,7 +3425,7 @@ module MyDomain : Madil.DOMAIN =
          let* in_a, in_b =
            Ndseq.map_tup_myseq ~name:"parse/Repalce/in_a_b" ~depth (0,0)
              (function
-              | `MapDomain (m,dom) ->
+              | `VD (`Map m, _) -> (* TODO: use MapRange *)
                  let m_diff = Mymap.filter (fun a b -> a <> b) m in
                  (match Mymap.bindings m_diff with
                   | [a, b] ->
@@ -3465,7 +3436,7 @@ module MyDomain : Madil.DOMAIN =
              (tup1 input) in
          let* da, _ = parse_a in_a in
          let* db, _ = parse_b in_b in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|da; db|], input)
     
       | MAP (ka,kb), Swap, [||], [|parse_a; parse_b|] when ka=kb ->
@@ -3474,7 +3445,7 @@ module MyDomain : Madil.DOMAIN =
          let* in_a, in_b =
            Ndseq.map_tup_myseq ~name:"parse/Swap/in_a_b" ~depth (0,0)
              (function
-              | `MapDomain (m,dom) ->
+              | `VD (`Map m, _) -> (* TODO: use MapRange *)
                  let m_diff = Mymap.filter (fun a b -> a <> b) m in
                  (match Mymap.bindings m_diff with
                   | [a, b; c, d] when a=d && b=c -> Myseq.return (input_of_value ta a,
@@ -3484,28 +3455,29 @@ module MyDomain : Madil.DOMAIN =
              (tup1 input) in
          let* da, _ = parse_a in_a in
          let* db, _ = parse_b in_b in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|da; db|], input)
     
-      | _, BgColor, [||], [|parse_col; parse_g1|] ->
+      | GRID (filling,nocolor), BgColor, [||], [|parse_col; parse_g1|] ->
          let v = value_of_input t input in
          let* in_col, in_g1 =
            Ndseq.map_tup_myseq ~name:"parse/BgColor/in_col_g1" ~depth (0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
                  if Grid.is_full g
                  then
+                   let tg1 = (`Sprite,nocolor) in
                    let* bc = Myseq.from_list (Segment.background_colors g) in
                    let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
                    let nc1 = if nc > 1 && g.Grid.color_count.(bc) > 0 then nc-1 else nc in
-                   Myseq.return (`Color bc,
-                                 `GridDimsCols (g1,rh,rw,nc1))
+                   Myseq.return (`VD (`Color bc, `ColorTyp (C_BG (filling = `Full))),
+                                 `VD (`Grid g1, `GridRange (tg1, rh, rw, `ColorCount nc1)))
                  else Myseq.empty
               | _ -> assert false)
              (tup1 input) in
          let* dcol, _ = parse_col in_col in
          let* dg1, _ = parse_g1 in_g1 in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dcol; dg1|], input)
 
       | _, IsFull, [||], [|parse_g1|] ->
@@ -3519,7 +3491,7 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (Data.value dg1) in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dg1|], input)
     
       | _, Crop, [|vg|], [|parse_pos; parse_size|] ->
@@ -3528,10 +3500,9 @@ module MyDomain : Madil.DOMAIN =
          let in_size =
            Ndseq.map ~depth 0
              (function
-              | `GridDimsCols (g1,rh1,rw1,nc1) ->
+              | `VD (`Grid g1, `GridRange (tg1, rh1, rw1, `ColorCount nc1)) ->
                  let h1, w1 = Grid.dims g1 in
-                 `Vec (`IntRange (h1, rh1),
-                       `IntRange (w1, rw1))
+                 `VD (`Vec (h1, w1), `VecRange (rh1, rw1))
               | _ -> assert false)
              input in
          let* dsize, _ = parse_size in_size in
@@ -3545,14 +3516,15 @@ module MyDomain : Madil.DOMAIN =
                     let h, w = Grid.dims g in
                     let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
                     Myseq.return
-                      (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)),
-                             `IntRange (j, Range.make_closed 0 (w-w1))))
+                      (`VD (`Vec (i,j),
+                            `VecRange (Range.make_closed 0 (h-h1),
+                                       Range.make_closed 0 (w-w1))))
                  | _, _, (Some `Null | None) -> Myseq.empty (* failed computation for source grid *)
                  | _ -> assert false)
                (v, Data.value dsize)
            with Invalid_argument _ -> Myseq.empty in (* dg may have an inconsistent structure *)
          let* dpos, _ = parse_pos in_pos in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c ~src [|dpos; dsize|], input)
     
       | GRID (filling,nocolor), Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_order; parse_card; parse_objs; _parse_merger; parse_noise|] ->
@@ -3560,23 +3532,24 @@ module MyDomain : Madil.DOMAIN =
          let in_size =
            Ndseq.map ~depth 0
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
                  let h, w = Grid.dims g in
-                 `Vec (`IntRange (h, rh),
-                       `IntRange (w, rw))
+                 `VD (`Vec (h,w), `VecRange (rh,rw))
               | _ -> assert false)
              input in
          let* dsize, _ = parse_size in_size in
          let* in_seg =
+           let lseg =
+             match mode with
+             | `Connected -> GPat.Objects.candidate_segmentations_connected
+             | `SameColor -> [GPat.Objects.SameColor] in             
            let* seg = (* common choice for all sequence items *)
-             Myseq.from_list
-               (match mode with
-                | `Connected -> GPat.Objects.candidate_segmentations_connected
-                | `SameColor -> [GPat.Objects.SameColor]) in
+             Myseq.from_list lseg in
            Myseq.return
              (Ndseq.map ~depth 0
                 (function
-                 | `GridDimsCols (g,rh,rw,nc) -> `Seg seg
+                 | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
+                    `VD (`Seg seg, `SegRange lseg)
                  | _ -> assert false)
                 input) in
          let* dseg, _ = parse_seg in_seg in
@@ -3586,19 +3559,23 @@ module MyDomain : Madil.DOMAIN =
            Myseq.return
              (Ndseq.map ~depth 0
                 (function
-                 | `GridDimsCols (g,rh,rw,nc) -> `Order (order,lorder)
+                 | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
+                    `VD (`Order order, `OrderRange lorder)
                  | _ -> assert false)
                 input) in
          let* dorder, _ = parse_order in_order in
          let* in_card, in_objs, in_noise =
            Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,1,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc), `Seg seg, `Order order, `Vec (h,w) ->
+              | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)),
+                `Seg seg, `Order order, `Vec (h,w) ->
+                 let tg1 = (`Sprite,nocolor) in
                  let nc1 = nc in
                  (* PB: not robust segmentation choice, and makes monocolor non-compresive
                    match seg with
                    | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
                    | _ -> nc in *)
+                 let tg_noise = (`Noise,nocolor) in
                  let* objs, g_noise = GPat.Objects.parse nmax seg g in
                  let objs = GPat.Objects.sort order objs in
                  let card = List.length objs in
@@ -3615,19 +3592,20 @@ module MyDomain : Madil.DOMAIN =
                                  (Myseq.cons (o3::o2::o1::os)
                                     (Myseq.return (o3::o1::o2::os)))))) in *)
                  Myseq.return
-                   (`IntRange (card, Range.make_closed 0 nmax),
+                   (`VD (`Int card, `IntRange (Range.make_closed 0 nmax)),
                     Ndseq.seq 0
                       (List.map
                          (fun (i,j,g1) ->
                            let h1, w1 = Grid.dims g1 in
-                           `Obj (`Vec (`IntRange (i, Range.make_closed 0 (h-h1)), (* (h-1)), *)
-                                       `IntRange (j, Range.make_closed 0 (w-w1))), (* (w-1))), *)
-                                 `GridDimsCols (g1,
-                                                Range.make_closed 1 h, (* (h-i), *)
-                                                Range.make_closed 1 w, (* (w-j), *)
-                                                nc1)))
+                           `VD (`Obj (`Vec (i,j), `Grid g1),
+                                `ObjRange (`VecRange (Range.make_closed 0 (h-h1), (* (h-1)), *)
+                                                      Range.make_closed 0 (w-w1)), (* (w-1))), *)
+                                           `GridRange (tg1,
+                                                       Range.make_closed 1 h, (* (h-i), *)
+                                                       Range.make_closed 1 w, (* (w-j), *)
+                                                       `ColorCount nc1))))
                          objs),
-                    `GridDimsCols (g_noise, Range.make_exact h, Range.make_exact w, nc))
+                    `VD (`Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, `ColorCount nc)))
               (* TODO: remove size, as included in noise, like for Motif? *)
               | _ -> assert false)
              (input, Data.value dseg, Data.value dorder, Data.value dsize) in
@@ -3635,7 +3613,7 @@ module MyDomain : Madil.DOMAIN =
          let* dobjs, _ = parse_objs in_objs in
          let* dnoise, _ = parse_noise in_noise in
          let _v, dmerger = make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|], input)
 
       | _, ColorPartition, [||], [|parse_size; parse_ncol; parse_colors; parse_masks|] ->
@@ -3643,11 +3621,12 @@ module MyDomain : Madil.DOMAIN =
          let* in_size, in_ncol, in_colors, in_masks =
            Ndseq.map_tup_myseq ~depth (0,0,1,1)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc)) ->
                  let h, w = Grid.dims g in
                  let layers = Grid_patterns.partition_by_color g in
                  let ncol = List.length layers in
                  let* () = Myseq.from_bool (ncol > 0) in
+                 let tm = (`Sprite, true) in
                  let* layers = (* permutations of first three objects *)
                    match layers with
                    | [] -> Myseq.return layers
@@ -3661,17 +3640,17 @@ module MyDomain : Madil.DOMAIN =
                                  (Myseq.cons (o3::o2::o1::os)
                                     (Myseq.return (o3::o1::o2::os)))))) in
                  Myseq.return
-                   (`Vec (`IntRange (h,rh), `IntRange (w,rw)),
-                    `IntRange (ncol, Range.make_closed 1 nc),
-                    Ndseq.seq 0 (List.map (fun (c,m) -> `Color c) layers),
-                    Ndseq.seq 0 (List.map (fun (c,m) -> `GridDimsCols (m, Range.make_exact h, Range.make_exact w, 1)) layers))
+                   (`VD (`Vec (h,w), `VecRange (rh, rw)),
+                    `VD (`Int ncol, `IntRange (Range.make_closed 1 nc)),
+                    Ndseq.seq 0 (List.map (fun (c,m) -> `VD (`Color c, `ColorTyp C_OBJ)) layers),
+                    Ndseq.seq 0 (List.map (fun (c,m) -> `VD (`Grid m, `GridRange (tm, Range.make_exact h, Range.make_exact w, `ColorCount 1))) layers))
               | _ -> assert false)
              (tup1 input) in
          let* dsize, _ = parse_size in_size in
          let* dncol, _ = parse_ncol in_ncol in
          let* dcolors, _ = parse_colors in_colors in
          let* dmasks, _ = parse_masks in_masks in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsize; dncol; dcolors; dmasks|], input)         
         
       | _, Monocolor, [||], [|parse_col; parse_mask|] ->
@@ -3679,18 +3658,19 @@ module MyDomain : Madil.DOMAIN =
          let* in_col, in_mask =
            Ndseq.map_tup_myseq ~name:"parse/Monocolor/in_col_mask" ~depth (0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc)) ->
                  if Grid.color_count Grid.transparent g = 1
                  then
                    let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
                    let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.one) in
-                   Myseq.return (`Color c, `GridDimsCols (mask,rh,rw,1))
+                   Myseq.return (`VD (`Color c, `ColorTyp C_OBJ),
+                                 `VD (`Grid mask, `GridRange ((filling,true), rh, rw, `ColorCount 1)))
                  else Myseq.empty
               | _ -> assert false)
              (tup1 input) in
          let* dcol, _ = parse_col in_col in
          let* dmask, _ = parse_mask in_mask in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dcol; dmask|], input)
 
       | _, Recoloring, [|vg1|], [|parse_map|] ->
@@ -3701,7 +3681,7 @@ module MyDomain : Madil.DOMAIN =
              Ndseq.mapi_tup_myseq ~depth 0
                (fun is input ->
                  match input, Ndseq.index_list_broadcast vg1 is 0 with
-                 | `GridDimsCols (g,rh,rw,nc), Some (`Grid g1) ->
+                 | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)), Some (`Grid g1) ->
                     (match Grid_patterns.parse_recoloring g g1 with
                      | Some mcol ->
                         let m =
@@ -3709,8 +3689,7 @@ module MyDomain : Madil.DOMAIN =
                             (fun c1 c2 res ->
                               Mymap.add (`Color c1) (`Color c2) res)
                             mcol (Mymap.empty : (value,value) Mymap.t) in
-                        let dom = mymap_keys m in
-                        Myseq.return (`MapDomain (m,dom))
+                        Myseq.return (`VD (`Map m, `MapTyp (COLOR C_OBJ, COLOR C_OBJ)))
                      | None -> Myseq.empty)
                  | _, None -> Myseq.empty
                  | input, Some vg1 ->
@@ -3720,7 +3699,7 @@ module MyDomain : Madil.DOMAIN =
                (tup1 input)
            with Invalid_argument _ -> Myseq.empty in (* dg1 is not guaranteed to have a consistent structure *)
          let* dmap, _ = parse_map in_map in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c ~src [|dmap|], input)
     
       | _, MotifMulti partial, [||], [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
@@ -3730,33 +3709,33 @@ module MyDomain : Madil.DOMAIN =
            let* mot = (* common choice for all items *)
              Myseq.from_list GPat.Motif.candidates_multi in
            Myseq.return
-             (Ndseq.map ~depth 0 (fun _ -> `Motif mot) input) in
+             (Ndseq.map ~depth 0 (fun _ -> `VD (`Motif mot, `MotifTyp MULTI)) input) in
          let* dmot, _ = parse_mot in_mot in
          let* in_core, in_mask_opt, in_noise =
            Ndseq.map_tup_myseq ~name:"parse/Motif/in_res" ~depth (0,0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc), `Motif mot ->
+              | `VD (`Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc)), `Motif mot ->
                  let* _mot, ru, rv, g_core, mask_opt, g_noise =
                    Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
                  assert (Grid.has_valid_size g_core); (* to make sure oversized grids are pruned out *)
                  Myseq.return
-                   (`GridDimsCols (g_core,ru,rv,nc),
+                   (`VD (`Grid g_core, `GridRange ((filling,nocolor), ru, rv, `ColorCount nc)),
                     (match partial, mask_opt with
                      | true, Some mask ->
                         let h, w = Grid.dims mask in (* same as grid and noise *)
                         let rh, rw = Range.make_exact h, Range.make_exact w in (* already encoded in noise *) 
-                        `GridDimsCols (mask,rh,rw,1)
-                     | _ -> `Null), (* TODO: revise handling of optional, ugly *)
-                    `GridDimsCols (g_noise,rh,rw,nc))
+                        `VD (`Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorCount 1))
+                     | _ -> `VD (`Null, `Null)), (* TODO: revise handling of optional, ugly *)
+                    `VD (`Grid g_noise, `GridRange ((`Noise,nocolor), rh, rw, `ColorCount nc)))
               | _ -> assert false)
              (input, Data.value dmot) in
          let* dcore, _ = parse_core in_core in
          let* dmask_opt, _ =
-           if not partial || Ndseq.for_all (fun x -> x <> `Null) in_mask_opt
+           if not partial || Ndseq.for_all (function `VD (`Null, _) -> false | _ -> true) in_mask_opt
            then parse_mask_opt in_mask_opt
            else Myseq.empty in
          let* dnoise, _ = parse_noise in_noise in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          let* dpure = make_motif_multi_dpure ~depth dmot dcore dnoise in
          Myseq.return (Data.make_dpat v c [|dmot; dcore; dpure; dmask_opt; dnoise|], input)
     
@@ -3767,12 +3746,12 @@ module MyDomain : Madil.DOMAIN =
            let* mot = (* common choice for all items *)
              Myseq.from_list GPat.Motif.candidates_bi in
            Myseq.return
-             (Ndseq.map ~depth 0 (fun _ -> `Motif mot) input) in
+             (Ndseq.map ~depth 0 (fun _ -> `VD (`Motif mot, `MotifTyp BI)) input) in
          let* dmot, _ = parse_mot in_mot in
          let* in_bgcolor, in_color, in_mask_opt, in_noise =
            Ndseq.map_tup_myseq ~name:"parse/MotifBi/in_res" ~depth (0,0,0,0)
              (function
-              | `GridDimsCols (g,rh,rw,nc), `Motif mot ->
+              | `VD (`Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc)), `Motif mot ->
                  let* _mot, _ru, _rv, g_core, mask_opt, g_noise =
                    Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
                  assert (Grid.dims g_core = (2,1));
@@ -3780,34 +3759,38 @@ module MyDomain : Madil.DOMAIN =
                  let color = Grid.get_pixel ~source:"parse MotifBi color" g_core 1 0 in
                  let* () = Myseq.from_bool (color <> Grid.transparent) in
                  Myseq.return
-                   (`Color bgcolor,
-                    `Color color,
+                   (`VD (`Color bgcolor, `ColorTyp (C_BG (filling = `Full))),
+                    `VD (`Color color, `ColorTyp C_OBJ),
                     (match partial, mask_opt with
-                     | true, Some mask -> `GridDimsCols (mask,rh,rw,1)
-                     | _ -> `Null), (* TODO: revise handling of optional, ugly *)
-                    `GridDimsCols (g_noise,rh,rw,nc))
+                     | true, Some mask -> `VD (`Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorCount 1))
+                     | _ -> `VD (`Null, `Null)), (* TODO: revise handling of optional, ugly *)
+                    `VD (`Grid g_noise, `GridRange ((`Noise,nocolor), rh, rw, `ColorCount nc)))
               | _ -> assert false)
              (input, Data.value dmot) in
          let* dbgcolor, _ = parse_bgcolor in_bgcolor in
          let* dcolor, _ = parse_color in_color in
          let* dmask_opt, _ =
-           if not partial || Ndseq.for_all (fun x -> x <> `Null) in_mask_opt
+           if not partial || Ndseq.for_all (function `VD (`Null, _) -> false | _ -> true) in_mask_opt
            then parse_mask_opt in_mask_opt
            else Myseq.empty in
          let* dnoise, _ = parse_noise in_noise in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          let* dpure = make_motif_bi_dpure ~depth dmot dbgcolor dcolor dnoise in
          Myseq.return (Data.make_dpat v c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|], input)
     
       | _, Metagrid, [||], [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|] ->
          let v = value_of_input t input in
-         let make_input_dim kl rhw =
-           let r = (* do not use kl to define r *)
+         let make_input_dims k l rh rw =
+           let aux_r rhw = (* do not use kl to define r *)
              match rhw with
              | Range.Closed (a,b) -> Range.make_closed 1 ((b+1) / 2)
-             | Range.Open a -> Range.make_open 1 in
-           assert (Range.mem kl r);
-           `IntRange (kl,r)
+             | Range.Open a -> Range.make_open 1
+           in
+           let rk = aux_r rh in
+           let rl = aux_r rw in
+           assert (Range.mem k rk);
+           assert (Range.mem l rl);
+           `VD (`Vec (k,l), `VecRange (rk,rl))
          and make_input_sizes start stop kl rhw sizes =
            let r, l =
              let init_range = Range.sub rhw (Range.make_exact (start + kl-1 + stop + kl)) in (* minus frontiers, and minus at least 1 for each size *)
@@ -3819,7 +3802,7 @@ module MyDomain : Madil.DOMAIN =
                    | Some b -> Range.make_closed 1 (1+b) in
                  assert (Range.mem hw1 r1);
                  Range.sub r (Range.make_exact (hw1-1)), (* minus excess of current size viz default 1 *)
-                 `IntRange (hw1,r1)::xs)
+                 `VD (`Int hw1, `IntRange r1)::xs)
                sizes (init_range, []) in
            assert (Range.mem 0 r);
            Ndseq.seq 0 l
@@ -3827,7 +3810,7 @@ module MyDomain : Madil.DOMAIN =
          let* in_sepcolor, in_borders, in_dims, in_heights, in_widths, in_gridss =
            Ndseq.map_tup_myseq ~name:"parse/Metagrid/in_res" ~depth (0,0,0,1,1,2)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc)) ->
                  let h, w = Grid.dims g in
                  assert (Range.mem h rh);
                  assert (Range.mem w rw);
@@ -3840,13 +3823,12 @@ module MyDomain : Madil.DOMAIN =
                    offset b.{0,0}, offset b.{0,1},
                    offset b.{1,0}, offset b.{1,1} in
                  Myseq.return
-                   (`Color mg.sepcolor,
-                    `GridDimsCols (mg.borders,
-                                   Range.make_exact 2,
-                                   Range.make_exact 2,
-                                   1),
-                    `Vec (make_input_dim k rh,
-                          make_input_dim l rw),
+                   (`VD (`Color mg.sepcolor, `ColorTyp (C_BG (filling = `Full))),
+                    `VD (`Grid mg.borders, `GridRange ((`Noise,true),
+                                                       Range.make_exact 2,
+                                                       Range.make_exact 2,
+                                                       `ColorCount 1)),
+                    make_input_dims k l rh rw,
                     make_input_sizes top bot k rh mg.part_heights,
                     make_input_sizes left right l rw mg.part_widths,
                     Ndseq.seq 1
@@ -3861,7 +3843,7 @@ module MyDomain : Madil.DOMAIN =
                                         let h1, w1 = Grid.dims g1 in
                                         let rh1 = Range.make_exact h1 in
                                         let rw1 = Range.make_exact w1 in
-                                        `GridDimsCols (g1, rh1, rw1, nc))
+                                        `VD (`Grid g1, `GridRange ((filling,nocolor), rh1, rw1, `ColorCount nc)))
                                       row)))
                             mg.parts)))
               | _ -> assert false)
@@ -3872,7 +3854,7 @@ module MyDomain : Madil.DOMAIN =
          let* dheights, _ = parse_heights in_heights in
          let* dwidths, _ = parse_widths in_widths in
          let* dgridss, _ = parse_gridss in_gridss in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsepcolor; dborders; ddims; dheights; dwidths; dgridss|], input)
 
 (*      | _, Repeat, [|parse_grid; parse_nis; parse_njs|], `GridDimsCols (g,rh,rw,nc) ->
@@ -3925,29 +3907,28 @@ module MyDomain : Madil.DOMAIN =
          let* in_size =
            Ndseq.map_myseq ~depth 0
              (function
-              | `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
+              | `VD (`Grid mask, `GridRange (tmask, rh, rw, `ColorCount nc)) -> (* nc = 1 *)
                  let h, w = Grid.dims mask in
                  if Grid.for_all_pixels pred mask
-                 then Myseq.return (`Vec (`IntRange (h, rh),
-                                          `IntRange (w, rw)))
+                 then Myseq.return (`VD (`Vec (h,w), `VecRange (rh,rw)))
                  else Myseq.empty
               | _ -> assert false)
              input in
          let* dsize, _ = parse_size in_size in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsize|], input)
 
       | _, Point, [||], [||] ->
          let v = value_of_input t input in
          if Ndseq.for_all ~depth
               (function
-               | `GridDimsCols (mask,rh,rw,nc) -> (* nc=1 *)
+               | `VD (`Grid mask, `GridRange (tmask, rh, rw, `ColorCount nc)) -> (* nc=1 *)
                   let h, w = Grid.dims mask in
                   h=1 && w=1 && Grid.Mask.mem 0 0 mask
                | _ -> assert false)
               input
          then
-           let input = Ndseq.const `Null input in
+           let input = Ndseq.const input_null input in
            Myseq.return (Data.make_dpat v c [||], input)
          else Myseq.empty
     
@@ -3956,19 +3937,18 @@ module MyDomain : Madil.DOMAIN =
          let* in_len, in_dir =
            Ndseq.map_tup_myseq ~name:"parse/Line/in_res" ~depth (0,0)
              (function
-              | `GridDimsCols (mask,rh,rw,nc) -> (* nc = 1 *)
+              | `VD (`Grid mask, `GridRange (tmask, rh, rw, `ColorCount nc)) -> (* nc = 1 *)
                  (match GPat.parse_line mask with
                   | Some (len, (di,dj)) ->
                      Myseq.return
-                       (`IntRange (len, Range.union rh rw),
-                        `Vec (`IntRange (di, Range.make_closed 0 1),
-                              `IntRange (dj, Range.make_closed (-1) 1)))
+                       (`VD (`Int len, `IntRange (Range.union rh rw)),
+                        `VD (`Vec (di,dj), `VecRange (Range.make_closed 0 1, Range.make_closed (-1) 1)))
                   | None -> Myseq.empty)
               | _ -> assert false)
              (tup1 input) in
          let* dlen, _ = parse_len in_len in
          let* ddir, _ = parse_dir in_dir in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dlen; ddir|], input)
 
       | _, ColorSeq dir, [||], [|parse_size; parse_colors|] ->
@@ -3976,28 +3956,28 @@ module MyDomain : Madil.DOMAIN =
          let* in_size, in_colors =
            Ndseq.map_tup_myseq ~name:"parse/ColorSeq/in_res" ~depth (0,1)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
                  let h, w = Grid.dims g in
                  (match dir with
                   | `H ->
                      let* () = Myseq.from_bool (h = 1) in
                      Myseq.return
-                       (`IntRange (w, rw),
+                       (`VD (`Int w, `IntRange rw),
                         Ndseq.seq 0
                           (List.init w (fun j ->
-                               `Color (Grid.get_pixel g 0 j))))
+                               `VD (`Color (Grid.get_pixel g 0 j), `ColorTyp C_OBJ))))
                   | `V ->
                      let* () = Myseq.from_bool (w = 1) in
                      Myseq.return
-                       (`IntRange (h, rh),
+                       (`VD (`Int h, `IntRange rh),
                         Ndseq.seq 0
                           (List.init h (fun i ->
-                               `Color (Grid.get_pixel g i 0)))))
+                               `VD (`Color (Grid.get_pixel g i 0), `ColorTyp C_OBJ)))))
               | _ -> assert false)
              (tup1 input) in
          let* dsize, _ = parse_size in_size in
          let* dcolors, _ = parse_colors in_colors in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsize; dcolors|], input)
     
       | _, ColorMat, [||], [|parse_size; parse_colorss|] ->
@@ -4005,39 +3985,42 @@ module MyDomain : Madil.DOMAIN =
          let* in_size, in_colorss =
            Ndseq.map_tup_myseq ~name:"parse/ColorMat/in_res" ~depth (0,2)
              (function
-              | `GridDimsCols (g,rh,rw,nc) ->
+              | `VD (`Grid g, `GridRange (tg, rh, rw, `ColorCount nc)) ->
                  let h, w = Grid.dims g in
                  (* XX let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in *)
                  Myseq.return
-                   (`Vec (`IntRange (h, rh), (* XX Range.inter rh (Range.make_closed 2 3)), *)
-                          `IntRange (w, rw)), (* XX Range.inter rw (Range.make_closed 2 3))), *)
+                   (`VD (`Vec (h,w), `VecRange (rh,rw)),
                     Ndseq.seq 1
                       (List.init h (fun i ->
                            Ndseq.seq 0
                              (List.init w (fun j ->
-                                  `Color (Grid.get_pixel g i j))))))
+                                  `VD (`Color (Grid.get_pixel g i j), `ColorTyp C_OBJ))))))
               | _ -> assert false)
              (tup1 input) in
          let* dsize, _ = parse_size in_size in
          let* dcolorss, _ = parse_colorss in_colorss in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dsize; dcolorss|], input)
 
-      | _, MakeGrid, [||], [|parse_grid|] ->
+      | COLOR tc, MakeGrid, [||], [|parse_grid|] ->
          let v = value_of_input t input in
          let depth = Ndseq.depth input in
          let* in_grid =
            Ndseq.map_myseq ~depth:(depth - 2) (-2)
              (fun input ->
                let* g = Myseq.from_result (make_grid_from_color_seq_seq (value_of_input t input)) in
+               let filling =
+                 match tc with
+                 | C_OBJ | C_BG true -> `Full
+                 | C_BG false -> `Sprite in
                let h, w = Grid.dims g in
                let rh = Range.make_exact h in (* grid dims known from above, patterns introducing color seq seq *)
                let rw = Range.make_exact w in
                let nc = Grid.nb_color in (* TODO: add nc info in input Col *)
-               Myseq.return (`GridDimsCols (g,rh,rw,nc)))    
+               Myseq.return (`VD (`Grid g, `GridRange ((filling,false), rh, rw, `ColorCount nc))))
              input in
          let* dgrid, _ = parse_grid in_grid in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c [|dgrid|], input)
 
       | _, SeqCons dep, [||], [|parse_hd; parse_tl|] ->
@@ -4096,11 +4079,11 @@ module MyDomain : Madil.DOMAIN =
                     let lint =
                       List.map
                         (function
-                         | `IntRange (x,_) -> x
+                         | `VD (`Int x, `IntRange _) -> x
                          | _ -> assert false)
                         l in
                     (match l with
-                     | `IntRange (x0,r0)::`IntRange (x1,r1)::_ ->
+                     | `VD (`Int x0, `IntRange r0)::`VD (`Int x1, `IntRange r1)::_ ->
                         let step = x1 - x0 in
                         let* () = Myseq.from_bool (lint = List.mapi (fun i _ -> x0 + i * step) l) in
                         let* range_step = (* TODO: ambiguity with ranges including negative values and Range.sub *)
@@ -4110,15 +4093,15 @@ module MyDomain : Madil.DOMAIN =
                           | Range.Closed (a0,b0), Range.Open a1 ->
                              Myseq.return (Range.Open (a1 - b0))
                           | Range.Open a0, _ -> Myseq.empty in
-                        Myseq.return (`IntRange (x0, r0),
-                                      `IntRange (step, range_step))
+                        Myseq.return (`VD (`Int x0, `IntRange r0),
+                                      `VD (`Int step, `IntRange range_step))
                      | _ -> Myseq.empty)
                  | _ -> assert false)
                (tup1 input) in
            let* dstart, _ = parse_start in_start in
            let* dstep, _ = parse_step in_step in
            let v = value_of_input t input in
-           let input = Ndseq.const `Null input in
+           let input = Ndseq.const input_null input in
            Myseq.return (Data.make_dpat v c [|dstart; dstep|], input)
          else parseur_any t input
 
@@ -4144,12 +4127,12 @@ module MyDomain : Madil.DOMAIN =
                     let n = List.length l in
                     let range = Range.make_closed 0 (n-1) in
                     let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
-                    aux (`IntRange (i, range) :: rev_path) d vi
+                    aux (`VD (`Int i, `IntRange range) :: rev_path) d vi
                | None -> assert false
            in
            aux [] depth_seq vseq in
          let* dindex, _ = parse_index in_index in
-         let input = Ndseq.const `Null input in
+         let input = Ndseq.const input_null input in
          Myseq.return (Data.make_dpat v c ~src [|dindex|], input)
 
       | _, SeqIndexOf kvalue, [|vseq|], [|parse_value|] ->
@@ -4170,7 +4153,7 @@ module MyDomain : Madil.DOMAIN =
              let tvalue = scalar kvalue in
              let in_value = input_of_value tvalue value in
              let* dvalue, _ = parse_value in_value in
-             let input = Ndseq.const `Null input in
+             let input = Ndseq.const input_null input in
              Myseq.return (Data.make_dpat v c ~src [|dvalue|], input)
           | None -> Myseq.empty)
 
@@ -4201,8 +4184,8 @@ module MyDomain : Madil.DOMAIN =
            then Mdl.Code.usage (0.090 /. float nbcolor)
            else invalid_arg ("dl_background_color: Unexpected color: " ^ Grid.name_of_color c)
 
-    let dl_seg (seg : GPat.Objects.segmentation) : dl =
-      Mdl.Code.uniform GPat.Objects.nb_candidate_segmentations_connected
+    let dl_seg (seg : GPat.Objects.segmentation) (lseg : GPat.Objects.segmentation list) : dl =
+      Mdl.Code.uniform (List.length lseg)
 
     let dl_order (order : GPat.Objects.order) lorder : dl =
       Mdl.Code.uniform (List.length lorder)
@@ -4269,7 +4252,7 @@ module MyDomain : Madil.DOMAIN =
          dl_value_scalar (INT (COORD (I,tv))) (`Int i)
          +. dl_value_scalar (INT (COORD (J,tv))) (`Int j)
       | COLOR tc, `Color c -> dl_color c tc
-      | SEG, `Seg seg -> dl_seg seg
+      | SEG, `Seg seg -> dl_seg seg GPat.Objects.candidate_segmentations_connected
       | ORDER nocolor, `Order order ->
          dl_order order (GPat.Objects.candidate_orders 2 nocolor)
       | MOTIF tmot, `Motif m -> dl_motif tmot m
@@ -4285,19 +4268,33 @@ module MyDomain : Madil.DOMAIN =
       | _ -> pp xp_value v; assert false
 
     let encoding_dany vr =
-      let rec aux = function
-        | `IntRange (ij,range) -> Range.dl ij range
-        | `VecRange (i,j,ri,rj) -> Range.dl i ri +. Range.dl j rj
-        | `ColorTyp (c,tc) -> dl_color c tc
-        | `Seg seg -> dl_seg seg
-        | `OrderRange (order,lorder) -> dl_order order lorder
-        | `MotifTyp (m,tm) -> dl_motif tm m
-        | `GridRange (g,tg,rh,rw,nc) -> dl_grid g tg rh rw nc
-        | `Obj (pos,g1) -> aux pos +. aux g1
-        | `MapTyp (m,ka,kb) -> dl_map (dl_value_scalar ka) (dl_value_scalar kb) m
-        | _ -> assert false
+      let rec aux v r =
+        match v, r with
+        | `Int ij, `IntRange range -> Range.dl ij range
+        | `Vec (i,j), `VecRange (ri,rj) -> Range.dl i ri +. Range.dl j rj
+        | `Color c, `ColorTyp tc -> dl_color c tc
+        | `Seg seg, `SegRange lseg -> dl_seg seg lseg
+        | `Order order, `OrderRange lorder -> dl_order order lorder
+        | `Motif m, `MotifTyp tm -> dl_motif tm m
+        | `Grid g, `GridRange (tg, rh, rw, rc) ->
+           let nc =
+             match rc with
+             | `ColorCount nc -> nc
+             | `ColorRange lc -> List.length lc
+             | _ -> assert false in
+           dl_grid g tg rh rw nc
+        | `Obj (pos,g1), `ObjRange (rpos,rg1) -> aux pos rpos +. aux g1 rg1
+        | `Map m, `MapTyp (ka,kb) -> dl_map (dl_value_scalar ka) (dl_value_scalar kb) m
+        | _ ->
+           pp_endline xp_value v;
+           assert false (* TODO: cover other distributions *)
       in
-      Ndseq.fold_left (fun dl vr -> dl +. aux vr) 0. vr
+      Ndseq.fold_left
+        (fun dl vr ->
+          match vr with
+          | `VD (v,r) -> dl +. aux v r
+          | _ -> assert false)
+        0. vr
     
     let encoding_dpat dc vsrc encs =
       match dc, encs with
@@ -6149,7 +6146,10 @@ module MyDomain : Madil.DOMAIN =
       let xo, varseq = Refining.new_var varseq in
       let input_model = Model.make_def xi (Model.make_any (scalar (GRID (`Full,false)))) in
       let output_model = Model.make_def xo (Model.make_any (scalar (GRID (`Full,false)))) in
-      let output_generator_info = `Grid ((1,Grid.max_size),(1,Grid.max_size),Grid.all_colors) in
+      let output_generator_info = `GridRange ((`Full,false),
+                                              Range.Closed (1,Grid.max_size),
+                                              Range.Closed (1,Grid.max_size),
+                                              `ColorRange Grid.all_colors) in
       { varseq;
         input_model;
         output_model;
