@@ -204,7 +204,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `IntRange of Range.t
       | `VecRange of Range.t * Range.t
       | `ColorTyp of typ_color
-      | `ColorCount of int
       | `ColorRange of Grid.color list
       | `MotifTyp of typ_motif
       | `MotifRange of GPat.Motif.t list
@@ -224,7 +223,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string ","; print#string (Range.to_string rj);
          print#string ")"
       | `ColorTyp tc -> xp_typ_kind ~html print (COLOR tc)
-      | `ColorCount nc -> print#string "COLOR x "; print#int nc
       | `ColorRange lc -> xp_list Grid.xp_color ~html print lc
       | `MotifTyp tmot -> xp_typ_kind ~html print (MOTIF tmot)
       | `MotifRange lmot -> xp_list GPat.Motif.xp ~html print lmot
@@ -2339,7 +2337,6 @@ module MyDomain : Madil.DOMAIN =
                                (Range.Closed (minh,maxh) as range_h),
                                (Range.Closed (minw,maxw) as range_w),
                                `ColorRange lc) ->
-           let nc = List.length lc in
            let* lhwc = Myseq.product_fair
                          [Myseq.range minh maxh;
                           Myseq.range minw maxw;
@@ -2347,7 +2344,7 @@ module MyDomain : Madil.DOMAIN =
            (match lhwc with
             | [h; w; c] ->
                let g = Grid.make h w c in
-               Myseq.return (`Grid g, `GridRange (tg, range_h, range_w, `ColorCount nc))
+               Myseq.return (`Grid g, `GridRange (tg, range_h, range_w, `ColorRange lc))
             | _ -> assert false)
         | OBJ tg, `ObjRange (rpos,rg1) ->
            let* vpos, rpos = aux (VEC POS) rpos in
@@ -3276,15 +3273,15 @@ module MyDomain : Madil.DOMAIN =
           | GRID (filling,nocolor as tg), `Grid g ->
              let rh = Range.make_open 1 in
              let rw = Range.make_open 1 in
-             let nc = if nocolor then 1 else Grid.nb_color in
-             `GridRange (tg, rh, rw, `ColorCount nc)
+             let lc = if nocolor then [Grid.one] else Grid.all_colors in
+             `GridRange (tg, rh, rw, `ColorRange lc)
           | OBJ (filling,nocolor as tg), `Obj (`Vec (i,j), `Grid g) ->
              let rh = Range.make_open 1 in
              let rw = Range.make_open 1 in
-             let nc = if nocolor then 1 else Grid.nb_color in
+             let lc = if nocolor then [Grid.one] else Grid.all_colors in
              `ObjRange (`VecRange (Range.make_closed 0 Grid.max_size,
                                    Range.make_closed 0 Grid.max_size),
-                        `GridRange (tg, rh, rw, `ColorCount nc))
+                        `GridRange (tg, rh, rw, `ColorRange lc))
           | MAP (ka,kb), `Map m -> `MapTyp (ka,kb)
           | _ -> assert false)
         v
@@ -3414,15 +3411,16 @@ module MyDomain : Madil.DOMAIN =
          let* col, r_col, g1, r_g1 =
            Ndseq.map_tup_myseq ~name:"parse/BgColor/in_col_g1" ~depth (0,0,0,0)
              (function
-              | `Grid g, `GridRange (tg, rh, rw, `ColorCount nc) ->
+              | `Grid g, `GridRange (tg, rh, rw, `ColorRange lc) ->
                  if Grid.is_full g
                  then
                    let tg1 = (`Sprite,nocolor) in
                    let* bc = Myseq.from_list (Segment.background_colors g) in
                    let* g1 = Myseq.from_result (Grid.Transf.swap_colors g bc Grid.transparent) in
-                   let nc1 = if nc > 1 && g.Grid.color_count.(bc) > 0 then nc-1 else nc in
+                   let lc1 = list_remove bc lc in
+                   (* REM let nc1 = if nc > 1 && g.Grid.color_count.(bc) > 0 then nc-1 else nc in *)
                    Myseq.return (`Color bc, `ColorTyp (C_BG (filling = `Full)),
-                                 `Grid g1, `GridRange (tg1, rh, rw, `ColorCount nc1))
+                                 `Grid g1, `GridRange (tg1, rh, rw, `ColorRange lc1))
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
@@ -3511,10 +3509,10 @@ module MyDomain : Madil.DOMAIN =
          let* card, r_card, objs, r_objs, noise, r_noise =
            Ndseq.map_tup_myseq ~name:"parse/Objects/in_objs" ~depth (0,0,1,1,0,0)
              (function
-              | `Grid g, `GridRange (tg, rh, rw, `ColorCount nc),
+              | `Grid g, `GridRange (tg, rh, rw, `ColorRange lc),
                 `Seg seg, `Order order, `Vec (h,w) ->
                  let tg1 = (`Sprite,nocolor) in
-                 let nc1 = nc in
+                 let lc1 = lc in
                  (* PB: not robust segmentation choice, and makes monocolor non-compresive
                    match seg with
                    | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
@@ -3551,10 +3549,10 @@ module MyDomain : Madil.DOMAIN =
                                       `GridRange (tg1,
                                                   Range.make_closed 1 h, (* (h-i), *)
                                                   Range.make_closed 1 w, (* (w-j), *)
-                                                  `ColorCount nc1)))
+                                                  `ColorRange lc1)))
                          objs),
 
-                    `Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, `ColorCount nc))
+                    `Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, `ColorRange lc))
               (* TODO: remove size, as included in noise, like for Motif? *)
               | _ -> assert false)
              (v, r, Data.value dseg, Data.value dorder, Data.value dsize) in
@@ -3568,8 +3566,9 @@ module MyDomain : Madil.DOMAIN =
          let* size, r_size, ncol, r_ncol, colors, r_colors, masks, r_masks =
            Ndseq.map_tup_myseq ~depth (0,0,0,0,1,1,1,1)
              (function
-              | `Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorCount nc) ->
+              | `Grid g, `GridRange ((filling,nocolor), rh, rw, `ColorRange lc) ->
                  let h, w = Grid.dims g in
+                 let nc = List.length lc in
                  let layers = Grid_patterns.partition_by_color g in
                  let ncol = List.length layers in
                  let* () = Myseq.from_bool (ncol > 0) in
@@ -3594,7 +3593,7 @@ module MyDomain : Madil.DOMAIN =
                     Ndseq.seq 0 (List.map (fun (c,m) -> `ColorTyp C_OBJ) layers),
 
                     Ndseq.seq 0 (List.map (fun (c,m) -> `Grid m) layers),
-                    Ndseq.seq 0 (List.map (fun (c,m) -> `GridRange (tm, Range.make_exact h, Range.make_exact w, `ColorCount 1)) layers))
+                    Ndseq.seq 0 (List.map (fun (c,m) -> `GridRange (tm, Range.make_exact h, Range.make_exact w, `ColorRange [c])) layers))
               | _ -> assert false)
              (v,r) in
          let* dsize = parse_size size r_size in
@@ -3613,7 +3612,7 @@ module MyDomain : Madil.DOMAIN =
                    let* c = Myseq.from_result (Grid.majority_color Grid.transparent g) in
                    let* mask = Myseq.from_result (Grid.Transf.swap_colors g c Grid.one) in
                    Myseq.return (`Color c, `ColorTyp C_OBJ,
-                                 `Grid mask, `GridRange ((filling,true), rh, rw, `ColorCount 1))
+                                 `Grid mask, `GridRange ((filling,true), rh, rw, `ColorRange [c]))
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
@@ -3670,7 +3669,7 @@ module MyDomain : Madil.DOMAIN =
                    | true, Some mask ->
                       let h, w = Grid.dims mask in (* same as grid and noise *)
                       let rh, rw = Range.make_exact h, Range.make_exact w in (* already encoded in noise *) 
-                      `Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorCount 1)
+                      `Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorRange [Grid.one])
                    | _ -> `Null, `Null in (* TODO: revise handling of optional, ugly *)
                  Myseq.return
                    (`Grid g_core, `GridRange ((filling,nocolor), ru, rv, rc),
@@ -3708,7 +3707,7 @@ module MyDomain : Madil.DOMAIN =
                  let* () = Myseq.from_bool (color <> Grid.transparent) in
                  let mask_opt, r_mask_opt =
                    match partial, mask_opt with
-                   | true, Some mask -> `Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorCount 1)
+                   | true, Some mask -> `Grid mask, `GridRange ((`Sprite,true), rh, rw, `ColorRange [Grid.one])
                    | _ -> `Null, `Null in (* TODO: revise handling of optional, ugly *)
                  Myseq.return
                    (`Color bgcolor, `ColorTyp (C_BG (filling = `Full)),
@@ -3792,7 +3791,7 @@ module MyDomain : Madil.DOMAIN =
                     `Grid mg.borders, `GridRange ((`Noise,true),
                                                   Range.make_exact 2,
                                                   Range.make_exact 2,
-                                                  `ColorCount 1),
+                                                  `ColorRange [Grid.one]),
                     dims, r_dims,
                     heights, r_heights,
                     widths, r_widths,
@@ -3974,8 +3973,8 @@ module MyDomain : Madil.DOMAIN =
                let h, w = Grid.dims g in
                let rh = Range.make_exact h in (* grid dims known from above, patterns introducing color seq seq *)
                let rw = Range.make_exact w in
-               let nc = Grid.nb_color in (* TODO: add nc info in input Col *)
-               Myseq.return (`Grid g, `GridRange ((filling,false), rh, rw, `ColorCount nc)))
+               let lc = Grid.all_colors in
+               Myseq.return (`Grid g, `GridRange ((filling,false), rh, rw, `ColorRange lc)))
              (v,r) in
          let* dgrid = parse_grid grid r_grid in
          Myseq.return (Data.make_dpat v r c [|dgrid|])
@@ -4229,7 +4228,6 @@ module MyDomain : Madil.DOMAIN =
         | `Grid g, `GridRange (tg, rh, rw, rc) ->
            let nc =
              match rc with
-             | `ColorCount nc -> nc
              | `ColorRange lc -> List.length lc
              | _ -> assert false in
            dl_grid g tg rh rw nc
