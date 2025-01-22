@@ -205,7 +205,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `VecRange of Range.t * Range.t
       | `ColorTyp of typ_color (* used for color data *)
       | `ColorRange of Grid.color list (* used in GridRange *)
-      | `MotifTyp of typ_motif
       | `MotifRange of GPat.Motif.t list
       | `SegRange of GPat.Objects.segmentation list
       | `OrderRange of GPat.Objects.order list
@@ -223,7 +222,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string ")"
       | `ColorTyp tc -> xp_typ_kind ~html print (COLOR tc)
       | `ColorRange lc -> xp_list Grid.xp_color ~html print lc
-      | `MotifTyp tmot -> xp_typ_kind ~html print (MOTIF tmot)
       | `MotifRange lmot -> xp_list GPat.Motif.xp ~html print lmot
       | `SegRange lseg -> xp_list GPat.Objects.xp_segmentation ~html print lseg
       | `OrderRange lorder -> xp_list GPat.Objects.xp_order ~html print lorder
@@ -2308,16 +2306,9 @@ module MyDomain : Madil.DOMAIN =
         | ORDER nocolor, `OrderRange lorder ->
            let* order = Myseq.from_list lorder in
            Myseq.return (`Order order, r)
-        | MOTIF _, `MotifTyp tmot ->
-           let lmot =
-             match tmot with
-             | MULTI -> GPat.Motif.candidates_multi
-             | BI -> GPat.Motif.candidates_bi in
+        | MOTIF _, `MotifRange lmot ->
            let* mot = Myseq.from_list lmot in
            Myseq.return (`Motif mot, r)               
-        | MOTIF tmot, `MotifRange lmot ->
-           let* mot = Myseq.from_list lmot in
-           Myseq.return (`Motif mot, `MotifTyp tmot)
         | GRID tg, `GridRange (_,
                                (Range.Closed (minh,maxh) as range_h),
                                (Range.Closed (minw,maxw) as range_w),
@@ -2696,7 +2687,7 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map_tup ~depth (0,0)
              (function
               | `GridRange ((filling,nocolor), rh, rw, rc) ->
-                 `MotifTyp MULTI,
+                 `MotifRange GPat.Motif.candidates_multi,
                  `GridRange ((`Noise,nocolor), rh, rw, `ColorRange [Grid.transparent])
               | _ -> assert false)
              (tup1 r) in
@@ -2755,7 +2746,7 @@ module MyDomain : Madil.DOMAIN =
                  if maxh >= 3 && maxw >= 3 (* bicolor motifs have size at least 3x3 *)
                  then
                    Myseq.return
-                     (`MotifTyp BI,
+                     (`MotifRange GPat.Motif.candidates_bi,
                       `GridRange ((`Noise,nocolor),
                                   Range.Closed (max 3 minh, maxh),
                                   Range.Closed (max 3 minw, maxw),
@@ -3560,7 +3551,7 @@ module MyDomain : Madil.DOMAIN =
              Myseq.from_list GPat.Motif.candidates_multi in
            Myseq.return
              (Ndseq.map ~depth 0 (fun _ -> `Motif mot) v,
-              Ndseq.map ~depth 0 (fun _ -> `MotifTyp MULTI) v) in
+              Ndseq.map ~depth 0 (fun _ -> `MotifRange GPat.Motif.candidates_multi) v) in
          let* dmot = parse_mot mot r_mot in
          let* core, r_core, mask_opt, r_mask_opt, noise, r_noise =
            Ndseq.map_tup_myseq ~name:"parse/Motif/in_res" ~depth (0,0,0,0,0,0)
@@ -3598,7 +3589,7 @@ module MyDomain : Madil.DOMAIN =
              Myseq.from_list GPat.Motif.candidates_bi in
            Myseq.return
              (Ndseq.map ~depth 0 (fun _ -> `Motif mot) v,
-              Ndseq.map ~depth 0 (fun _ -> `MotifTyp BI) v) in
+              Ndseq.map ~depth 0 (fun _ -> `MotifRange GPat.Motif.candidates_bi) v) in
          let* dmot = parse_mot mot r_mot in
          let* bgcolor, r_bgcolor, color, r_color, mask_opt, r_mask_opt, noise, r_noise =
            Ndseq.map_tup_myseq ~name:"parse/MotifBi/in_res" ~depth (0,0,0,0,0,0,0,0)
@@ -4024,12 +4015,17 @@ module MyDomain : Madil.DOMAIN =
     let dl_order (order : GPat.Objects.order) lorder : dl =
       Mdl.Code.uniform (List.length lorder)
          
-    let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
+(* REM    let dl_motif (tmot : typ_motif) (m : GPat.Motif.t) : dl =
       match tmot with
       | MULTI ->
          (* Mdl.Code.uniform GPat.Motif.nb_candidates_multi *)
          Mdl.Code.usage (GPat.Motif.prob_multi m)
-      | BI -> Mdl.Code.uniform GPat.Motif.nb_candidates_bi
+         | BI -> Mdl.Code.uniform GPat.Motif.nb_candidates_bi *)
+
+    let dl_motif (m : GPat.Motif.t) (lm : GPat.Motif.t list) : dl =
+      let sum = List.fold_left (fun res m -> res +. GPat.Motif.weight m) 0. lm in
+      let prob = GPat.Motif.weight m /. sum in
+      Mdl.Code.usage prob    
          
     let dl_grid g (filling,nocolor) rh rw nc : dl = (* too efficient a coding for being useful? *)
       (* nc is nb of colors, not including transparent or undefined, nocolor implies nc=1 *)
@@ -4089,7 +4085,12 @@ module MyDomain : Madil.DOMAIN =
       | SEG, `Seg seg -> dl_seg seg GPat.Objects.candidate_segmentations_connected
       | ORDER nocolor, `Order order ->
          dl_order order (GPat.Objects.candidate_orders 2 nocolor)
-      | MOTIF tmot, `Motif m -> dl_motif tmot m
+      | MOTIF tmot, `Motif m ->
+         let lm =
+           match tmot with
+           | MULTI -> GPat.Motif.candidates_multi
+           | BI -> GPat.Motif.candidates_bi in
+         dl_motif m lm
       | GRID tg, `Grid g ->
          let rmax = Range.make_closed 1 Grid.max_size in
          dl_grid g tg rmax rmax Grid.nb_color
@@ -4109,7 +4110,7 @@ module MyDomain : Madil.DOMAIN =
         | `Color c, `ColorTyp tc -> dl_color c tc
         | `Seg seg, `SegRange lseg -> dl_seg seg lseg
         | `Order order, `OrderRange lorder -> dl_order order lorder
-        | `Motif m, `MotifTyp tm -> dl_motif tm m
+        | `Motif m, `MotifRange lm -> dl_motif m lm
         | `Grid g, `GridRange (tg, rh, rw, rc) ->
            let nc =
              match rc with

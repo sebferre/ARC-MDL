@@ -958,7 +958,12 @@ let candidates_multi = (* multicolor motifs *)
 let nb_candidates_multi = List.length candidates_multi
 let nb_affine_params = 3
 
-let prob_multi : t -> float = function
+let candidates_bi = (* bicolor shape-like motifs *)
+  let open Grid.Transf in
+  [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
+let nb_candidates_bi = List.length candidates_bi
+
+let weight : t -> float = function
   | Scale -> 0.3
 
   (* 0.3 *)
@@ -993,12 +998,7 @@ let prob_multi : t -> float = function
       | _ -> assert false)
   | Affine (a,b) ->
      0.2 /. float nb_affine_params
-  | _ -> assert false
-
-let candidates_bi = (* bicolor shape-like motifs *)
-  let open Grid.Transf in
-  [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
-let nb_candidates_bi = List.length candidates_bi
+  | Border | Corners | CrossPlus | CrossTimes | Diamond | Star -> 0.1
 
 
 let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
