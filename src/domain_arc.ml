@@ -203,15 +203,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       [ `Null (* the null value *)
       | `IntRange of Range.t
       | `VecRange of Range.t * Range.t
-      | `ColorTyp of typ_color
-      | `ColorRange of Grid.color list
+      | `ColorTyp of typ_color (* used for color data *)
+      | `ColorRange of Grid.color list (* used in GridRange *)
       | `MotifTyp of typ_motif
       | `MotifRange of GPat.Motif.t list
       | `SegRange of GPat.Objects.segmentation list
       | `OrderRange of GPat.Objects.order list
       | `GridRange of typ_grid * Range.t * Range.t * distrib (* height, width, colors *) (* TODO: consider removing typ_grid *)
       | `ObjRange of distrib * distrib (* pos, grid *)
-      | `MapTyp of typ_kind * typ_kind (* domain, range - assuming domain known from context *) (* TODO: missing range constraints *)
       | `MapRange of distrib * distrib (* src, dst *)
       | distrib Ndseq.seq ]
 
@@ -237,7 +236,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "OBJ(pos ~ "; xp_distrib ~html print rpos;
          print#string ", grid ~ "; xp_distrib ~html print rg1;
          print#string ")"
-      | `MapTyp (ka,kb) -> xp_typ_kind ~html print (MAP (ka,kb))
       | `MapRange (ra,rb) ->
          print#string "MAP(src ~ "; xp_distrib ~html print ra;
          print#string ", dst ~ "; xp_distrib ~html print rb;
@@ -2349,10 +2347,12 @@ module MyDomain : Madil.DOMAIN =
         | OBJ tg, `ObjRange (rpos,rg1) ->
            let* vpos, rpos = aux (VEC POS) rpos in
            let* vg1, rg1 = aux (GRID tg) rg1 in
-           Myseq.return (`Obj (vpos,vg1), `ObjRange (rpos, rg1))
+           Myseq.return (`Obj (vpos,vg1), r)
         | MAP (ka,kb), `MapRange (ra, rb) ->
-           let m = Mymap.empty in (* TODO: use ra, rb ? *)
-           Myseq.return (`Map m, `MapTyp (ka,kb)) (* empty map = identity map *)
+           let* a, ra = aux ka ra in
+           let* b, rb = aux kb rb in
+           let m = Mymap.singleton a b in
+           Myseq.return (`Map m, r) (* empty map = identity map *)
         | _ -> assert false
       in
       let k = t.kind in
@@ -3241,7 +3241,7 @@ module MyDomain : Madil.DOMAIN =
     
     (* model-based parsing *)
            
-    let distrib_of_value (t : typ) (v : value) : distrib = (* TODO: avoid its usage *)
+    let rec distrib_of_value (t : typ) (v : value) : distrib = (* TODO: avoid its usage *)
       assert (Ndseq.depth v = t.ndim);
       Ndseq.map 0
         (fun v ->
@@ -3282,17 +3282,15 @@ module MyDomain : Madil.DOMAIN =
              `ObjRange (`VecRange (Range.make_closed 0 Grid.max_size,
                                    Range.make_closed 0 Grid.max_size),
                         `GridRange (tg, rh, rw, `ColorRange lc))
-          | MAP (ka,kb), `Map m -> `MapTyp (ka,kb)
+          | MAP (ka,kb), `Map m ->
+             (match Mymap.min_binding_opt m with
+              | None -> assert false
+              | Some (a,b) ->
+                 let ra = distrib_of_value (scalar ka) a in
+                 let rb = distrib_of_value (scalar kb) b in
+                 `MapRange (ra,rb))              
           | _ -> assert false)
         v
-
-(* REM    let value_of_input t (input : input) : value =
-      Ndseq.map 0
-        (fun input ->
-          match input with
-          | `VD (v,_) -> v
-          | _ -> assert false)
-        input *)
 
     let parseur_value (v0 : value) (v : value) (r : distrib) =
       let* v' =
@@ -3352,19 +3350,18 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v r c [|dpos; dg1|])
 
       | MAP (ka,kb), DomMap keys, [||], [|parse_vals|] ->
-         let tb = scalar kb in (* only atomic values in maps *)
          let* vals, r_vals =
            Ndseq.map_tup_myseq ~depth (1,1)
              (function
-              | `Map m, _ -> (* TODO: use MapRange *)
+              | `Map m, `MapRange (ra,rb) ->
                  let pairs = Mymap.bindings m in
                  let m_keys = List.map fst pairs in
                  if m_keys = keys
                  then
                    let vals = List.map snd pairs in
-                   Myseq.return (* TODO: replace 0 by values-dependent expr *)
+                   Myseq.return (* TODO: replace 0 by values-dependent expr ? if seqs in vals *)
                      (Ndseq.seq 0 vals,
-                      Ndseq.seq 0 (List.map (distrib_of_value tb) vals))
+                      Ndseq.seq 0 (List.map (fun _ -> rb) vals))
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
@@ -3372,16 +3369,15 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v r c [|dvals|])
     
       | MAP (ka,kb), Replace, [||], [|parse_a; parse_b|] when ka=kb ->
-         let ta = scalar ka in
          let* a, r_a, b, r_b =
            Ndseq.map_tup_myseq ~name:"parse/Repalce/in_a_b" ~depth (0,0,0,0)
              (function
-              | `Map m, _ -> (* TODO: use MapRange *)
+              | `Map m, `MapRange (ra,rb) ->
                  let m_diff = Mymap.filter (fun a b -> a <> b) m in
                  (match Mymap.bindings m_diff with
                   | [a, b] ->
-                     Myseq.return (a, distrib_of_value ta a,
-                                   b, distrib_of_value ta b)
+                     Myseq.return (a, ra,
+                                   b, rb)
                   | _ -> Myseq.empty)
               | _ -> assert false)
              (v,r) in
@@ -3390,16 +3386,15 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (Data.make_dpat v r c [|da; db|])
     
       | MAP (ka,kb), Swap, [||], [|parse_a; parse_b|] when ka=kb ->
-         let ta = scalar ka in
          let* a, r_a, b, r_b =
            Ndseq.map_tup_myseq ~name:"parse/Swap/in_a_b" ~depth (0,0,0,0)
              (function
-              | `Map m, _ -> (* TODO: use MapRange *)
+              | `Map m, `MapRange (ra,rb) ->
                  let m_diff = Mymap.filter (fun a b -> a <> b) m in
                  (match Mymap.bindings m_diff with
                   | [a, b; c, d] when a=d && b=c ->
-                     Myseq.return (a, distrib_of_value ta a,
-                                   b, distrib_of_value ta b)
+                     Myseq.return (a, ra,
+                                   b, rb)
                   | _ -> Myseq.empty)
               | _ -> assert false)
              (v,r) in
@@ -3635,7 +3630,7 @@ module MyDomain : Madil.DOMAIN =
                             (fun c1 c2 res ->
                               Mymap.add (`Color c1) (`Color c2) res)
                             mcol (Mymap.empty : (value,value) Mymap.t) in
-                        Myseq.return (`Map m, `MapTyp (COLOR C_OBJ, COLOR C_OBJ))
+                        Myseq.return (`Map m, `MapRange (rc, rc))
                      | None -> Myseq.empty)
                  | _, _, None -> Myseq.empty
                  | _, _, Some vg1 ->
@@ -4232,7 +4227,7 @@ module MyDomain : Madil.DOMAIN =
              | _ -> assert false in
            dl_grid g tg rh rw nc
         | `Obj (pos,g1), `ObjRange (rpos,rg1) -> aux pos rpos +. aux g1 rg1
-        | `Map m, `MapTyp (ka,kb) -> dl_map (dl_value_scalar ka) (dl_value_scalar kb) m
+        | `Map m, `MapRange (ra,rb) -> dl_map (fun a -> aux a ra) (fun b -> aux b rb) m
         | _ ->
            pp_endline xp_value v;
            assert false (* TODO: cover other distributions *)
