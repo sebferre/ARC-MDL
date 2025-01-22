@@ -284,7 +284,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRepeat of int (* depth *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
       | SeqIndex (* [seq:X^n] index:INT^1 : X^(n-k) *)
-      | SeqIndexOf of typ_kind (* X. [seq:X^n] value:X : INDEX^1 *)
 
     let xp_any t ~html print () =
       xp_html_elt "span" ~classe:"model-any" ~html print
@@ -448,9 +447,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqIndex, [|xp_seq|], [|xp_index|] ->
          print#string "Index";
          xp_tuple2 xp_seq xp_index ~html print ((),())
-      | SeqIndexOf tvalue, [|xp_seq|], [|xp_value|] ->
-         print#string "IndexOf";
-         xp_tuple2 xp_seq xp_value ~html print ((),())
       | _ -> assert false
 
     let xp_field ~html print = function
@@ -543,8 +539,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRange, _ -> assert false
       | SeqIndex, 0 -> print#string "index"
       | SeqIndex, _ -> assert false
-      | SeqIndexOf _, 0 -> print#string "value"
-      | SeqIndexOf _, _ -> assert false
     
     (* functions *)
 
@@ -829,15 +823,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           match t.kind with
           | BOOL -> res
           | INT ti ->
-             let res =
-               (SeqRange, [||], [|t; {t with kind = INT (COORD (I, MOVE))} |]) :: res in
-             (* let res =
-               match ti with
-               | INDEX ->
-                  let$ res, kind = res, [BOOL] in (* TODO: should be polymorphic, for every type *)
-                  (SeqIndexOf kind, [|scalar kind; scalar kind|]) :: res
-               | _ -> res in *)
-             res
+             (SeqRange, [||], [|t; {t with kind = INT (COORD (I, MOVE))} |])
+             :: res
           | VEC tv ->
              (Vec, [||], [| {t with kind = INT (COORD (I, tv))};
                             {t with kind = INT (COORD (J, tv))} |])
@@ -3205,32 +3192,6 @@ module MyDomain : Madil.DOMAIN =
            | None -> Myseq.empty (* index undefined *) in
          Myseq.return (Data.make_dpat v r c ~src [|dindex|])
 
-      | INT INDEX, SeqIndexOf tvalue, [|vseq|], [|gen_value|] ->
-         let depth_seq = Ndseq.depth vseq in
-         let r_value = `Null in (* what else? *)
-         let* dvalue = gen_value r_value in
-         let value = Data.value dvalue in
-         let depth_value = Ndseq.depth value in
-         let* v =
-           let rec aux rev_path depseq vseq = (* iterating over substructures, searching v *)
-             if depseq = depth_value
-             then
-               if vseq = value
-               then
-                 let vindex = Ndseq.seq 0 (List.rev rev_path) in
-                 Myseq.return vindex
-               else Myseq.empty
-             else
-               match Ndseq.as_seq vseq with
-               | Some (d, l) ->
-                  let n = List.length l in
-                  let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
-                  aux (`Int i :: rev_path) d vi
-               | None -> assert false
-           in
-           aux [] depth_seq vseq in
-         Myseq.return (Data.make_dpat v r c ~src [|dvalue|])
-
       | _ ->
          pp_endline xp_typ t;
          pp_endline (xp_pat c
@@ -4081,26 +4042,6 @@ module MyDomain : Madil.DOMAIN =
          let* dindex = parse_index index r_index in
          Myseq.return (Data.make_dpat v r c ~src [|dindex|])
 
-      | _, SeqIndexOf kvalue, [|vseq|], [|parse_value|] ->
-         let index : int option list =
-           match Ndseq.as_seq v with
-           | Some (0, l) ->
-              List.map
-                (function
-                 | `Int i -> Some i
-                 | _ -> assert false)
-                l
-           | _ -> assert false in
-         let len = List.length index in
-         let* () = Myseq.from_bool (len > 0 && len <= Ndseq.depth vseq) in
-         (match Ndseq.index_list vseq index with
-          | Some value ->
-             let tvalue = scalar kvalue in
-             let r_value = distrib_of_value tvalue value in
-             let* dvalue = parse_value value r_value in
-             Myseq.return (Data.make_dpat v r c ~src [|dvalue|])
-          | None -> Myseq.empty)
-
       | _ -> assert false
     
 
@@ -4269,7 +4210,6 @@ module MyDomain : Madil.DOMAIN =
       | SeqRepeat depth, [|enc_e|] -> enc_e
       | SeqRange, [|enc_start; enc_step|] -> enc_start +. enc_step
       | SeqIndex, [|enc_index|] -> enc_index
-      | SeqIndexOf _, [|enc_value|] -> enc_value
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
     let encoding_expr_value v = 0.
@@ -4322,7 +4262,6 @@ module MyDomain : Madil.DOMAIN =
       | SeqRepeat depth -> Mdl.Code.universal_int_star depth
       | SeqRange -> 0.
       | SeqIndex -> 0.
-      | SeqIndexOf tvalue -> 0. (* tvalue information available from first argument *)
 
     let dl_periodicity_mode : Grid.Transf.periodicity_mode -> dl = function
       | `Total -> Mdl.Code.usage 0.25
@@ -5970,14 +5909,6 @@ module MyDomain : Madil.DOMAIN =
            [| Model.make_def xindex (Model.make_any typ_index) |],
          varseq) :: rs in
       match t.kind with
-(*    | INT INDEX ->
-      let rs = (* adding SeqIndexOf *) (* NOT specific enough, too many matches *)           let xvalue, varseq = Refining.new_var varseq in
-           let$ rs, (x,tx) = rs, Mymap.bindings env_vars in
-           (Model.make_pat {tx with ndim = 1} (SeqIndexOf tx.kind)
-              [| Model.make_expr (Expr.Ref (tx, x));
-                 Model.make_def xvalue (Model.make_any (scalar tx)) |],
-            varseq) :: rs
-        | _ -> rs in *)
       | GRID (filling,nocolor as tg) ->
          let refs = rs in
          let refs = (* Crop *)
