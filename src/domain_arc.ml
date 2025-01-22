@@ -3202,57 +3202,6 @@ module MyDomain : Madil.DOMAIN =
     
     (* model-based parsing *)
            
-    let rec distrib_of_value (t : typ) (v : value) : distrib = (* TODO: avoid its usage *)
-      assert (Ndseq.depth v = t.ndim);
-      Ndseq.map 0
-        (fun v ->
-          match t.kind, v with
-          | _, `Null -> `Null
-          | INT CARD, `Int i -> `IntRange (Range.make_open 0)
-          | INT INDEX, `Int i -> `IntRange (Range.make_open 0)
-          | INT (COORD (axis,tv)), `Int i ->
-             let range =
-               match tv with
-               | SIZE -> Range.make_closed 1 Grid.max_size
-               | POS -> Range.make_closed 0 Grid.max_size
-               | MOVE -> Range.make_closed (- Grid.max_size) Grid.max_size in
-             `IntRange range
-          | VEC tv, `Vec (i,j) ->
-             let range =
-               match tv with
-               | SIZE -> Range.make_closed 1 Grid.max_size
-               | POS -> Range.make_closed 0 Grid.max_size
-               | MOVE -> Range.make_closed (- Grid.max_size) Grid.max_size in
-             `VecRange (range, range)
-          | COLOR tc, `Color c -> `ColorTyp tc
-          | SEG, `Seg (GPat.Objects.SameColor as seg) -> `SegRange [seg]
-          | SEG, `Seg seg -> `SegRange GPat.Objects.candidate_segmentations_connected
-          | ORDER nocolor, `Order order ->
-             let lorder = GPat.Objects.candidate_orders 2 nocolor in
-             `OrderRange lorder
-          | MOTIF tmot, `Motif mot -> `MotifTyp tmot
-          | GRID (filling,nocolor as tg), `Grid g ->
-             let rh = Range.make_open 1 in
-             let rw = Range.make_open 1 in
-             let lc = if nocolor then [Grid.one] else Grid.all_colors in
-             `GridRange (tg, rh, rw, `ColorRange lc)
-          | OBJ (filling,nocolor as tg), `Obj (`Vec (i,j), `Grid g) ->
-             let rh = Range.make_open 1 in
-             let rw = Range.make_open 1 in
-             let lc = if nocolor then [Grid.one] else Grid.all_colors in
-             `ObjRange (`VecRange (Range.make_closed 0 Grid.max_size,
-                                   Range.make_closed 0 Grid.max_size),
-                        `GridRange (tg, rh, rw, `ColorRange lc))
-          | MAP (ka,kb), `Map m ->
-             (match Mymap.min_binding_opt m with
-              | None -> assert false
-              | Some (a,b) ->
-                 let ra = distrib_of_value (scalar ka) a in
-                 let rb = distrib_of_value (scalar kb) b in
-                 `MapRange (ra,rb))              
-          | _ -> assert false)
-        v
-
     let parseur_value (v0 : value) (v : value) (r : distrib) =
       let* v' =
         Ndseq.match_myseq 0
