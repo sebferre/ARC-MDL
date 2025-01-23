@@ -2287,32 +2287,32 @@ module MyDomain : Madil.DOMAIN =
       let rec aux kind r =
         match kind, r with
         | _, `Null ->
-           Myseq.return (`Null, r)
+           Myseq.return `Null
         | BOOL, _ -> assert false
         | INT _, `IntRange (Range.Closed (a,b)) ->
            let* n = Myseq.range a b in
-           Myseq.return (`Int n, r)
+           Myseq.return (`Int n)
         | INT _, _ -> assert false
         | VEC tv, `VecRange (Range.Closed (i1,i2), Range.Closed (j1,j2)) ->
            let* i = Myseq.range i1 i2 in
            let* j = Myseq.range j1 j2 in
-           Myseq.return (`Vec (i,j), r)
+           Myseq.return (`Vec (i,j))
         | VEC _, _ -> assert false
         | COLOR _, `ColorRange (tc,lc) ->
            let* c = Myseq.from_list lc in
-           Myseq.return (`Color c, r)
+           Myseq.return (`Color c)
         | SEG, `SegRange lseg ->
            let* seg = Myseq.from_list lseg in
-           Myseq.return (`Seg seg, r)
+           Myseq.return (`Seg seg)
         | ORDER nocolor, `OrderRange lorder ->
            let* order = Myseq.from_list lorder in
-           Myseq.return (`Order order, r)
+           Myseq.return (`Order order)
         | MOTIF _, `MotifRange lmot ->
            let* mot = Myseq.from_list lmot in
-           Myseq.return (`Motif mot, r)               
+           Myseq.return (`Motif mot)               
         | GRID tg, `GridRange (_,
-                               (Range.Closed (minh,maxh) as range_h),
-                               (Range.Closed (minw,maxw) as range_w),
+                               Range.Closed (minh,maxh),
+                               Range.Closed (minw,maxw),
                                lc) ->
            let* lhwc = Myseq.product_fair
                          [Myseq.range minh maxh;
@@ -2321,24 +2321,24 @@ module MyDomain : Madil.DOMAIN =
            (match lhwc with
             | [h; w; c] ->
                let g = Grid.make h w c in
-               Myseq.return (`Grid g, `GridRange (tg, range_h, range_w, lc))
+               Myseq.return (`Grid g)
             | _ -> assert false)
         | OBJ tg, `ObjRange (rpos,rg1) ->
-           let* vpos, rpos = aux (VEC POS) rpos in
-           let* vg1, rg1 = aux (GRID tg) rg1 in
-           Myseq.return (`Obj (vpos,vg1), r)
+           let* vpos = aux (VEC POS) rpos in
+           let* vg1 = aux (GRID tg) rg1 in
+           Myseq.return (`Obj (vpos,vg1))
         | MAP (ka,kb), `MapRange (ra, rb) ->
-           let* a, ra = aux ka ra in
-           let* b, rb = aux kb rb in
+           let* a = aux ka ra in
+           let* b = aux kb rb in
            let m = Mymap.singleton a b in
-           Myseq.return (`Map m, r) (* empty map = identity map *)
+           Myseq.return (`Map m) (* empty map = identity map *)
         | _ -> assert false
       in
       let k = t.kind in
-      let* v, r =
-        Ndseq.map_tup_myseq ~depth (0,0)
+      let* v =
+        Ndseq.map_myseq ~depth 0
           (fun r -> aux k r)
-          (tup1 r) in
+          r in
       Myseq.return (Data.make_dany v r)
 
     let generator_pat t c src gen_args (r : distrib) =
@@ -3422,18 +3422,6 @@ module MyDomain : Madil.DOMAIN =
                  let* objs, g_noise = GPat.Objects.parse nmax seg g in
                  let objs = GPat.Objects.sort order objs in
                  let card = List.length objs in
-                 (* REM let* objs = (* permutations of first three objects *)
-                   match objs with
-                   | [] -> Myseq.return objs
-                   | [o1] -> Myseq.return objs
-                   | [o1;o2] -> Myseq.cons objs (Myseq.return [o2;o1])
-                   | o1::o2::o3::os ->
-                      Myseq.cons objs
-                        (Myseq.cons (o1::o3::o2::os)
-                           (Myseq.cons (o2::o1::o3::os)
-                              (Myseq.cons (o2::o3::o1::os)
-                                 (Myseq.cons (o3::o2::o1::os)
-                                    (Myseq.return (o3::o1::o2::os)))))) in *)
                  Myseq.return
                    (`Int card, `IntRange (Range.make_closed 0 nmax),
                     
@@ -4329,477 +4317,6 @@ module MyDomain : Madil.DOMAIN =
       | `SwapColors_3 -> 0.
 
     (* expression index *)
-
-(* XX    let make_index (bindings : bindings) : expr_index =
-      (*pp xp_bindings bindings;*)
-      (*let test level index = (* testing expr index[i]($21) in task a157, $21 is seq of pos of input objects *)
-        match Mymap.find_opt 21 bindings with
-        | None -> ()
-        | Some (t,v_tree) ->
-           print_endline level;
-           assert (t = VEC POS);
-           assert (Ndtree.ndim v_tree = 1);
-           assert (Ndtree.length v_tree = Some 5);
-           [1;2;-2;-1]
-           |> List.iter
-                (fun i ->
-                  print_int i;
-                  match Ndtree.index v_tree [Some i] with
-                  | None -> assert false
-                  | Some vi ->
-                     match Mymap.find_opt (t,vi) index with
-                     | None -> assert false
-                     | Some es ->
-                        let ei = Expr.Apply (t, `Index_1 [Some i], [|Expr.Ref (t,21)|]) in
-                        match Myseq.find_map
-                                (fun e -> if e = ei then Some e else None)
-                                (Expr.Exprset.to_seq es) with
-                        | Some _ -> ()
-                        | None -> assert false
-                        (*if Expr.Exprset.mem ei es
-                        then ()
-                        else assert false*));
-           print_newline ()
-      in*)                          
-      let bgcolors full =
-        Grid.black :: if full then [] else [Grid.transparent] in
-      let index = Expr.Index.empty in
-      let index = Expr.index_add_bindings index bindings in
-      let index = (* LEVEL 0 - seq indexes *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 1
-          (fun (t_args, v_args) ->
-            match t_args with
-            | [|t1|] ->
-               let ndim = t1.ndim in
-               let res = [] in
-               let res =
-                 if ndim >= 1
-                 then
-                   let$ res, i = res, [0; 1; 2; -2; -1] in
-                   ({t1 with ndim = ndim-1}, `Index_1 [Some i], `Default)::
-                     (t1, `Tail_1, `Default)::
-                       res
-                 else res in
-               let res =
-                 if ndim >= 2
-                 then
-                   let res =
-                     let$ res, j = res, [0; 1; 2; -2; -1] in
-                     ({t1 with ndim = ndim-1}, `Index_1 [None; Some j], `Default) :: res in
-                   let res =
-                     let$ res, i = res, [0; 1; -1] in
-                     let$ res, j = res, [0; 1; -1] in
-                     ({t1 with ndim = ndim-2}, `Index_1 [Some i; Some j], `Default) :: res in
-                   res
-                 else res in
-               res
-            | _ -> []) in
-      (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
-      (*test "TEST LEVEL 0" index;*)
-      let index = (* LEVEL 0' - components *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 1
-          (fun (t_args, v_args) ->
-            let res : (typ * func * _ Expr.args_spec) list = [] in
-            match t_args with
-            | [| {kind = VEC tv} as t1 |] ->
-               ({t1 with kind = INT (COORD (I, tv))}, `I_1, `Default)
-               ::({t1 with kind = INT (COORD (J, tv))}, `J_1, `Default)
-               ::res
-            | [| {kind = OBJ tg} as t1 |] ->
-               ({t1 with kind = VEC POS}, `Pos_1, `Default)
-               ::({t1 with kind = GRID tg}, `Grid_1, `Default)
-               ::res
-            | _ -> res) in
-      let index = (* LEVEL 1 *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 2 (* TEST *)
-          (fun (t_args, v_args) ->
-            let res : (typ * func * _ Expr.args_spec) list = [] in
-            let res = (* Norm_1 *)
-              match t_args with
-              | [| {kind = VEC tv} as t1 |] ->
-                 ({t1 with kind = INT CARD}, `Norm_1, `Default)::res
-              | _ -> res in
-            let res = (* Size_1, Height, Width, Area_1 *)
-              match t_args with
-              | [| {kind = GRID (filling,nocolor)} as t1 |] ->
-                 ({t1 with kind = VEC SIZE}, `Size_1, `Default)
-                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Height_1, `Default)
-                 ::({t1 with kind = INT (COORD (J, SIZE))}, `Width_1, `Default)
-                 ::({t1 with kind = INT CARD}, `Area_1, `Default)
-                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default) (* TODO: add conversion function from CARD to COORD *)
-                 ::({t1 with kind = INT (COORD (J, SIZE))}, `Area_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* Right, Center, Bottom, Middle *)
-              match t_args with
-              | [| {kind = OBJ tg} as t1 |] ->
-                 ({t1 with kind = INT (COORD (J,POS))}, `Right_1, `Default)
-                 ::({t1 with kind = INT (COORD (J,POS))}, `Center_1, `Default)
-                 ::({t1 with kind = INT (COORD (I,POS))}, `Bottom_1, `Default)
-                 ::({t1 with kind = INT (COORD (I,POS))}, `Middle_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* TopHalf, BottomHalf, LeftHalf, RightHalf *)
-              match t_args with
-              | [| {kind = GRID tg} as t1 |] ->
-                 ({t1 with kind = GRID tg}, `TopHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `BottomHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `LeftHalf_1, `Default)
-                 ::({t1 with kind = GRID tg}, `RightHalf_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* ProjI/J_1 *)
-              match t_args with
-              | [| {kind = VEC tv} as t1|] ->
-                 ({t1 with kind = VEC tv}, `ProjI_1, `Default)
-                 ::({t1 with kind = VEC tv}, `ProjJ_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* IJTranspose_1 *)
-              match t_args with
-              | [| {kind = INT (COORD (axis,tv))} as t1 |] ->
-                 ({t1 with kind = INT (COORD (axis_transpose axis, tv))}, `Transpose_1, `Default)::res
-              | [| {kind = VEC tv} as t1 |] ->
-                 ({t1 with kind = VEC tv}, `IJTranspose_1, `Default)::res
-              | _ -> res in
-            let res = (* Direction_1, Abs_1 *)
-              match t_args with
-              | [| {kind = INT ti} as t|] ->
-                 (t, `Direction_1, `Default)
-                 ::(t, `Abs_1, `Default)
-                 ::res
-              | [| {kind = VEC tv} as t |] ->
-                 (t, `Direction_1, `Default)
-                 ::(t, `Abs_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* AsTVec_1 *)
-              match t_args with
-              | [| {kind = INT (COORD (axis,tv))} as t1 |] ->
-                 let$ res, tv' = res, (match tv with
-                                       | POS -> [SIZE; MOVE]
-                                       | SIZE -> [POS; MOVE]
-                                       | MOVE -> [POS; SIZE]) in
-                 ({t1 with kind = INT (COORD (axis,tv'))}, `AsTVec_1 tv', `Default)::res
-              | [| {kind = VEC tv} as t1 |] ->
-                 let$ res, tv' = res, (match tv with
-                                       | POS -> [SIZE; MOVE]
-                                       | SIZE -> [POS; MOVE]
-                                       | MOVE -> [POS; SIZE]) in
-                 ({t1 with kind = VEC tv'}, `AsTVec_1 tv', `Default)::res
-              | _ -> res in
-            let res = (* MajorityColor_1, MinorityColor_1 *)
-              match t_args with
-              | [| {kind = GRID (filling,false)} as t1 |] ->
-                 let full = (filling = `Full) in
-                 let$ res, tc = res, [C_BG full; C_OBJ] in
-                 ({t1 with kind = COLOR tc}, `MajorityColor_1, `Default)
-                 ::({t1 with kind = COLOR tc}, `MinorityColor_1, `Default)
-                 ::res
-              | _ -> res in
-            let res = (* ColorCount_1 *)
-              match t_args with
-              | [| {kind = GRID (filling,false)} as t1 |] ->
-                 ({t1 with kind = INT CARD}, `ColorCount_1, `Default)::res
-              | _ -> res in
-            (*let res = (* Strip_1: covered by pattern Crop *)
-              match t_args with
-              | [|GRID (filling,nocolor)|] -> (GRID (false,nocolor), `Strip_1)::res
-              | _ -> res in *)
-            (* TODO: PeriodicFactor_2, as pattern *)
-            let res = (* Corner_2 *)
-              match t_args with
-              | [| {kind = VEC POS} as t1;
-                   {kind = VEC POS} as t2 |] ->
-                 ({kind = VEC POS; ndim = max t1.ndim t2.ndim}, `Corner_2, `Default)::res
-              | _ -> res in
-            let res = (* Span_2 *)
-              match t_args with
-              | [| {kind = INT (COORD (axis1,POS))} as t1;
-                   {kind = INT (COORD (axis2,POS))} as t2 |] when axis1=axis2 ->
-                 ({kind = INT (COORD (axis1,POS)); ndim = max t1.ndim t2.ndim}, `Span_2, `Default)::res
-              | [| {kind = VEC POS} as t1;
-                   {kind = VEC POS} as t2 |] ->
-                 ({kind = VEC POS; ndim = max t1.ndim t2.ndim}, `Span_2, `Default)::res
-              | _ -> res in
-            let res = (* translation = pos - pos *)
-              match t_args with
-              | [| {kind = INT (COORD (axis1,POS))} as t1;
-                   {kind = INT (COORD (axis2,POS))} as t2 |] when axis1=axis2 ->
-                 ({kind = INT (COORD (axis1,MOVE)); ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
-              | [| {kind = VEC POS} as t1;
-                   {kind = VEC POS} as t2 |] ->
-                 ({kind = VEC POS; ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
-              | _ -> res in
-(* REM            let res = (* TranslationOnto *)
-              match t_args with
-              | [| {kind = OBJ _} as t1;
-                   {kind = OBJ _} as t2 |] ->
-                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationOnto_2, `Default)::res
-              | _ -> res in *)
-            let res = (* TranslationSym *)
-              match t_args with
-              | [| {kind = OBJ _} as t1;
-                   {kind = (OBJ _ | GRID _)} as t2 |] ->
-                 let$ res, sym =
-                   res,
-                   [`FlipHeight; `FlipWidth; `FlipDiag1; `FlipDiag2;
-                    `Rotate180; `Rotate90; `Rotate270] in
-                 ({kind = VEC MOVE; ndim = max t1.ndim t2.ndim}, `TranslationSym_2 sym, `Default)::res
-              | _ -> res in
-            (*let res = (* Crop *)
-              match t_args with
-              | [|GRID tg1; OBJ _|] -> (GRID tg1, `Crop_2)::res
-              | _ -> res in*)
-            let res = (* MaskOfGrid *)
-              match t_args with
-              | [| {kind = GRID ((`Sprite|`Noise as filling), false)} as t1 |] ->
-                 ({t1 with kind = GRID (filling, true)}, `MaskOfGrid_1, `Default)::res
-              | _ -> res in
-            let res = (* Cardinal *)
-              match t_args with
-              | [| {kind = OBJ _} as t1 |] when t1.ndim > 0 ->
-                 (scalar (INT CARD), `Cardinal_1, `Default)::res (* TODO: generalize beyond OBJ ? *)
-              | _ -> res in
-            res) in
-      (*pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index;*)
-      (*test "TEST LEVEL 1" index;*)
-      let index = (* LEVEL 2 *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 2 (* TEST *)
-          (fun (t_args,v_args) ->
-            let res : (typ * func * _ Expr.args_spec) list = [] in
-            let res = (* Reverse, Rotate, Transpose, Flatten *)
-              match t_args with
-              | [|t1|] ->
-                 let res =
-                   if t1.ndim >= 1 (* only defined on sequences *)
-                   then
-                     let res = (t1, `Reverse_1, `Default)::res in
-                     let$ res, shift = res, [-1; 1] in
-                     (t1, `Rotate_1 shift, `Default)::res
-                   else res in
-                 let res =
-                   if t1.ndim >= 2 (* only defined on sequences of sequences *)
-                   then
-                     let res = (t1, `Transpose_1, `Default)::res in
-                     let$ res, rows = res, [true; false] in
-                     let$ res, snake = res, [false; true] in
-                     (t1, `Flatten_1 (rows,snake), `Default)::res
-                   else res in
-                 res
-              | _ -> res in
-            let res = (* ScaleUp, ScaleDown *)
-              match t_args with
-              | [| {kind = INT _ | VEC _ | GRID _} as t1 |] ->
-                 let$ res, k = res, [2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (INT CARD), `Int k)|] in
-                 (t1, `ScaleUp_2, args_spec)::(t1, `ScaleDown_2, args_spec)::res
-              | _ -> res in
-            (* MOVE as POS ? *)
-            let res = (* ApplySymGrid *)
-              match t_args with
-              | [| {kind = GRID _} as t1 |] ->
-                 let$ res, sym = res, all_symmetry in
-                 (t1, `ApplySymGrid_1 sym, `Default)::res
-              | _ -> res in
-            let res = (* Coloring *)
-              match t_args with
-              | [| {kind = GRID _} as t1;
-                   {kind = COLOR _} as t2 |] ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Coloring_2, `Default)::res
-              | _ -> res in
-            let res = (* SelfCompose *)
-              match t_args with
-              | [| {kind = GRID (filling,nocolor)} as t1 |] ->
-                 let full = filling = `Full in
-                 let bgcolor = if full then Grid.black else Grid.transparent in 
-                 let$ res, color = res, if nocolor then [Grid.black] else Grid.all_colors in
-                 let args_spec = `Custom [| `Val (scalar (COLOR (C_BG full)), `Color bgcolor);
-                                            `Val (scalar (COLOR C_OBJ), `Color color);
-                                            `Pos 0|] in
-                 (t1, `SelfCompose_3, args_spec)::res
-              | [| {kind = COLOR C_OBJ} as t1;
-                   {kind = GRID (filling,nocolor)} as t2 |] ->
-                 let full = filling = `Full in
-                 let bgcolor = if full then Grid.black else Grid.transparent in
-                 let args_spec = `Custom [| `Val (scalar (COLOR (C_BG full)), `Color bgcolor);
-                                            `Pos 0;
-                                            `Pos 1|] in                 
-                 ({t2 with ndim = max t1.ndim t2.ndim}, `SelfCompose_3, args_spec)::res
-              | _ -> res in
-            let res = (* Plus *)
-              match t_args with
-              | [| {kind = INT (CARD | INDEX)} as t1 |] ->
-                 let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (INT CARD), `Int i2)|] in
-                 (t1, `Plus_2, args_spec)::res
-              | [| {kind = INT (CARD | INDEX)} as t1;
-                   {kind = INT (CARD | INDEX)} as t2 |] ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Plus_2, `Default)::res
-              | [| {kind = INT (COORD (axis,tv1))} as t1 |] when tv1 <> MOVE ->
-                 let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (INT (COORD (axis,MOVE))), `Int i2)|] in
-                 (t1, `Plus_2, args_spec)::res
-              | [| {kind = INT (COORD (_,tv1))} as t1;
-                   {kind = INT (COORD (_,(SIZE|MOVE)))} as t2 |] when tv1 <> MOVE ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Plus_2, `Default)::res
-              | [| {kind = VEC tv1} as t1 |] when tv1 <> MOVE ->
-                 let$ res, i2 = res, [0;1;2;3] in
-                 let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (VEC MOVE), `Vec (i2,j2))|] in
-                 (t1, `Plus_2, args_spec)::res
-              | [| {kind = VEC tv1} as t1;
-                   {kind = VEC (SIZE|MOVE)} as t2 |] when tv1 <> MOVE ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Plus_2, `Default)::res
-              | _ -> res in
-            let res = (* Minus *)
-              match t_args with
-              | [| {kind = INT (CARD | INDEX)} as t1|] ->
-                 let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (INT CARD), `Int i2)|] in
-                 (t1, `Minus_2, args_spec)::res
-              | [| {kind = INT (CARD | INDEX)} as t1;
-                   {kind = INT (CARD | INDEX)} as t2 |] ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
-              | [| {kind = INT (COORD (axis,tv1))} as t1 |] when tv1 <> MOVE ->
-                 let$ res, i2 = res, [1;2;3] in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (INT (COORD (axis,MOVE))), `Int i2)|] in
-                 (t1, `Minus_2, args_spec)::res
-              | [| {kind = INT (COORD (_,tv1))} as t1;
-                   {kind = INT (COORD (_, (SIZE|MOVE)))} as t2 |] when tv1 <> MOVE ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
-              | [| {kind = VEC tv1} as t1 |] when tv1 <> MOVE ->
-                 let$ res, i2 = res, [0;1;2;3] in
-                 let$ res, j2 = res, (if i2=0 then [1;2;3] else [0;1;2;3]) in
-                 let args_spec = `Custom [|`Pos 0; `Val (scalar (VEC MOVE), `Vec (i2,j2))|] in
-                 (t1, `Minus_2, args_spec)::res
-              | [| {kind = VEC tv1} as t1;
-                   {kind = VEC (SIZE|MOVE)} as t2 |] when tv1 <> MOVE ->
-                 ({t1 with ndim = max t1.ndim t2.ndim}, `Minus_2, `Default)::res
-              | _ -> res in
-            let res = (* Min, Max, ArgMin, ArgMax *)
-              match t_args with
-              | [| {kind = INT _} as t1 |] when t1.ndim > 0 ->
-                 ({t1 with ndim = 0}, `Min_1, `Default)
-                 ::({t1 with ndim = 0}, `Max_1, `Default)
-                 ::(typ_index, `ArgMin_1, `Default)
-                 ::(typ_index, `ArgMax_1, `Default)
-                 ::res
-              | _ -> res in
-(*            let res = (* And, Or, XOr, AndNOt *)
-              match t_args with
-              | [| {kind = GRID (`Sprite,true)} as t1; t2 |] when t2.kind = t1.kind ->
-                 let$ res, f = res, [`LogAnd_2; `LogOr_2; `LogXOr_2; `LogAndNot_2] in
-                 ({t1 with ndim = max t1.ndim t2.ndim}, f, `Default)::res
-              | _ -> res in *)
-            res) in
-      (*test "TEST LEVEL 2" index;*)
-      let index = (* LEVEL 3 *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 1 (* TEST: 2, binary, is too expansive *)
-          (fun (t_args,v_args) ->
-            let res : (typ * func * _ Expr.args_spec) list = [] in
-            let res = (* AsTVec_1 *)
-              match t_args with
-              | [| {kind = INT CARD} as t1 |] ->
-                 let$ res, axis = res, [I; J] in
-                 let$ res, tv = res, [POS; SIZE; MOVE] in
-                 ({t1 with kind = INT (COORD (axis,tv))}, `AsTVec_1 tv, `Default)::res
-              | _ -> res in
-            let res = (* LogNot *)
-              match t_args with
-              | [| {kind = GRID (`Sprite,true)} as t1 |] ->
-                 (t1, `LogNot_1, `Default)::res
-              | _ -> res in
-            (*let res = (* Tiling *)
-              match t_args with
-              | [|(VEC SIZE | GRID _ as t1)|] ->
-                 let$ res, k = res, [1;2;3] in
-                 let$ res, l = res, [1;2;3] in
-                 if k>1 || l>1
-                 then (t1, `Tiling_1 (k,l), `Default)::res
-                 else res
-              | _ -> res in*)
-            (*let res = (* FillResizeAlike *)
-              match t_args with
-              | [|VEC SIZE; GRID ((`Full|`Sprite as filling),_) as t3|] ->
-                 let full = (filling = `Full) in
-                 let$ res, bgcolor = res, bgcolors full in
-                 let args_spec = `Custom [|`Val (scalar (COLOR (C_BG full)), `Color bgcolor); `Pos 0; `Pos 1|] in
-                 let$ res, mode =
-                   res, (if full
-                         then [`TradeOff; `Total; `Strict]
-                         else [`TradeOff; `Strict]) in
-                 (t3, `FillResizeAlike_3 mode, args_spec)::res
-              | _ -> res in*)
-            let res = (* Unrepeat *)
-              match t_args with
-              | [| {kind = GRID _} as t1 |] ->
-                 (t1, `Unrepeat_1, `Default)::res
-              | _ -> res in
-            (*let res = (* UnfoldSym *)
-              match t_args with
-              | [|GRID _ as t1|] ->
-                 let$ res, sym_matrix = res, all_symmetry_unfold in
-                 (t1, `UnfoldSym_1 sym_matrix, `Default)::res
-              | _ -> res in*)
-            let res = (* CloseSym *)
-              match t_args with
-              | [| {kind = GRID (filling,_)} as t2 |] ->
-                 let full = (filling = `Full) in
-                 let$ res, bgcolor = res, bgcolors full in
-                 let args_spec = `Custom [|`Val (scalar (COLOR (C_BG full)), `Color bgcolor); `Pos 0|] in
-                 let$ res, sym_seq = res, all_symmetry_close in
-                 (t2, `CloseSym_2 sym_seq, args_spec)::res
-              | _ -> res in
-            (*let res = (* SwapColors *)
-              match t_args with
-              | [|GRID (_,_) as t1; COLOR C_OBJ; COLOR C_OBJ|] -> (t1, `SwapColors_3)::res
-              | _ -> res in*)
-            (*let res = (* ScaleTo *)
-              match t_args with
-              | [|GRID _ as t1; VEC SIZE|] -> (t1, `ScaleTo_2, `Default)::res
-              | _ -> res in*)
-            (* Stack *)
-            res) in
-      (*test "TEST LEVEL 4" index;*)
-      let index = (* LEVEL 4 *)
-        Expr.index_apply_functions
-          ~eval_func
-          index 1
-          (fun (t_args,v_args) ->
-            let res : (typ * func * _ Expr.args_spec) list = [] in
-            let res = (* Cast *)
-              match t_args with
-              | [| {kind} as t1 |] ->
-                 let lk' =
-                   match kind with
-                   | INT CARD -> [INT INDEX]
-                   | COLOR C_OBJ -> [COLOR (C_BG true); COLOR (C_BG false)]
-                   | COLOR (C_BG true) -> [COLOR C_OBJ; COLOR (C_BG false)]
-                   | GRID (filling,nocolor) ->
-                      let$ res, filling' = [], [`Full; `Sprite; `Noise] in
-                      if filling' = filling then res else GRID (filling',nocolor)::res
-                   | OBJ (filling,nocolor) ->
-                      let$ res, filling' = [], [`Full; `Sprite; `Noise] in
-                      if filling' = filling then res else OBJ (filling',nocolor)::res
-                   | _ -> [] in
-                 let$ res, k' = res, lk' in
-                 assert (k' <> kind);
-                 ({t1 with kind = k'}, `Cast_1 (kind,k'), `Default)::res
-              | _ -> res in
-            res) in
-      (* pp (xp_expr_index ~on_typ:(function VEC POS -> true | _ -> false)) index; *)
-      index *)
 
     let affine_params = [
         `ScaleUp_2, 1, `Plus_2, 1;
@@ -5939,17 +5456,6 @@ module MyDomain : Madil.DOMAIN =
       []
     let prunings_pat t c args varseq value =
       [Model.make_any t, varseq]
-(* REM      let refs =
-        match c with
-        | SeqCons _ ->
-           [Model.make_any t, varseq]
-        | SeqRepeat _ -> (* TODO: how to relax the Repeat part, beware of not confusing depths *)
-           [Model.make_any t, varseq]
-        | _ -> [] in      
-      match t.kind, c with
-      | GRID tg, _ -> (Model.make_any t, varseq) :: refs
-      | MAP (ka,kb), _ -> (Model.make_any t, varseq) :: refs
-      | _ -> refs (* TODO: why not pruning for all types? *) *)
     let prunings_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
