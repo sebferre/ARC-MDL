@@ -3211,6 +3211,7 @@ module MyDomain : Madil.DOMAIN =
     let parseur_any t (v : value) (r : distrib) =
       let depth = t.ndim in
       assert (Ndseq.depth v = depth);
+      assert (Ndseq.depth r = depth);
       Myseq.return (Data.make_dany v r)
     
     let parseur_pat t c src parse_args (v : value) (r : distrib) =
@@ -3862,8 +3863,9 @@ module MyDomain : Madil.DOMAIN =
 
       | COLOR tc, MakeGrid, [||], [|parse_grid|] ->
          let depth = Ndseq.depth v in
+         assert (depth >= 2);
          let* grid, r_grid =
-           Ndseq.map_tup_myseq ~depth:(depth - 2) (-2,-2)
+           Ndseq.map_tup_myseq ~name:"parse/MakeGrid/grid" ~depth:(depth - 2) (0,0)
              (fun (v,r) ->
                let* g = Myseq.from_result (make_grid_from_color_seq_seq v) in
                let filling =
@@ -3891,18 +3893,20 @@ module MyDomain : Madil.DOMAIN =
          else parseur_any t v r
 
       | _, SeqRepeat dep, [||], [|parse_e|] ->
+         assert (depth >= 1);
          assert (dep < depth);
          if Ndseq.is_complete ~depth:dep v
          then
+           let delta_d = depth - dep - 1 in
            let* e, r_e =
-             Ndseq.map_tup_myseq ~depth:dep (-1,-1)
+             Ndseq.map_tup_myseq ~name:"parse/SeqRepeat/e" ~depth:dep (delta_d, delta_d)
                (fun (v,r) ->
                  match Ndseq.as_seq v, Ndseq.as_seq r with
                  | Some (d, []), _ -> Myseq.empty
-                 | Some (d, v::l1), Some (_, r::_) ->
+                 | Some (d, v0::l1), Some (_, r0::_) ->
                     (try
-                      if List.for_all (fun v1 -> v1 = v) l1 (* all elts should be the same value *)
-                      then Myseq.return (v,r)
+                      if List.for_all (fun v1 -> v1 = v0) l1 (* all elts should be the same value *)
+                      then Myseq.return (v0,r0)
                       else Myseq.empty
                      with _ -> Myseq.empty)
                  | _ -> assert false)
