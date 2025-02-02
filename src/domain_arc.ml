@@ -810,31 +810,31 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
               
     let asd (* : asd *) =
       object
-        inherit [typ,typ,constr,func] Model.asd
+        inherit [typ,typ] Model.asd
         method abstract t = {t with ndim = 0} (* ignoring ndim to avoid infinite recursion *)
         method pats t (* abstract *) =
           (* synchronize with is_default_constr *)
           assert (t.ndim = 0);
           let res =
-            [ SeqCons 0, [||], [|t; t|];
-              SeqRepeat 0, [||], [|t|];
-              SeqIndex, [||], [|t; scalar (INT INDEX)|] ] in
+            [ "SeqCons", [||], [|t; t|];
+              "SeqRepeat", [||], [|t|];
+              "SeqIndex", [||], [|t; scalar (INT INDEX)|] ] in
           match t.kind with
           | BOOL -> res
           | INT ti ->
-             (SeqRange, [||], [|t; {t with kind = INT (COORD (I, MOVE))} |])
+             ("SeqRange", [||], [|t; {t with kind = INT (COORD (I, MOVE))} |])
              :: res
           | VEC tv ->
-             (Vec, [||], [| {t with kind = INT (COORD (I, tv))};
-                            {t with kind = INT (COORD (J, tv))} |])
-             ::(Square, [||], [| {t with kind = INT (COORD (I, tv))} |])
+             ("Vec", [||], [| {t with kind = INT (COORD (I, tv))};
+                              {t with kind = INT (COORD (J, tv))} |])
+             ::("Square", [||], [| {t with kind = INT (COORD (I, tv))} |])
              :: res
           | COLOR tc ->
              (* let filling =
                match tc with
                | C_OBJ | C_BG true -> `Full
                | C_BG false -> `Sprite in *)
-             (MakeGrid, [||], [| {t with kind = GRID (`Sprite, false)} |])
+             ("MakeGrid", [||], [| {t with kind = GRID (`Sprite, false)} |])
              :: res
           | SEG -> res
           | ORDER nocolor -> res
@@ -847,15 +847,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  then c_args::res
                  else res)
                res
-               [ full, (BgColor, [||],
+               [ full, ("BgColor", [||],
                         [| {t with kind = COLOR (C_BG full)};
                            {t with kind = GRID (`Sprite,nocolor)} |]);
-                 not full, (IsFull,[||],  [| {t with kind = GRID (`Full,nocolor)} |]);
-                 true, (Crop,
+                 not full, ("IsFull", [||], [| {t with kind = GRID (`Full,nocolor)} |]);
+                 true, ("Crop",
                         [| {t with kind = GRID (filling,nocolor)} |],
                         [| {t with kind = VEC POS};
                            {t with kind = VEC SIZE} |]);
-                 not full, (Objects (1,`Connected), [||],
+                 not full, ("Objects", [||],
                             [| {t with kind = VEC SIZE};
                                {t with kind = SEG};
                                {t with kind = ORDER nocolor};
@@ -868,22 +868,22 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                   {t with kind = INT CARD};
                                   {t with kind = COLOR C_OBJ};
                                   {t with kind = GRID (`Sprite,true)} |]); *)
-                 not nocolor, (Monocolor, [||],
+                 not nocolor, ("Monocolor", [||],
                                [| {t with kind = COLOR C_OBJ};
                                   {t with kind = GRID (filling,true)} |]);
-                 not nocolor, (Recoloring,
+                 not nocolor, ("Recoloring",
                                [| {t with kind = GRID (filling,nocolor)} |],
                                [| {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)} |]);
-                 true, (MotifMulti false, [||],
+                 true, ("MotifMulti", [||],
                         [| {t with kind = MOTIF MULTI};
                            {t with kind = GRID ((if filling = `Noise then `Sprite else filling), nocolor)};
                           (* derived pure, not counting *)
                            {t with kind = GRID (`Sprite,true)}; (* TODO: encode optional *)
                            {t with kind = GRID (`Noise,nocolor)} |]);
-                 (*true, (Repeat, [|GRID (filling,nocolor);
+                 (*true, ("Repeat", [|GRID (filling,nocolor);
                                   INT (COORD (I, SIZE));
                                   INT (COORD (J, SIZE))|]);*)
-                 true, (MotifBi false, [||],
+                 true, ("MotifBi", [||],
                         [| {t with kind = MOTIF BI};
                            {t with kind = COLOR (C_BG full)};
                            {t with kind = COLOR C_OBJ};
@@ -893,27 +893,27 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  (*true, (Repeat, [|GRID (filling,nocolor);
                                   INT (COORD (I, SIZE));
                                   INT (COORD (J, SIZE))|]);*)
-                 true, (Metagrid, [||],
+                 true, ("Metagrid", [||],
                         [| {t with kind = COLOR (C_BG full)};
                            {t with kind = GRID (`Noise,true)};
                            {t with kind = VEC SIZE};
                            {t with kind = INT (COORD (I,SIZE))};
                            {t with kind = INT (COORD (J,SIZE))};
                            {t with kind = GRID (filling,nocolor)} |]);
-                 not full (*&& nocolor*), (Empty, [||], [| {t with kind = VEC SIZE} |]);
-                 not full && nocolor, (Full, [||], [| {t with kind = VEC SIZE} |]);
-                 not full && nocolor, (Point, [||], [||]);
-                 not full && nocolor, (Line, [||],
+                 not full (*&& nocolor*), ("Empty", [||], [| {t with kind = VEC SIZE} |]);
+                 not full && nocolor, ("Full", [||], [| {t with kind = VEC SIZE} |]);
+                 not full && nocolor, ("Point", [||], [||]);
+                 not full && nocolor, ("Line", [||],
                                        [| {t with kind = INT (COORD (I, SIZE))};
                                           {t with kind = VEC MOVE} |]);
-                 full && not nocolor, (ColorSeq `H, [||],
+                 full && not nocolor, ("ColorSeq", [||],
                                        [| {t with kind = INT (COORD (I,SIZE))};
                                           {t with kind = COLOR C_OBJ} |]);
-                 full && not nocolor, (ColorMat, [||],
+                 full && not nocolor, ("ColorMat", [||],
                                        [| {t with kind = VEC SIZE};
                                           {t with kind = COLOR C_OBJ} |]) ]
           | OBJ tg ->
-             (Obj, [||],
+             ("Obj", [||],
               [| {t with kind = VEC POS};
                  {t with kind = GRID tg} |])
              :: res
@@ -924,157 +924,157 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  then c_args::res
                  else res)
                res
-               [ true, (DomMap [], [||], [| {t with kind = kb} |]);
-                 ka=kb, (Replace, [||],
+               [ true, ("DomMap", [||], [| {t with kind = kb} |]);
+                 ka=kb, ("Replace", [||],
                          [| {t with kind = ka};
                             {t with kind = ka} |]);
-                 ka=kb, (Swap, [||],
+                 ka=kb, ("Swap", [||],
                          [| {t with kind = ka};
                             {t with kind = ka} |]) ]
         method funcs t (* abstract *) =
           assert (t.ndim = 0);
           let res =
-            [ `Cast_1 (t.kind,t.kind), [|t|];
-              `MostCommon_1, [|t|];
-              `LeastCommon_1, [|t|];
-              `Index_1 [], [|t|];
-              `Flatten_1 (true,false), [|t|];
-              `Tail_1, [|t|];
-              `Reverse_1, [|t|];
-              `Rotate_1 1, [|t|];
-              `Transpose_1, [|t|] ] in
+            [ "Cast_1", [|t|];
+              "MostCommon_1", [|t|];
+              "LeastCommon_1", [|t|];
+              "Index_1", [|t|];
+              "Flatten_1", [|t|];
+              "Tail_1", [|t|];
+              "Reverse_1", [|t|];
+              "Rotate_1", [|t|];
+              "Transpose_1", [|t|] ] in
           match t.kind with
           | BOOL -> res
           | INT CARD ->
-             (`Cardinal_1, [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *)
-             ::(`Sum_1, [|t|])
-             ::(`Min_1, [|t|])
-             ::(`Max_1, [|t|])
-             ::(`Plus_2, [|t (* const *)|])
-             ::(`Minus_2, [|t (* const *)|])
-             ::(`Area_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`ColorCount_1, [| {t with kind = GRID (`Sprite,false)} |]) (* also for `Noise? *)
-             ::(`Average_n, [|t; t|])
+             ("Cardinal_1", [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *)
+             ::("Sum_1", [|t|])
+             ::("Min_1", [|t|])
+             ::("Max_1", [|t|])
+             ::("Plus_2", [|t (* const *)|])
+             ::("Minus_2", [|t (* const *)|])
+             ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
+             ::("ColorCount_1", [| {t with kind = GRID (`Sprite,false)} |]) (* also for `Noise? *)
+             ::("Average_n", [|t; t|])
              ::res
           | INT INDEX ->
-             (`Sum_1, [|t|])
-             ::(`Min_1, [|t|])
-             ::(`Max_1, [|t|])
-             ::(`ArgMin_1, [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
-             ::(`ArgMax_1, [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
+             ("Sum_1", [|t|])
+             ::("Min_1", [|t|])
+             ::("Max_1", [|t|])
+             ::("ArgMin_1", [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
+             ::("ArgMax_1", [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
              ::res
           | INT (COORD (axis,tv)) ->
-             (`Sum_1, [|t|])
-             ::(`Min_1, [|t|])
-             ::(`Max_1, [|t|])
-             ::(`I_1, [| {t with kind = VEC tv} |])
-             ::(`J_1, [| {t with kind = VEC tv} |])
-             ::(`Left_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Right_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Center_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Top_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Bottom_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Middle_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`Right_1, [| {t with kind = GRID (`Sprite,false) } |])
-             ::(`Center_1, [| {t with kind = GRID (`Sprite,false) } |])
-             ::(`Bottom_1, [| {t with kind = GRID (`Sprite,false) } |])
-             ::(`Middle_1, [| {t with kind = GRID (`Sprite,false) } |])
-             ::(`IJTranspose_1, [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
-             ::(`Direction_1, [|t|])
-             ::(`Abs_1, [|t|])
-             ::(`AsTVec_1 tv, [| {t with kind = INT (COORD (axis, tv))} |]) (* should be any other tv *)
-             ::(`Area_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`Plus_2, [|t (* const *)|])
-             ::(`Minus_2, [|t (* const *)|])
-             ::(`ScaleUp_2, [|t (* const: {t with kind = INT CARD} *) |])
-             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
+             ("Sum_1", [|t|])
+             ::("Min_1", [|t|])
+             ::("Max_1", [|t|])
+             ::("I_1", [| {t with kind = VEC tv} |])
+             ::("J_1", [| {t with kind = VEC tv} |])
+             ::("Left_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Right_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Center_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Top_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Bottom_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Middle_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("Right_1", [| {t with kind = GRID (`Sprite,false) } |])
+             ::("Center_1", [| {t with kind = GRID (`Sprite,false) } |])
+             ::("Bottom_1", [| {t with kind = GRID (`Sprite,false) } |])
+             ::("Middle_1", [| {t with kind = GRID (`Sprite,false) } |])
+             ::("IJTranspose_1", [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
+             ::("Direction_1", [|t|])
+             ::("Abs_1", [|t|])
+             ::("AsTVec_1", [| {t with kind = INT (COORD (axis, tv))} |]) (* should be any other tv *)
+             ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
+             ::("Plus_2", [|t (* const *)|])
+             ::("Minus_2", [|t (* const *)|])
+             ::("ScaleUp_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
              ::res
           | VEC tv ->
-             (`Pos_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             ::(`MiddleCenter_1, [| {t with kind = OBJ (`Sprite,false) } |])
-             ::(`MiddleCenter_1, [| {t with kind = GRID (`Sprite,false) } |])
-             ::(`Size_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`Plus_2, [|t (* const: t *)|])
-             ::(`Minus_2, [|t (* const: t *)|])
-             ::(`ScaleUp_2, [|t (* const: {t with kind = INT CARD} *) |])
-             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
-             ::(`ProjI_1, [|t|])
-             ::(`ProjJ_1, [|t|])
-             ::(`IJTranspose_1, [|t|])
-             ::(`Direction_1, [|t|])
-             ::(`Abs_1, [|t|])
-             ::(`AsTVec_1 tv, [| {t with kind = VEC tv} |]) (* should be any other tv *)
-             ::(`RelativePos_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             ::(`TranslatedOnto_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             (* ::(`TranslationSym_2 `Id, [| {t with kind = OBJ (`Sprite,false)};
+             ("Pos_1", [| {t with kind = OBJ (`Sprite,false)} |])
+             ::("MiddleCenter_1", [| {t with kind = OBJ (`Sprite,false) } |])
+             ::("MiddleCenter_1", [| {t with kind = GRID (`Sprite,false) } |])
+             ::("Size_1", [| {t with kind = GRID (`Sprite,false)} |])
+             ::("Plus_2", [|t (* const: t *)|])
+             ::("Minus_2", [|t (* const: t *)|])
+             ::("ScaleUp_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ProjI_1", [|t|])
+             ::("ProjJ_1", [|t|])
+             ::("IJTranspose_1", [|t|])
+             ::("Direction_1", [|t|])
+             ::("Abs_1", [|t|])
+             ::("AsTVec_1", [| {t with kind = VEC tv} |]) (* should be any other tv *)
+             ::("RelativePos_1", [| {t with kind = OBJ (`Sprite,false)} |])
+             ::("TranslatedOnto_1", [| {t with kind = OBJ (`Sprite,false)} |])
+             (* ::("TranslationSym_2", [| {t with kind = OBJ (`Sprite,false)};
                                           {t with kind = GRID (`Sprite,false)} |]) *)
-             (* ::(`ApplySymVec_1 (`Id,tv), [|t|]) *)
-             (* ::(`Tiling_1 (2,2), [|t|]) *)
+             (* ::("ApplySymVec_1", [|t|]) *)
+             (* ::("Tiling_1", [|t|]) *)
              ::res
           | COLOR tc ->
-             (`Colors_1, [| {t with kind = GRID (`Sprite,false)} |])
-             ::(`MajorityColor_1, [| {t with kind = GRID (`Sprite,false)}|]) (* also `Full and `Noise *)
-             ::(`MinorityColor_1, [| {t with kind = GRID (`Sprite,false)} |]) (* also `Full and `Noise *)
+             ("Colors_1", [| {t with kind = GRID (`Sprite,false)} |])
+             ::("MajorityColor_1", [| {t with kind = GRID (`Sprite,false)}|]) (* also `Full and `Noise *)
+             ::("MinorityColor_1", [| {t with kind = GRID (`Sprite,false)} |]) (* also `Full and `Noise *)
              ::res
           | SEG -> res
           | ORDER _ -> res
           | MOTIF tm -> res
           | GRID (filling,nocolor) ->
              (*let full = (filling = `Full) in*)
-             (`Grid_1, [| {t with kind = OBJ (filling,nocolor)} |])
-             ::(`Halves_1 `H, [|t|])
-             ::(`Quadrants_1, [|t|])
-             ::(`MaskOfGrid_1, [| {t with kind = OBJ (`Sprite,false)} |])
-             ::(`GridOfColorSeq_1 `H, [| {t with kind = COLOR C_OBJ} |])
-             ::(`GridOfColorMat_1, [| {t with kind = COLOR C_OBJ} |])
-             ::(`ScaleUp_2, [|t (* const:{t with kind = INT CARD} *) |])
-             ::(`ScaleDown_2, [|t (* const: {t with kind = INT CARD} *) |])
-             (* ::(`ScaleTo_2, [|t; {t with kind = VEC SIZE} |]) *)
-             (* ::(`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t|]) *)
-             (* ::(`Crop_2, [| {t with kind = GRID (`Full,false)};
+             ("Grid_1", [| {t with kind = OBJ (filling,nocolor)} |])
+             ::("Halves_1", [|t|])
+             ::("Quadrants_1", [|t|])
+             ::("MaskOfGrid_1", [| {t with kind = OBJ (`Sprite,false)} |])
+             ::("GridOfColorSeq_1", [| {t with kind = COLOR C_OBJ} |])
+             ::("GridOfColorMat_1", [| {t with kind = COLOR C_OBJ} |])
+             ::("ScaleUp_2", [|t (* const:{t with kind = INT CARD} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
+             (* ::("ScaleTo_2", [|t; {t with kind = VEC SIZE} |]) *)
+             (* ::("PeriodicFactor_2", [| {t with kind = COLOR (C_BG full)}; t|]) *)
+             (* ::("Crop_2", [| {t with kind = GRID (`Full,false)};
                             {t with kind = OBJ (`Sprite,false)} |]) *)
-             ::(`ApplySymGrid_1 `Id, [|t|])
-             (* ::(`Coloring_2, [|t; {t with kind = COLOR C_OBJ} |]) *)
-             ::(`Border_1, [|t|])
-             ::(`Interior_1, [|t|])
-             ::(`DNeighbors_1, [|t|])
-             ::(`INeighbors_1, [|t|])
-             ::(`Neighbors_1, [|t|])
-             ::(`Unrepeat_1, [|t|])
-             (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
+             ::("ApplySymGrid_1", [|t|])
+             (* ::("Coloring_2", [|t; {t with kind = COLOR C_OBJ} |]) *)
+             ::("Border_1", [|t|])
+             ::("Interior_1", [|t|])
+             ::("DNeighbors_1", [|t|])
+             ::("INeighbors_1", [|t|])
+             ::("Neighbors_1", [|t|])
+             ::("Unrepeat_1", [|t|])
+             (* ::("FillResizeAlike_3", [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
                                                  t |]) *)
-             ::(`SelfCompose_3, [| (* const: {t with kind = COLOR (C_BG full)};*)
+             ::("SelfCompose_3", [| (* const: {t with kind = COLOR (C_BG full)};*)
                   (* const: {t with kind = COLOR C_OBJ};*)
                                    t |])
-             ::(`SelfCompose_3, [| (* const: {t with kind = COLOR (C_BG full)};*)
+             ::("SelfCompose_3", [| (* const: {t with kind = COLOR (C_BG full)};*)
                                    {t with kind = COLOR C_OBJ};
                                    t |])
-             (* ::(`UnfoldSym_1 [], [|t|]) *)
-             ::(`CloseSym_2 [], [| (* const: {t with kind = COLOR (C_BG full)};*) t|])
-             (* ::(`SwapColors_3, [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |]) *)
-             (* ::(`Stack_n, [|t; t|]) *)
+             (* ::("UnfoldSym_1", [|t|]) *)
+             ::("CloseSym_2", [| (* const: {t with kind = COLOR (C_BG full)};*) t|])
+             (* ::("SwapColors_3", [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |]) *)
+             (* ::("Stack_n", [|t; t|]) *)
              (* on masks *)
-             ::(`LogNot_1, [|t|])
-             ::(`LogAnd_1, [|t|])
-             ::(`LogOr_1, [|t|])
-             ::(`LogXOr_1, [|t|])
+             ::("LogNot_1", [|t|])
+             ::("LogAnd_1", [|t|])
+             ::("LogOr_1", [|t|])
+             ::("LogXOr_1", [|t|])
              ::res
           | OBJ (filling,nocolor) ->
              (*let full = (filling = `Full) in*)
-             (* (`PeriodicFactor_2 `TradeOff, [| {t with kind = COLOR (C_BG full)}; t |]) *)
-             (* ::(`FillResizeAlike_3 `TradeOff, [| {t with kind = COLOR (C_BG full)};
+             (* ("PeriodicFactor_2", [| {t with kind = COLOR (C_BG full)}; t |]) *)
+             (* ::("FillResizeAlike_3", [| {t with kind = COLOR (C_BG full)};
                                                  {t with kind = VEC SIZE};
                                                  t |]) *)
-             (* ::(`ApplySymGrid_1 `Id, [|t|]) *)
-             (* ::(`UnfoldSym_1 [], [|t|]) *)
-             (* ::(`CloseSym_2 [], [| {t with kind = COLOR (C_BG full)}; t |]) *)
-             (`Strip_1, [| {t with kind = GRID (filling,nocolor)} |])
-             ::(`Border_1, [|t|])
-             ::(`Interior_1, [|t|])
-             ::(`DNeighbors_1, [|t|])
-             ::(`INeighbors_1, [|t|])
-             ::(`Neighbors_1, [|t|])
+             (* ::("ApplySymGrid_1", [|t|]) *)
+             (* ::("UnfoldSym_1", [|t|]) *)
+             (* ::("CloseSym_2", [| {t with kind = COLOR (C_BG full)}; t |]) *)
+             ("Strip_1", [| {t with kind = GRID (filling,nocolor)} |])
+             ::("Border_1", [|t|])
+             ::("Interior_1", [|t|])
+             ::("DNeighbors_1", [|t|])
+             ::("INeighbors_1", [|t|])
+             ::("Neighbors_1", [|t|])
              ::res
           | MAP (ka,kb) -> res
         
