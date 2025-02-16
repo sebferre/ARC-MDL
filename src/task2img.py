@@ -45,6 +45,7 @@ colors = [(0,0,0), # black
           (255,165,0), # orange
           (0,255,255), # cyan
           (165,42,42), # brown
+          (255,255,255) # white (transparent)
           ]
 
 color_cells = [Image.new('RGB', (cell_width,cell_width), color)
@@ -62,7 +63,8 @@ def grid_image(grid):
     for i in range(0,k):
         for j in range(0,l):
             c = grid[i][j]
-            img.paste(color_cells[c], (offset(j), offset(i)))
+            if c >= 0 and c <= 10:
+                img.paste(color_cells[c], (offset(j), offset(i)))
     return img
 
 def task_image(task):
@@ -94,35 +96,40 @@ def task_image(task):
     for (i, (gi,go)) in enumerate(grid_pairs):
         img.paste(gi, (i * w + grid_span, grid_span))
         img.paste(go, (i * w + grid_span, hi + grid_span))
-    return img
+    return img, grid_pairs
 
 # main functions
 
-def process_file(json_file,img_folder):
+def process_file(json_file, img_folder, flag_grids):
     task = load_task(json_file)
     if task:
-        img = task_image(task)
+        img, grid_pairs = task_image(task)
         basename, _ = os.path.splitext(json_file)
         _, filename = os.path.split(basename)
         print(filename)
         img_file = os.path.join(img_folder, filename + ".png")
         img.save(img_file)
+        if flag_grids:
+            for (i, (gi,go)) in enumerate(grid_pairs):
+                gi.save(os.path.join(img_folder, filename + "_input" + str(i+1) + ".png"))
+                go.save(os.path.join(img_folder, filename + "_output" + str(i+1) + ".png"))
     else:
         print("this JSON file could not be read: ", json_file)
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python task2img.py <src_folder[/task.json]> <dest_folder>")
+        print("Usage: python task2img.py <src_folder[/task.json]> <dest_folder> [grids]")
         sys.exit(1)
     src_path = sys.argv[1]
     img_folder = sys.argv[2]
+    flag_grids = len(sys.argv) > 3 and sys.argv[3] == "grids"
     if src_path.endswith(".json"):
-        process_file(src_path, img_folder)
+        process_file(src_path, img_folder, flag_grids)
     else:
         for filename in os.listdir(src_path):
             if filename.endswith('.json'):
                 json_path = os.path.join(src_path, filename)
-                process_file(json_path, img_folder)
+                process_file(json_path, img_folder, flag_grids)
 
 
 if __name__ == "__main__":
