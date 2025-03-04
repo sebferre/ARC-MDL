@@ -2222,7 +2222,7 @@ timeout).
 Those changes result in 10 additional successful training tasks, 52
 (13\%) in total.
 
-\paragraph{Version 2.6.} Here are the main changes in this version:
+\paragraph{Version 2.6 -- 2022-11-07.} Here are the main changes in this version:
 \begin{itemize}
 \item many new functions:
   \begin{itemize}
@@ -2237,27 +2237,27 @@ Those changes result in 10 additional successful training tasks, 52
 Those changes result in a sharp increase of the number of solved
 tasks, from 52 to 94 training tasks (23.5\%), and from 9 to 23 evaluation tasks (5.75\%).
 
-\paragraph{Version 2.7.}
+\paragraph{Version 2.7 -- 2022-12-20.}
 \begin{itemize}
 \item a lot of refactoring
 \item patterns: grid tiling
 \end{itemize}
 
-\paragraph{Version 3.0} Restart with the MADIL framework. New models:
+\paragraph{Version 3.0 -- 2023-12-10.} Restart with the MADIL framework. New models:
 lost incremental object addition and object overlapping; gained
 sequences (of objects and other things); lifted a number of functions
 as patterns for better incrementality and findability (motifs). Kind
 of DFS search, considering up to top-3 refinements at the same path at
 each step.
 
-\paragraph{Version 3.1}
+\paragraph{Version 3.1 -- 2024-02-26.}
 \begin{itemize}
 \item introduced loop vars
 \item patterns: segmentation mode as argument for objects + derived field for all objects as one; small grids as color sequences or matrices (sequence of sequences); derived pure grid in motifs; maps (replace, swap, fixed-domain); crop of a grid expression; recoloring of a grid expression; new motifs (border, crosses, star, diamond)
 \item functions: unrepeat to compress grids; tail and reverse of a sequence
 \end{itemize}
 
-\paragraph{Version 3.2}
+\paragraph{Version 3.2 -- 2024-03-06.}
 \begin{itemize}
 \item patterns: line objects, defined by length and direction; more segmentation modes for objects (connect by 8, 4, 2 and/or color)
 \item functions: abs and direction (sign) of ints/vecs; transpose of vecs; top/bottom/left/right halves of grids; mask of a grid (ignoring colors); minority color of a grid; self-compose takes a bgcolor; cardinal of a sequence
@@ -2265,7 +2265,7 @@ each step.
 \item explicit conversions between different kinds of integers (expressions) to penalize thorough DL
 \end{itemize}
 
-\paragraph{Version 3.3}
+\paragraph{Version 3.3 -- 2024-05-05.}
 \begin{itemize}
 \item Ndtrees: transpose, flatten, and rotate functions on first dimension
 \item sequence lengths encoded by patterns as extra arguments, parsing and generation conform to them
@@ -2277,7 +2277,7 @@ each step.
 \item functions: selfCompose can use color expression
 \end{itemize}
 
-\paragraph{Version 3.4}
+\paragraph{Version 3.4 -- 2024-09-04.}
 \begin{itemize}
 \item MADIL: handling of sequences delegated to the domain (no more loops), simpler pattern semantics (pure data decompositions). This allows for custom sequence matching and computation. Utilities for element-wise computations on sequences of sequences, etc.
 \item notion of Decompositions: patterns that do not compress but split into parts. They must be further refined until made compressive. Subset of patterns: Vec, Obj.
@@ -2287,13 +2287,22 @@ each step.
 \item MCTS search through model refinement tree (search space)
 \end{itemize}
 
-\paragraph{Version 3.5}
+\paragraph{Version 3.5 -- 2024-10-29.}
 \begin{itemize}
 \item expression-only arguments (patterns Crop, Recoloring, SeqIndex) are separated from part arguments; refinements apart from patterns and expressions, a mix between;
 \item ASD: no more default constructor; binary functions can be declared as unary if only used with a constant argument;
 \item patterns: ColorSeq/ColorMat made decompositions; colors as grid decomposition; Square sizes and moves; added noise argument to Objects; new motif Rings;  
 \item functions: MiddleCenter; Top...Middle defined on grids; GridOfColorSeq and GridOfColorMat; aggregations Sum, MostCommon and LeastCommon sequence item; RelativePos and TranslationOnto for inter-object relations; Halves replaced XHalf; generic Cast function; 
 \item new version of expression index: more systematic and avoiding binary expressions, relying on inter-object functions, constant arguments, and aggregations.
+\end{itemize}
+
+\paragraph{Version 3.x -- 2025-02-16+.}
+\begin{itemize}
+\item one expression index per variable because only unary functions, enables to cache;
+\item introduction of type for value distributions, used for parsing and generation;
+\item patterns: sorting argument in Objects; Affine (ax+b); 
+\item functions: Quadrants; Strip; Colors of a grid/object; Border, Interior and Neighbors on objects;
+\item lots of code cleaning and simplification.
 \end{itemize}
 
 %%%

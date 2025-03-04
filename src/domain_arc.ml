@@ -4622,7 +4622,7 @@ module MyDomain : Madil.DOMAIN =
           index
           (fun t1 v1 ->
             let res = [] in
-            let res = (* MaskOfGrid *)
+            let res = (* MaskOfGrid, LogNot *)
               match t1.kind with
               | GRID ((`Sprite|`Noise as filling), false) ->
                  let tres = {t1 with kind = GRID (filling, true)} in
