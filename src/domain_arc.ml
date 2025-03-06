@@ -1109,7 +1109,7 @@ module MyDomain : Madil.DOMAIN =
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
     let refinement_branching = def_param "refinement_branching" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let input_branching = def_param "input_branching" 10 string_of_int (* max nb of explored input models during output model learning (refining phase). min=1 *)
-    let solution_pool = def_param "solution_pool" 3 string_of_int (* max nb of solutions before choosing best one *)
+    let solution_pool = def_param "solution_pool" 1 (* more is not beneficial *) string_of_int (* max nb of solutions before choosing best one *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
 
     let _ = Random.init 1976
