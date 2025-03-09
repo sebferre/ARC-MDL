@@ -4839,6 +4839,17 @@ module MyDomain : Madil.DOMAIN =
               [| Model.make_def xgrid (Model.make_any {kind = GRID (`Sprite,false); ndim = ndim-2})|],
             varseq) :: rs
         | _ -> rs in
+      let rs = (* IsFull, added here because hardly compressive *)
+        match t.kind with
+        | GRID (filling,nocolor) ->
+           if filling = `Sprite && not nocolor then (* nocolor isfull covered by full mask *)
+             let xgrid1, varseq = Refining.new_var varseq in
+             (Model.make_pat t IsFull
+                [| Model.make_def xgrid1 (Model.make_any {t with kind = GRID (`Full,nocolor)}) |],
+              varseq)
+             :: rs
+           else rs
+        | _ -> rs in
       let rs = (* adding SeqCons *) (* TODO: find better, for any position, matching some pattern *)
         if ndim = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
