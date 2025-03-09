@@ -1102,12 +1102,12 @@ module MyDomain : Madil.DOMAIN =
     let max_nb_reads = def_param "max_nb_doc_reads" 3 string_of_int (* max nb of selected doc reads, passed to the next stage *)
     let max_nb_writes = def_param "max_nb_doc_writes" 3 string_of_int (* max nb of selected output writes *)
     let max_parse_dl_factor = def_param "max_parse_dl_factor" 3. string_of_float (* compared to best parse, how much longer alternative parses can be *)
-    let max_expr_size = def_param "max_expr_size" 9 string_of_int (* max size of candidate expressions *)
-    let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 1000 string_of_int (* max nb of considered expr refinements per grid read *)
+    let max_expr_size = def_param "max_expr_size" 6 (* TEST 9 *) string_of_int (* max size of candidate expressions *)
+    let max_expr_refinements_per_read = def_param "max_expr_refinements_per_read" 100 (* TEST 1000 *) string_of_int (* max nb of considered expr refinements per grid read *)
     let max_expr_refinements_per_var = def_param "max_expr_refinements_per_var" 10 string_of_int (* max nb of considered expr refinements per model var *)
-    let max_refinement_steps = def_param "max_refinement_steps" 4 string_of_int (* max nb of refinements steps into a single refined model, for decompositions *)
+    let max_refinement_steps = def_param "max_refinement_steps" 2 (* TEST 4 *) string_of_int (* max nb of refinements steps into a single refined model, for decompositions *)
     let max_refinements = def_param "max_refinements" 100 string_of_int (* max nb of considered refinements *)
-    let refinement_branching = def_param "refinement_branching" 3 string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
+    let refinement_branching = def_param "refinement_branching" 9 (* TEST 3 *) string_of_int (* max nb of explored pattern refinements at some model path during learning (refining phase). min=1 *)
     let input_branching = def_param "input_branching" 10 string_of_int (* max nb of explored input models during output model learning (refining phase). min=1 *)
     let solution_pool = def_param "solution_pool" 1 (* more is not beneficial *) string_of_int (* max nb of solutions before choosing best one *)
     let search_temperature = def_param "search_temperature" 1. string_of_float (* DEPRECATED by MCTS approach - to control choice of model to jump to and refine, based on softmax: base-2 log, values between -2. and 0. *)
@@ -4839,7 +4839,7 @@ module MyDomain : Madil.DOMAIN =
               [| Model.make_def xgrid (Model.make_any {kind = GRID (`Sprite,false); ndim = ndim-2})|],
             varseq) :: rs
         | _ -> rs in
-      let rs = (* adding SeqCons *)
+      let rs = (* adding SeqCons *) (* TODO: find better, for any position, matching some pattern *)
         if ndim = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
           let xhd, varseq = Refining.new_var varseq in
