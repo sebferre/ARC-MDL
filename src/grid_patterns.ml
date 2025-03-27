@@ -517,38 +517,81 @@ let parse (nmax : int) seg (g : Grid.t) : t Myseq.t =
   then Myseq.return (objs, g_noise)
   else Myseq.empty
 
-  end
 
-let partition_by_color (g : Grid.t) : Grid.t list =
+type order = Color | AreaMask | Pos
+
+let xp_order ~html print = function
+  | Color -> print#string "color"
+  | AreaMask -> print#string "area/mask"
+  | Pos -> print#string "pos"
+
+let obj_color (i,j,g1) = Grid.majority_color Grid.transparent g1 [@@inline]
+let obj_area (i,j,g1) = - (Grid.color_area Grid.transparent g1) [@@inline] (* descending area *)
+let obj_mask (i,j,g1) = Grid.Mask.from_grid_background Grid.transparent g1 [@@inline]
+let obj_posi (i,j,g1) = let h1, w1 = Grid.dims g1 in float i +. float h1 /. 2. [@@inline]
+let obj_posj (i,j,g1) = let h1, w1 = Grid.dims g1 in float j +. float w1 /. 2. [@@inline]
+let obj_color_plus obj = obj_color obj, obj_area obj, obj_mask obj
+let obj_area_mask_plus obj = obj_area obj, obj_mask obj, obj_color obj
+
+let candidate_orders nmax nocolor =
+  if nmax = 1 then [Pos]
+  else if nocolor then [AreaMask; Pos]
+  else [Color; AreaMask; Pos]
+
+let sort_gen (key : obj -> 'k) (objs : obj list) : obj list =
+  let sorted = List.sort Stdlib.compare (List.map (fun obj -> key obj, obj) objs) in
+  List.map snd sorted
+
+let sort (order : order) (objs : obj list) : obj list =
+  match order with
+  | Color -> sort_gen obj_color_plus objs
+  | AreaMask -> sort_gen obj_area_mask_plus objs
+  | Pos -> List.sort Stdlib.compare objs (* obj = (i,j,g1) *)
+
+let rec single_key (sorted : ('k * obj) list) : bool =
+  match sorted with
+  | [] -> true
+  | [(k,_)] -> true
+  | (k1,_)::((k2,_)::_ as r) -> k1 = k2 && single_key r
+
+let rec unique_keys (sorted : ('k * obj) list) : bool =
+  match sorted with
+  | [] -> true
+  | [(k,_)] -> true
+  | (k1,_)::((k2,_)::_ as r) -> k1 <> k2 && unique_keys r
+
+  end (* Objects *)
+
+let partition_by_color (g : Grid.t) : (Grid.color * Grid.t (* mask *)) list =
   Common.prof "Grid_patterns.partition_by_color" (fun () ->
   let h, w = Grid.dims g in
   let mat = g.matrix in
   let color_part =
     Array.init Grid.nb_color (* one potential grid per color *)
-      (fun c -> (Grid.make h w Grid.transparent, ref 0)) in
+      (fun c -> (Grid.make h w Grid.zero, ref 0)) in
   for i = 0 to h-1 do
     for j = 0 to w-1 do
       let c = mat.{i,j} in
       if Grid.is_true_color c then
-        let g1, area = color_part.(c) in
-        Grid.Do.set_pixel g1 i j c;
+        let m, area = color_part.(c) in
+        Grid.Do.set_pixel m i j Grid.one;
         incr area
     done
   done;
   let parts =
     let res = ref [] in
     Array.iteri
-      (fun c (g1,area) ->
+      (fun c (m,area) ->
         if !area > 0 then
-          res := (!area, c, g1) :: !res)
+          res := (!area, c, m) :: !res)
       color_part;
     !res in
   let sorted_parts =
     List.sort
-      (fun (a1,c1,g1) (a2,c2,g2) ->
-        Stdlib.compare (a2,c1) (a1,c2)) (* decreasing area first *)
+      (fun (a1,c1,m1) (a2,c2,m2) ->
+        Stdlib.compare (a2,c1) (a1,c2)) (* decreasing area *)
       parts in
-  List.map (fun (_,_,g1) -> g1) sorted_parts)
+  List.map (fun (_,c,m) -> c,m) sorted_parts)
 
 let partition_by_color, reset_partition_by_color =
   Memo.memoize ~size:103 partition_by_color
@@ -569,6 +612,7 @@ module Motif =
 type t =
   | Scale
   | Periodic of Grid.Transf.axis * Grid.Transf.axis
+  | Affine of int * int (* ax + b, same on two axes so far *) 
   (* symmetries *) (* TODO: add symmetry axis/center position *)
   | FlipH | FlipW | FlipHW
   | FlipD1 | FlipD2 | FlipD12
@@ -585,6 +629,10 @@ let xp ~html print = function
   | Periodic (phi,psi) ->
      print#string "periodic["; Grid.Transf.xp_axis print phi;
      print#string ","; Grid.Transf.xp_axis print psi;
+     print#string "]"
+  | Affine (a,b) ->
+     print#string "affine["; print#int a;
+     print#string ","; print#int b;
      print#string "]"
   | FlipH -> print#string "flipH"
   | FlipW -> print#string "flipW"
@@ -603,39 +651,51 @@ let xp ~html print = function
   | Diamond -> print#string "Diamond"
   | Star -> print#string "Star"
 
-let project (mot : t) h w u v : (int -> int -> int * int) =
+let project (mot : t) h w u v : (int -> int -> (int * int) option) =
   (* project coord (i,j) in (h,w) range to (u,v) range, according to motif *)
   let h_1, w_1 = h-1, w-1 in
   match mot with
   | Scale ->
      let k, l = h_1 / u + 1, w_1 / v + 1 in
-     (fun i j -> i / k, j / l)
+     (fun i j -> Some (i / k, j / l))
   | Periodic (phi,psi) ->
      let eval_phi = Grid.Transf.eval_axis phi in
      let eval_psi = Grid.Transf.eval_axis psi in
      (fun i j ->
        let a, b = eval_phi i j, eval_psi i j in
-       a mod u, b mod v)
+       Some (a mod u, b mod v))
+  | Affine (a,b) ->
+     let proj y = (* positive integer solution to ax + b = y *)
+       let z = y - b in
+       if z >= 0 && z mod a = 0
+       then
+         let x = z / a in
+         Some x
+       else None in
+     (fun i j ->
+       let@ i' = proj i in
+       let@ j' = proj j in
+       Some (i',j'))
   | FlipH ->
-     (fun i j -> min i (h_1 - i), j)
+     (fun i j -> Some (min i (h_1 - i), j))
   | FlipW ->
-     (fun i j -> i, min j (w_1 - j))
+     (fun i j -> Some (i, min j (w_1 - j)))
   | FlipHW ->
-     (fun i j -> min i (h_1 - i), min j (w_1 - j))
+     (fun i j -> Some (min i (h_1 - i), min j (w_1 - j)))
   | FlipD1 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       min p (h_1 + w_1 - p), m)
+       Some (min p (h_1 + w_1 - p), m))
   | FlipD2 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       p, min m (h_1 + w_1 - m))
+       Some (p, min m (h_1 + w_1 - m)))
   | FlipD12 ->
      (fun i j ->
        let p, m = i + j, i + (w_1 - j) in
-       min p (h_1 + w_1 - p), min m (h_1 + w_1 - m))
+       Some (min p (h_1 + w_1 - p), min m (h_1 + w_1 - m)))
   | Rotate180 ->
-     (fun i j -> min (i, j) (h_1 - i, w_1 - j))
+     (fun i j -> Some (min (i, j) (h_1 - i, w_1 - j)))
   | Rotate90 ->
      (fun i j ->
        let a, b =
@@ -644,50 +704,50 @@ let project (mot : t) h w u v : (int -> int -> int * int) =
               (min (h_1 - i, w_1 - j)
                  (j, h_1 - i))) in
        if b >= v
-       then w_1 - b, a 
-       else a, b)
+       then Some (w_1 - b, a)
+       else Some (a, b))
   | FullSym ->
      (fun i j ->
        let i_min = min i (h_1 - i) in
        let j_min = min j (w_1 - j) in
-       min i_min j_min, max i_min j_min)
+       Some (min i_min j_min, max i_min j_min))
   | Rings ->
      (fun i j ->
-       min (min i (h_1 - i)) (min j (w_1 - j)), 0)
+       Some (min (min i (h_1 - i)) (min j (w_1 - j)), 0))
   (* (u,v) = (2,1), shape color at [1,0], bgcolor at [0,0] *)
   | Corners ->
      (fun i j ->
        if (i = 0 || i = h_1) && (j = 0 || j = w_1)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Border ->
      (fun i j ->
        if i = 0 || j = 0 || i = h_1 || j = w_1
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | CrossPlus ->
      (fun i j ->
        if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | CrossTimes ->
      (fun i j ->
        if i = j || i = (w_1-j)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Star ->
      (fun i j ->
        if i = h/2 || i = h_1/2 || j = w/2 || j = w_1/2 (* CrossPlus *)
           || i = j || i = (w_1-j) (* CrossTimes *)
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
   | Diamond ->
      assert (h = w);
      (fun i j ->
        let p, m = i + j,  i + (w_1 - j) in
        if p = h_1/2 || p = h_1 + h/2 || m = h_1/2 || m = h_1 + h/2
-       then 1, 0
-       else 0, 0)
+       then Some (1, 0)
+       else Some (0, 0))
              
 let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (int * int) list =
   (* range and list of core dimensions (u,v) given a motif and grid dims *)
@@ -724,6 +784,12 @@ let all_coredims_of_motif (mot : t) (h : int) (w : int) : Range.t * Range.t * (i
              else (u,v)::res)
            1 w' res)
        1 h' []
+  | Affine (a,b) ->
+     let u = (h - 1 - b) / a + 1 in
+     let v = (w - 1 - b) / a + 1 in
+     Range.make_exact u,
+     Range.make_exact v,
+     [u,v]
   | FlipH ->
      let u, v = (h+1)/2, w in
      Range.make_exact u,
@@ -849,11 +915,13 @@ let make_grid (h : int) (w : int) (mot : t) (core : Grid.t) : Grid.t result = (*
     let g =
       Grid.init h w
         (fun i j ->
-          let i', j' = proj i j in
-          assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
-            (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
-            assert false); *)
-          core.Grid.matrix.{i',j'}) in
+          match proj i j with
+          | Some (i',j') ->
+             assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
+             (* pp xp mot; Printf.printf " (%d,%d) -> (%d,%d) [%d,%d]\n" h w u v i' j';
+                assert false); *)
+             core.Grid.matrix.{i',j'}
+          | None -> Grid.transparent) in
     if g.color_count.(Grid.undefined) = 0
     then Result.Ok g
     else Result.Error (Failure "Grid_patterns.Motif.make_grid: undefined cells")
@@ -880,30 +948,42 @@ let candidates_multi = (* multicolor motifs *)
     Periodic (PlusIJ, Zero);
     Periodic (DiffIJ, Zero);
     Periodic (MaxIJ, Zero);
-    Periodic (MinIJ, Zero) ]
+    Periodic (MinIJ, Zero);
+    Affine (2,0);
+    Affine (2,1);
+    Affine (3,0);
+    Affine (3,1);
+    Affine (3,2);
+  ]
 let nb_candidates_multi = List.length candidates_multi
+let nb_affine_params = 3
 
-let prob_multi : t -> float = function
+let candidates_bi = (* bicolor shape-like motifs *)
+  let open Grid.Transf in
+  [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
+let nb_candidates_bi = List.length candidates_bi
+
+let weight : t -> float = function
   | Scale -> 0.3
 
-  (* 0.4 *)
-  | FullSym -> 0.4 *. 0.25
-  | Rings -> 0.4 *. 0.10
-
-  | FlipHW -> 0.4 *. 0.2
-  | FlipH -> 0.4 *. 0.05
-  | FlipW -> 0.4 *. 0.05
-
-  | FlipD12 -> 0.4 *. 0.1
-  | FlipD1 -> 0.4 *. 0.05
-  | FlipD2 -> 0.4 *. 0.05
-
-  | Rotate90 -> 0.4 *. 0.1
-  | Rotate180 -> 0.4 *. 0.05
-
   (* 0.3 *)
+  | FullSym -> 0.3 *. 0.25
+  | Rings -> 0.3 *. 0.10
+
+  | FlipHW -> 0.3 *. 0.2
+  | FlipH -> 0.3 *. 0.05
+  | FlipW -> 0.3 *. 0.05
+
+  | FlipD12 -> 0.3 *. 0.1
+  | FlipD1 -> 0.3 *. 0.05
+  | FlipD2 -> 0.3 *. 0.05
+
+  | Rotate90 -> 0.3 *. 0.1
+  | Rotate180 -> 0.3 *. 0.05
+
+  (* 0.4 *)
   | Periodic (a,b) ->
-     0.3 *.
+     0.2 *.
      (match a, b with
       | I, J -> 0.2
       | I, PlusIJ -> 0.04
@@ -916,17 +996,14 @@ let prob_multi : t -> float = function
       | MaxIJ, Zero -> 0.04
       | MinIJ, Zero -> 0.04
       | _ -> assert false)
-  | _ -> assert false
-
-let candidates_bi = (* bicolor shape-like motifs *)
-  let open Grid.Transf in
-  [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
-let nb_candidates_bi = List.length candidates_bi
+  | Affine (a,b) ->
+     0.2 /. float nb_affine_params
+  | Border | Corners | CrossPlus | CrossTimes | Diamond | Star -> 0.1
 
 
 let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * Range.t * Range.t * Grid.t * Grid.t option * Grid.t) list = (* list of (motif, range_u, range_v, (u,v)-sized core, mask, noise) that [g] agreeds to as pure(motif,core,size(noise)) & mask + noise *)
   (* bgcolor is the color to be ignored *)
-  Common.prof "Grid_patterns.from_grid" (fun () ->
+  Common.prof "Grid_patterns.Motif.from_grid" (fun () ->
   let h, w = Grid.dims g in
   (* color stats: lists of (color,count) pairs *)
   let add_color c (n,n_def,cstats) =
@@ -965,12 +1042,14 @@ let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * R
         (fun (u,v,proj,ncols) ->
           Grid.iter_pixels
             (fun i j c ->
-              let i', j' = proj i j in
-              assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
-              (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
-                pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
-                assert false);*)
-              ncols.(i').(j') <- add_color c ncols.(i').(j'))
+              match proj i j with
+              | Some (i', j') ->
+                 assert (i' >= 0 && i' < u && j' >= 0 && j' < v);
+                 (*if not (i' >= 0 && i' < u && j' >= 0 && j' < v) then (
+                   pp xp mot; Printf.printf " (%d,%d) [%d,%d]\n" u v i' j';
+                   assert false);*)
+                 ncols.(i').(j') <- add_color c ncols.(i').(j')
+              | None -> ()) (* pixel at (i,j) does not contribute to core *)
             g)
         cores)
     motifs;
@@ -1203,7 +1282,7 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
         let k, l = mg.k, mg.l in
         let top, bot, left, right =
           let b = mg.borders.matrix in
-          let offset c = if c = Grid.Mask.one then 1 else 0 in
+          let offset c = if c = Grid.one then 1 else 0 in
           offset b.{0,0}, offset b.{0,1},
           offset b.{1,0}, offset b.{1,1} in
         let h = Array.fold_left (+) (top + k-1 + bot) mg.part_heights in (* k-1 frontiers *)
@@ -1302,7 +1381,7 @@ module Metagrid = (* grid of grids, separated by sepcolor frontiers *)
             then None
             else
               let borders =
-                let col b = if b then Grid.Mask.one else Grid.Mask.zero [@@inline] in
+                let col b = if b then Grid.one else Grid.zero [@@inline] in
                 Grid.init 2 2
                   (fun i j ->
                     match i, j with

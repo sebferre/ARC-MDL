@@ -23,6 +23,10 @@ let brown = 9
 let transparent = 10 (* for non-covered parts, no color *)
 let undefined = 11 (* for use in special algos, hidden parts, any color *)
 
+(* color coding of Boolean values / masks *)
+let zero = transparent
+let one = black
+
 let nb_color = 10
 let last_color = 9
 
@@ -1099,7 +1103,8 @@ module Transf =
         Memo.memoize ~size:memoize_size (fun (g,i,j,h,w) -> crop g i j h w) in
       (fun g i j h w -> f (g,i,j,h,w)), reset
 
-    let strip (bgcolor : color) (g : t) (out_bgcolor : color) : (int * int * t) result = (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
+    let strip (bgcolor : color) (g : t) (out_bgcolor : color) : (int * int * int * int * t) result = (* i, j, h1, w1, g1 *)
+      (* croping on anything else than bgcolor, the remaining bgcolor is made out_bgcolor *)
       let h, w = dims g in
       let min_i, max_i = ref h, ref (-1) in
       let min_j, max_j = ref w, ref (-1) in
@@ -1114,13 +1119,110 @@ module Transf =
       if !min_i < 0 (* grid is bgcolor only *)
       then Result.Error (Undefined_result "grid has no contents")
       else
-        let| g' = swap_colors g bgcolor out_bgcolor in
-        let| g' = crop g' !min_i !min_j (!max_i - !min_i + 1) (!max_j - !min_j + 1) in
-        Result.Ok (!min_i,!min_j,g')
+        let| g1 = swap_colors g bgcolor out_bgcolor in
+        let i, j = !min_i, !min_j in
+        let h1, w1 = !max_i - i + 1, !max_j - j + 1 in
+        let| g1 = crop g1 i j h1 w1 in
+        Result.Ok (i,j,h1,w1,g1)
     let strip, reset_strip =
       Memo.memoize3 ~size:memoize_size strip
 
+
+    (* neighbors, border, interior *)
+
+    let cell_dneighbors (bgcolor : color) (g : t) h w i j : color list =
+      (* list of colors of direct neighbors of cell (i,j) in g *)
+      (* outside the grid is assumed bgcolor *)
+      [ (if i > 0 then g.matrix.{i-1,j} else bgcolor);
+        (if i < h-1 then g.matrix.{i+1,j} else bgcolor);
+        (if j > 0 then g.matrix.{i,j-1} else bgcolor);
+        (if j < w-1 then g.matrix.{i,j+1} else bgcolor) ]
     
+    let cell_ineighbors (bgcolor : color) (g : t) h w i j : color list =
+      (* list of colors of indirect neighbors of cell (i,j) in g *)
+      (* outside the grid is assumed bgcolor *)
+      [ (if i > 0 && j > 0 then g.matrix.{i-1,j-1} else bgcolor);
+        (if i < h-1 && j > 0 then g.matrix.{i+1,j-1} else bgcolor);
+        (if i > 0 && j < w-1 then g.matrix.{i-1,j+1} else bgcolor);
+        (if i < h-1 && j < w-1 then g.matrix.{i+1,j+1} else bgcolor) ]
+
+    let cell_neighbors bgcolor g h w i j =
+      cell_dneighbors bgcolor g h w i j
+      @ cell_ineighbors bgcolor g h w i j
+    
+    let border (bgcolor : color) (g : t) : t =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          let c = g.matrix.{i,j} in
+          if c <> bgcolor
+             && List.mem bgcolor (cell_dneighbors bgcolor g h w i j)
+          then c
+          else bgcolor)
+
+    let interior (bgcolor : color) (g : t) : t =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          let c = g.matrix.{i,j} in
+          if c <> bgcolor
+             && not (List.mem bgcolor (cell_dneighbors bgcolor g h w i j))
+          then c
+          else bgcolor)
+
+    let dneighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_dneighbors bgcolor g h w i j)
+          then one
+          else zero)
+    
+    let ineighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_ineighbors bgcolor g h w i j)
+          then one
+          else zero)
+
+    let neighbors (bgcolor : color) (g : t) : t (* mask *) =
+      let h, w = dims g in
+      init h w
+        (fun i j ->
+          if g.matrix.{i,j} = bgcolor
+             && List.exists (fun c1 -> c1 <> bgcolor) (cell_neighbors bgcolor g h w i j)
+          then one
+          else zero)
+
+    let apply_stripped_at_pos ?(margin = 0) (f : color -> t -> t) (bgcolor : color) (i, j : int * int) (g : t) : (int * int * t) result =
+      (* for object sprite g at position (i,j), apply transformation f (among the above), allowing for some margin, then returning updated position and sprite *)
+      let h, w = dims g in
+      (* assuming that g is stripped *)
+      assert
+        (match strip bgcolor g bgcolor with
+         | Result.Ok (i1, j1, h1, w1, g1) -> i1 = 0 && j1 = 0 && h = h1 && w = w1
+         | _ -> false);
+      let temp = make (h + 2 * margin) (w + 2 * margin) bgcolor in
+      add_grid_at temp margin margin g;
+      let temp = f bgcolor temp in
+      let| i1, j1, h1, w1, g1 = strip bgcolor temp bgcolor in
+      let i, j = i - margin + i1, j - margin + j1 in (* new position *)
+      if i < 0 || j < 0
+      then (* cropping g1 to have positive position *) (* TODO: should also crop on g1 size *)
+        let di = if i < 0 then -i else 0 in
+        let dj = if j < 0 then -j else 0 in
+        let| g1 = crop g1 di dj (h1 - di) (w1 - dj) in
+        Result.Ok (i + di, j + dj, g1)
+      else Result.Ok (i,j,g1)
+    let border_at_pos bgcolor pos g = apply_stripped_at_pos border bgcolor pos g
+    let interior_at_pos bgcolor pos g = apply_stripped_at_pos interior bgcolor pos g
+    let dneighbors_at_pos bgcolor pos g = apply_stripped_at_pos ~margin:1 dneighbors bgcolor pos g
+    let ineighbors_at_pos bgcolor pos g = apply_stripped_at_pos ~margin:1 ineighbors bgcolor pos g
+    let neighbors_at_pos bgcolor pos g = apply_stripped_at_pos ~margin:1 neighbors bgcolor pos g
+
     (* concatenating *)
       
     let concatHeight g1 g2 : t result =
@@ -1331,9 +1433,6 @@ module Transf =
 
 module Mask =
   struct
-    (* color coding of Boolean values *)
-    let zero = transparent
-    let one = black
     let bool (b : bool) : color = if b then one else zero
 
     let is_well_formed m =

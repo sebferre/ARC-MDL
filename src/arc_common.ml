@@ -112,7 +112,10 @@ let myseq_bind_list_interleave (k : int) (l : 'a list) (f : 'a * 'a list -> 'b M
 
 module Memo = (* appears to be more efficient than Common versions *)
   struct
+let log_on = ref false
+
 let memoize (type k)
+      ?(name : string option)    
       ?(equal : k -> k -> bool = (=))
       ?(hash : k -> int = Hashtbl.hash)
       ~(size : int)
@@ -125,7 +128,13 @@ let memoize (type k)
         let hash = hash
       end) in
   let ht : 'a H.t = H.create size in
-  let reset () = H.clear ht in
+  let log_memsize () =
+    match name with
+    | None -> ()
+    | Some name -> Printf.printf "MEMSIZE %s\t%dk\n" name (Common.memsize ht / 1000) in
+  let reset () =
+    if !log_on then log_memsize ();
+    H.clear ht in
   let memoized_f =
     fun x ->
     match H.find_opt ht x with
@@ -133,18 +142,19 @@ let memoize (type k)
     | None ->
        let y = f x in
        H.add ht x y;
+       if !log_on then log_memsize ();
        y
   in
   memoized_f, reset
 
-let memoize2 ?equal ~size f2 =
-  let mem_f2, reset = memoize ?equal ~size (fun (x1,x2) -> f2 x1 x2) in
+let memoize2 ?name ?equal ~size f2 =
+  let mem_f2, reset = memoize ?name ?equal ~size (fun (x1,x2) -> f2 x1 x2) in
   (fun x1 x2 -> mem_f2 (x1,x2)), reset
-let memoize3 ?equal ~size f3 =
-  let mem_f3, reset = memoize ?equal ~size (fun (x1,x2,x3) -> f3 x1 x2 x3) in
+let memoize3 ?name ?equal ~size f3 =
+  let mem_f3, reset = memoize ?name ?equal ~size (fun (x1,x2,x3) -> f3 x1 x2 x3) in
   (fun x1 x2 x3 -> mem_f3 (x1,x2,x3)), reset
-let memoize4 ?equal ~size f4 =
-  let mem_f4, reset = memoize ?equal ~size (fun (x1,x2,x3,x4) -> f4 x1 x2 x3 x4) in
+let memoize4 ?name ?equal ~size f4 =
+  let mem_f4, reset = memoize ?name ?equal ~size (fun (x1,x2,x3,x4) -> f4 x1 x2 x3 x4) in
   (fun x1 x2 x3 x4 -> mem_f4 (x1,x2,x3,x4)), reset
 
   end

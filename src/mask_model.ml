@@ -41,7 +41,7 @@ let mem ~height ~width i j = (* mask height and width, relative position (i,j) *
 let matches (m : Grid.t) (mm : t) : bool =
   let h, w = Grid.dims m in
   Grid.for_all_pixels
-    (fun i j c -> (c = Grid.Mask.one) = mem ~height:h ~width:w i j mm)
+    (fun i j c -> (c = Grid.one) = mem ~height:h ~width:w i j mm)
     m
 let matches, reset_matches =
   Memo.memoize2 ~size:memoize_size matches
