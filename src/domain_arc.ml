@@ -4280,15 +4280,29 @@ module MyDomain : Madil.DOMAIN =
         `ScaleUp_2, 1, `Minus_2, 1;
         `ScaleUp_2, 1, `Minus_2, 2;
         `ScaleUp_2, 1, `Minus_2, 3;
+
         `ScaleUp_2, 2, `Plus_2, 0;
         `ScaleUp_2, 2, `Plus_2, 1;
+        `ScaleUp_2, 2, `Plus_2, 2;
+        `ScaleUp_2, 2, `Plus_2, 3;
         `ScaleUp_2, 2, `Minus_2, 1;
+        `ScaleUp_2, 2, `Minus_2, 2;
+        `ScaleUp_2, 2, `Minus_2, 3;
+
         `ScaleDown_2, 2, `Plus_2, 0;
         `ScaleDown_2, 2, `Plus_2, 1;
         `ScaleDown_2, 2, `Minus_2, 1;
+
         `ScaleUp_2, 3, `Plus_2, 0;
         `ScaleUp_2, 3, `Plus_2, 1;
+        `ScaleUp_2, 3, `Plus_2, 2;
+        `ScaleUp_2, 3, `Plus_2, 3;
+        `ScaleUp_2, 3, `Plus_2, 4;
         `ScaleUp_2, 3, `Minus_2, 1;
+        `ScaleUp_2, 3, `Minus_2, 2;
+        `ScaleUp_2, 3, `Minus_2, 3;
+        `ScaleUp_2, 3, `Minus_2, 4;
+
         `ScaleDown_2, 3, `Plus_2, 0;
         `ScaleDown_2, 3, `Plus_2, 1;
         `ScaleDown_2, 3, `Minus_2, 1;
