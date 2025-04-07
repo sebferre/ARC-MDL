@@ -247,8 +247,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              
     let xp_var ~html print x =
       xp_html_elt "span" ~classe:"model-var" ~html print
-        (fun () -> print#string "$"; print#int x)
+        (fun () -> print#string "$"; if x <> 0 then print#int x)
 
+    let var0 = 0
+    
     (* model constr *)
 
     type segmentation = [`Connected | `ConnectedSameColor | `SameColor]
@@ -4769,13 +4771,12 @@ module MyDomain : Madil.DOMAIN =
     
     (* refining *)
 
-    let refinements_any (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+    let refinements_any (t : typ) (value : value) : model list = (* QUICK *)
       let ndim = t.ndim in
       let rs = [] in
       let rs = (* adding SeqRepeat : almost DECOMP *)
         if ndim > 0
         then
-          let xe, varseq = Refining.new_var varseq in
           let$ rs, depth = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth
                 (fun v ->
@@ -4785,15 +4786,13 @@ module MyDomain : Madil.DOMAIN =
                 value
           then
             (Model.make_pat t (SeqRepeat depth)
-               [| Model.make_def xe (Model.make_any {t with ndim = ndim-1}) |],
-             varseq) :: rs
+               [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
+            :: rs
           else rs
         else rs in
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
         if ndim = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
-          let xhd, varseq = Refining.new_var varseq in
-          let xtl, varseq = Refining.new_var varseq in
           let$ rs, depth = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth
                 (fun v ->
@@ -4803,9 +4802,9 @@ module MyDomain : Madil.DOMAIN =
                 value
           then
             (Model.make_pat t (SeqCons depth)
-               [| Model.make_def xhd (Model.make_any {t with ndim = ndim-1});
-                  Model.make_def xtl (Model.make_any t) |],
-             varseq) :: rs
+               [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
+                  Model.make_def var0 (Model.make_any t) |])
+            :: rs
           else rs
         else rs in
       match t.kind with
@@ -4813,29 +4812,24 @@ module MyDomain : Madil.DOMAIN =
          let rs = (* adding SeqRange *)
            if ndim > 0
            then
-             let xstart, varseq = Refining.new_var varseq in
-             let xstep, varseq = Refining.new_var varseq in
              (Model.make_pat t SeqRange
-                [| Model.make_def xstart (Model.make_any {t with ndim = ndim-1});
-                   Model.make_def xstep (Model.make_any {kind = INT (COORD (I, MOVE)); ndim = ndim-1}) |],
-              varseq) :: rs
+                [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
+                   Model.make_def var0 (Model.make_any {kind = INT (COORD (I, MOVE)); ndim = ndim-1}) |])
+             :: rs
            else rs in
          rs
       | VEC tv ->
          let rs = (* adding Vec : DECOMP *)
-           let xi, varseq = Refining.new_var varseq in
-           let xj, varseq = Refining.new_var varseq in
            (Model.make_pat t Vec
-              [| Model.make_def xi (Model.make_any {t with kind = INT (COORD (I, tv))});
-                 Model.make_def xj (Model.make_any {t with kind = INT (COORD (J, tv))}) |],
-            varseq) :: rs in
+              [| Model.make_def var0 (Model.make_any {t with kind = INT (COORD (I, tv))});
+                 Model.make_def var0 (Model.make_any {t with kind = INT (COORD (J, tv))}) |])
+            :: rs in
          let rs = (* Square *)
            match tv with
            | SIZE | MOVE ->
-              let xij, varseq = Refining.new_var varseq in
               (Model.make_pat t Square
-                 [| Model.make_def xij (Model.make_any {t with kind = INT (COORD (I, tv))}) |],
-               varseq) :: rs
+                 [| Model.make_def var0 (Model.make_any {t with kind = INT (COORD (I, tv))}) |])
+               :: rs
            | POS -> rs in (* not relevant for positions *)
          rs
       | COLOR tc ->
@@ -4846,17 +4840,16 @@ module MyDomain : Madil.DOMAIN =
                 match tc with
                 | C_OBJ | C_BG true -> `Full
                 | C_BG false -> `Sprite in *)
-             let xgrid, varseq = Refining.new_var varseq in
              (Model.make_pat t MakeGrid
-                [| Model.make_def xgrid (Model.make_any {kind = GRID (`Sprite,false); ndim = ndim-2})|],
-              varseq) :: rs
+                [| Model.make_def var0 (Model.make_any {kind = GRID (`Sprite,false); ndim = ndim-2})|])
+              :: rs
            else rs in
          rs
       | SEG -> rs
       | ORDER _ -> rs
       | MOTIF tmot -> rs
       | MAP (ka,kb) ->
-         let refs : (model * varseq) list = rs in
+         let refs : model list = rs in
          let refs = (* DomMap *)
            match kb with
            | COLOR tc -> (* TODO: generalize to other types *)
@@ -4868,184 +4861,125 @@ module MyDomain : Madil.DOMAIN =
                        keys :: res
                     | _ -> assert false)
                   [] value in
-              let xloop, varseq = Refining.new_var varseq in
-              let xvals, varseq = Refining.new_var varseq in
-              let mvals, varseq = Model.make_any {kind = COLOR tc; ndim = ndim+1}, varseq in
+              let mvals = Model.make_any {kind = COLOR tc; ndim = ndim+1} in
               let$ refs, keys = refs, l_keys in (* TODO: check for single keys ? *)
               (* TODO: needs Cons
                  List.fold_right (* explicit sequence of same length as keys *)
-                  (fun _ (mvals, varseq) ->
-                    let xcol, varseq = Refining.new_var varseq in
-                    let mcol = Model.make_def xcol (make_anycolor tc) in
-                    let mvals = Model.make_cons xloop mcol mvals in
-                    mvals, varseq)
-                  keys (Model.make_nil tb, varseq) in *)
+                  (fun _ mvals ->
+                    let mcol = Model.make_def var0 (make_anycolor tc) in
+                    let mvals = Model.make_cons var0 mcol mvals in
+                    mvals)
+                  keys (Model.make_nil tb) in *)
               (Model.make_pat t (DomMap keys)
-                 [| Model.make_def xvals mvals |],
-               varseq)
+                 [| Model.make_def var0 mvals |])
               :: refs
            | _ -> refs in
         let refs = (* Replace *)
            if ka = kb then
-             let xa, varseq = Refining.new_var varseq in
-             let xb, varseq = Refining.new_var varseq in
              (Model.make_pat t Replace
-                [| Model.make_def xa (Model.make_any {t with kind = COLOR C_OBJ});
-                   Model.make_def xb (Model.make_any {t with kind = COLOR C_OBJ}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
+                   Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ}) |])
              :: refs
            else refs in
          let refs = (* Swap *)
            if ka = kb then
-             let xa, varseq = Refining.new_var varseq in
-             let xb, varseq = Refining.new_var varseq in
              (Model.make_pat t Swap
-                [| Model.make_def xa (Model.make_any {t with kind = COLOR C_OBJ});
-                   Model.make_def xb (Model.make_any {t with kind = COLOR C_OBJ}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
+                   Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ}) |])
              :: refs
            else refs in
          refs
       | GRID (filling,nocolor) ->
-         let refs : (model * varseq) list = rs in
+         let refs : model list = rs in
          let refs = (* BgColor *)
            if filling = `Full && not nocolor then
-             let xcol, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
              (Model.make_pat t BgColor
-                [| Model.make_def xcol (Model.make_any {t with kind = COLOR (C_BG true)});
-                   Model.make_def xg1 (Model.make_any {t with kind = GRID (`Sprite,nocolor)}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = COLOR (C_BG true)});
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Sprite,nocolor)}) |])
              :: refs
            else refs in
          let refs = (* IsFull : almost DECOMP *)
            if filling = `Sprite && not nocolor then (* nocolor isfull covered by full mask *)
-             let xgrid1, varseq = Refining.new_var varseq in
              (Model.make_pat t IsFull
-                [| Model.make_def xgrid1 (Model.make_any {t with kind = GRID (`Full,nocolor)}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = GRID (`Full,nocolor)}) |])
              :: refs
            else refs in
          let refs = (* Objects - Connected *)
            if filling <> `Full then
-             let xsize, varseq = Refining.new_var varseq in
-             let xsize_i, varseq = Refining.new_var varseq in
-             let xsize_j, varseq = Refining.new_var varseq in
-             let xseg, varseq = Refining.new_var varseq in
-             let xorder, varseq = Refining.new_var varseq in
-             let xcard, varseq = Refining.new_var varseq in
-             let xobj, varseq = Refining.new_var varseq in
-             let xpos, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
-             let xmerger, varseq = Refining.new_var varseq in
-             let xnoise, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
              (Model.make_pat t (Objects (nmax, `Connected))
-                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_def xseg (Model.make_any {t with kind = SEG});
-                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
-                   Model.make_def xcard (Model.make_any {t with kind = INT CARD});
-                   Model.make_def xobj
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def var0 (Model.make_any {t with kind = SEG});
+                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                        [| Model.make_def xpos (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                           Model.make_def xg1 (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1}) |]);
-                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
-                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
-              varseq)
+                        [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                           Model.make_def var0 (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1}) |]);
+                   Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
              :: refs
            else refs in
          let refs = (* Objects - SameColor *)
            if filling <> `Full && not nocolor then
-             let xsize, varseq = Refining.new_var varseq in
-             let xorder, varseq = Refining.new_var varseq in
-             let xcard, varseq = Refining.new_var varseq in
-             let xobj, varseq = Refining.new_var varseq in
-             let xpos, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
-             let xg1_color, varseq = Refining.new_var varseq in
-             let xg1_mask, varseq = Refining.new_var varseq in
-             let xmerger, varseq = Refining.new_var varseq in
-             let xnoise, varseq = Refining.new_var varseq in
              let$ refs, nmax = refs, [1;9] in
              (Model.make_pat t (Objects (nmax, `SameColor))
-                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr
                      (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
-                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
-                   Model.make_def xcard (Model.make_any {t with kind = INT CARD});
-                   Model.make_def xobj
+                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                        [| Model.make_def xpos (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                           Model.make_def xg1
+                        [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                           Model.make_def var0
                              (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
-                                [| Model.make_def xg1_color (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
-                                   Model.make_def xg1_mask (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
-                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
-                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
-              varseq)
+                                [| Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
+                                   Model.make_def var0 (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
+                   Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
              :: refs
            else if filling <> `Full && nocolor then
-             let xsize, varseq = Refining.new_var varseq in
-             let xorder, varseq = Refining.new_var varseq in
-             let xcard, varseq = Refining.new_var varseq in
-             let xobj, varseq = Refining.new_var varseq in
-             let xpos, varseq = Refining.new_var varseq in
-             let xg1, varseq = Refining.new_var varseq in
-             let xmerger, varseq = Refining.new_var varseq in
-             let xnoise, varseq = Refining.new_var varseq in
              let nmax = 1 in
              (Model.make_pat t (Objects (nmax, `SameColor))
-                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr
                      (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
-                   Model.make_def xorder (Model.make_any {t with kind = ORDER nocolor});
-                   Model.make_def xcard (Model.make_any {t with kind = INT CARD});
-                   Model.make_def xobj
+                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                        [| Model.make_def xpos (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                           Model.make_def xg1 (Model.make_any {kind = GRID (filling,nocolor); ndim = ndim+1}) |]);
-                   Model.make_def xmerger (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
-                   Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
-              varseq)
+                        [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                           Model.make_def var0 (Model.make_any {kind = GRID (filling,nocolor); ndim = ndim+1}) |]);
+                   Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
              :: refs
            else refs in
          (* let refs = (* ColorPartition *)
            if filling <> `Full && not nocolor then
-             let xsize, varseq = Refining.new_var varseq in
-             let xncol, varseq = Refining.new_var varseq in
-             let xcolors, varseq = Refining.new_var varseq in
-             let xmasks, varseq = Refining.new_var varseq in
              (Model.make_pat t ColorPartition
-                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_def xncol (Model.make_any {t with kind = INT CARD});
-                   Model.make_def xcolors (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
-                   Model.make_def xmasks
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
+                   Model.make_def var0
                      (Model.make_any
                         {kind = GRID (`Noise, true);
-                         ndim = ndim+1}) |],
-              varseq)
+                         ndim = ndim+1}) |])
              :: refs
            else refs in *)
          let refs = (* Monocolor *)
            if not nocolor then
-             let xcol, varseq = Refining.new_var varseq in
-             let xmask, varseq = Refining.new_var varseq in
-             let mmask, varseq =
+             let mmask =
                if filling = `Full
                then (* a monocolor full grid must have a full mask of some size *)
-                 let msize, varseq =
-                   let xsize, varseq = Refining.new_var varseq in
-                   let xsize_i, varseq = Refining.new_var varseq in
-                   let xsize_j, varseq = Refining.new_var varseq in
-                   Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}),
-                   varseq in
-                 Model.make_pat {t with kind = GRID (`Full,true)} Full [|msize|], varseq
+                 let msize =
+                   Model.make_def var0 (Model.make_any {t with kind = VEC SIZE}) in
+                 Model.make_pat {t with kind = GRID (`Full,true)} Full [|msize|]
                else
-                 Model.make_any {t with kind = GRID (filling,true)}, varseq in
+                 Model.make_any {t with kind = GRID (filling,true)} in
              (Model.make_pat t Monocolor
-                [| Model.make_def xcol (Model.make_any {t with kind = COLOR C_OBJ});
-                   Model.make_def xmask mmask |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
+                   Model.make_def var0 mmask |])
              :: refs
            else refs in
          let refs = (* Recoloring-const *)
@@ -5061,115 +4995,72 @@ module MyDomain : Madil.DOMAIN =
              match vg1_res with
              | Result.Ok vg1 ->
                 let eg1 = Expr.Const (t, vg1) in
-                let xmap, varseq = Refining.new_var varseq in
                 (Model.make_pat t Recoloring ~src:[|eg1|]
-                   [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
-                 varseq)
+                   [| Model.make_def var0 (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |])
                 :: refs
              | _ -> refs
            else refs in
          let refs = (* MotifMulti *)
            let t_mask = {t with kind = GRID (`Sprite,true)} in
-           let xmot, varseq = Refining.new_var varseq in
-           let xcore, varseq = Refining.new_var varseq in
-           let xpure, varseq = Refining.new_var varseq in
-           let xmask, varseq = Refining.new_var varseq in
-           let xnoise, varseq = Refining.new_var varseq in
            let$ refs, partial = refs, (match filling with
                                        | `Full -> [false]
                                        | _ -> [false; true]) in
            (Model.make_pat t (MotifMulti partial)
-              [| Model.make_def xmot (Model.make_any {t with kind = MOTIF MULTI});
-                 Model.make_def xcore (Model.make_any {t with kind = GRID ((if filling = `Noise then `Sprite else filling), nocolor)});
-                 Model.make_def xpure (Model.make_derived t);
+              [| Model.make_def var0 (Model.make_any {t with kind = MOTIF MULTI});
+                 Model.make_def var0 (Model.make_any {t with kind = GRID ((if filling = `Noise then `Sprite else filling), nocolor)});
+                 Model.make_def var0 (Model.make_derived t);
                  (if partial
-                  then Model.make_def xmask (Model.make_any t_mask)
+                  then Model.make_def var0 (Model.make_any t_mask)
                   else Model.make_expr (Expr.Const (t_mask, `Null)));
-                 Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
-            varseq)
+                 Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
            :: refs in
          let refs = (* MotifBi *)
            let t_mask = {t with kind = GRID (`Sprite,true)} in
-           let xmot, varseq = Refining.new_var varseq in
-           let xbgcolor, varseq = Refining.new_var varseq in
-           let xcolor, varseq = Refining.new_var varseq in
-           let xpure, varseq = Refining.new_var varseq in
-           let xmask, varseq = Refining.new_var varseq in
-           let xnoise, varseq = Refining.new_var varseq in
            let$ refs, partial = refs, (match filling with
                                        | `Full -> [false]
                                        | _ -> [false; true]) in
            (Model.make_pat t (MotifBi partial)
-              [| Model.make_def xmot (Model.make_any {t with kind = MOTIF BI});
-                 Model.make_def xbgcolor (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
-                 Model.make_def xcolor (Model.make_any {t with kind = COLOR C_OBJ});
-                 Model.make_def xpure (Model.make_derived t);
+              [| Model.make_def var0 (Model.make_any {t with kind = MOTIF BI});
+                 Model.make_def var0 (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
+                 Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
+                 Model.make_def var0 (Model.make_derived t);
                  (if partial
-                  then Model.make_def xmask (Model.make_any t_mask)
+                  then Model.make_def var0 (Model.make_any t_mask)
                   else Model.make_expr (Expr.Const (t_mask, `Null)));
-                 Model.make_def xnoise (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |],
-            varseq)
+                 Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
            :: refs in
          let refs = (* Metagrid *)
-           let xsepcolor, varseq = Refining.new_var varseq in
-           let xborders, varseq = Refining.new_var varseq in
-           let xdims, varseq = Refining.new_var varseq in
-           let xk, varseq = Refining.new_var varseq in
-           let xl, varseq = Refining.new_var varseq in
-           let xl_heights, varseq = Refining.new_var varseq in
-           let xheight, varseq = Refining.new_var varseq in
-           let xl_widths, varseq = Refining.new_var varseq in
-           let xwidth, varseq = Refining.new_var varseq in
-           let xl_i, varseq = Refining.new_var varseq in
-           let xl_j, varseq = Refining.new_var varseq in
-           let xg1, varseq = Refining.new_var varseq in
            (Model.make_pat t Metagrid
-              [| Model.make_def xsepcolor (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
-                 Model.make_def xborders (Model.make_any {t with kind = GRID (`Noise,true)});
-                 Model.make_def xdims (Model.make_any {t with kind = VEC SIZE});
-                 Model.make_def xheight (Model.make_any {kind = INT (COORD (I, SIZE)); ndim = ndim+1});
-                 Model.make_def xwidth (Model.make_any {kind = INT (COORD (J, SIZE)); ndim = ndim+1});
-                 Model.make_def xg1 (Model.make_any {t with ndim = ndim+2})|],
-            varseq)
+              [| Model.make_def var0 (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
+                 Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,true)});
+                 Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                 Model.make_def var0 (Model.make_any {kind = INT (COORD (I, SIZE)); ndim = ndim+1});
+                 Model.make_def var0 (Model.make_any {kind = INT (COORD (J, SIZE)); ndim = ndim+1});
+                 Model.make_def var0 (Model.make_any {t with ndim = ndim+2})|])
            :: refs in
          (* let refs = (* Repeat - too catchy, replaced by function *)
-           let xg1, varseq = Refining.new_var varseq in
-           let xli, varseq = Refining.new_var varseq in
-           let xni, varseq = Refining.new_var varseq in
-           let xlj, varseq = Refining.new_var varseq in
-           let xnj, varseq = Refining.new_var varseq in
            (make_repeat tg
-              (Model.make_def xg1 (make_anygrid (filling,nocolor)))
-              (Model.make_loop xli (Range.make_open 1)
-                 (Model.make_def xni (make_anycoord I SIZE)))
-              (Model.make_loop xlj (Range.make_open 1)
-                 (Model.make_def xnj (make_anycoord J SIZE))),
-            varseq)
+              (Model.make_def var0 (make_anygrid (filling,nocolor)))
+              (Model.make_loop var0 (Range.make_open 1)
+                 (Model.make_def var0 (make_anycoord I SIZE)))
+              (Model.make_loop var0 (Range.make_open 1)
+                 (Model.make_def var0 (make_anycoord J SIZE))))
            ::refs in *)
          let refs = (* Masks *)
-           let msize, varseq_msize =
-             let xsize, varseq = Refining.new_var varseq in
-             let xsize_i, varseq = Refining.new_var varseq in
-             let xsize_j, varseq = Refining.new_var varseq in
-             Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}),
-             varseq in
+           let msize =
+             Model.make_def var0 (Model.make_any {t with kind = VEC SIZE}) in
            (* TODO: consider casting functions rather than normalizing model type *)
-           (Model.make_pat {t with kind = GRID (`Sprite,false)} Empty [|msize|], varseq_msize)
+           (Model.make_pat {t with kind = GRID (`Sprite,false)} Empty [|msize|])
            :: (if nocolor then
-                 (Model.make_pat {t with kind = GRID (`Sprite,true)} Full [|msize|], varseq_msize)
-                 :: (Model.make_pat {t with kind = GRID (`Sprite,true)} Point [||], varseq)
+                 (Model.make_pat {t with kind = GRID (`Sprite,true)} Full [|msize|])
+                 :: (Model.make_pat {t with kind = GRID (`Sprite,true)} Point [||])
                  :: refs
                else refs) in
          let refs = (* Line *)
            if filling <> `Full && nocolor then
-             let xlen, varseq = Refining.new_var varseq in
-             let xdir, varseq = Refining.new_var varseq in
-             let xdir_i, varseq = Refining.new_var varseq in
-             let xdir_j, varseq = Refining.new_var varseq in
              (Model.make_pat {t with kind = GRID (`Sprite,true)} Line
-                [| Model.make_def xlen (Model.make_any {t with kind = INT (COORD (I, SIZE))});
-                   Model.make_def xdir (Model.make_any {t with kind = VEC MOVE}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = INT (COORD (I, SIZE))});
+                   Model.make_def var0 (Model.make_any {t with kind = VEC MOVE}) |])
              ::refs
            else refs in
          let refs = (* ColorSeq : DECOMP *)
@@ -5180,13 +5071,10 @@ module MyDomain : Madil.DOMAIN =
                        (h = 1 && w <= 6) || (h <= 6 && w = 1)
                     | _ -> false)
            then (* TODO: allow when not full, impact on color type *)
-             let xsize, varseq = Refining.new_var varseq in
-             let xcol, varseq = Refining.new_var varseq in
              let$ refs, (dir,axis) = refs, [`H, J; `V, I] in
              (Model.make_pat t (ColorSeq dir)
-                [| Model.make_def xsize (Model.make_any {t with kind = INT (COORD (axis, SIZE))});
-                   Model.make_def xcol (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = INT (COORD (axis, SIZE))});
+                   Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1}) |])
              ::refs
            else refs in
          let refs = (* ColorMat : DECOMP *)
@@ -5197,27 +5085,21 @@ module MyDomain : Madil.DOMAIN =
                      h <= 3 && w <= 3
                   | _ -> false)
            then
-             let xsize, varseq = Refining.new_var varseq in
-             let xh, varseq = Refining.new_var varseq in
-             let xw, varseq = Refining.new_var varseq in
-             let xcol, varseq = Refining.new_var varseq in
              (Model.make_pat t ColorMat
-                [| Model.make_def xsize (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_def xcol (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+2}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+2}) |])
              ::refs
            else refs in
          refs
       | OBJ _ -> rs
       | _ -> assert false    
-    let refinements_pat (t : typ) (c : constr) (args : model array) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+    let refinements_pat (t : typ) (c : constr) (args : model array) (value : value) : model list = (* QUICK *)
       []
     (* TODO: add SeqCons/SeqRepeat(m,m) but requires global change of depths for head model *) 
-    let refinements_pat_expr ~env_vars (t : typ) (varseq : varseq) (value : value) : (model * varseq) list = (* QUICK *)
+    let refinements_pat_expr ~env_vars (t : typ) (value : value) : model list = (* QUICK *)
       let ndim = t.ndim in
       let rs = [] in
       let rs = (* adding SeqIndex *)
-        let xindex, varseq = Refining.new_var varseq in
         let compatible_vars = (* same type vars from env *)
           Mymap.fold
             (fun x tx res ->
@@ -5227,18 +5109,12 @@ module MyDomain : Madil.DOMAIN =
             env_vars [] in
         let$ rs, (x,tx) = rs, compatible_vars in
         (Model.make_pat t SeqIndex ~src:[|Expr.Ref (tx, x)|]
-           [| Model.make_def xindex (Model.make_any typ_index) |],
-         varseq) :: rs in
+           [| Model.make_def var0 (Model.make_any typ_index) |])
+         :: rs in
       match t.kind with
       | GRID (filling,nocolor as tg) ->
          let refs = rs in
          let refs = (* Crop *)
-           let xpos, varseq = Refining.new_var varseq in
-           let xpos_i, varseq = Refining.new_var varseq in
-           let xpos_j, varseq = Refining.new_var varseq in
-           let xsize, varseq = Refining.new_var varseq in
-           let xsize_i, varseq = Refining.new_var varseq in
-           let xsize_j, varseq = Refining.new_var varseq in
            let cropable_vars =
              Mymap.fold
                (fun x tx res ->
@@ -5248,13 +5124,11 @@ module MyDomain : Madil.DOMAIN =
                env_vars [] in
            let$ refs, (gvar,tvar) = refs, cropable_vars in
            (Model.make_pat t Crop ~src:[|Expr.Ref (tvar, gvar)|]
-              [| Model.make_def xpos (Model.make_any {t with kind = VEC POS});
-                 Model.make_def xsize (Model.make_any {t with kind = VEC SIZE}) |],
-            varseq)
+              [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
+                 Model.make_def var0 (Model.make_any {t with kind = VEC SIZE}) |])
            :: refs in
          let refs = (* Recoloring-expr *)
            if not nocolor then
-             let xmap, varseq = Refining.new_var varseq in
              let eg1s =
                Mymap.fold
                  (fun x tx res ->
@@ -5266,8 +5140,7 @@ module MyDomain : Madil.DOMAIN =
                  env_vars [] in
              let$ refs, eg1 = refs, eg1s in
              (Model.make_pat t Recoloring ~src:[|eg1|]
-                [| Model.make_def xmap (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |],
-              varseq)
+                [| Model.make_def var0 (Model.make_any {t with kind = MAP (COLOR C_OBJ, COLOR C_OBJ)}) |])
              :: refs
            else refs in
          refs
@@ -5276,42 +5149,35 @@ module MyDomain : Madil.DOMAIN =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
 
-    let prunings_value t v varseq =
+    let prunings_value t v =
       match t.kind, v with
       | _, `Null -> [] (* for when Null is used as a missing optional arg *)
       | INT ti, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | VEC tv, _ ->
-         let x, varseq = Refining.new_var varseq in
-         let y, varseq = Refining.new_var varseq in
-         [ Model.make_any t, varseq ] 
+         [ Model.make_any t ] 
       | COLOR tc, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | SEG, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | ORDER _, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | MOTIF tmot, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | GRID tg, _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | OBJ tg, _ ->
-      (*         [ Model.make_any t, varseq ] *)
-         let xpos, varseq = Refining.new_var varseq in
-         let xi, varseq = Refining.new_var varseq in
-         let xj, varseq = Refining.new_var varseq in
-         let xg1, varseq = Refining.new_var varseq in
+      (*         [ Model.make_any t ] *)
          [ Model.make_pat t Obj
-             [| Model.make_def xpos (Model.make_any {t with kind = VEC POS});
-                Model.make_def xg1 (Model.make_any {t with kind = GRID tg}) |],
-           varseq ]
+             [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
+                Model.make_def var0 (Model.make_any {t with kind = GRID tg}) |] ]
       | MAP (ka,kb), _ ->
-         [ Model.make_any t, varseq ]
+         [ Model.make_any t ]
       | _ -> pp_endline xp_typ t; pp_endline xp_value v; assert false
-    let prunings_any t varseq value =
+    let prunings_any t value =
       []
-    let prunings_pat t c args varseq value =
-      [Model.make_any t, varseq]
+    let prunings_pat t c args value =
+      [Model.make_any t]
     let prunings_postprocessing t m =
       fun m' ~supp ~nb ~alt best_reads ->
       Myseq.return (m', best_reads)
@@ -5323,8 +5189,8 @@ module MyDomain : Madil.DOMAIN =
     let get_init_config name task =
       let open Task_model in
       let varseq = varseq0 in
-      let xi, varseq = Refining.new_var varseq in
-      let xo, varseq = Refining.new_var varseq in
+      let xi, varseq = Model.new_var varseq in
+      let xo, varseq = Model.new_var varseq in
       let input_model = Model.make_def xi (Model.make_any (scalar (GRID (`Full,false)))) in
       let output_model = Model.make_def xo (Model.make_any (scalar (GRID (`Full,false)))) in
       let distrib = `GridRange ((`Full,false),
