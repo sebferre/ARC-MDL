@@ -1909,6 +1909,8 @@ by the parser.
     v3.5 & 2024-10-29 & 180s & 111s (18s) & ~146 / 154.4~ & ~127 / 128.2~ & 143s (37s) & ~69 / 79.6~ & ~59 / 60.5~ \\
     \hline
     v3.6 & 2025-03-09 & 120s & 79s (15s) & ~133 / 138.8~ & ~124 / 126.2~ & 96s (14s) & ~64 / 69.4~ & ~56 / 57.5~ \\
+     & 2025-04-03 & 120s & 70s (10s) & ~132 / 139.0~ & ~122 / 124.2~ & 82s (11s) & ~65 / 70.0~ & ~57 / 58.5~ \\
+     & 2025-04-06 & 120s & 70s (14s) & ~147 / 151.5~ & ~127 / 129.2~ & 87s (10s) & ~71 / 76.5~ & ~63 / 64.5~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2298,13 +2300,20 @@ each step.
 \item new version of expression index: more systematic and avoiding binary expressions, relying on inter-object functions, constant arguments, and aggregations.
 \end{itemize}
 
-\paragraph{Version 3.x -- 2025-02-16+.}
+\paragraph{Version 3.6 -- 2025-03-09.}
 \begin{itemize}
 \item one expression index per variable because only unary functions, enables to cache;
 \item introduction of type for value distributions, used for parsing and generation;
 \item patterns: sorting argument in Objects; Affine (ax+b); 
 \item functions: Quadrants; Strip; Colors of a grid/object; Border, Interior and Neighbors on objects;
-\item lots of code cleaning and simplification.
+\item lots of code cleaning and simplification;
+\item tuned some parameters after experiments.
+\end{itemize}
+
+Last changes:
+\begin{itemize}
+\item 2025-04-03: ranking refinements based on estimate DL, bug fix about normlized DL; more affine expressions
+\item 2025-04-06: no more decompositions, non-compressive steps with stall detection to avoid divergence (using DL EMA)
 \end{itemize}
 
 %%%
