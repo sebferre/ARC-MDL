@@ -1911,6 +1911,7 @@ by the parser.
     v3.6 & 2025-03-09 & 120s & 79s (15s) & ~133 / 138.8~ & ~124 / 126.2~ & 96s (14s) & ~64 / 69.4~ & ~56 / 57.5~ \\
      & 2025-04-03 & 120s & 70s (10s) & ~132 / 139.0~ & ~122 / 124.2~ & 82s (11s) & ~65 / 70.0~ & ~57 / 58.5~ \\
      & 2025-04-06 & 120s & 70s (14s) & ~147 / 151.5~ & ~127 / 129.2~ & 87s (10s) & ~71 / 76.5~ & ~63 / 64.5~ \\
+     & 2025-04-08 & 120s & 85s (15s) & ~147 / 154.0~ & ~135 / 137.2~ & 103s (11s) & ~75 / 81.8~ & ~67 / 69.0~ \\
     \hline
   \end{tabular}
   \label{tab:eval}
@@ -2314,6 +2315,7 @@ Last changes:
 \begin{itemize}
 \item 2025-04-03: ranking refinements based on estimate DL, bug fix about normlized DL; more affine expressions
 \item 2025-04-06: no more decompositions, non-compressive steps with stall detection to avoid divergence (using DL EMA)
+\item 2025-04-08: grouping expressions by size in index, and bounding size to maxexprsize in index instead of on lookup
 \end{itemize}
 
 %%%

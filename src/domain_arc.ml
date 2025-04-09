@@ -4311,6 +4311,7 @@ module MyDomain : Madil.DOMAIN =
     
     let make_index_bind (bindings : bindings) : expr_index = (* NEW VERSION *)
       Common.prof "make_index_bind" (fun () ->
+      let max_expr_size = !max_expr_size in
       let bgcolors full =
         Grid.black :: if full then [] else [Grid.transparent] in
       let index = new Expr.index_bind in
@@ -4318,7 +4319,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: Obj features *)
         Common.prof "make_index/obj_features" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4349,7 +4350,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: Grid features *)
         Common.prof "make_index/grid_features" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4371,7 +4372,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: Color features, Vec features *)
         Common.prof "make_index/color_vec_features" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4415,7 +4416,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: Int features, Color to Grid *)
         Common.prof "make_index/int_features" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4478,7 +4479,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: Int+Vec bin *)
         Common.prof "make_index/int_vec_bin" (fun () ->
         Expr.index_apply_functions_2
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (function ({kind = (INT _ | VEC _); ndim}, _) -> ndim <= 1 | _ -> false)
           (fun t1 v1 t2 v2 ->
@@ -4520,7 +4521,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: INT+VEC affine, GRID derived *)
         Common.prof "make_index/int_vec_affine" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4563,7 +4564,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: INT+VEC transpose *)
         Common.prof "make_index/int_vec_transpose" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4584,7 +4585,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: GRID compose *)
         Common.prof "make_index/grid_part_compose" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4633,7 +4634,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: GRID mask *)
         Common.prof "make_index/grid_mask" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let res = [] in
@@ -4649,7 +4650,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: ALL items and slices *)
         Common.prof "make_index/items_slices" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let ndim = t1.ndim in
@@ -4678,7 +4679,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: collection-wise *)
         Common.prof "make_index/collection" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let ndim = t1.ndim in
@@ -4725,7 +4726,7 @@ module MyDomain : Madil.DOMAIN =
       let () = (* LEVEL: cast *)
         Common.prof "make_index/cast" (fun () ->
         Expr.index_apply_functions_1
-          ~eval_func
+          ~max_expr_size ~eval_func
           index
           (fun t1 v1 ->
             let kind = t1.kind in
