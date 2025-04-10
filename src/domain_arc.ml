@@ -281,6 +281,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
       | MakeGrid (* GRID : COLOR++ *)
+      | SeqSingle of int (* depth *) (* X : X^1 *)
+      | SeqPair of int (* depth *) (* X, X : X^1 *)
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
       | SeqRepeat of int (* depth *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
@@ -436,6 +438,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "as grid:";
          xp_newline ~html print ();
          xp_grid ~html print ()
+      | SeqSingle depth, [||], [|xp1|] ->
+         print#string ("Single[" ^ string_of_int depth ^ "]");
+         xp_tuple1 xp1 ~html print ()
+      | SeqPair depth, [||], [|xp1; xp2|] ->
+         print#string ("Pair[" ^ string_of_int depth ^ "]");
+         xp_tuple2 xp1 xp2 ~html print ((),())
       | SeqCons depth, [||], [|xp_hd; xp_tl|] ->
          print#string ("Cons[" ^ string_of_int depth ^ "]");
          xp_tuple2 xp_hd xp_tl ~html print ((),())
@@ -530,6 +538,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorMat, _ -> assert false
       | MakeGrid, 0 -> print#string "grid"
       | MakeGrid, _ -> assert false
+      | SeqSingle _, 0 -> print#string "1st"
+      | SeqSingle _, _ -> assert false
+      | SeqPair _, 0 -> print#string "1st"
+      | SeqPair _, 1 -> print#string "2nd"
+      | SeqPair _, _ -> assert false
       | SeqCons _, 0 -> print#string "head"
       | SeqCons _, 1 -> print#string "tail"
       | SeqCons _, _ -> assert false
@@ -818,7 +831,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           (* synchronize with is_default_constr *)
           assert (t.ndim = 0);
           let res =
-            [ "SeqCons", [||], [|t; t|];
+            [ "SeqSingle", [||], [|t|];
+              "SeqPair", [||], [|t; t|];
+              "SeqCons", [||], [|t; t|];
               "SeqRepeat", [||], [|t|];
               "SeqIndex", [||], [|t; scalar (INT INDEX)|] ] in
           match t.kind with
@@ -2346,6 +2361,7 @@ module MyDomain : Madil.DOMAIN =
 
     let generator_pat t c src gen_args (r : distrib) =
       let depth = t.ndim in
+      let ndim = t.ndim in
       assert (Ndseq.depth r = depth);
       match c, src, gen_args with
       | Vec, [||], [|gen_i; gen_j|] ->
@@ -3066,6 +3082,42 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (Data.value dgrid, r_grid) in
          Myseq.return (Data.make_dpat v r c [|dgrid|])
+    
+      | SeqSingle depth, [||], [|gen1|] ->
+         let* r1 =
+           Ndseq.map_myseq ~depth (-1)
+             (fun r ->
+               match Ndseq.as_seq r with
+               | Some (_, [r1]) -> Myseq.return r1
+               | Some _ -> Myseq.empty
+               | _ -> assert false)
+             r in
+         let* d1 = gen1 r1 in
+         let v : value =
+           let d = ndim - depth - 1 in
+           Ndseq.map ~depth (+1)
+             (fun v1 -> Ndseq.seq d [v1])
+             (Data.value d1) in
+         Myseq.return (Data.make_dpat v r c [|d1|])
+    
+      | SeqPair dep, [||], [|gen1; gen2|] ->
+         let res_depth12 = depth - dep - 1 in
+         let* r1, r2 =
+           Ndseq.map_tup_myseq ~depth:dep (res_depth12, res_depth12)
+             (fun r ->
+               match Ndseq.as_seq r with
+               | Some (_, [r1; r2]) -> Myseq.return (r1, r2)
+               | Some _ -> Myseq.empty
+               | _ -> assert false)
+             (tup1 r) in
+         let* d1 = gen1 r1 in
+         let* d2 = gen2 r2 in
+         let v : value =
+           let d = depth - dep - 1 in
+           Ndseq.map2 ~depth:dep (+1)
+             (fun v1 v2 -> Ndseq.seq d [v1; v2])
+             (Data.value d1) (Data.value d2) in
+         Myseq.return (Data.make_dpat v r c [|d1;d2|])
     
       | SeqCons depth, [||], [|gen_hd; gen_tl|] ->
          let* r_hd, r_tl = Ndseq.head_tail ~depth r in
@@ -3825,6 +3877,51 @@ module MyDomain : Madil.DOMAIN =
          let* dgrid = parse_grid grid r_grid in
          Myseq.return (Data.make_dpat v r c [|dgrid|])
 
+      | SeqSingle dep, [||], [|parse1|] ->
+         if Ndseq.is_complete ~depth:dep v
+         then
+           let dep1 = depth - dep - 1 in
+           let* v1, r1 =
+             Ndseq.map_tup_myseq ~depth:dep (dep1, dep1)
+               (fun (v,r) ->
+                 match Ndseq.as_seq v, Ndseq.as_seq r with
+                 | Some (_, [v1]), Some (_, [r1]) ->
+                    assert (Ndseq.depth v1 = dep1);
+                    Myseq.return (v1,r1)
+                 | Some _, Some _ -> Myseq.empty
+                 | _ -> assert false)
+               (v,r) in
+           let* d1 = parse1 v1 r1 in
+           let v : value =
+             Ndseq.map ~depth:dep (+1)
+               (fun v1 -> Ndseq.seq dep1 [v1])
+               (Data.value d1) in
+           Myseq.return (Data.make_dpat v r c [|d1|])
+         else parseur_any t v r
+
+      | SeqPair dep, [||], [|parse1; parse2|] ->
+         if Ndseq.is_complete ~depth:dep v
+         then
+           let dep12 = depth - dep - 1 in
+           let* v1, v2, r1, r2 =
+             Ndseq.map_tup_myseq ~depth:dep (dep12, dep12, dep12, dep12)
+               (fun (v,r) ->
+                 match Ndseq.as_seq v, Ndseq.as_seq r with
+                 | Some (_, [v1;v2]), Some (_, [r1;r2]) ->
+                    assert (Ndseq.depth v1 = dep12);
+                    Myseq.return (v1,v2,r1,r2)
+                 | Some _, Some _ -> Myseq.empty
+                 | _ -> assert false)
+               (v, r) in
+           let* d1 = parse1 v1 r1 in
+           let* d2 = parse2 v2 r2 in
+           let v : value =
+             Ndseq.map2 ~depth:dep (+1)
+               (fun v1 v2 -> Ndseq.seq dep12 [v1;v2])
+               (Data.value d1) (Data.value d2) in
+           Myseq.return (Data.make_dpat v r c [|d1;d2|])
+         else parseur_any t v r
+
       | SeqCons dep, [||], [|parse_hd; parse_tl|] ->
          if Ndseq.is_complete ~depth:dep v
          then
@@ -4098,6 +4195,8 @@ module MyDomain : Madil.DOMAIN =
       | ColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
       | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | MakeGrid, [|enc_grid|] -> enc_grid
+      | SeqSingle depth, [|enc1|] -> enc1
+      | SeqPair depth, [|enc1; enc2|] -> enc1 +. enc2
       | SeqCons depth, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
       | SeqRepeat depth, [|enc_e|] -> enc_e
       | SeqRange, [|enc_start; enc_step|] -> enc_start +. enc_step
@@ -4150,6 +4249,8 @@ module MyDomain : Madil.DOMAIN =
       | ColorSeq dir -> 1. (* encoding direction *)
       | ColorMat -> 0.
       | MakeGrid -> 0.
+      | SeqSingle depth -> Mdl.Code.universal_int_star depth
+      | SeqPair depth -> Mdl.Code.universal_int_star depth
       | SeqCons depth -> Mdl.Code.universal_int_star depth
       | SeqRepeat depth -> Mdl.Code.universal_int_star depth
       | SeqRange -> 0.
@@ -4791,8 +4892,41 @@ module MyDomain : Madil.DOMAIN =
             :: rs
           else rs
         else rs in
+      (* let rs = (* adding SeqSingle : DECOMP *)
+        if ndim > 0
+        then
+          let$ rs, depth = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth
+               (fun v ->
+                  match Ndseq.as_seq v with
+                  | Some (_,l) -> List.length l = 1
+                  | _ -> assert false)
+                value
+          then
+            (Model.make_pat t (SeqSingle depth)
+               [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
+            :: rs
+          else rs
+        else rs in *)
+      let rs = (* adding SeqPair : DECOMP *)
+        if ndim > 0
+        then
+          let$ rs, depth = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth
+               (fun v ->
+                  match Ndseq.as_seq v with
+                  | Some (_,l) -> List.length l = 2
+                  | _ -> assert false)
+                value
+          then
+            (Model.make_pat t (SeqPair depth)
+               [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
+                  Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
+            :: rs
+          else rs
+        else rs in
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
-        if ndim = 1 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
+        if ndim > 0 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
           let$ rs, depth = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth
