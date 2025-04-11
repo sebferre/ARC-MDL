@@ -3204,28 +3204,15 @@ module MyDomain : Madil.DOMAIN =
     
     (* model-based parsing *)
            
-    let parseur_value (v0 : value) (v : value) (r : distrib) =
-      let* v' =
-        Ndseq.match_myseq 0
-          (fun v0 v ->
-            if v = v0
-            then Myseq.return v0
-            else Myseq.empty)
-          v0 v in
-      Myseq.return (Data.make_dexpr v' r)
-    
-    let parseur_any t (v : value) (r : distrib) =
+    let parseur_value (v0 : value) (v : value) =
+      Ndseq.matches 0 (=) v0 v
+
+    let parseur_pat t c src (v : value) (r : distrib) =
       let depth = t.ndim in
       assert (Ndseq.depth v = depth);
       assert (Ndseq.depth r = depth);
-      Myseq.return (Data.make_dany v r)
-    
-    let parseur_pat t c src parse_args (v : value) (r : distrib) =
-      let depth = t.ndim in
-      assert (Ndseq.depth v = depth);
-      assert (Ndseq.depth r = depth);
-      match c, src, parse_args with
-      | Vec, [||], [|parse_i; parse_j|] ->
+      match c, src with
+      | Vec, [||] ->
          let i, j =
            Ndseq.map_tup ~depth (0,0)
              (function
@@ -3233,11 +3220,9 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (tup1 v) in
          let r_i, r_j = distrib_vec_i_j ~depth src r in
-         let* di = parse_i i r_i in
-         let* dj = parse_j j r_j in
-         Myseq.return (Data.make_dpat v r c [|di; dj|])
+         Myseq.return (v, [|i, r_i; j, r_j|])
 
-      | Square, [||], [|parse_ij|] ->
+      | Square, [||] ->
          let* ij, r_ij =
            Ndseq.map_tup_myseq ~depth (0,0)
              (function
@@ -3247,21 +3232,18 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dij = parse_ij ij r_ij in
-         Myseq.return (Data.make_dpat v r c [|dij|])
+         Myseq.return (v, [|ij, r_ij|])
 
-      | Obj, [||], [|parse_pos; parse_g1|] ->
+      | Obj, [||] ->
          let pos, r_pos, g1, r_g1 =
            Ndseq.map_tup ~depth (0,0,0,0)
              (function
               | `Obj (pos,g1), `ObjRange (rpos,rg1) -> pos, rpos, g1, rg1
               | _ -> assert false)
              (v,r) in
-         let* dpos = parse_pos pos r_pos in
-         let* dg1 = parse_g1 g1 r_g1 in
-         Myseq.return (Data.make_dpat v r c [|dpos; dg1|])
+         Myseq.return (v, [|pos, r_pos; g1, r_g1|])
 
-      | DomMap keys, [||], [|parse_vals|] ->
+      | DomMap keys, [||] ->
          let* vals, r_vals =
            Ndseq.map_tup_myseq ~depth (1,1)
              (function
@@ -3277,10 +3259,9 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dvals = parse_vals vals r_vals in
-         Myseq.return (Data.make_dpat v r c [|dvals|])
+         Myseq.return (v, [|vals, r_vals|])
     
-      | Replace, [||], [|parse_a; parse_b|] ->
+      | Replace, [||] ->
          let* a, r_a, b, r_b =
            Ndseq.map_tup_myseq ~name:"parse/Repalce/in_a_b" ~depth (0,0,0,0)
              (function
@@ -3293,11 +3274,9 @@ module MyDomain : Madil.DOMAIN =
                   | _ -> Myseq.empty)
               | _ -> assert false)
              (v,r) in
-         let* da = parse_a a r_a in
-         let* db = parse_b b r_b in
-         Myseq.return (Data.make_dpat v r c [|da; db|])
+         Myseq.return (v, [|a, r_a; b, r_b|])
     
-      | Swap, [||], [|parse_a; parse_b|] ->
+      | Swap, [||] ->
          let* a, r_a, b, r_b =
            Ndseq.map_tup_myseq ~name:"parse/Swap/in_a_b" ~depth (0,0,0,0)
              (function
@@ -3310,11 +3289,9 @@ module MyDomain : Madil.DOMAIN =
                   | _ -> Myseq.empty)
               | _ -> assert false)
              (v,r) in
-         let* da = parse_a a r_a in
-         let* db = parse_b b r_b in
-         Myseq.return (Data.make_dpat v r c [|da; db|])
+         Myseq.return (v, [|a, r_a; b, r_b|])
     
-      | BgColor, [||], [|parse_col; parse_g1|] ->
+      | BgColor, [||] ->
          let* col, r_col, g1, r_g1 =
            Ndseq.map_tup_myseq ~name:"parse/BgColor/in_col_g1" ~depth (0,0,0,0)
              (function
@@ -3330,11 +3307,9 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dcol = parse_col col r_col in
-         let* dg1 = parse_g1 g1 r_g1 in
-         Myseq.return (Data.make_dpat v r c [|dcol; dg1|])
+         Myseq.return (v, [|col, r_col; g1, r_g1|])
 
-      | IsFull, [||], [|parse_g1|] ->
+      | IsFull, [||] ->
          let* v1, r1 =
            Ndseq.map_tup_myseq ~depth (0,0)
              (function
@@ -3344,10 +3319,9 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dg1 = parse_g1 v1 r1 in
-         Myseq.return (Data.make_dpat v r c [|dg1|])
+         Myseq.return (v, [|v1, r1|])
     
-      |  Crop, [|vg|], [|parse_pos; parse_size|] ->
+      |  Crop, [|vg|] ->
          let depth = Ndseq.depth v in
          let size, r_size =
            Ndseq.map_tup ~depth (0,0)
@@ -3374,11 +3348,9 @@ module MyDomain : Madil.DOMAIN =
                  | _ -> assert false)
                (v, size)
            with Invalid_argument _ -> Myseq.empty in (* dg may have an inconsistent structure *)
-         let* dpos = parse_pos pos r_pos in
-         let* dsize = parse_size size r_size in
-         Myseq.return (Data.make_dpat v r c ~src [|dpos; dsize|])
+         Myseq.return (v, [|pos, r_pos; size, r_size|])
     
-      | Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_order; parse_card; parse_objs; parse_merger; parse_noise|] ->
+      | Objects (nmax,mode), [||] ->
          let filling, nocolor =
            match t.kind with
            | GRID (filling,nocolor) -> filling, nocolor
@@ -3452,16 +3424,15 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (v, r, seg, order, size) in
          let _v, merger, r_merger = make_objects_v_merger ~depth size seg order card objs noise in
-         let* dsize = parse_size size r_size in
-         let* dseg = parse_seg seg r_seg in
-         let* dorder = parse_order order r_order in
-         let* dcard = parse_card card r_card in
-         let* dobjs = parse_objs objs r_objs in
-         let* dnoise = parse_noise noise r_noise in
-         let* dmerger = parse_merger merger r_merger in
-         Myseq.return (Data.make_dpat v r c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|])
+         Myseq.return (v, [|size, r_size;
+                            seg, r_seg;
+                            order, r_order;
+                            card, r_card;
+                            objs, r_objs;
+                            merger, r_merger;
+                            noise, r_noise|])
 
-      | ColorPartition, [||], [|parse_size; parse_ncol; parse_colors; parse_masks|] ->
+      | ColorPartition, [||] ->
          let* size, r_size, ncol, r_ncol, colors, r_colors, masks, r_masks =
            Ndseq.map_tup_myseq ~depth (0,0,0,0,1,1,1,1)
              (function
@@ -3495,13 +3466,9 @@ module MyDomain : Madil.DOMAIN =
                     Ndseq.seq 0 (List.map (fun (c,m) -> `GridRange (tm, Range.make_exact h, Range.make_exact w, [c])) layers))
               | _ -> assert false)
              (v,r) in
-         let* dsize = parse_size size r_size in
-         let* dncol = parse_ncol ncol r_ncol in
-         let* dcolors = parse_colors colors r_colors in
-         let* dmasks = parse_masks masks r_masks in
-         Myseq.return (Data.make_dpat v r c [|dsize; dncol; dcolors; dmasks|])
+         Myseq.return (v, [|size, r_size; ncol, r_ncol; colors, r_colors; masks, r_masks|])
         
-      | Monocolor, [||], [|parse_col; parse_mask|] ->
+      | Monocolor, [||] ->
          let* col, r_col, mask, r_mask =
            Ndseq.map_tup_myseq ~name:"parse/Monocolor/in_col_mask" ~depth (0,0,0,0)
              (function
@@ -3515,11 +3482,9 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dcol = parse_col col r_col in
-         let* dmask = parse_mask mask r_mask in
-         Myseq.return (Data.make_dpat v r c [|dcol; dmask|])
+         Myseq.return (v, [|col, r_col; mask, r_mask|])
 
-      | Recoloring, [|vg1|], [|parse_map|] ->
+      | Recoloring, [|vg1|] ->
          let* map, r_map =
            try
              Ndseq.mapi_tup_myseq ~depth (0,0)
@@ -3545,10 +3510,9 @@ module MyDomain : Madil.DOMAIN =
                     assert false)
                (v,r)
            with Invalid_argument _ -> Myseq.empty in (* dg1 is not guaranteed to have a consistent structure *)
-         let* dmap = parse_map map r_map in
-         Myseq.return (Data.make_dpat v r c ~src [|dmap|])
+         Myseq.return (v, [|map, r_map|])
     
-      | MotifMulti partial, [||], [|parse_mot; parse_core; parse_pure; parse_mask_opt; parse_noise|] ->
+      | MotifMulti partial, [||] ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* mot, r_mot =
            let* mot = (* common choice for all items *)
@@ -3577,17 +3541,12 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (v, r, mot) in
          let* pure, r_pure = make_motif_multi_pure ~depth mot core noise in
-         let* dmot = parse_mot mot r_mot in
-         let* dcore = parse_core core r_core in
-         let* dpure = parse_pure pure r_pure in
-         let* dmask_opt =
-           if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
-           then parse_mask_opt mask_opt r_mask_opt
-           else Myseq.empty in
-         let* dnoise = parse_noise noise r_noise in
-         Myseq.return (Data.make_dpat v r c [|dmot; dcore; dpure; dmask_opt; dnoise|])
+         if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
+         then Myseq.return (v, [|mot, r_mot; core, r_core; pure, r_pure;
+                                 mask_opt, r_mask_opt; noise, r_noise|])
+         else Myseq.empty
     
-      | MotifBi partial, [||], [|parse_mot; parse_bgcolor; parse_color; parse_pure; parse_mask_opt; parse_noise|] ->
+      | MotifBi partial, [||] ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* mot, r_mot =
            let* mot = (* common choice for all items *)
@@ -3617,18 +3576,12 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (v, r, mot) in
          let* pure, r_pure = make_motif_bi_pure ~depth mot bgcolor color noise in
-         let* dmot = parse_mot mot r_mot in
-         let* dbgcolor = parse_bgcolor bgcolor r_bgcolor in
-         let* dcolor = parse_color color r_color in
-         let* dpure = parse_pure pure r_pure in
-         let* dmask_opt =
-           if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
-           then parse_mask_opt mask_opt r_mask_opt
-           else Myseq.empty in
-         let* dnoise = parse_noise noise r_noise in
-         Myseq.return (Data.make_dpat v r c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|])
+         if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
+         then Myseq.return (v, [|mot, r_mot; bgcolor, r_bgcolor; color, r_color;
+                                 pure, r_pure; mask_opt, r_mask_opt; noise, r_noise|])
+         else Myseq.empty
     
-      | Metagrid, [||], [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|] ->
+      | Metagrid, [||] ->
          let make_input_dims k l rh rw =
            let aux_r rhw = (* do not use kl to define r *)
              match rhw with
@@ -3706,13 +3659,9 @@ module MyDomain : Madil.DOMAIN =
                         `GridRange ((filling,nocolor), rh1, rw1, lc)))
               | _ -> assert false)
              (v, r) in
-         let* dsepcolor = parse_sepcolor sepcolor r_sepcolor in
-         let* dborders = parse_borders borders r_borders in
-         let* ddims = parse_dims dims r_dims in
-         let* dheights = parse_heights heights r_heights in
-         let* dwidths = parse_widths widths r_widths in
-         let* dgridss = parse_gridss gridss r_gridss in
-         Myseq.return (Data.make_dpat v r c [|dsepcolor; dborders; ddims; dheights; dwidths; dgridss|])
+         Myseq.return (v, [|sepcolor, r_sepcolor; borders, r_borders;
+                            dims, r_dims; heights, r_heights; widths, r_widths;
+                            gridss, r_gridss|])
 
 (*      | _, Repeat, [|parse_grid; parse_nis; parse_njs|], `GridDimsCols (g,rh,rw,nc) ->
          let rec aux_inputs min max_opt = function
@@ -3753,7 +3702,7 @@ module MyDomain : Madil.DOMAIN =
          let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
          Myseq.return data *)
     
-      | (Empty | Full as c), [||], [|parse_size|] ->
+      | (Empty | Full as c), [||] ->
          let pred =
            match c with
            | Empty -> (fun i j c -> c = Grid.zero)
@@ -3770,10 +3719,9 @@ module MyDomain : Madil.DOMAIN =
                  else Myseq.empty
               | _ -> assert false)
              (v,r) in
-         let* dsize = parse_size size r_size in
-         Myseq.return (Data.make_dpat v r c [|dsize|])
+         Myseq.return (v, [|size, r_size|])
 
-      | Point, [||], [||] ->
+      | Point, [||] ->
          if Ndseq.for_all ~depth
               (function
                | `Grid mask -> (* nc=1 *)
@@ -3781,10 +3729,10 @@ module MyDomain : Madil.DOMAIN =
                   h=1 && w=1 && Grid.Mask.mem 0 0 mask
                | _ -> assert false)
               v
-         then Myseq.return (Data.make_dpat v r c [||])
+         then Myseq.return (v, [||])
          else Myseq.empty
     
-      | Line, [||], [|parse_len; parse_dir|] ->
+      | Line, [||] ->
          let* len, r_len, dir, r_dir =
            Ndseq.map_tup_myseq ~name:"parse/Line/in_res" ~depth (0,0,0,0)
              (function
@@ -3797,11 +3745,9 @@ module MyDomain : Madil.DOMAIN =
                   | None -> Myseq.empty)
               | _ -> assert false)
              (v,r) in
-         let* dlen = parse_len len r_len in
-         let* ddir = parse_dir dir r_dir in
-         Myseq.return (Data.make_dpat v r c [|dlen; ddir|])
+         Myseq.return (v, [|len, r_len; dir, r_dir|])
 
-      | ColorSeq dir, [||], [|parse_size; parse_colors|] ->
+      | ColorSeq dir, [||] ->
          let* size, r_size, colors, r_colors =
            Ndseq.map_tup_myseq ~name:"parse/ColorSeq/in_res" ~depth (0,0,1,1)
              (function
@@ -3829,18 +3775,15 @@ module MyDomain : Madil.DOMAIN =
                         Ndseq.seq 0 (List.init h (fun i -> rc))))
               | _ -> assert false)
              (v,r) in
-         let* dsize = parse_size size r_size in
-         let* dcolors = parse_colors colors r_colors in
-         Myseq.return (Data.make_dpat v r c [|dsize; dcolors|])
+         Myseq.return (v, [|size, r_size; colors, r_colors|])
     
-      | ColorMat, [||], [|parse_size; parse_colorss|] ->
+      | ColorMat, [||] ->
          let* size, r_size, colorss, r_colorss =
            Ndseq.map_tup_myseq ~name:"parse/ColorMat/in_res" ~depth (0,0,2,2)
              (function
               | `Grid g, `GridRange (tg, rh, rw, lc) ->
                  let h, w = Grid.dims g in
                  let rc = `ColorRange (C_OBJ, lc) in
-                 (* XX let* () = Myseq.from_bool (h > 1 && h <= 3 && w > 1 && w <= 3) in *)
                  Myseq.return
                    (`Vec (h,w), `VecRange (rh,rw),
                     
@@ -3856,11 +3799,9 @@ module MyDomain : Madil.DOMAIN =
                                   rc)))))
               | _ -> assert false)
              (v,r) in
-         let* dsize = parse_size size r_size in
-         let* dcolorss = parse_colorss colorss r_colorss in
-         Myseq.return (Data.make_dpat v r c [|dsize; dcolorss|])
+         Myseq.return (v, [|size, r_size; colorss, r_colorss|])
 
-      | MakeGrid, [||], [|parse_grid|] ->
+      | MakeGrid, [||] ->
          assert (depth >= 2);
          let* grid, r_grid =
            Ndseq.map_tup_myseq ~name:"parse/MakeGrid/grid" ~depth:(depth - 2) (0,0)
@@ -3876,10 +3817,9 @@ module MyDomain : Madil.DOMAIN =
                let lc = Grid.all_colors in
                Myseq.return (`Grid g, `GridRange ((`Sprite,false), rh, rw, lc)))
              (v,r) in
-         let* dgrid = parse_grid grid r_grid in
-         Myseq.return (Data.make_dpat v r c [|dgrid|])
+         Myseq.return (v, [|grid, r_grid|])
 
-      | SeqSingle dep, [||], [|parse1|] ->
+      | SeqSingle dep, [||] ->
          if Ndseq.is_complete ~depth:dep v
          then
            let dep1 = depth - dep - 1 in
@@ -3893,15 +3833,10 @@ module MyDomain : Madil.DOMAIN =
                  | Some _, Some _ -> Myseq.empty
                  | _ -> assert false)
                (v,r) in
-           let* d1 = parse1 v1 r1 in
-           (* XX let v : value =
-             Ndseq.map ~depth:dep (+1)
-               (fun v1 -> Ndseq.seq dep1 [v1])
-               (Data.value d1) in *)
-           Myseq.return (Data.make_dpat v r c [|d1|])
-         else parseur_any t v r
+           Myseq.return (v, [|v1, r1|])
+         else Myseq.empty
 
-      | SeqPair dep, [||], [|parse1; parse2|] ->
+      | SeqPair dep, [||] ->
          if Ndseq.is_complete ~depth:dep v
          then
            let dep12 = depth - dep - 1 in
@@ -3915,27 +3850,18 @@ module MyDomain : Madil.DOMAIN =
                  | Some _, Some _ -> Myseq.empty
                  | _ -> assert false)
                (v, r) in
-           let* d1 = parse1 v1 r1 in
-           let* d2 = parse2 v2 r2 in
-           (* XX let v : value =
-             Ndseq.map2 ~depth:dep (+1)
-               (fun v1 v2 -> Ndseq.seq dep12 [v1;v2])
-               (Data.value d1) (Data.value d2) in *)
-           Myseq.return (Data.make_dpat v r c [|d1;d2|])
-         else parseur_any t v r
+           Myseq.return (v, [|v1, r1; v2, r2|])
+         else Myseq.empty
 
-      | SeqCons dep, [||], [|parse_hd; parse_tl|] ->
+      | SeqCons dep, [||] ->
          if Ndseq.is_complete ~depth:dep v
          then
            let* hd, tl = Ndseq.head_tail ~depth:dep v in
            let* r_hd, r_tl = Ndseq.head_tail ~depth:dep r in
-           let* dhd = parse_hd hd r_hd in
-           let* dtl = parse_tl tl r_tl in
-           (* XX let v : value = Ndseq.cons ~depth:dep (Data.value dhd) (Data.value dtl) in *)
-           Myseq.return (Data.make_dpat v r c [|dhd;dtl|])
-         else parseur_any t v r
+           Myseq.return (v, [|hd, r_hd; tl, r_tl|])
+         else Myseq.empty
 
-      | SeqRepeat dep, [||], [|parse_e|] ->
+      | SeqRepeat dep, [||] ->
          assert (depth >= 1);
          assert (dep < depth);
          if Ndseq.is_complete ~depth:dep v
@@ -3954,19 +3880,10 @@ module MyDomain : Madil.DOMAIN =
                      with _ -> Myseq.empty)
                  | _ -> assert false)
                (v,r) in
-           let* de = parse_e e r_e in
-           (* XX let v =
-             Ndseq.map_tup ~depth:dep (depth - dep)
-               (fun (ve,v) ->
-                 match Ndseq.as_seq v with
-                 | Some (d,l) ->
-                    Ndseq.seq d (List.map (fun _ -> ve) l)
-                 | _ -> assert false)
-               (Data.value de, v) in *)
-           Myseq.return (Data.make_dpat v r c [|de|])
-         else parseur_any t v r (* TODO: improve by using parse_e ? *)
+           Myseq.return (v, [|e, r_e|])
+         else Myseq.empty
 
-      | SeqRange, [||], [|parse_start; parse_step|] ->
+      | SeqRange, [||] ->
          let dep = depth - 1 in
          assert (dep >= 0);
          if Ndseq.is_complete ~depth:dep v
@@ -3999,12 +3916,10 @@ module MyDomain : Madil.DOMAIN =
                      | _ -> Myseq.empty)
                  | _ -> assert false)
                (v,r) in
-           let* dstart = parse_start start r_start in
-           let* dstep = parse_step step r_step in
-           Myseq.return (Data.make_dpat v r c [|dstart; dstep|])
-         else parseur_any t v r
+           Myseq.return (v, [|start, r_start; step, r_step|])
+         else Myseq.empty
 
-      | SeqIndex, [|vseq|], [|parse_index|] ->
+      | SeqIndex, [|vseq|] ->
          let depth_seq = Ndseq.depth vseq in
          let* () = Myseq.from_bool (depth < depth_seq) in (* v must be an element or proper substructure of vseq *)
          let* index, r_index =
@@ -4030,8 +3945,7 @@ module MyDomain : Madil.DOMAIN =
                | None -> assert false
            in
            aux [] [] depth_seq vseq in
-         let* dindex = parse_index index r_index in
-         Myseq.return (Data.make_dpat v r c ~src [|dindex|])
+         Myseq.return (v, [|index, r_index|])
 
       | _ -> assert false
     
