@@ -3820,104 +3820,89 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (v, [|grid, r_grid|])
 
       | SeqSingle dep, [||] ->
-         if Ndseq.is_complete ~depth:dep v
-         then
-           let dep1 = depth - dep - 1 in
-           let* v1, r1 =
-             Ndseq.map_tup_myseq ~depth:dep (dep1, dep1)
-               (fun (v,r) ->
-                 match Ndseq.as_seq v, Ndseq.as_seq r with
-                 | Some (_, [v1]), Some (_, [r1]) ->
-                    assert (Ndseq.depth v1 = dep1);
-                    Myseq.return (v1,r1)
-                 | Some _, Some _ -> Myseq.empty
-                 | _ -> assert false)
-               (v,r) in
-           Myseq.return (v, [|v1, r1|])
-         else Myseq.empty
+         let dep1 = depth - dep - 1 in
+         let* v1, r1 =
+           Ndseq.map_tup_myseq ~depth:dep (dep1, dep1)
+             (fun (v,r) ->
+               match Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (_, [v1]), Some (_, [r1]) ->
+                  assert (Ndseq.depth v1 = dep1);
+                  Myseq.return (v1,r1)
+               | Some _, Some _ -> Myseq.empty
+               | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|v1, r1|])
 
       | SeqPair dep, [||] ->
-         if Ndseq.is_complete ~depth:dep v
-         then
-           let dep12 = depth - dep - 1 in
-           let* v1, v2, r1, r2 =
-             Ndseq.map_tup_myseq ~depth:dep (dep12, dep12, dep12, dep12)
-               (fun (v,r) ->
-                 match Ndseq.as_seq v, Ndseq.as_seq r with
-                 | Some (_, [v1;v2]), Some (_, [r1;r2]) ->
-                    assert (Ndseq.depth v1 = dep12);
-                    Myseq.return (v1,v2,r1,r2)
-                 | Some _, Some _ -> Myseq.empty
-                 | _ -> assert false)
-               (v, r) in
-           Myseq.return (v, [|v1, r1; v2, r2|])
-         else Myseq.empty
+         let dep12 = depth - dep - 1 in
+         let* v1, v2, r1, r2 =
+           Ndseq.map_tup_myseq ~depth:dep (dep12, dep12, dep12, dep12)
+             (fun (v,r) ->
+               match Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (_, [v1;v2]), Some (_, [r1;r2]) ->
+                  assert (Ndseq.depth v1 = dep12);
+                  Myseq.return (v1,v2,r1,r2)
+               | Some _, Some _ -> Myseq.empty
+               | _ -> assert false)
+             (v, r) in
+         Myseq.return (v, [|v1, r1; v2, r2|])
 
       | SeqCons dep, [||] ->
-         if Ndseq.is_complete ~depth:dep v
-         then
-           let* hd, tl = Ndseq.head_tail ~depth:dep v in
-           let* r_hd, r_tl = Ndseq.head_tail ~depth:dep r in
-           Myseq.return (v, [|hd, r_hd; tl, r_tl|])
-         else Myseq.empty
+         let* hd, tl = Ndseq.head_tail ~depth:dep v in
+         let* r_hd, r_tl = Ndseq.head_tail ~depth:dep r in
+         Myseq.return (v, [|hd, r_hd; tl, r_tl|])
 
       | SeqRepeat dep, [||] ->
          assert (depth >= 1);
          assert (dep < depth);
-         if Ndseq.is_complete ~depth:dep v
-         then
-           let delta_d = depth - dep - 1 in
-           let* e, r_e =
-             Ndseq.map_tup_myseq ~name:"parse/SeqRepeat/e" ~depth:dep (delta_d, delta_d)
-               (fun (v,r) ->
-                 match Ndseq.as_seq v, Ndseq.as_seq r with
-                 | Some (d, []), _ -> Myseq.empty
-                 | Some (d, v0::l1), Some (_, r0::_) ->
-                    (try
-                      if List.for_all (fun v1 -> v1 = v0) l1 (* all elts should be the same value *)
-                      then Myseq.return (v0,r0)
-                      else Myseq.empty
-                     with _ -> Myseq.empty)
-                 | _ -> assert false)
-               (v,r) in
-           Myseq.return (v, [|e, r_e|])
-         else Myseq.empty
+         let delta_d = depth - dep - 1 in
+         let* e, r_e =
+           Ndseq.map_tup_myseq ~name:"parse/SeqRepeat/e" ~depth:dep (delta_d, delta_d)
+             (fun (v,r) ->
+               match Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (d, []), _ -> Myseq.empty
+               | Some (d, v0::l1), Some (_, r0::_) ->
+                  (try
+                     if List.for_all (fun v1 -> v1 = v0) l1 (* all elts should be the same value *)
+                     then Myseq.return (v0,r0)
+                     else Myseq.empty
+                   with _ -> Myseq.empty)
+               | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|e, r_e|])
 
       | SeqRange, [||] ->
          let dep = depth - 1 in
          assert (dep >= 0);
-         if Ndseq.is_complete ~depth:dep v
-         then
-           let* start, r_start, step, r_step =
-             Ndseq.map_tup_myseq ~depth:dep (0,0,0,0)
-               (fun (v,r) ->
-                 match Ndseq.as_seq v, Ndseq.as_seq r with
-                 | Some (_,l), Some (_,r_l) ->
-                    let lint =
-                      List.map
-                        (function
-                         | `Int x -> x
-                         | _ -> assert false)
-                        l in
-                    (match l, r_l with
-                     | `Int x0 :: `Int x1 :: _,
-                       `IntRange r0 :: `IntRange r1 :: _ ->
-                        let step = x1 - x0 in
-                        let* () = Myseq.from_bool (lint = List.mapi (fun i _ -> x0 + i * step) l) in
-                        let* range_step = (* TODO: ambiguity with ranges including negative values and Range.sub *)
-                          match r0, r1 with
-                          | Range.Closed (a0,b0), Range.Closed (a1,b1) ->
-                             Myseq.return (Range.Closed (a1 - b0, b1 - a0))
-                          | Range.Closed (a0,b0), Range.Open a1 ->
-                             Myseq.return (Range.Open (a1 - b0))
-                          | Range.Open a0, _ -> Myseq.empty in
-                        Myseq.return (`Int x0, `IntRange r0,
-                                      `Int step, `IntRange range_step)
-                     | _ -> Myseq.empty)
-                 | _ -> assert false)
-               (v,r) in
-           Myseq.return (v, [|start, r_start; step, r_step|])
-         else Myseq.empty
+         let* start, r_start, step, r_step =
+           Ndseq.map_tup_myseq ~depth:dep (0,0,0,0)
+             (fun (v,r) ->
+               match Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (_,l), Some (_,r_l) ->
+                  let lint =
+                    List.map
+                      (function
+                       | `Int x -> x
+                       | _ -> assert false)
+                      l in
+                  (match l, r_l with
+                   | `Int x0 :: `Int x1 :: _,
+                     `IntRange r0 :: `IntRange r1 :: _ ->
+                      let step = x1 - x0 in
+                      let* () = Myseq.from_bool (lint = List.mapi (fun i _ -> x0 + i * step) l) in
+                      let* range_step = (* TODO: ambiguity with ranges including negative values and Range.sub *)
+                        match r0, r1 with
+                        | Range.Closed (a0,b0), Range.Closed (a1,b1) ->
+                           Myseq.return (Range.Closed (a1 - b0, b1 - a0))
+                        | Range.Closed (a0,b0), Range.Open a1 ->
+                           Myseq.return (Range.Open (a1 - b0))
+                        | Range.Open a0, _ -> Myseq.empty in
+                      Myseq.return (`Int x0, `IntRange r0,
+                                    `Int step, `IntRange range_step)
+                   | _ -> Myseq.empty)
+               | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|start, r_start; step, r_step|])
 
       | SeqIndex, [|vseq|] ->
          let depth_seq = Ndseq.depth vseq in
