@@ -1179,73 +1179,70 @@ module MyDomain : Madil.DOMAIN =
          | _ -> assert false)
         (vsize, vcolors, vmasks)
     
-    let make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise : value * data =
-      let v, merger, rmerger = (* TODO: use dseg and dorder *)
-        Ndseq.map_tup ~depth (0,0,0)
-          (function
-           | `Vec (h, w), `Int card, seq_objs, `Grid g_noise ->
-              let objs =
-                match Ndseq.as_seq seq_objs with
-                | Some (_,objs) ->
-                   List.map
-                     (function
-                      | `Obj (`Vec (i,j), `Grid g1) -> (i,j,g1)
-                      | _ -> assert false)
-                     objs
-                | None -> assert false in
-              assert (card = List.length objs);
-              let i0, j0, h0, w0 =
-                if card = 0
-                then 0, 0, 1, 1 (* dummy merger pos/size *)
-                else
-                  let i0, j0, ih0, jw0 =
-                    List.fold_left
-                      (fun (i0,j0,ih0,jw0) (i,j,g1) ->
-                        let h1, w1 = Grid.dims g1 in
-                        min i0 i, min j0 j,
-                        max ih0 (i+h1), max jw0 (j+w1))
-                      (h, w, 0, 0) objs in
-                  assert (i0 < ih0 && j0 < jw0);
-                  i0, j0, ih0 - i0, jw0 - j0 in
-              let g = Grid.make h w Grid.transparent in
-              let g0 = Grid.make h0 w0 Grid.transparent in (* merger object *)
-              List.iter
-                (fun (i,j,g1) ->
-                  Grid.add_grid_at g i j g1;
-                  Grid.add_grid_at g0 (i-i0) (j-j0) g1)
-                objs;
-              Grid.add_grid_at g 0 0 g_noise;
-              (`Grid g, `Obj (`Vec (i0,j0), `Grid g0), `Null) (* TODO: define better distrib for merger *)
-           | _ -> assert false)
-          (Data.value dsize, Data.value dcard, Data.value dobjs, Data.value dnoise) in
-      v, Data.make_dexpr merger rmerger
+    let make_objects_v_merger ~depth size seg order card objs noise : value * value * distrib =
+      Ndseq.map_tup ~depth (0,0,0)
+        (function
+         | `Vec (h, w), `Int card, seq_objs, `Grid g_noise ->
+            let objs =
+              match Ndseq.as_seq seq_objs with
+              | Some (_,objs) ->
+                 List.map
+                   (function
+                    | `Obj (`Vec (i,j), `Grid g1) -> (i,j,g1)
+                    | _ -> assert false)
+                   objs
+              | None -> assert false in
+            assert (card = List.length objs);
+            let i0, j0, h0, w0 =
+              if card = 0
+              then 0, 0, 1, 1 (* dummy merger pos/size *)
+              else
+                let i0, j0, ih0, jw0 =
+                  List.fold_left
+                    (fun (i0,j0,ih0,jw0) (i,j,g1) ->
+                      let h1, w1 = Grid.dims g1 in
+                      min i0 i, min j0 j,
+                      max ih0 (i+h1), max jw0 (j+w1))
+                    (h, w, 0, 0) objs in
+                assert (i0 < ih0 && j0 < jw0);
+                i0, j0, ih0 - i0, jw0 - j0 in
+            let g = Grid.make h w Grid.transparent in
+            let g0 = Grid.make h0 w0 Grid.transparent in (* merger object *)
+            List.iter
+              (fun (i,j,g1) ->
+                Grid.add_grid_at g i j g1;
+                Grid.add_grid_at g0 (i-i0) (j-j0) g1)
+              objs;
+            Grid.add_grid_at g 0 0 g_noise;
+            (`Grid g, `Obj (`Vec (i0,j0), `Grid g0), `Null) (* TODO: define better distrib for merger *)
+         | _ -> assert false)
+        (size, card, objs, noise)
 
-    let make_motif_dpure ~depth dmot vcore dnoise : data Myseq.t =
-      let* vpure, rpure =
-        Ndseq.map_tup_myseq ~name:"make_motif_dpure" ~depth (0,0)
+    let make_motif_pure ~depth mot core noise : (value * distrib) Myseq.t =
+      let* pure, r_pure =
+        Ndseq.map_tup_myseq ~name:"make_motif_pure" ~depth (0,0)
           (function
            | `Motif mot, `Grid g_core, `Grid g_noise ->
               let h, w = Grid.dims g_noise in
               let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
               Myseq.return (`Grid g_pure, `Null) (* TODO: define better rpure *)
            | _ -> assert false)
-          (Data.value dmot, vcore, Data.value dnoise) in
-      Myseq.return (Data.make_dexpr vpure rpure)
-    let make_motif_multi_dpure dmot dcore dnoise =
-      make_motif_dpure dmot (Data.value dcore) dnoise
-    let make_motif_bi_dpure dmot dbgcolor dcolor dnoise =
-      let vbgcolor, vcolor = Data.value dbgcolor, Data.value dcolor in
-      let depth = Ndseq.depth vbgcolor in
-      assert (Ndseq.depth vcolor = depth);
-      let vcore =
+          (mot, core, noise) in
+      Myseq.return (pure, r_pure)
+    let make_motif_multi_pure mot core noise =
+      make_motif_pure mot core noise
+    let make_motif_bi_pure mot bgcolor color noise =
+      let depth = Ndseq.depth bgcolor in
+      assert (Ndseq.depth color = depth);
+      let core =
         Ndseq.map_tup ~depth 0
           (function
            | `Color bgcolor, `Color color ->
               `Grid (GPat.Motif.make_core_bi bgcolor color)
            | _ -> assert false)
-          (vbgcolor, vcolor) in
-      assert (Ndseq.depth vcore = depth);
-      make_motif_dpure dmot vcore dnoise
+          (bgcolor, color) in
+      assert (Ndseq.depth core = depth);
+      make_motif_pure mot core noise
 
     let make_grid_from_color_seq dir vcolors =
       let| acolors =
@@ -2580,7 +2577,11 @@ module MyDomain : Madil.DOMAIN =
              (Data.value dobjs, r) in
          let* dsize = gen_size r_size in
          let* dnoise = gen_noise r_noise in
-         let v, dmerger = make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise in
+         let v, merger, r_merger =
+           make_objects_v_merger ~depth
+             (Data.value dsize) (Data.value dseg) (Data.value dorder)
+             vcard (Data.value dobjs) (Data.value dnoise) in
+         let dmerger = Data.make_dexpr merger r_merger in
          Myseq.return (Data.make_dpat v r c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|])
 
       | ColorPartition, [||], [|gen_size; gen_ncol; gen_colors; gen_masks|] ->
@@ -3377,7 +3378,7 @@ module MyDomain : Madil.DOMAIN =
          let* dsize = parse_size size r_size in
          Myseq.return (Data.make_dpat v r c ~src [|dpos; dsize|])
     
-      | Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_order; parse_card; parse_objs; _parse_merger; parse_noise|] ->
+      | Objects (nmax,mode), [||], [|parse_size; parse_seg; parse_order; parse_card; parse_objs; parse_merger; parse_noise|] ->
          let filling, nocolor =
            match t.kind with
            | GRID (filling,nocolor) -> filling, nocolor
@@ -3450,13 +3451,14 @@ module MyDomain : Madil.DOMAIN =
               (* TODO: remove size, as included in noise, like for Motif? *)
               | _ -> assert false)
              (v, r, seg, order, size) in
+         let _v, merger, r_merger = make_objects_v_merger ~depth size seg order card objs noise in
          let* dsize = parse_size size r_size in
          let* dseg = parse_seg seg r_seg in
          let* dorder = parse_order order r_order in
          let* dcard = parse_card card r_card in
          let* dobjs = parse_objs objs r_objs in
          let* dnoise = parse_noise noise r_noise in
-         let _v, dmerger = make_objects_v_dmerger ~depth dsize dseg dorder dcard dobjs dnoise in
+         let* dmerger = parse_merger merger r_merger in
          Myseq.return (Data.make_dpat v r c [|dsize; dseg; dorder; dcard; dobjs; dmerger; dnoise|])
 
       | ColorPartition, [||], [|parse_size; parse_ncol; parse_colors; parse_masks|] ->
@@ -3546,7 +3548,7 @@ module MyDomain : Madil.DOMAIN =
          let* dmap = parse_map map r_map in
          Myseq.return (Data.make_dpat v r c ~src [|dmap|])
     
-      | MotifMulti partial, [||], [|parse_mot; parse_core; _parse_pure; parse_mask_opt; parse_noise|] ->
+      | MotifMulti partial, [||], [|parse_mot; parse_core; parse_pure; parse_mask_opt; parse_noise|] ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* mot, r_mot =
            let* mot = (* common choice for all items *)
@@ -3574,17 +3576,18 @@ module MyDomain : Madil.DOMAIN =
                     `Grid g_noise, `GridRange ((`Noise,nocolor), rh, rw, lc))
               | _ -> assert false)
              (v, r, mot) in
+         let* pure, r_pure = make_motif_multi_pure ~depth mot core noise in
          let* dmot = parse_mot mot r_mot in
          let* dcore = parse_core core r_core in
+         let* dpure = parse_pure pure r_pure in
          let* dmask_opt =
            if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
            then parse_mask_opt mask_opt r_mask_opt
            else Myseq.empty in
          let* dnoise = parse_noise noise r_noise in
-         let* dpure = make_motif_multi_dpure ~depth dmot dcore dnoise in
          Myseq.return (Data.make_dpat v r c [|dmot; dcore; dpure; dmask_opt; dnoise|])
     
-      | MotifBi partial, [||], [|parse_mot; parse_bgcolor; parse_color; _parse_pure; parse_mask_opt; parse_noise|] ->
+      | MotifBi partial, [||], [|parse_mot; parse_bgcolor; parse_color; parse_pure; parse_mask_opt; parse_noise|] ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* mot, r_mot =
            let* mot = (* common choice for all items *)
@@ -3613,15 +3616,16 @@ module MyDomain : Madil.DOMAIN =
                     `Grid g_noise, `GridRange ((`Noise,nocolor), rh, rw, lc))
               | _ -> assert false)
              (v, r, mot) in
+         let* pure, r_pure = make_motif_bi_pure ~depth mot bgcolor color noise in
          let* dmot = parse_mot mot r_mot in
          let* dbgcolor = parse_bgcolor bgcolor r_bgcolor in
          let* dcolor = parse_color color r_color in
+         let* dpure = parse_pure pure r_pure in
          let* dmask_opt =
            if not partial || Ndseq.for_all (function `Null -> false | _ -> true) mask_opt
            then parse_mask_opt mask_opt r_mask_opt
            else Myseq.empty in
          let* dnoise = parse_noise noise r_noise in
-         let* dpure = make_motif_bi_dpure ~depth dmot dbgcolor dcolor dnoise in
          Myseq.return (Data.make_dpat v r c [|dmot; dbgcolor; dcolor; dpure; dmask_opt; dnoise|])
     
       | Metagrid, [||], [|parse_sepcolor; parse_borders; parse_dims; parse_heights; parse_widths; parse_gridss|] ->
