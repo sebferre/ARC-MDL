@@ -1,7 +1,7 @@
 import sys
 import os
 import json
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # options
 
@@ -9,8 +9,14 @@ cell_width = 19
 border_width = 1
 border_color = (128,128,128) # grey
 bg_color = (255,255,255) # white
-grid_span = 15
+grid_span = 12
 train_test_sep_color = (255,0,0) # red
+arrow = { "h1": 10, # height of the arrow body
+          "h2": 10, # height of the arrow head
+          "w1": 7, # width of one arrow head side
+          "w2": 6  # width of arrow body
+         }
+alpha_guess = 0.67 # control dimming for test output grids (to be predicted)
 
 # reading task files and folders
 
@@ -54,7 +60,7 @@ color_cells = [Image.new('RGB', (cell_width,cell_width), color)
 def offset(i):
     return i * (cell_width + border_width) + border_width
 
-def grid_image(grid):
+def grid_image(grid, guess=False):
     k = len(grid)
     l = len(grid[0])
     h = offset(k)
@@ -65,6 +71,22 @@ def grid_image(grid):
             c = grid[i][j]
             if c >= 0 and c <= 10:
                 img.paste(color_cells[c], (offset(j), offset(i)))
+    if guess:
+        bg = Image.new('RGB', (w,h), bg_color)
+        img = Image.blend(img, bg, alpha_guess)
+    return img
+
+def arrow_image():
+    points = [ (arrow["w1"], 0),
+               (arrow["w1"], arrow["h1"]),
+               (0, arrow["h1"]),
+               (arrow["w1"] + arrow["w2"]/2, arrow["h1"] + arrow["h2"]),
+               (2*arrow["w1"] + arrow["w2"], arrow["h1"]),
+               (arrow["w1"] + arrow["w2"], arrow["h1"]),
+               (arrow["w1"] + arrow["w2"], 0) ]
+    img = Image.new("RGB", (2*arrow["w1"] + arrow["w2"], arrow["h1"] + arrow["h2"]), bg_color)
+    img1 = ImageDraw.Draw(img)
+    img1.polygon(points, outline=border_color, fill=border_color)
     return img
 
 def task_image(task):
@@ -73,8 +95,13 @@ def task_image(task):
     n_train = len(train)
     n_test = len(test)
     n = n_train + n_test
-    grid_pairs = [(grid_image(pair["input"]), grid_image(pair["output"]))
-                  for pair in (train + test)]
+    # grid_pairs = [(grid_image(pair["input"]), grid_image(pair["output"], guess=True))
+    #               for pair in (train + test)]
+    train_grid_pairs = [(grid_image(pair["input"]), grid_image(pair["output"]))
+                        for pair in train]
+    test_grid_pairs = [(grid_image(pair["input"]), grid_image(pair["output"], guess=True))
+                       for pair in test]
+    grid_pairs = train_grid_pairs + test_grid_pairs
     maxhi = 0
     maxho = 0
     maxw = 0
@@ -90,12 +117,16 @@ def task_image(task):
     hi = maxhi + 2 * grid_span
     ho = maxho + 2 * grid_span
     w = maxw + 2 * grid_span
-    img = Image.new('RGB', (w * n, hi + ho), bg_color)
-    train_test_sep = Image.new('RGB', (2, hi + ho), train_test_sep_color)
+    arrow = arrow_image()
+    arrow_width, arrow_height = arrow.size
+    h = hi + arrow_height + ho
+    train_test_sep = Image.new('RGB', (2, h), train_test_sep_color)
+    img = Image.new('RGB', (w * n, h), bg_color)
     img.paste(train_test_sep, (w * n_train - 1, 0))
     for (i, (gi,go)) in enumerate(grid_pairs):
         img.paste(gi, (i * w + grid_span, grid_span))
-        img.paste(go, (i * w + grid_span, hi + grid_span))
+        img.paste(arrow, (i * w + grid_span, hi))
+        img.paste(go, (i * w + grid_span, hi + arrow_height + grid_span))
     return img, grid_pairs
 
 # main functions
