@@ -267,6 +267,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | IsFull (* SPRITE : GRID *)
       | Crop (* [SPRITE] POS, SIZE : SPRITE *)
       | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, ORDER, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
+      | Object of [`Connected|`SameColor] (* mode *) (* SIZE, SEG, OBJ, NOISE : SPRITE *) (* mode constrains SEG *)
       | ColorPartition (* SIZE, INT, COLOR+, MASK+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
       | Recoloring (* [SPRITE] MAP(COLOR,COLOR) : SPRITE *)
@@ -343,6 +344,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          xp_objs ~html print ();
          print#string " forming the constellation object: ";
          xp_merger ~html print ();
+         print#string "  plus the noise:";
+         xp_newline ~html print ();
+         xp_noise ~html print ()
+      | Object _mode, [||], [|xp_size; xp_seg; xp_obj; xp_noise|] ->
+         print#string "a grid of size "; xp_size ~html print ();
+         print#string " that contains 1 "; xp_seg ~html print ();
+         print#string " object:";
+         xp_newline ~html print ();
+         xp_obj ~html print ();
          print#string "  plus the noise:";
          xp_newline ~html print ();
          xp_noise ~html print ()
@@ -490,6 +500,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Objects _, 5 -> print#string "merger"
       | Objects _, 6 -> print#string "noise"
       | Objects _, _ -> assert false
+      | Object _, 0 -> print#string "size"
+      | Object _, 1 -> print#string "seg"
+      | Object _, 2 -> print#string "obj"
+      | Object _, 3 -> print#string "noise"
+      | Object _, _ -> assert false
       | ColorPartition, 0 -> print#string "size"
       | ColorPartition, 1 -> print#string "ncol"
       | ColorPartition, 2 -> print#string "colors"
@@ -879,6 +894,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                {t with kind = INT CARD};
                                {t with kind = OBJ (`Sprite,nocolor)};
                                (* derived merger, not counting *)
+                               {t with kind = GRID (`Noise,nocolor)} |]);
+                 not full, ("Object", [||],
+                            [| {t with kind = VEC SIZE};
+                               {t with kind = SEG};
+                               {t with kind = OBJ (`Sprite,nocolor)};
                                {t with kind = GRID (`Noise,nocolor)} |]);
                  (* not nocolor, (ColorPartition, [||],
                                [| {t with kind = VEC SIZE};
@@ -2582,6 +2602,63 @@ module MyDomain : Madil.DOMAIN =
              res_val v
           | _ -> assert false)
 
+      | Object mode, [||], [|size; seg; obj; noise|] ->
+         let r_seg =
+           Ndseq.map_tup ~depth 0
+             (fun _ ->
+               `SegRange [ match mode with
+                           | `Connected -> GPat.Objects.(Connected (Connect8,false))
+                           | `SameColor -> GPat.Objects.SameColor ])
+             (tup1 r) in
+         let+ vseg = seg, r_seg in
+         let r_obj =
+           Ndseq.map_tup ~depth 1
+             (function
+              | `GridRange ((filling,nocolor),
+                            Range.Closed (minh,maxh),
+                            Range.Closed (minw,maxw),
+                            lc) ->
+                 `ObjRange (`VecRange (Range.Closed (0,0),
+                                       Range.Closed (0,0)),
+                            `GridRange ((`Sprite,nocolor),
+                                        Range.Closed (1,3),
+                                        Range.Closed (1,3),
+                                        lc))
+              | _ -> assert false)
+             (tup1 r) in
+         let+ vobj = obj, r_obj in
+         let r_size, r_noise =
+           Ndseq.map_tup ~depth (0,0)
+             (function
+              | `Obj (`Vec (i,j), `Grid g1),
+                `GridRange ((filling,nocolor),
+                            Range.Closed (minh,maxh),
+                            Range.Closed (minw,maxw),
+                            lc) ->
+                 let h1, w1 = Grid.dims g1 in
+                 let minh, minw = max minh (i+h1), max minw (j+w1) in
+                 let maxh, maxw = max maxh minh, max maxw minw in
+                 `VecRange (Range.Closed (minh,maxh), Range.Closed (minw,maxw)),
+                 `GridRange ((`Noise,nocolor),
+                             Range.Closed (minh,maxh),
+                             Range.Closed (minw,maxw),
+                             [Grid.transparent])
+              | _ -> assert false)
+             (vobj, r) in
+         let+ vsize = size, r_size in
+         let+ vnoise = noise, r_noise in
+         let v, _vmerger, _r_merger =
+           let vcard =
+             Ndseq.map ~depth 0
+               (fun _ -> `Int 1)
+               r in
+           let vobjs =
+             Ndseq.map ~depth 1
+               (fun vobj -> Ndseq.seq 0 [vobj])
+               vobj in             
+           make_objects_v_merger ~depth vsize vcard vobjs vnoise in
+         res_val v
+
       | ColorPartition, [||], [|size; ncol; colors; masks|] ->
          let r_size, r_ncol =
            Ndseq.map_tup ~depth (0,0)
@@ -3367,7 +3444,7 @@ module MyDomain : Madil.DOMAIN =
                    (`Vec (h,w), `VecRange (rh,rw), (* size *)
                     `Seg seg, `SegRange lseg, (* seg *)
                     `Order order, `OrderRange lorder, (* order *)
-                    `Int card, `IntRange (Range.make_closed 0 nmax), (* card *)
+                    `Int card, `IntRange (Range.make_closed 1 nmax), (* card *)
                     
                     Ndseq.seq 0 (* objs *)
                       (List.map
@@ -3395,6 +3472,50 @@ module MyDomain : Madil.DOMAIN =
                             card, r_card;
                             objs, r_objs;
                             merger, r_merger;
+                            noise, r_noise|])
+
+      | Object mode, [||], 4 ->
+         let lseg =
+           match mode with
+           | `Connected -> GPat.Objects.candidate_segmentations_connected
+           | `SameColor -> [GPat.Objects.SameColor] in             
+         let* seg = Myseq.from_list lseg in (* common choice for all sequence items *)
+         let* size, r_size, seg, r_seg, obj, r_obj, noise, r_noise =
+           Ndseq.map_tup_myseq ~depth (0,0, 0,0, 0,0, 0,0)
+             (function
+              | `Grid g, `GridRange ((filling,nocolor), rh, rw, lc) ->
+                 let h, w = Grid.dims g in
+                 let tg1 = (`Sprite,nocolor) in
+                 let lc1 = lc in
+                 (* PB: not robust segmentation choice, and makes monocolor non-compresive
+                   match seg with
+                   | GPat.Objects.Connected (_,true) | GPat.Objects.SameColor -> 1
+                   | _ -> nc in *)
+                 let tg_noise = (`Noise,nocolor) in
+                 let* objs, g_noise = GPat.Objects.parse 1 seg g in
+                 let i, j, g1 =
+                   match objs with
+                   | [obj] -> obj
+                   | _ -> assert false in
+                 let h1, w1 = Grid.dims g1 in
+                 Myseq.return
+                   (`Vec (h,w), `VecRange (rh,rw), (* size *)
+                    `Seg seg, `SegRange lseg, (* seg *)
+                    
+                    `Obj (`Vec (i,j), `Grid g1), (* obj *)
+                    `ObjRange (`VecRange (Range.make_closed 0 (h-h1), (* (h-1)), *)
+                                          Range.make_closed 0 (w-w1)), (* (w-1))), *)
+                               `GridRange (tg1,
+                                           Range.make_closed 1 h, (* (h-i), *)
+                                           Range.make_closed 1 w, (* (w-j), *)
+                                           lc1)),
+                    
+                    `Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, lc)) (* noise *)
+              | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|size, r_size;
+                            seg, r_seg;
+                            obj, r_obj;
                             noise, r_noise|])
 
       | ColorPartition, [||], 4 ->
@@ -4044,6 +4165,7 @@ module MyDomain : Madil.DOMAIN =
       | IsFull, [|enc_g1|] -> enc_g1
       | Crop, [|enc_pos; enc_size|] -> enc_pos +. enc_size
       | Objects (nmax,mode), [|enc_size; enc_seg; enc_order; enc_card; enc_objs; _enc_merger; enc_noise|] -> enc_size +. enc_seg +. enc_order +. enc_card +. enc_objs +. enc_noise (* TODO: take seg into account for encoding objects *)
+      | Object mode, [|enc_size; enc_seg; enc_obj; enc_noise|] -> enc_size +. enc_seg +. enc_obj +. enc_noise (* TODO: take seg into account for encoding objects *)
       | ColorPartition, [|enc_size; enc_ncol; enc_colors; enc_masks|] -> enc_size +. enc_ncol +. enc_colors +. enc_masks
       | Monocolor, [|enc_col; enc_mask|] -> enc_col +. enc_mask
       | Recoloring, [|enc_map|] -> enc_map
@@ -4101,6 +4223,13 @@ module MyDomain : Madil.DOMAIN =
             | `ConnectedSameColor -> 0.33
             | `SameColor -> 0.33)
          +. *) 1. +. Mdl.Code.universal_int_plus nmax
+      | Object mode ->
+         (*Mdl.Code.usage
+           (match seg with
+            | `Connected -> 0.33
+            | `ConnectedSameColor -> 0.33
+            | `SameColor -> 0.33)
+         +. *) 1.
       | ColorPartition -> 0.
       | Monocolor -> 0.
       | Recoloring -> 0.
@@ -4907,13 +5036,11 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          let refs = (* Objects - Connected *)
            if filling <> `Full then
-             let$ refs, nmax = refs, [1;9] in
+             let nmax = 9 in
              (Model.make_pat t (Objects (nmax, `Connected))
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def var0 (Model.make_any {t with kind = SEG});
-                   (if nmax = 1
-                    then Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos)
-                    else Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor}));
+                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
                    Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -4925,13 +5052,11 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          let refs = (* Objects - SameColor *)
            if filling <> `Full && not nocolor then
-             let$ refs, nmax = refs, [1;9] in
+             let nmax = 9 in
              (Model.make_pat t (Objects (nmax, `SameColor))
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
-                   (if nmax = 1
-                    then Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos)
-                    else Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor}));
+                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
                    Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -4943,18 +5068,43 @@ module MyDomain : Madil.DOMAIN =
                    Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
                    Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
              :: refs
-           else if filling <> `Full && nocolor then
-             let nmax = 1 in
-             (Model.make_pat t (Objects (nmax, `SameColor))
+           else refs in
+         let refs = (* Object - Connected *)
+           if filling <> `Full then
+             (Model.make_pat t (Object `Connected)
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def var0 (Model.make_any {t with kind = SEG});
+                   Model.make_def var0
+                     (Model.make_pat {t with kind = OBJ (`Sprite,nocolor)} Obj
+                        [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
+                           Model.make_def var0 (Model.make_any {t with kind = GRID (`Sprite,nocolor)}) |]);
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
+             :: refs
+           else refs in
+         let refs = (* Object - SameColor - colored grid *)
+           if filling <> `Full && not nocolor then
+             (Model.make_pat t (Object `SameColor)
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
-                   Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos);
-                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
-                     (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                        [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                           Model.make_def var0 (Model.make_any {kind = GRID (filling,nocolor); ndim = ndim+1}) |]);
-                   Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                     (Model.make_pat {t with kind = OBJ (`Sprite,nocolor)} Obj
+                        [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
+                           Model.make_def var0
+                             (Model.make_pat {t with kind = GRID (`Sprite,nocolor)} Monocolor
+                                [| Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
+                                   Model.make_def var0 (Model.make_any {t with kind = GRID (filling,true)}) |]) |]);
+                   Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
+             :: refs
+           else refs in
+         let refs = (* Object - SameColor - mask *)
+           if filling <> `Full && nocolor then
+             (Model.make_pat t (Object `SameColor)
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
+                   Model.make_def var0
+                     (Model.make_pat {t with kind = OBJ (`Sprite,nocolor)} Obj
+                        [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
+                           Model.make_def var0 (Model.make_any {t with kind = GRID (filling,nocolor)}) |]);
                    Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
              :: refs
            else refs in
