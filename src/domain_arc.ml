@@ -4072,7 +4072,7 @@ module MyDomain : Madil.DOMAIN =
     let encoding_expr_value v = 0.
     let dl_of_encoding enc = enc
            
-    let dl_var ~nb_env_vars t p =
+    let dl_var ~nb_env_vars t p = (* TODO: take t into account, filtering env vars *)
       let k = max 1 nb_env_vars in (* to avoid 0, happens in pruning mode *)
       Mdl.Code.uniform k
 
@@ -4911,7 +4911,9 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat t (Objects (nmax, `Connected))
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def var0 (Model.make_any {t with kind = SEG});
-                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   (if nmax = 1
+                    then Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos)
+                    else Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor}));
                    Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -4926,9 +4928,10 @@ module MyDomain : Madil.DOMAIN =
              let$ refs, nmax = refs, [1;9] in
              (Model.make_pat t (Objects (nmax, `SameColor))
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_expr
-                     (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
-                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
+                   (if nmax = 1
+                    then Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos)
+                    else Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor}));
                    Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -4944,9 +4947,8 @@ module MyDomain : Madil.DOMAIN =
              let nmax = 1 in
              (Model.make_pat t (Objects (nmax, `SameColor))
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_expr
-                     (Expr.Const ({t with kind = SEG}, `Seg GPat.Objects.SameColor));
-                   Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
+                   Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
+                   Model.make_expr_const {t with kind = ORDER nocolor} (`Order GPat.Objects.Pos);
                    Model.make_def var0 (Model.make_any {t with kind = INT CARD});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
@@ -5012,7 +5014,7 @@ module MyDomain : Madil.DOMAIN =
                  Model.make_def var0 (Model.make_derived t);
                  (if partial
                   then Model.make_def var0 (Model.make_any t_mask)
-                  else Model.make_expr (Expr.Const (t_mask, `Null)));
+                  else Model.make_expr_const t_mask `Null);
                  Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
            :: refs in
          let refs = (* MotifBi *)
@@ -5027,7 +5029,7 @@ module MyDomain : Madil.DOMAIN =
                  Model.make_def var0 (Model.make_derived t);
                  (if partial
                   then Model.make_def var0 (Model.make_any t_mask)
-                  else Model.make_expr (Expr.Const (t_mask, `Null)));
+                  else Model.make_expr_const t_mask `Null);
                  Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |])
            :: refs in
          let refs = (* Metagrid *)
