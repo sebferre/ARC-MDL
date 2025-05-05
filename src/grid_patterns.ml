@@ -341,12 +341,49 @@ and xp_connectedness ~html print = function
   | Connect2_row -> print#string "same-row"
   | Connect2_col -> print#string "same-column"
 
+let seg_conn_opt : segmentation -> connectedness option = function
+  | Connected (conn, _) -> Some conn
+  | SameColor -> None
+
+let connectedness_axes (conn : connectedness) : bool * bool * bool * bool = (* row, col, diag1, diag2 *)
+  match conn with
+  | Connect8 -> (true, true, true, true)
+  | Connect4 -> (true, true, false, false)
+  | Connect2_row -> (true, false, false, false)
+  | Connect2_col -> (false, true, false, false)
+
+let disconnected_area (conn : connectedness) (g : Grid.t) : int = (* QUICK *)
+  let h, w = Grid.dims g in
+  let mat = g.matrix in
+  let c_row, c_col, c_diag1, c_diag2 = connectedness_axes conn in
+  let res = ref 0 in (* nb of disconnected cells, i.e. having only transparent neighbors *)
+  for i = 0 to h-1 do
+    for j = 0 to w-1 do
+      let left, right = j-1, j+1 in
+      let up, down = i-1, i+1 in
+      (* computing ok = transparent and all neighbors are transparent *)
+      let ok = ref (mat.{i,j} = Grid.transparent) in
+      if !ok && c_row && left >= 0 then ok := mat.{i, left} = Grid.transparent;
+      if !ok && c_row && right < w then ok := mat.{i, right} = Grid.transparent;
+      if !ok && c_col && up >= 0 then ok := mat.{up, j} = Grid.transparent;
+      if !ok && c_col && down < h then ok := mat.{down, j} = Grid.transparent;
+      if !ok && c_diag1 && up >= 0 && left >= 0 then ok := mat.{up, left} = Grid.transparent;
+      if !ok && c_diag1 && down < h && right < w then ok := mat.{down, right} = Grid.transparent;
+      if !ok && c_diag2 && up >= 0 && right < w then ok := mat.{up, right} = Grid.transparent;
+      if !ok && c_diag2 && down < h && left >= 0 then ok := mat.{down, left} = Grid.transparent;
+      if !ok then incr res
+    done
+  done;
+  !res
+
+
 type obj = int * int * Grid.t (* object *)
 type t = obj list * Grid.t (* noise *)
 
 let segment_gen
       (nmax : int)
-      (c_row, c_col, c_diag1, c_diag2, c_samecolor : bool * bool * bool * bool * bool) (* row, col, diag1, diag2, samecolor *)
+      (c_row, c_col, c_diag1, c_diag2 : bool * bool * bool * bool)
+      (c_samecolor : bool)
       (g : Grid.t)
     : t = (* objects and noise *)
   Common.prof "Grid.segment" (fun () ->
@@ -437,11 +474,8 @@ let segment_gen
 let segment_connected nmax (conn : connectedness) (samecolor : bool) g =
   segment_gen
     nmax
-    (match conn with
-     | Connect8 -> (true, true, true, true, samecolor)
-     | Connect4 -> (true, true, false, false, samecolor)
-     | Connect2_row -> (true, false, false, false, samecolor)
-     | Connect2_col -> (false, true, false, false, samecolor))
+    (connectedness_axes conn)
+    samecolor
     g
 let segment_connected, reset_segment_connected =
   Memo.memoize3 ~size:103 segment_connected
