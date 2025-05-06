@@ -59,6 +59,105 @@ let parse_line (g : Grid.t) (* mask *) : (int * (int * int)) option = (* len, di
    | None -> print_endline "not a line"
    | Some (len, (di,dj)) -> Printf.printf "len=%d, dir=(%d,%d)\n" len di dj)*)
 
+let parse_skyline (g : Grid.t) (* mask *) : ((int * int) * int list) option = (* dir, lpos *)
+  let h, w = Grid.dims g in
+  assert (h > 0 && w > 0);
+  let aux_vertical () =
+    let dir_i = 0 in
+    let dir_j = ref 0 in
+    let ok = ref true in
+    let rev_lpos = ref [] in
+    for i = 0 to h-1 do
+      if !ok then (
+        let state = ref (`Left (Grid.Mask.mem i 0 g)) in
+        for j = 1 to w-1 do
+          let b = Grid.Mask.mem i j g in
+          match !state with
+          | `Left b0 ->
+             if b0 <> b then
+               state := `Right (j, b)
+          | `Right (_, b0) ->
+             if b0 <> b then
+               state := `Wrong
+          | `Wrong -> ()      
+      done;
+        match !state with
+        | `Left false -> (* all false *)
+           rev_lpos := 0 :: !rev_lpos
+        | `Left true -> (* all true *)
+           rev_lpos := w :: !rev_lpos
+        | `Right (ji, false) -> (* change from true to false at j *)
+           if !dir_j = (-1)
+           then ok := false (* inconsistent j *)
+           else (
+             dir_j := 1;
+             rev_lpos := ji :: !rev_lpos
+         )
+        | `Right (ji, true) -> (* change from false to true at j *)
+           if !dir_j = 1
+           then ok := false (* inconsistent j *)
+         else (
+             dir_j := (-1);
+             rev_lpos := (w - ji) :: !rev_lpos
+           )
+        | `Wrong ->
+           ok := false
+      )
+    done;
+    if !ok
+    then Some ((dir_i, !dir_j), List.rev !rev_lpos)
+    else None
+  and aux_horizontal () =
+    let dir_i = ref 0 in
+    let dir_j = 0 in
+    let ok = ref true in
+    let rev_lpos = ref [] in
+    for j = 0 to w-1 do
+      if !ok then (
+        let state = ref (`Left (Grid.Mask.mem 0 j g)) in
+        for i = 1 to h-1 do
+          let b = Grid.Mask.mem i j g in
+          match !state with
+          | `Left b0 ->
+             if b0 <> b then
+               state := `Right (i, b)
+          | `Right (_, b0) ->
+             if b0 <> b then
+               state := `Wrong
+          | `Wrong -> ()      
+      done;
+        match !state with
+        | `Left false -> (* all false *)
+           rev_lpos := 0 :: !rev_lpos
+        | `Left true -> (* all true *)
+           rev_lpos := h :: !rev_lpos
+        | `Right (ij, false) -> (* change from true to false at i *)
+           if !dir_i = (-1)
+           then ok := false (* inconsistent i *)
+           else (
+             dir_i := 1;
+             rev_lpos := ij :: !rev_lpos
+         )
+        | `Right (ij, true) -> (* change from false to true at i *)
+           if !dir_i = 1
+           then ok := false (* inconsistent i *)
+         else (
+             dir_i := (-1);
+             rev_lpos := (h - ij) :: !rev_lpos
+           )
+        | `Wrong ->
+           ok := false
+      )
+    done;
+    if !ok
+    then Some ((!dir_i, dir_j), List.rev !rev_lpos)
+    else None
+  in
+  match aux_vertical () with
+  | None -> aux_horizontal ()
+  | res -> res
+
+
 (* Coloring *)
 
 let recoloring (g : Grid.t) : (Grid.t * Grid.color array) result = (* QUICK *)

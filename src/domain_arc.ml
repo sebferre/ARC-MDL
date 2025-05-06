@@ -282,6 +282,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
       | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
+      | Skyline (* SIZE, VEC MOVE, POS+, derived POS+ : MASK *)
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
       | MakeGrid (* GRID : COLOR++ *)
@@ -437,6 +438,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Line, [||], [|xp_len; xp_dir|] ->
          print#string "a line of length "; xp_len ~html print ();
          print#string " and direction "; xp_dir ~html print ()
+      | Skyline, [||], [|xp_size; xp_dir; xp_pos; xp_pos_compl|] ->
+         print#string "a skyline of size "; xp_size ~html print ();
+         print#string " and direction "; xp_dir ~html print ();
+         print#string " and positions:"; xp_pos ~html print ();
+         print#string " and complement positions: "; xp_pos_compl ~html print ()
       | ColorSeq dir, [||], [|xp_size; xp_colors|] ->
          print#string "a ";
          xp_direction ~html print dir;
@@ -548,6 +554,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Line, 0 -> print#string "length"
       | Line, 1 -> print#string "direction"
       | Line, _ -> assert false
+      | Skyline, 0 -> print#string "size"
+      | Skyline, 1 -> print#string "direction"
+      | Skyline, 2 -> print#string "pos"
+      | Skyline, 3 -> print#string "compl"
+      | Skyline, _ -> assert false
       | ColorSeq _, 0 -> print#string "size"
       | ColorSeq _, 1 -> print#string "colors"
       | ColorSeq _, _ -> assert false
@@ -946,6 +957,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full && nocolor, ("Line", [||],
                                        [| {t with kind = INT (COORD (I, SIZE))};
                                           {t with kind = VEC MOVE} |]);
+                 not full && nocolor, ("Skyline", [||],
+                                       [| {t with kind = VEC SIZE};
+                                          {t with kind = VEC MOVE};
+                                          {t with kind = INT CARD} |]); (* derived compl not counting *)
                  full && not nocolor, ("ColorSeq", [||],
                                        [| {t with kind = INT (COORD (I,SIZE))};
                                           {t with kind = COLOR C_OBJ} |]);
@@ -1242,6 +1257,38 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
         (size, card, objs, noise)
 
+    let make_skyline_v_compl_itemwise h w i j lpos : value * value * distrib =
+      assert ((i=0) <> (j=0));
+      assert (List.length lpos = (if i = 0 then h else w));
+      let ar_pos = Array.of_list lpos in
+      let pred =
+        match i, j with
+        | 0, 1 (* base on the left *) -> (fun i j -> j < ar_pos.(i))
+        | 0, -1 (* on the right *) -> (fun i j -> j >= w - ar_pos.(i))
+        | 1, 0 (* base on the top *) -> (fun i j -> i < ar_pos.(j))
+        | -1, 0 (* on the bottom *) -> (fun i j -> i >= h - ar_pos.(j))
+        | _ -> assert false in
+      let g = Grid.Mask.init h w pred in
+      let vcompl =
+        let max = if i = 0 then w else h in
+        Ndseq.seq 0 (List.map (fun p -> `Int (max - p)) lpos) in
+      (`Grid g, vcompl, `Null)
+    
+    let make_skyline_v_compl ~depth size dir pos : value * value * distrib =
+      Ndseq.map_tup ~depth (0,0,0)
+        (fun (size, dir, pos) ->
+          match size, dir, Ndseq.as_seq pos with
+          | `Vec (h,w), `Vec (i,j), Some (_, lpos) ->
+             let lpos =
+               List.map
+                 (function
+                  | `Int p -> p
+                  | _ -> assert false)
+                 lpos in
+             make_skyline_v_compl_itemwise h w i j lpos
+          | _ -> assert false)
+        (size, dir, pos)
+    
     let make_motif_multi_pure_itemwise mot g_core g_noise : (value * distrib) Myseq.t =
       let h, w = Grid.dims g_noise in
       let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
@@ -2898,8 +2945,8 @@ module MyDomain : Madil.DOMAIN =
                Ndseq.map_tup ~depth (1,1)
                  (function
                   | `Vec (k,l) ->
-                     Ndseq.seq 0 (List.init k (fun _ -> `IntRange (Range.Closed (1,10)))),
-                     Ndseq.seq 0 (List.init l (fun _ -> `IntRange (Range.Closed (1,10))))
+                     Ndseq.seq 0 (List.init k (fun _ -> `IntRange (Range.Closed (1,3)))),
+                     Ndseq.seq 0 (List.init l (fun _ -> `IntRange (Range.Closed (1,3))))
                   | _ -> assert false)
                  (tup1 vdims) in
              let++ vheights, vwidths = (heights, r_heights), (widths, r_widths) in
@@ -3034,6 +3081,37 @@ module MyDomain : Madil.DOMAIN =
                  Myseq.return (`Grid g)
               | _ -> assert false)
              (vlen, vdir) in
+         res_val v
+
+      | Skyline, [||], [|size; dir; pos; compl|] ->
+         let r_size, r_dir =
+           Ndseq.map_tup ~depth (0,0)
+             (function
+              | `GridRange (_, Range.Closed (minh,maxh), Range.Closed (minw,maxw), _, _) ->
+                 `VecRange (Range.Closed (minh,maxh), Range.Closed (minw,maxw)),
+                 `VecRange (Range.Closed (-1,1), Range.Closed (-1,1))
+              | _ -> assert false)
+             (tup1 r) in
+         let+ vsize = size, r_size in
+         let+ vdir = dir, r_dir in
+         let* r_pos =
+           Ndseq.map_tup_myseq ~depth 1
+             (function
+              | `Vec (h,w), `Vec (i,j) ->
+                 if (i=0) = (j=0) (* invalid dir *)
+                 then Myseq.empty
+                 else
+                   let len, max_pos =
+                     if i = 0 (* vertical skyline, pos on j axis *)
+                     then h, w
+                     else w, h in
+                   let r_pos = `IntRange (Range.Closed (0, min 2 max_pos)) in
+                   Myseq.return (Ndseq.seq 0 (List.init len (fun _ -> r_pos)))
+              | _ -> assert false)
+             (vsize, vdir) in
+         let+ vpos = pos, r_pos in
+         let v, vcompl, r_compl = make_skyline_v_compl ~depth vsize vdir vpos in
+         let= () = compl, vcompl, r_compl in
          res_val v
     
       | ColorSeq dir, [||], [|size; colors|] ->
@@ -3179,7 +3257,7 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map_myseq ~depth (-1)
              (fun r ->
                match Ndseq.as_seq r with
-               | Some (_, [r1]) -> Myseq.return r1
+               | Some (_, r1::_) -> Myseq.return r1
                | Some _ -> Myseq.empty
                | _ -> assert false)
              r in
@@ -3197,7 +3275,8 @@ module MyDomain : Madil.DOMAIN =
            Ndseq.map_tup_myseq ~depth:dep (res_depth12, res_depth12)
              (fun r ->
                match Ndseq.as_seq r with
-               | Some (_, [r1; r2]) -> Myseq.return (r1, r2)
+               | Some (_, r1::r2::_) -> Myseq.return (r1, r2)
+               | Some (_, r1::_) -> Myseq.return (r1, r1)
                | Some _ -> Myseq.empty
                | _ -> assert false)
              (tup1 r) in
@@ -3855,6 +3934,29 @@ module MyDomain : Madil.DOMAIN =
              (v,r) in
          Myseq.return (v, [|len, r_len; dir, r_dir|])
 
+      | Skyline, [||], 4 ->
+         let* size, r_size, dir, r_dir, pos, r_pos, compl, r_compl =
+           Ndseq.map_tup_myseq ~depth (0,0, 0,0, 1,1, 1,1)
+             (function
+              | `Grid g, `GridRange ((filling,nocolor), rh, rw, lc, conn_opt) ->
+                 let h, w = Grid.dims g in
+                 (match GPat.parse_skyline g with
+                  | Some ((i,j),lpos) ->
+                     let max_pos = if i = 0 then w else h in
+                     Myseq.return
+                       (`Vec (h,w), `VecRange (rh, rw),
+                        `Vec (i,j), `VecRange (Range.Closed (-1,1), Range.Closed (-1, 1)),
+                        
+                        Ndseq.seq 0 (List.map (fun p -> `Int p) lpos),
+                        Ndseq.seq 0 (List.map (fun p -> `IntRange (Range.Closed (0,max_pos))) lpos),
+
+                        Ndseq.seq 0 (List.map (fun p -> `Int (max_pos - p)) lpos),
+                        Ndseq.seq 0 (List.map (fun p -> `IntRange (Range.make_exact (max_pos - p))) lpos))
+                  | None -> Myseq.empty)
+              | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|size, r_size; dir, r_dir; pos, r_pos; compl, r_compl|])
+
       | ColorSeq dir, [||], 2 ->
          let* size, r_size, colors, r_colors =
            Ndseq.map_tup_myseq ~name:"parse/ColorSeq/in_res" ~depth (0,0, 1,1)
@@ -4206,6 +4308,7 @@ module MyDomain : Madil.DOMAIN =
       | Full, [|enc_size|] -> enc_size
       | Point, [||] -> 0.
       | Line, [|enc_len; enc_dir|] -> enc_len +. enc_dir
+      | Skyline, [|enc_size; enc_dir; enc_pos; enc_compl|] -> enc_size +. enc_dir +. enc_pos (* compl derived *)
       | ColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
       | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | MakeGrid, [|enc_grid|] -> enc_grid
@@ -4267,6 +4370,7 @@ module MyDomain : Madil.DOMAIN =
       | Full -> 0.
       | Point -> 0.
       | Line -> 0.
+      | Skyline -> 0.
       | ColorSeq dir -> 1. (* encoding direction *)
       | ColorMat -> 0.
       | MakeGrid -> 0.
@@ -5240,6 +5344,15 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat {t with kind = GRID (`Sprite,true)} Line
                 [| Model.make_def var0 (Model.make_any {t with kind = INT (COORD (I, SIZE))});
                    Model.make_def var0 (Model.make_any {t with kind = VEC MOVE}) |])
+             ::refs
+           else refs in
+         let refs = (* Skyline *)
+           if filling <> `Full && nocolor then
+             (Model.make_pat {t with kind = GRID (`Sprite,true)} Skyline
+                [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                   Model.make_def var0 (Model.make_any {t with kind = VEC MOVE});
+                   Model.make_def var0 (Model.make_any {kind = INT CARD; ndim = ndim+1});
+                   Model.make_def var0 (Model.make_derived {kind = INT CARD; ndim = ndim+1}) |])
              ::refs
            else refs in
          let refs = (* ColorSeq : DECOMP *)
