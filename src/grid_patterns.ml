@@ -419,15 +419,18 @@ and connectedness =
   | Connect2_row
   | Connect2_col
 
-let candidate_segmentations_connected =
-  [ Connected (Connect8,true);
-    Connected (Connect8,false);
-    Connected (Connect4,true);
-    Connected (Connect4,false);
-    Connected (Connect2_row,true);
-    Connected (Connect2_col,true) ]
-let nb_candidate_segmentations_connected =
-  List.length candidate_segmentations_connected
+let candidate_segmentations_connected nocolor =
+  if nocolor (* on masks *)
+  then
+    [ Connected (Connect8,false);
+      Connected (Connect4,false) ]
+  else
+    [ Connected (Connect8,true);
+      Connected (Connect8,false);
+      Connected (Connect4,true);
+      Connected (Connect4,false);
+      Connected (Connect2_row,true);
+      Connected (Connect2_col,true) ]
 
 let rec xp_segmentation ~html print = function
   | Connected (conn,mono) ->
@@ -1088,13 +1091,11 @@ let candidates_multi = (* multicolor motifs *)
     Affine (3,1);
     Affine (3,2);
   ]
-let nb_candidates_multi = List.length candidates_multi
 let nb_affine_params = 3
 
 let candidates_bi = (* bicolor shape-like motifs *)
   let open Grid.Transf in
   [ Border; Corners; CrossPlus; CrossTimes; Diamond; Star ]
-let nb_candidates_bi = List.length candidates_bi
 
 let weight : t -> float = function
   | Scale -> 0.3

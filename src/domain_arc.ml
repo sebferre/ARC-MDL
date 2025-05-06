@@ -3514,7 +3514,7 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false in
          let lseg =
            match mode with
-           | `Connected -> GPat.Objects.candidate_segmentations_connected
+           | `Connected -> GPat.Objects.candidate_segmentations_connected nocolor
            | `SameColor -> [GPat.Objects.SameColor] in             
          let* seg = Myseq.from_list lseg in (* common choice for all sequence items *)
          let lorder = GPat.Objects.candidate_orders nmax nocolor in
@@ -3574,9 +3574,13 @@ module MyDomain : Madil.DOMAIN =
                             noise, r_noise|])
 
       | Object mode, [||], 4 ->
+         let filling, nocolor =
+           match t.kind with
+           | GRID (filling,nocolor) -> filling, nocolor
+           | _ -> assert false in
          let lseg =
            match mode with
-           | `Connected -> GPat.Objects.candidate_segmentations_connected
+           | `Connected -> GPat.Objects.candidate_segmentations_connected nocolor
            | `SameColor -> [GPat.Objects.SameColor] in             
          let* seg = Myseq.from_list lseg in (* common choice for all sequence items *)
          let* size, r_size, seg, r_seg, obj, r_obj, noise, r_noise =
@@ -4241,7 +4245,8 @@ module MyDomain : Madil.DOMAIN =
          dl_value_scalar (INT (COORD (I,tv))) (`Int i)
          +. dl_value_scalar (INT (COORD (J,tv))) (`Int j)
       | COLOR tc, `Color c -> dl_color c tc Grid.all_colors
-      | SEG, `Seg seg -> dl_seg seg GPat.Objects.candidate_segmentations_connected
+      | SEG, `Seg seg ->
+         dl_seg seg (GPat.Objects.candidate_segmentations_connected false)
       | ORDER nocolor, `Order order ->
          dl_order order (GPat.Objects.candidate_orders 2 nocolor)
       | MOTIF tmot, `Motif m ->
