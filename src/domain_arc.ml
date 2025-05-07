@@ -69,6 +69,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     
     let typ_bool = scalar BOOL (* for conditions, TODO: higher ndim? *)
     let typ_index = {kind = INT INDEX; ndim = 1}
+    let typ_card = {kind = INT CARD; ndim = 0}
 
     let nb_typ_axis = 2
     let nb_typ_vec = 3
@@ -659,9 +660,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tail_1 (* X^k -> X^k *)
       | `Reverse_1 (* X^k -> X^k *)
       | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
+      | `Unique_1 (* X^k -> X^ k: keeping only first occurrences of items *)
       | `Transpose_1 (* X^k -> X^k *)
       | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
       | `Cardinal_1 (* X^k -> Int *)
+      | `Count_1 (* Int^k -> Int *)
+      | `DistinctCount_1 (* Int^k -> Int *)
       | `Sum_1 (* Int^k -> Int *)
       | `Min_1 (* Int^k -> Int *)
       | `Max_1 (* Int^k -> Int *)
@@ -729,6 +733,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
       | `Rotate_1 shift -> print#string "rotate["; print#int shift; print#string "]"
+      | `Unique_1 -> print#string "unique"
       | `Transpose_1 -> print#string "transpose"
       | `Flatten_1 (rows,snake) ->
          print#string "flatten";
@@ -753,6 +758,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 -> print#string "crop"
       | `Strip_1 -> print#string "strip"
       | `Corner_2 -> print#string "corner"
+      | `Count_1 -> print#string "count"
+      | `DistinctCount_1 -> print#string "distinct_count"
       | `Sum_1 -> print#string "sum"
       | `Min_1 -> print#string "min"
       | `Max_1 -> print#string "max"
@@ -997,11 +1004,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
               "Tail_1", [|t|];
               "Reverse_1", [|t|];
               "Rotate_1", [|t|];
+              "Unique_1", [|t|];
               "Transpose_1", [|t|] ] in
           match t.kind with
           | BOOL -> res
           | INT CARD ->
-             ("Cardinal_1", [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *)
+             (* not used("Cardinal_1", [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *) *)
+             ("Count_1", [|t|])
+             ::("DistinctCount_1", [|t|])
              ::("Sum_1", [|t|])
              ::("Min_1", [|t|])
              ::("Max_1", [|t|])
@@ -2054,6 +2064,17 @@ module MyDomain : Madil.DOMAIN =
                             v1)
              else Result.Error (Undefined_result "rotate: not defined on scalars")
           | _ -> assert false)
+      | `Unique_1 ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.ndim v1 in
+             if ndim >= 1
+             then
+               Result.Ok (Ndseq.map ~depth:(ndim-1) 0
+                            (Ndseq.seq_of_seq list_unique)
+                          v1)
+             else Result.Error (Undefined_result "unique: not defined on scalars")
+          | _ -> assert false)
       | `Transpose_1 ->
          (function
           | [|v1|] ->
@@ -2080,6 +2101,26 @@ module MyDomain : Madil.DOMAIN =
                                (fun l -> `Int (List.length l)))
                             v1)
              else Result.Error (Undefined_result "cardinal: not a sequence")
+          | _ -> assert false)
+      | `Count_1 ->
+         (function
+          | [|v1|] ->
+             let| count =
+               eval_aggreg "count"
+                 (fun v -> Some 1)
+                 (fun (sum, _) -> Some (sum + 1))
+                 v1 in
+             Result.Ok (`Int count)
+          | _ -> assert false)
+      | `DistinctCount_1 ->
+         (function
+          | [|v1|] ->
+             let| seen =
+               eval_aggreg "distinct_count"
+                 (fun v -> Some (Bintree.singleton v))
+                 (fun (seen, v) -> Some (Bintree.add v seen))
+                 v1 in
+             Result.Ok (`Int (Bintree.cardinal seen))
           | _ -> assert false)
       | `Sum_1 ->
          (function
@@ -4435,6 +4476,7 @@ module MyDomain : Madil.DOMAIN =
       | `Rotate_1 shift ->
          assert (shift <> 0);
          1. (* sign *) +. Mdl.Code.universal_int_plus (abs shift)
+      | `Unique_1 -> 0.
       | `Transpose_1 -> 0.
       | `Flatten_1 (rows,snake) -> 1. +. Mdl.Code.usage (if snake then 0.1 else 0.9)
       | `Cardinal_1 -> 0.
@@ -4456,6 +4498,8 @@ module MyDomain : Madil.DOMAIN =
       | `Crop_2 -> 0.
       | `Strip_1 -> 0.
       | `Corner_2 -> 0.
+      | `Count_1 -> 0.
+      | `DistinctCount_1 -> 0.
       | `Sum_1 -> 0.
       | `Min_1 -> 0.
       | `Max_1 -> 0.
@@ -4918,8 +4962,9 @@ module MyDomain : Madil.DOMAIN =
             if ndim > 0
             then
               let t1_scalar = {t1 with ndim = 0} in
-              let res = (* Reverse, Rotate *)
+              let res = (* Reverse, Rotate, Unique *)
                 let res = (t1, `Reverse_1, `Default)::res in
+                let res = (t1, `Unique_1, `Default)::res in
                 let$ res, shift = res, [-1; 1] in
                 (t1, `Rotate_1 shift, `Default)::res in
               let res = (* Transpose, Flatten *)
@@ -4930,6 +4975,10 @@ module MyDomain : Madil.DOMAIN =
                   let$ res, snake = res, [false; true] in
                   ({t1 with ndim = t1.ndim - 1}, `Flatten_1 (rows,snake), `Default)::res
                 else res in
+              let res = (* Count, DistinctCount *)
+                (typ_card, `Count_1, `Default)
+                ::(typ_card, `DistinctCount_1, `Default)
+                ::res in
               let res = (* Sum, Min, Max, ArgMin, ArgMax *)
                 match t1.kind with
                 | INT _ ->

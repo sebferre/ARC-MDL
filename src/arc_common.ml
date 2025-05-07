@@ -74,6 +74,15 @@ let list_rotate (l : 'a list) (shift : int) : 'a list =
   if n <= 1 then l
   else aux shift l
 
+let list_unique (l : 'a list) : 'a list =
+  let rec aux seen = function
+    | [] -> []
+    | x::r ->
+       if Bintree.mem x seen
+       then aux seen r
+       else x :: aux (Bintree.add x seen) r
+  in
+  aux Bintree.empty l
 
 (* mymap *)
 
