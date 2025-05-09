@@ -287,6 +287,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
       | MakeGrid (* GRID : COLOR++ *)
+      | Map (* [seq: X^1] Y^1 (f(unique(seq))) : Y^1 (f(seq)) *)
       | SeqSingle of int (* depth *) (* X : X^1 *)
       | SeqPair of int (* depth *) (* X, X : X^1 *)
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
@@ -458,6 +459,9 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "as grid:";
          xp_newline ~html print ();
          xp_grid ~html print ()
+      | Map, [|xp_seq|], [|xp_vals|] ->
+         print#string "map unique of "; xp_seq ~html print ();
+         print#string " to "; xp_vals ~html print ()
       | SeqSingle depth, [||], [|xp1|] ->
          print#string ("Single[" ^ string_of_int depth ^ "]");
          xp_tuple1 xp1 ~html print ()
@@ -568,6 +572,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | ColorMat, _ -> assert false
       | MakeGrid, 0 -> print#string "grid"
       | MakeGrid, _ -> assert false
+      | Map, 0 -> print#string "vals"
+      | Map, _ -> assert false
       | SeqSingle _, 0 -> print#string "1st"
       | SeqSingle _, _ -> assert false
       | SeqPair _, 0 -> print#string "1st"
@@ -660,7 +666,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tail_1 (* X^k -> X^k *)
       | `Reverse_1 (* X^k -> X^k *)
       | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
-      | `Unique_1 (* X^k -> X^ k: keeping only first occurrences of items *)
+      | `Unique_1 (* X^k -> X^k: keeping only first occurrences of items *)
       | `Transpose_1 (* X^k -> X^k *)
       | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
       | `Cardinal_1 (* X^k -> Int *)
@@ -867,7 +873,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           (* synchronize with is_default_constr *)
           assert (t.ndim = 0);
           let res =
-            [ "SeqSingle", [||], [|t|];
+            [ "Map", [|t|], [|t|]; (* the src may have any other type *)
+              "SeqSingle", [||], [|t|];
               "SeqPair", [||], [|t; t|];
               "SeqCons", [||], [|t; t|];
               "SeqRepeat", [||], [|t|];
@@ -3292,6 +3299,32 @@ module MyDomain : Madil.DOMAIN =
               | _ -> assert false)
              (vgrid, r_grid) in
          res_val v
+
+      | Map, [|vseq|], [|vals|] ->
+         let* r_vals =
+           Ndseq.map_tup_myseq ~depth:(ndim-1) 1
+             (fun (r,vseq) ->
+               match Ndseq.as_seq r, Ndseq.as_seq vseq with
+               | Some (0, rs), Some (0, vitems) ->
+                  if List.length rs = List.length vitems
+                  then Myseq.return (Ndseq.seq 0 (list_unique_assoc (List.combine vitems rs)))
+                  else Myseq.empty
+               | _ -> Myseq.empty)
+             (r, vseq) in
+         let+ vvals = vals, r_vals in
+         let v : value =
+           Ndseq.map_tup ~depth:(ndim-1) 1
+             (fun (vseq,vvals) ->
+               match Ndseq.as_seq vseq, Ndseq.as_seq vvals with
+               | Some (0, items), Some (0, vals) ->
+                  let m = try List.combine (list_unique items) vals with _ -> assert false in
+                  Ndseq.seq 0
+                    (List.map
+                       (fun item -> try List.assoc item m with _ -> assert false)
+                       items)
+               | _ -> assert false)
+             (vseq, vvals) in
+         res_val v
     
       | SeqSingle depth, [||], [|p1|] ->
          let* r1 =
@@ -3415,6 +3448,7 @@ module MyDomain : Madil.DOMAIN =
 
     let parseur_pat t c src k (v : value) (r : distrib) =
       let depth = t.ndim in
+      let ndim = t.ndim in
       assert (Ndseq.depth v = depth);
       assert (Ndseq.depth r = depth);
       match c, src, k with
@@ -4074,6 +4108,26 @@ module MyDomain : Madil.DOMAIN =
              (v,r) in
          Myseq.return (v, [|grid, r_grid|])
 
+      | Map, [|vseq|], 1 ->
+         assert (ndim > 0);
+         let* vals, r_vals =
+           Ndseq.map_tup_myseq ~depth:(ndim-1) (1,1)
+             (fun (vseq,v,r) ->
+               match Ndseq.as_seq vseq, Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (0, xs), Some (0, ys), Some (0, yrs) ->
+                  if List.length xs = List.length ys
+                  then
+                    let vals, r_vals =
+                      List.split (list_unique_assoc (List.combine xs (List.combine ys yrs))) in
+                    let unique_pairs = list_unique (List.combine xs ys) in
+                    if List.length vals = List.length unique_pairs
+                    then Myseq.return (Ndseq.seq 0 vals, Ndseq.seq 0 r_vals)
+                    else Myseq.empty (* not a map *)
+                  else Myseq.empty (* incompatible lengths *)
+               | _ -> Myseq.empty)
+             (vseq,v,r) in
+         Myseq.return (v, [|vals, r_vals|])
+    
       | SeqSingle dep, [||], 1 ->
          let dep1 = depth - dep - 1 in
          let* v1, r1 =
@@ -4358,6 +4412,7 @@ module MyDomain : Madil.DOMAIN =
       | ColorSeq dir, [|enc_size; enc_colors|] -> enc_size +. enc_colors
       | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | MakeGrid, [|enc_grid|] -> enc_grid
+      | Map, [|enc_vals|] -> enc_vals
       | SeqSingle depth, [|enc1|] -> enc1
       | SeqPair depth, [|enc1; enc2|] -> enc1 +. enc2
       | SeqCons depth, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
@@ -4420,6 +4475,7 @@ module MyDomain : Madil.DOMAIN =
       | ColorSeq dir -> 1. (* encoding direction *)
       | ColorMat -> 0.
       | MakeGrid -> 0.
+      | Map -> 0.
       | SeqSingle depth -> Mdl.Code.universal_int_star depth
       | SeqPair depth -> Mdl.Code.universal_int_star depth
       | SeqCons depth -> Mdl.Code.universal_int_star depth
@@ -4750,6 +4806,19 @@ module MyDomain : Madil.DOMAIN =
                  res
               | _ -> res in
             res)) in
+      let () = (* LEVEL: Collection features *)
+        Common.prof "make_index/coll_features" (fun () ->
+        Expr.index_apply_functions_1
+          ~max_expr_size ~eval_func
+          index
+          (fun t1 v1 ->
+            let ndim = Ndseq.ndim v1 in
+            let res = [] in
+            let res = (* Unique *)
+              if ndim > 0
+              then (t1, `Unique_1, `Default)::res
+              else res in
+            res)) in
   (* TODO: binary exprs too costly
       let () = (* LEVEL: Int+Vec bin *)
         Common.prof "make_index/int_vec_bin" (fun () ->
@@ -4962,9 +5031,8 @@ module MyDomain : Madil.DOMAIN =
             if ndim > 0
             then
               let t1_scalar = {t1 with ndim = 0} in
-              let res = (* Reverse, Rotate, Unique *)
+              let res = (* Reverse, Rotate *)
                 let res = (t1, `Reverse_1, `Default)::res in
-                let res = (t1, `Unique_1, `Default)::res in
                 let$ res, shift = res, [-1; 1] in
                 (t1, `Rotate_1 shift, `Default)::res in
               let res = (* Transpose, Flatten *)
@@ -5457,6 +5525,21 @@ module MyDomain : Madil.DOMAIN =
         (Model.make_pat t SeqIndex ~src:[|Expr.Ref (tx, x)|]
            [| Model.make_def var0 (Model.make_any typ_index) |])
          :: rs in
+      let rs = (* adding Map *)
+        if ndim > 0
+        then
+          let compatible_vars =
+            Mymap.fold
+              (fun x tx res ->
+                if tx.ndim = ndim
+                then (x,tx)::res
+                else res)
+              env_vars [] in
+          let$ rs, (x,tx) = rs, compatible_vars in
+          (Model.make_pat t Map ~src:[|Expr.Ref (tx, x)|]
+             [| Model.make_def var0 (Model.make_any t) |])
+          :: rs
+        else rs in
       match t.kind with
       | GRID (filling,nocolor as tg) ->
          let refs = rs in

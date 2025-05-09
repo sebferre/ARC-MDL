@@ -84,6 +84,16 @@ let list_unique (l : 'a list) : 'a list =
   in
   aux Bintree.empty l
 
+let list_unique_assoc (l : ('a * 'b) list) : 'b list =
+  let rec aux seen = function
+    | [] -> []
+    | (x,y)::r ->
+       if Bintree.mem x seen
+       then aux seen r
+       else y :: aux (Bintree.add x seen) r
+  in
+  aux Bintree.empty l
+
 (* mymap *)
 
 let mymap_keys (m : ('a,'b) Mymap.t) : 'a list =
