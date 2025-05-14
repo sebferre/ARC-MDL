@@ -74,7 +74,7 @@ let list_rotate (l : 'a list) (shift : int) : 'a list =
   if n <= 1 then l
   else aux shift l
 
-let list_unique (l : 'a list) : 'a list =
+let list_unique_vals (l : 'a list) : 'a list =
   let rec aux seen = function
     | [] -> []
     | x::r ->
@@ -93,6 +93,21 @@ let list_unique_assoc (l : ('a * 'b) list) : 'b list =
        else y :: aux (Bintree.add x seen) r
   in
   aux Bintree.empty l
+
+let list_unique_ranks (l : 'a list) : 'a list * int list = (* l1=unique items, l2=rank list *)
+  (* l = map (fun rank -> l1[rank]) l2 *)
+  let rec aux seen rank = function
+    | [] -> [], []
+    | x::r ->
+       if Mymap.mem x seen
+       then
+         let r1, r2 = aux seen rank r in
+         r1, Mymap.find x seen :: r2
+       else
+         let r1, r2 = aux (Mymap.add x rank seen) (rank+1) r in
+         x :: r1, rank :: r2
+  in
+  aux Mymap.empty 0 l
 
 (* mymap *)
 

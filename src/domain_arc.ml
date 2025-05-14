@@ -283,11 +283,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
       | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
-      | Skyline (* SIZE, VEC MOVE, POS+, derived POS+ : MASK *)
+      | Skyline (* SIZE, VEC MOVE, INDEX+, derived INDEX+ : MASK *)
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
       | MakeGrid (* GRID : COLOR++ *)
       | Map (* [seq: X^1] Y^1 (f(unique(seq))) : Y^1 (f(seq)) *)
+      | Unique (* INT, X+, INDEX+ : X+ *)
       | SeqSingle of int (* depth *) (* X : X^1 *)
       | SeqPair of int (* depth *) (* X, X : X^1 *)
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
@@ -462,6 +463,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Map, [|xp_seq|], [|xp_vals|] ->
          print#string "map unique of "; xp_seq ~html print ();
          print#string " to "; xp_vals ~html print ()
+      | Unique, [||], [|xp_n; xp_vals; xp_ranks|] ->
+         print#string "unique with nb: "; xp_n ~html print ();
+         print#string " with values: "; xp_vals ~html print ();
+         print#string " with ranks: "; xp_ranks ~html print ()
       | SeqSingle depth, [||], [|xp1|] ->
          print#string ("Single[" ^ string_of_int depth ^ "]");
          xp_tuple1 xp1 ~html print ()
@@ -574,6 +579,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MakeGrid, _ -> assert false
       | Map, 0 -> print#string "vals"
       | Map, _ -> assert false
+      | Unique, 0 -> print#string "n"
+      | Unique, 1 -> print#string "unique"
+      | Unique, 2 -> print#string "ranks"
+      | Unique, _ -> assert false
       | SeqSingle _, 0 -> print#string "1st"
       | SeqSingle _, _ -> assert false
       | SeqPair _, 0 -> print#string "1st"
@@ -666,7 +675,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tail_1 (* X^k -> X^k *)
       | `Reverse_1 (* X^k -> X^k *)
       | `Rotate_1 of int (* shift *) (* X^k -> X^k *)
-      | `Unique_1 (* X^k -> X^k: keeping only first occurrences of items *)
+      | `UniqueVals_1 (* X^k -> X^k: keeping only first occurrences of items *)
+      | `UniqueRanks_1 (* X^1 -> Index^1: rank of items among unique items *)
       | `Transpose_1 (* X^k -> X^k *)
       | `Flatten_1 of bool (* by rows vs cols *) * bool (* like snake *) (* X^k -> X^k-1 *)
       | `Cardinal_1 (* X^k -> Int *)
@@ -739,7 +749,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Tail_1 -> print#string "tail"
       | `Reverse_1 -> print#string "reverse"
       | `Rotate_1 shift -> print#string "rotate["; print#int shift; print#string "]"
-      | `Unique_1 -> print#string "unique"
+      | `UniqueVals_1 -> print#string "unique_vals"
+      | `UniqueRanks_1 -> print#string "unique_ranks"
       | `Transpose_1 -> print#string "transpose"
       | `Flatten_1 (rows,snake) ->
          print#string "flatten";
@@ -874,6 +885,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           assert (t.ndim = 0);
           let res =
             [ "Map", [|t|], [|t|]; (* the src may have any other type *)
+              "Unique", [||], [|{t with kind = INT CARD}; t; {t with kind = INT INDEX}|];
               "SeqSingle", [||], [|t|];
               "SeqPair", [||], [|t; t|];
               "SeqCons", [||], [|t; t|];
@@ -974,7 +986,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full && nocolor, ("Skyline", [||],
                                        [| {t with kind = VEC SIZE};
                                           {t with kind = VEC MOVE};
-                                          {t with kind = INT CARD} |]); (* derived compl not counting *)
+                                          {t with kind = INT INDEX} |]); (* derived compl not counting *)
                  full && not nocolor, ("ColorSeq", [||],
                                        [| {t with kind = INT (COORD (I,SIZE))};
                                           {t with kind = COLOR C_OBJ} |]);
@@ -1011,7 +1023,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
               "Tail_1", [|t|];
               "Reverse_1", [|t|];
               "Rotate_1", [|t|];
-              "Unique_1", [|t|];
+              "UniqueVals_1", [|t|];
               "Transpose_1", [|t|] ] in
           match t.kind with
           | BOOL -> res
@@ -1029,7 +1041,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("Average_n", [|t; t|])
              ::res
           | INT INDEX ->
-             ("Sum_1", [|t|])
+             ("UniqueRanks_1", [|{t with kind = GRID (`Sprite,false)}|]) (* TODO: should be any type, not only GRID *)
+             ::("Sum_1", [|t|])
              ::("Min_1", [|t|])
              ::("Max_1", [|t|])
              ::("ArgMin_1", [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
@@ -2071,16 +2084,33 @@ module MyDomain : Madil.DOMAIN =
                             v1)
              else Result.Error (Undefined_result "rotate: not defined on scalars")
           | _ -> assert false)
-      | `Unique_1 ->
+      | `UniqueVals_1 ->
          (function
           | [|v1|] ->
              let ndim = Ndseq.ndim v1 in
              if ndim >= 1
              then
                Result.Ok (Ndseq.map ~depth:(ndim-1) 0
-                            (Ndseq.seq_of_seq list_unique)
+                            (Ndseq.seq_of_seq list_unique_vals)
                           v1)
-             else Result.Error (Undefined_result "unique: not defined on scalars")
+             else Result.Error (Undefined_result "unique_vals: not defined on scalars")
+          | _ -> assert false)
+      | `UniqueRanks_1 ->
+         (function
+          | [|v1|] ->
+             let ndim = Ndseq.ndim v1 in
+             if ndim >= 1
+             then
+               Result.Ok
+                 (Ndseq.map ~depth:(ndim-1) 0
+                    (fun v1 ->
+                      match Ndseq.as_seq v1 with
+                      | Some (0, l) ->
+                         let _unique, ranks = list_unique_ranks l in
+                         Ndseq.seq 0 (List.map (fun n -> `Int n) ranks)
+                      | _ -> assert false)
+                    v1)
+             else Result.Error (Undefined_result "unique_ranks: not defined on scalars")
           | _ -> assert false)
       | `Transpose_1 ->
          (function
@@ -3317,13 +3347,58 @@ module MyDomain : Madil.DOMAIN =
              (fun (vseq,vvals) ->
                match Ndseq.as_seq vseq, Ndseq.as_seq vvals with
                | Some (0, items), Some (0, vals) ->
-                  let m = try List.combine (list_unique items) vals with _ -> assert false in
+                  let m = try List.combine (list_unique_vals items) vals with _ -> assert false in
                   Ndseq.seq 0
                     (List.map
                        (fun item -> try List.assoc item m with _ -> assert false)
                        items)
                | _ -> assert false)
              (vseq, vvals) in
+         res_val v
+
+      | Unique, [||], [|n; vals; ranks|] ->
+         let r_n =
+           Ndseq.map ~depth:(ndim-1) (-1)
+             (fun r ->
+               match Ndseq.as_seq r with
+               | Some (0,l) -> `IntRange (Range.Closed (0, List.length l))
+               | _ -> assert false)
+             r in
+         let+ vn = n, r_n in
+         let r_ranks =
+           Ndseq.map_tup ~depth:(ndim-1) 1
+             (fun (vn,r) ->
+               match vn, Ndseq.as_seq r with
+               | `Int n, Some (0,l) ->
+                  let r_rank = `IntRange (Range.Closed (0, n-1)) in
+                  Ndseq.seq 0 (List.map (fun _ -> r_rank) l)
+               | _ -> assert false)
+             (vn, r) in
+         let+ vranks = ranks, r_ranks in
+         let r_vals =
+           Ndseq.map_tup ~depth:(ndim-1) 1
+             (fun (r,vranks) ->
+               match Ndseq.as_seq r, Ndseq.as_seq vranks with
+               | Some (0,l), Some (0,ranks) ->
+                  Ndseq.seq 0 (list_unique_assoc (List.combine ranks l))
+               | _ -> assert false)
+             (r,vranks) in
+         let+ vvals = vals, r_vals in
+         let v : value =
+           Ndseq.map_tup ~depth:(ndim-1) 1
+             (fun (vvals, vranks) ->
+               match Ndseq.as_seq vvals, Ndseq.as_seq vranks with
+               | Some (0, lu), Some (0, lr) ->
+                  let ar_u = Array.of_list lu in
+                  let n = Array.length ar_u in
+                  Ndseq.seq 0
+                    (List.map
+                       (function
+                        | `Int i -> assert (i >= 0 && i < n); ar_u.(i)
+                        | _ -> assert false)
+                       lr)
+               | _ -> assert false)
+             (vvals, vranks) in
          res_val v
     
       | SeqSingle depth, [||], [|p1|] ->
@@ -4119,7 +4194,7 @@ module MyDomain : Madil.DOMAIN =
                   then
                     let vals, r_vals =
                       List.split (list_unique_assoc (List.combine xs (List.combine ys yrs))) in
-                    let unique_pairs = list_unique (List.combine xs ys) in
+                    let unique_pairs = list_unique_vals (List.combine xs ys) in
                     if List.length vals = List.length unique_pairs
                     then Myseq.return (Ndseq.seq 0 vals, Ndseq.seq 0 r_vals)
                     else Myseq.empty (* not a map *)
@@ -4127,6 +4202,29 @@ module MyDomain : Madil.DOMAIN =
                | _ -> Myseq.empty)
              (vseq,v,r) in
          Myseq.return (v, [|vals, r_vals|])
+
+      | Unique, [||], 3 ->
+         assert (ndim > 0);
+         let n, r_n, vals, r_vals, ranks, r_ranks =
+           Ndseq.map_tup ~depth:(ndim-1) (0,0, 1,1, 1,1)
+             (fun (v,r) ->
+               match Ndseq.as_seq v, Ndseq.as_seq r with
+               | Some (0, lv), Some (0, lr) ->
+                  let len = List.length lv in
+                  let vals, ranks = list_unique_ranks lv in
+                  let n = List.length vals in
+                  
+                  `Int n, `IntRange (Range.Closed (0,len)),
+
+                  Ndseq.seq 0 vals,
+                  Ndseq.seq 0 (list_unique_assoc (List.combine lv lr)),
+
+                  Ndseq.seq 0 (List.map (fun i -> `Int i) ranks),
+                  Ndseq.seq 0 (List.init len (fun pos -> `IntRange (Range.Closed (0, min pos (n-1)))))
+                  
+               | _ -> assert false)
+             (v,r) in
+         Myseq.return (v, [|n, r_n; vals, r_vals; ranks, r_ranks|])
     
       | SeqSingle dep, [||], 1 ->
          let dep1 = depth - dep - 1 in
@@ -4413,6 +4511,7 @@ module MyDomain : Madil.DOMAIN =
       | ColorMat, [|enc_size; enc_colorss|] -> enc_size +. enc_colorss
       | MakeGrid, [|enc_grid|] -> enc_grid
       | Map, [|enc_vals|] -> enc_vals
+      | Unique, [|enc_n; enc_vals; enc_ranks|] -> enc_n +. enc_vals +. enc_ranks
       | SeqSingle depth, [|enc1|] -> enc1
       | SeqPair depth, [|enc1; enc2|] -> enc1 +. enc2
       | SeqCons depth, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
@@ -4476,6 +4575,7 @@ module MyDomain : Madil.DOMAIN =
       | ColorMat -> 0.
       | MakeGrid -> 0.
       | Map -> 0.
+      | Unique -> 0.
       | SeqSingle depth -> Mdl.Code.universal_int_star depth
       | SeqPair depth -> Mdl.Code.universal_int_star depth
       | SeqCons depth -> Mdl.Code.universal_int_star depth
@@ -4494,6 +4594,11 @@ module MyDomain : Madil.DOMAIN =
       | INT CARD ->
          (match k' with
           | INT INDEX -> Mdl.Code.usage 0.5
+          | INT (COORD (axis,tv)) -> Mdl.Code.usage 0.5 +. Mdl.Code.uniform 2 (* axis *) +. Mdl.Code.uniform 3 (* tv *)
+          | _ -> assert false)
+      | INT INDEX ->
+         (match k' with
+          | INT CARD -> Mdl.Code.usage 0.5
           | INT (COORD (axis,tv)) -> Mdl.Code.usage 0.5 +. Mdl.Code.uniform 2 (* axis *) +. Mdl.Code.uniform 3 (* tv *)
           | _ -> assert false)
       | COLOR C_OBJ ->
@@ -4532,7 +4637,8 @@ module MyDomain : Madil.DOMAIN =
       | `Rotate_1 shift ->
          assert (shift <> 0);
          1. (* sign *) +. Mdl.Code.universal_int_plus (abs shift)
-      | `Unique_1 -> 0.
+      | `UniqueVals_1 -> 0.
+      | `UniqueRanks_1 -> 0.
       | `Transpose_1 -> 0.
       | `Flatten_1 (rows,snake) -> 1. +. Mdl.Code.usage (if snake then 0.1 else 0.9)
       | `Cardinal_1 -> 0.
@@ -4814,9 +4920,12 @@ module MyDomain : Madil.DOMAIN =
           (fun t1 v1 ->
             let ndim = Ndseq.ndim v1 in
             let res = [] in
-            let res = (* Unique *)
+            let res = (* UniqueVals *)
               if ndim > 0
-              then (t1, `Unique_1, `Default)::res
+              then
+                (t1, `UniqueVals_1, `Default)
+                ::({t1 with kind = INT INDEX}, `UniqueRanks_1, `Default)
+                ::res
               else res in
             res)) in
   (* TODO: binary exprs too costly
@@ -5086,6 +5195,11 @@ module MyDomain : Madil.DOMAIN =
                  let$ res, tv = res, [SIZE; POS; MOVE] in
                  let$ res, axis = res, [I; J] in
                  INT (COORD (axis,tv))::res
+              | INT INDEX ->
+                 let res = [INT CARD] in
+                 let$ res, tv = res, [SIZE; POS; MOVE] in
+                 let$ res, axis = res, [I; J] in
+                 INT (COORD (axis,tv))::res
               | COLOR C_OBJ -> [COLOR (C_BG true); COLOR (C_BG false)]
               | COLOR (C_BG true) -> [COLOR C_OBJ; COLOR (C_BG false)]
               | GRID (filling,nocolor) ->
@@ -5171,6 +5285,15 @@ module MyDomain : Madil.DOMAIN =
                   Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
             :: rs
           else rs
+        else rs in
+      let rs = (* adding Unique *)
+        if ndim > 0
+        then
+          (Model.make_pat t Unique
+             [| Model.make_def var0 (Model.make_any {kind = INT CARD; ndim = ndim-1});
+                Model.make_def var0 (Model.make_any t);
+                Model.make_def var0 (Model.make_any {t with kind = INT INDEX}) |])
+          :: rs
         else rs in
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
         if ndim > 0 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
@@ -5473,8 +5596,8 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat {t with kind = GRID (`Sprite,true)} Skyline
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def var0 (Model.make_any {t with kind = VEC MOVE});
-                   Model.make_def var0 (Model.make_any {kind = INT CARD; ndim = ndim+1});
-                   Model.make_def var0 (Model.make_derived {kind = INT CARD; ndim = ndim+1}) |])
+                   Model.make_def var0 (Model.make_any {kind = INT INDEX; ndim = ndim+1});
+                   Model.make_def var0 (Model.make_derived {kind = INT INDEX; ndim = ndim+1}) |])
              ::refs
            else refs in
          let refs = (* ColorSeq : DECOMP *)
@@ -5525,7 +5648,7 @@ module MyDomain : Madil.DOMAIN =
         (Model.make_pat t SeqIndex ~src:[|Expr.Ref (tx, x)|]
            [| Model.make_def var0 (Model.make_any typ_index) |])
          :: rs in
-      let rs = (* adding Map *)
+      (* let rs = (* adding Map => see Unique *)
         if ndim > 0
         then
           let compatible_vars =
@@ -5539,7 +5662,7 @@ module MyDomain : Madil.DOMAIN =
           (Model.make_pat t Map ~src:[|Expr.Ref (tx, x)|]
              [| Model.make_def var0 (Model.make_any t) |])
           :: rs
-        else rs in
+        else rs in *)
       match t.kind with
       | GRID (filling,nocolor as tg) ->
          let refs = rs in
