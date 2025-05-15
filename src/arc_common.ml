@@ -109,6 +109,17 @@ let list_unique_ranks (l : 'a list) : 'a list * int list = (* l1=unique items, l
   in
   aux Mymap.empty 0 l
 
+let rec list_map_unpairs (f : 'a -> 'c) (g : 'b -> 'c) (l : ('a * 'b) list) : 'c list =
+  match l with
+  | [] -> []
+  | (x,y)::r -> f x :: g y :: list_map_unpairs f g r
+
+let rec list_map_pairs (f : 'a -> 'b) (g : 'a -> 'c) (l : 'a list) : ('b * 'c) list =
+  match l with
+  | [] -> []
+  | [x] -> invalid_arg "Arc_common.list_assoc_unflatten: the input list must have an even length"
+  | x::y::r -> (f x, g y) :: list_map_pairs f g r
+
 (* mymap *)
 
 let mymap_keys (m : ('a,'b) Mymap.t) : 'a list =
