@@ -44,8 +44,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MAP of typ_kind * typ_kind
     (* list of values have the type of their elts *)
     and typ_int =
-      | CARD
-      | INDEX
+      | NAT
       | COORD of typ_axis * typ_vec
     and typ_axis =
       | I
@@ -68,8 +67,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
     let scalar kind = {kind; ndim = 0} [@@inline]
     
     let typ_bool = scalar BOOL (* for conditions, TODO: higher ndim? *)
-    let typ_index = {kind = INT INDEX; ndim = 1}
-    let typ_card = {kind = INT CARD; ndim = 0}
+    let typ_index = {kind = INT NAT; ndim = 1}
+    let typ_card = {kind = INT NAT; ndim = 0}
 
     let nb_typ_axis = 2
     let nb_typ_vec = 3
@@ -94,8 +93,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
       | MAP (ta,tb) -> xp_typ_kind ~html print ta; print#string " -> "; xp_typ_kind ~html print tb
     and xp_typ_int ~html print = function
-      | CARD -> print#string "CARD"
-      | INDEX -> print#string "INDEX"
+      | NAT -> print#string "NAT"
       | COORD (ij,tv) ->
          xp_typ_vec ~html print tv;
          print#string (match ij with I -> ".I" | J -> ".J")
@@ -270,7 +268,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | BgColor (* COLOR, SPRITE : GRID *)
       | IsFull (* SPRITE : GRID *)
       | Crop (* [SPRITE] POS, SIZE : SPRITE *)
-      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, ORDER, CARD, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
+      | Objects of int (* nmax *) * [`Connected|`SameColor] (* mode *) (* SIZE, SEG, ORDER, NAT, OBJ+, derived OBJ (merge), NOISE : SPRITE *) (* int is for max seq length, mode constrains SEG *)
       | Object of [`Connected|`SameColor] (* mode *) (* SIZE, SEG, OBJ, NOISE : SPRITE *) (* mode constrains SEG *)
       | ColorPartition (* SIZE, INT, COLOR+, MASK+ : SPRITE *)
       | Monocolor (* COLOR, MASK : SPRITE *)
@@ -283,12 +281,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | Full (* SIZE : MASK *)
       | Point (* MASK *)
       | Line (* len:INT SIZE, dir:VEC MOVE : MASK *)
-      | Skyline (* SIZE, VEC MOVE, INDEX+, derived INDEX+ : MASK *)
+      | Skyline (* SIZE, VEC MOVE, NAT+, derived NAT+ : MASK *)
       | ColorSeq of direction (* INT SIZE, COLOR+ : GRID *)
       | ColorMat (* VEC SIZE, COLOR++ : GRID *)
       | MakeGrid (* GRID : COLOR++ *)
       | Map (* [seq: X^1] Y^1 (f(unique(seq))) : Y^1 (f(seq)) *)
-      | Unique (* INT, X+, INDEX+ : X+ *)
+      | Unique (* INT, X+, NAT+ : X+ *)
       | SeqSingle of int (* depth *) (* X : X^1 *)
       | SeqPair of int (* depth *) (* X, X : X^1 *)
       | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
@@ -885,12 +883,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
           assert (t.ndim = 0);
           let res =
             [ "Map", [|t|], [|t|]; (* the src may have any other type *)
-              "Unique", [||], [|{t with kind = INT CARD}; t; {t with kind = INT INDEX}|];
+              "Unique", [||], [|{t with kind = INT NAT}; t; {t with kind = INT NAT}|];
               "SeqSingle", [||], [|t|];
               "SeqPair", [||], [|t; t|];
               "SeqCons", [||], [|t; t|];
               "SeqRepeat", [||], [|t|];
-              "SeqIndex", [||], [|t; scalar (INT INDEX)|] ] in
+              "SeqIndex", [||], [|t; scalar (INT NAT)|] ] in
           match t.kind with
           | BOOL -> res
           | INT ti ->
@@ -931,7 +929,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                             [| {t with kind = VEC SIZE};
                                {t with kind = SEG};
                                {t with kind = ORDER nocolor};
-                               {t with kind = INT CARD};
+                               {t with kind = INT NAT};
                                {t with kind = OBJ (`Sprite,nocolor)};
                                (* derived merger, not counting *)
                                {t with kind = GRID (`Noise,nocolor)} |]);
@@ -942,7 +940,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                                {t with kind = GRID (`Noise,nocolor)} |]);
                  (* not nocolor, (ColorPartition, [||],
                                [| {t with kind = VEC SIZE};
-                                  {t with kind = INT CARD};
+                                  {t with kind = INT NAT};
                                   {t with kind = COLOR C_OBJ};
                                   {t with kind = GRID (`Sprite,true)} |]); *)
                  not nocolor, ("Monocolor", [||],
@@ -986,7 +984,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  not full && nocolor, ("Skyline", [||],
                                        [| {t with kind = VEC SIZE};
                                           {t with kind = VEC MOVE};
-                                          {t with kind = INT INDEX} |]); (* derived compl not counting *)
+                                          {t with kind = INT NAT} |]); (* derived compl not counting *)
                  full && not nocolor, ("ColorSeq", [||],
                                        [| {t with kind = INT (COORD (I,SIZE))};
                                           {t with kind = COLOR C_OBJ} |]);
@@ -1027,26 +1025,21 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
               "Transpose_1", [|t|] ] in
           match t.kind with
           | BOOL -> res
-          | INT CARD ->
+          | INT NAT ->
              (* not used("Cardinal_1", [| {t with kind = OBJ (`Sprite,false)} |]) (* TODO: generalize to other kinds, and other ndims, param and result *) *)
              ("Count_1", [|t|])
              ::("DistinctCount_1", [|t|])
              ::("Sum_1", [|t|])
              ::("Min_1", [|t|])
              ::("Max_1", [|t|])
+             ::("ArgMin_1", [| {t with kind = INT NAT} |]) (* TODO: should be any INT *)
+             ::("ArgMax_1", [| {t with kind = INT NAT} |]) (* TODO: should be any INT *)
              ::("Plus_2", [|t (* const *)|])
              ::("Minus_2", [|t (* const *)|])
              ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
              ::("ColorCount_1", [| {t with kind = GRID (`Sprite,false)} |]) (* also for `Noise? *)
-             ::("Average_n", [|t; t|])
-             ::res
-          | INT INDEX ->
-             ("UniqueRanks_1", [|{t with kind = GRID (`Sprite,false)}|]) (* TODO: should be any type, not only GRID *)
-             ::("Sum_1", [|t|])
-             ::("Min_1", [|t|])
-             ::("Max_1", [|t|])
-             ::("ArgMin_1", [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
-             ::("ArgMax_1", [| {t with kind = INT CARD} |]) (* TODO: should be any INT, except maybe INDEX *)
+             (* ::("Average_n", [|t; t|]) *)
+             ::("UniqueRanks_1", [|{t with kind = GRID (`Sprite,false)}|]) (* TODO: should be any type, not only GRID *)
              ::res
           | INT (COORD (axis,tv)) ->
              ("Sum_1", [|t|])
@@ -1071,8 +1064,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
              ::("Plus_2", [|t (* const *)|])
              ::("Minus_2", [|t (* const *)|])
-             ::("ScaleUp_2", [|t (* const: {t with kind = INT CARD} *) |])
-             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ScaleUp_2", [|t (* const: {t with kind = INT NAT} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT NAT} *) |])
              ::res
           | VEC tv ->
              ("Pos_1", [| {t with kind = OBJ (`Sprite,false)} |])
@@ -1081,8 +1074,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("Size_1", [| {t with kind = GRID (`Sprite,false)} |])
              ::("Plus_2", [|t (* const: t *)|])
              ::("Minus_2", [|t (* const: t *)|])
-             ::("ScaleUp_2", [|t (* const: {t with kind = INT CARD} *) |])
-             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ScaleUp_2", [|t (* const: {t with kind = INT NAT} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT NAT} *) |])
              ::("ProjI_1", [|t|])
              ::("ProjJ_1", [|t|])
              ::("IJTranspose_1", [|t|])
@@ -1112,8 +1105,8 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("MaskOfGrid_1", [| {t with kind = OBJ (`Sprite,false)} |])
              ::("GridOfColorSeq_1", [| {t with kind = COLOR C_OBJ} |])
              ::("GridOfColorMat_1", [| {t with kind = COLOR C_OBJ} |])
-             ::("ScaleUp_2", [|t (* const:{t with kind = INT CARD} *) |])
-             ::("ScaleDown_2", [|t (* const: {t with kind = INT CARD} *) |])
+             ::("ScaleUp_2", [|t (* const:{t with kind = INT NAT} *) |])
+             ::("ScaleDown_2", [|t (* const: {t with kind = INT NAT} *) |])
              (* ::("ScaleTo_2", [|t; {t with kind = VEC SIZE} |]) *)
              (* ::("PeriodicFactor_2", [| {t with kind = COLOR (C_BG full)}; t|]) *)
              (* ::("Crop_2", [| {t with kind = GRID (`Full,false)};
@@ -4418,7 +4411,7 @@ module MyDomain : Madil.DOMAIN =
       match k, v with
       | _, `Null -> 0. (* for optional parts *)
       | BOOL, `Bool b -> 1.
-      | INT (CARD | INDEX), `Int i ->
+      | INT NAT, `Int i ->
          if i >= 0
          then Mdl.Code.universal_int_star i
          else (print_int i; assert false)
@@ -4591,15 +4584,13 @@ module MyDomain : Madil.DOMAIN =
     let dl_cast_kind k k' =
       (* encoding k' given k *)
       match k with
-      | INT CARD ->
+      | INT NAT ->
          (match k' with
-          | INT INDEX -> Mdl.Code.usage 0.5
           | INT (COORD (axis,tv)) -> Mdl.Code.usage 0.5 +. Mdl.Code.uniform 2 (* axis *) +. Mdl.Code.uniform 3 (* tv *)
           | _ -> assert false)
-      | INT INDEX ->
+      | INT (COORD _) ->
          (match k' with
-          | INT CARD -> Mdl.Code.usage 0.5
-          | INT (COORD (axis,tv)) -> Mdl.Code.usage 0.5 +. Mdl.Code.uniform 2 (* axis *) +. Mdl.Code.uniform 3 (* tv *)
+          | INT NAT -> 0.
           | _ -> assert false)
       | COLOR C_OBJ ->
          (match k' with
@@ -4862,21 +4853,21 @@ module MyDomain : Madil.DOMAIN =
               | VEC tv ->
                  ({t1 with kind = INT (COORD (I, tv))}, `I_1, `Default)
                  ::({t1 with kind = INT (COORD (J, tv))}, `J_1, `Default)
-                 ::({t1 with kind = INT CARD}, `Norm_1, `Default)
+                 ::({t1 with kind = INT NAT}, `Norm_1, `Default)
                  ::res
               | _ -> res in
             let res = (* Area_1 *)
               match t1.kind with
               | GRID (filling,nocolor) ->
-                 ({t1 with kind = INT CARD}, `Area_1, `Default)
-                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default) (* TODO: add cast from CARD to COORD? *)
+                 ({t1 with kind = INT NAT}, `Area_1, `Default)
+                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default) (* TODO: add cast from NAT to COORD? *)
                  ::({t1 with kind = INT (COORD (J, SIZE))}, `Area_1, `Default)
                  ::res
               | _ -> res in
             let res = (* ColorCount_1 *)
               match t1.kind with
               | GRID (filling,false) ->
-                 ({t1 with kind = INT CARD}, `ColorCount_1, `Default)::res
+                 ({t1 with kind = INT NAT}, `ColorCount_1, `Default)::res
               | _ -> res in
             let res = (* Left, Right, Center, Top, Bottom, Middle, MiddleCenter *)
               match t1.kind with
@@ -4924,7 +4915,7 @@ module MyDomain : Madil.DOMAIN =
               if ndim > 0
               then
                 (t1, `UniqueVals_1, `Default)
-                ::({t1 with kind = INT INDEX}, `UniqueRanks_1, `Default)
+                ::({t1 with kind = INT NAT}, `UniqueRanks_1, `Default)
                 ::res
               else res in
             res)) in
@@ -4982,7 +4973,7 @@ module MyDomain : Madil.DOMAIN =
               match t1.kind with
               | INT (COORD (_, MOVE)) -> res
               | INT ti ->
-                 let ta = scalar (INT CARD) in
+                 let ta = scalar (INT NAT) in
                  let tb = scalar (INT ti) in
                  let$ res, (opmult,a,opadd,b) = res, affine_params in
                  let f, spec_args =
@@ -4993,7 +4984,7 @@ module MyDomain : Madil.DOMAIN =
                  (t1, f, spec_args)::res
               | VEC MOVE -> res
               | VEC tv ->
-                 let ta = scalar (VEC SIZE) in (* should be CARD *)
+                 let ta = scalar (VEC SIZE) in (* should be NAT *)
                  let tb = scalar (VEC MOVE) in
                  let$ res, (opmult,a,opadd,b) = res, affine_params in
                  let$ res, (a1,a2) = res, if a = 1 then [(1,1)] else [(a,a); (1,a); (a,1)] in
@@ -5190,13 +5181,7 @@ module MyDomain : Madil.DOMAIN =
             let res = [] in
             let lk' =
               match kind with
-              | INT CARD ->
-                 let res = [INT INDEX] in
-                 let$ res, tv = res, [SIZE; POS; MOVE] in
-                 let$ res, axis = res, [I; J] in
-                 INT (COORD (axis,tv))::res
-              | INT INDEX ->
-                 let res = [INT CARD] in
+              | INT NAT ->
                  let$ res, tv = res, [SIZE; POS; MOVE] in
                  let$ res, axis = res, [I; J] in
                  INT (COORD (axis,tv))::res
@@ -5290,9 +5275,9 @@ module MyDomain : Madil.DOMAIN =
         if ndim > 0
         then
           (Model.make_pat t Unique
-             [| Model.make_def var0 (Model.make_any {kind = INT CARD; ndim = ndim-1});
+             [| Model.make_def var0 (Model.make_any {kind = INT NAT; ndim = ndim-1});
                 Model.make_def var0 (Model.make_any t);
-                Model.make_def var0 (Model.make_any {t with kind = INT INDEX}) |])
+                Model.make_def var0 (Model.make_any {t with kind = INT NAT}) |])
           :: rs
         else rs in
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
@@ -5416,7 +5401,7 @@ module MyDomain : Madil.DOMAIN =
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def var0 (Model.make_any {t with kind = SEG});
                    Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
-                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0 (Model.make_any {t with kind = INT NAT});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
                         [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
@@ -5432,7 +5417,7 @@ module MyDomain : Madil.DOMAIN =
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_expr_const {t with kind = SEG} (`Seg GPat.Objects.SameColor);
                    Model.make_def var0 (Model.make_any {t with kind = ORDER nocolor});
-                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0 (Model.make_any {t with kind = INT NAT});
                    Model.make_def var0
                      (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
                         [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
@@ -5487,7 +5472,7 @@ module MyDomain : Madil.DOMAIN =
            if filling <> `Full && not nocolor then
              (Model.make_pat t ColorPartition
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
-                   Model.make_def var0 (Model.make_any {t with kind = INT CARD});
+                   Model.make_def var0 (Model.make_any {t with kind = INT NAT});
                    Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
                    Model.make_def var0
                      (Model.make_any
@@ -5596,8 +5581,8 @@ module MyDomain : Madil.DOMAIN =
              (Model.make_pat {t with kind = GRID (`Sprite,true)} Skyline
                 [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
                    Model.make_def var0 (Model.make_any {t with kind = VEC MOVE});
-                   Model.make_def var0 (Model.make_any {kind = INT INDEX; ndim = ndim+1});
-                   Model.make_def var0 (Model.make_derived {kind = INT INDEX; ndim = ndim+1}) |])
+                   Model.make_def var0 (Model.make_any {kind = INT NAT; ndim = ndim+1});
+                   Model.make_def var0 (Model.make_derived {kind = INT NAT; ndim = ndim+1}) |])
              ::refs
            else refs in
          let refs = (* ColorSeq : DECOMP *)
