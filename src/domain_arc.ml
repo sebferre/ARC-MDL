@@ -602,43 +602,43 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqIndex, _ -> assert false
       | NdseqMap c, i -> xp_field ~html print (c, i) 
 
-    let rec constr_delta_ndims (ndim : int) : constr -> int array = function
-      (* provides arity and delta ndim of args *)
-      | Vec -> [|0; 0|]
-      | Square -> [|0|]
-      | Obj -> [|0; 0|]
-      | DomMap _ -> [|1|]
-      | Replace -> [|0; 0|]
-      | Swap -> [|0; 0|]
-      | BgColor -> [|0; 0|]
-      | IsFull -> [|0|]
-      | Crop -> [|0; 0|]
-      | Objects _ -> [|0; 0; 0; 0; 1; 0; 0|]
-      | Object _ -> [|0; 0; 0; 0|]
-      | ColorPartition -> [|0; 0; 1; 1|]
-      | Monocolor -> [|0; 0|]
-      | Recoloring -> [|0|]
-      | MotifMulti _ -> [|0; 0; 0; 0; 0|]
-      | MotifBi _ -> [|0; 0; 0; 0; 0; 0|]
-      | Metagrid -> [|0; 0; 0; 1; 1; 2|]
-      | Repeat -> [|0; 1; 1|]
-      | Empty -> [|0|]
-      | Full -> [|0|]
-      | Point -> [||]
-      | Line -> [|0; 0|]
-      | Skyline -> [|0; 0; 1; 1|]
-      | ColorSeq _ -> [|0; 1|]
-      | ColorMat -> [|0; 2|]
-      | MakeGrid -> [| -2 |]
-      | Map -> [|0; 0|]
-      | Unique -> [| -1; 0; 0|]
-      | SeqSingle _ -> [| -1|]
-      | SeqPair _ -> [| -1; -1|]
-      | SeqCons _ -> [| -1; 1|]
-      | SeqRepeat _ -> [| -1|]
-      | SeqRange -> [| -1; -1|]
-      | SeqIndex -> [| - ndim + 1 |]
-      | NdseqMap c -> constr_delta_ndims ndim c
+    let rec constr_v_args_ndims : constr -> int * int array = function
+      (* provides arity and ndim of whole value and parts (args) *)
+      | Vec -> 0, [|0; 0|]
+      | Square -> 0, [|0|]
+      | Obj -> 0, [|0; 0|]
+      | DomMap _ -> 0, [|1|]
+      | Replace -> 0, [|0; 0|]
+      | Swap -> 0, [|0; 0|]
+      | BgColor -> 0, [|0; 0|]
+      | IsFull -> 0, [|0|]
+      | Crop -> 0, [|0; 0|]
+      | Objects _ -> 0, [|0; 0; 0; 0; 1; 0; 0|]
+      | Object _ -> 0, [|0; 0; 0; 0|]
+      | ColorPartition -> 0, [|0; 0; 1; 1|]
+      | Monocolor -> 0, [|0; 0|]
+      | Recoloring -> 0, [|0|]
+      | MotifMulti _ -> 0, [|0; 0; 0; 0; 0|]
+      | MotifBi _ -> 0, [|0; 0; 0; 0; 0; 0|]
+      | Metagrid -> 0, [|0; 0; 0; 1; 1; 2|]
+      | Repeat -> 0, [|0; 1; 1|]
+      | Empty -> 0, [|0|]
+      | Full -> 0, [|0|]
+      | Point -> 0, [||]
+      | Line -> 0, [|0; 0|]
+      | Skyline -> 0, [|0; 0; 1; 1|]
+      | ColorSeq _ -> 0, [|0; 1|]
+      | ColorMat -> 0, [|0; 2|]
+      | MakeGrid -> 2, [|0|]
+      | Map -> 1, [|1; 1|]
+      | Unique -> 1, [| 0; 1; 1|]
+      | SeqSingle _ -> 1, [|0|]
+      | SeqPair _ -> 1, [|0; 0|]
+      | SeqCons _ -> 1, [| 0; 1|]
+      | SeqRepeat _ -> 1, [|0|]
+      | SeqRange -> 1, [|0; 0|]
+      | SeqIndex -> raise TODO (* v_ndim not well-defined *)
+      | NdseqMap c -> constr_v_args_ndims c
 
     
     (* functions *)
@@ -3150,50 +3150,45 @@ module MyDomain : Madil.DOMAIN =
 
       | MakeGrid, [||], [|grid|], _ ->
          let* r_grid =
-           Ndseq.map_myseq ~depth:(depth - 2) (-2)
-             (fun r ->
-               let* h, w, tc, lc =
-                 match Ndseq.as_seq r with
-                 | Some (1, row0::rows1) ->
-                    (match Ndseq.as_seq row0 with
-                     | Some (0, (`ColorRange (tc,lc) :: cells)) ->
-                        let h = 1 + List.length rows1 in
-                        let w = 1 + List.length cells in
-                        if List.for_all
-                             (fun row1 ->
-                               match Ndseq.as_seq row1 with
-                               | Some (0, cells) -> List.length cells = w
-                               | _ -> false)
-                             rows1
-                        then Myseq.return (h, w, tc, lc)
-                        else Myseq.empty (* not rectangular *)
-                     | Some (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
-                     | _ -> assert false)
-                 | Some (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
-                 | _ -> assert false in
-               (* let filling =
-                 match tc with
-                 | C_OBJ | C_BG true -> `Full
-                 | C_BG false -> `Sprite in *)
-               Myseq.return (`GridRange ((`Sprite,false), Range.Closed (h,h), Range.Closed (w,w), lc, None)))
-             r in
+           let* h, w, tc, lc =
+             match Ndseq.as_seq r with
+             | Some (1, row0::rows1) ->
+                (match Ndseq.as_seq row0 with
+                 | Some (0, (`ColorRange (tc,lc) :: cells)) ->
+                    let h = 1 + List.length rows1 in
+                    let w = 1 + List.length cells in
+                    if List.for_all
+                         (fun row1 ->
+                           match Ndseq.as_seq row1 with
+                           | Some (0, cells) -> List.length cells = w
+                           | _ -> false)
+                         rows1
+                    then Myseq.return (h, w, tc, lc)
+                    else Myseq.empty (* not rectangular *)
+                 | Some (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+                 | _ -> assert false)
+             | Some (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+             | _ -> assert false in
+           (* let filling =
+              match tc with
+              | C_OBJ | C_BG true -> `Full
+              | C_BG false -> `Sprite in *)
+           Myseq.return (`GridRange ((`Sprite,false), Range.Closed (h,h), Range.Closed (w,w), lc, None)) in
          let+ vgrid = grid, r_grid in
          let* v =
-           Ndseq.map_tup_myseq ~depth:(depth - 2) 2
-             (function
-              | `Grid g, `GridRange (_, Range.Closed (h,_), Range.Closed (w,_), _, _) ->
-                 if Grid.dims g = (h,w)
-                 then Myseq.return
-                        (Ndseq.seq 1
-                           (List.init h
-                              (fun i ->
-                                Ndseq.seq 0
-                                  (List.init w
-                                     (fun j ->
-                                       `Color (Grid.get_pixel ~source:"gen/MakeGrid" g i j))))))
-                 else Myseq.empty
-              | _ -> assert false)
-             (vgrid, r_grid) in
+           match vgrid, r_grid with
+           | `Grid g, `GridRange (_, Range.Closed (h,_), Range.Closed (w,_), _, _) ->
+              if Grid.dims g = (h,w)
+              then Myseq.return
+                     (Ndseq.seq 1
+                        (List.init h
+                           (fun i ->
+                             Ndseq.seq 0
+                               (List.init w
+                                  (fun j ->
+                                    `Color (Grid.get_pixel ~source:"gen/MakeGrid" g i j))))))
+              else Myseq.empty
+           | _ -> assert false in
          res_val v
 
       | Map, [|vseq|], [|vals|], _ ->
@@ -3375,31 +3370,34 @@ module MyDomain : Madil.DOMAIN =
          res_val v
 
       | NdseqMap c, _, _, _ ->
-         let delta_ndims = constr_delta_ndims ndim c in
+         let v_ndim, args_ndim = constr_v_args_ndims c in
+         assert (v_ndim <= ndim);
+         assert (Array.length args_ndim = Array.length args_index);
+         let dep = ndim - v_ndim in
          let* gps : generator_pat_ndseq =
-           Ndseq.mapi_tup_myseq ~depth 0
+           Ndseq.mapi_tup_myseq ~depth:dep 0
              (fun is ri ->
                match array_map_option
                        (fun vsrc -> Ndseq.index_list_broadcast vsrc is 0)
                        src with
                | Some src ->
-                  let* gp = generator_pat {t with ndim=0} c src k ri in
+                  let* gp = generator_pat {t with ndim = v_ndim} c src k ri in
                   Myseq.return (gp : generator_pat :> generator_pat_ndseq)
                | None -> Myseq.empty)
              (tup1 r) in
          let rec aux (gps : generator_pat_ndseq) : generator_pat Myseq.t =
            match Ndseq.choose gps with
            | Some (`NextArg ((i0,_), _)) ->
-              let dn = delta_ndims.(i0) in
+              let dn = args_ndim.(i0) in
               let rs, fs =
-                Ndseq.map_tup ~depth (dn,0)
+                Ndseq.map_tup ~depth:dep (dn,0)
                   (function
                    | `NextArg ((i,ri), fi) when i=i0 -> ri, `Fun fi
                    | _ -> assert false)
                   (tup1 gps) in
               let+ vs = i0, rs in
               let* gps1 =
-                Ndseq.map_tup_myseq ~depth 0
+                Ndseq.map_tup_myseq ~depth:dep 0
                   (function
                    | `Fun f, v ->
                       let* gp1 = f v in
@@ -3408,16 +3406,16 @@ module MyDomain : Madil.DOMAIN =
                   (fs, vs) in
               aux gps1
            | Some (`NextArg2 ((i0,_),(j0,_), _)) ->
-              let dni, dnj = delta_ndims.(i0), delta_ndims.(j0) in
+              let dni, dnj = args_ndim.(i0), args_ndim.(j0) in
               let rsi, rsj, fs =
-                Ndseq.map_tup ~depth (dni,dnj,0)
+                Ndseq.map_tup ~depth:dep (dni,dnj,0)
                   (function
                    | `NextArg2 ((i,ri), (j,rj), f) when i=i0 && j=j0 -> ri, rj, `Fun f
                    | _ -> assert false)
                   (tup1 gps) in
               let++ vsi, vsj = (i0,rsi), (j0,rsj) in
               let* gps1 =
-                Ndseq.map_tup_myseq ~depth 0
+                Ndseq.map_tup_myseq ~depth:dep 0
                   (function
                    | `Fun f, vi, vj ->
                       let* gp1 = f (vi, vj) in
@@ -3427,10 +3425,10 @@ module MyDomain : Madil.DOMAIN =
               aux gps1
            | Some (`NextArgs (lir, _)) ->
               let li0 = List.map fst lir in
-              let dns = Array.of_list (List.map (fun i0 -> delta_ndims.(i0)) li0) in
+              let dns = Array.of_list (List.map (fun i0 -> args_ndim.(i0)) li0) in
               let lrs =
                 Array.to_list
-                  (Ndseq.mapn_n ~depth dns
+                  (Ndseq.mapn_n ~depth:dep dns
                      (fun is ->
                        function
                        | [| `NextArgs (lir, f) |] ->
@@ -3441,14 +3439,14 @@ module MyDomain : Madil.DOMAIN =
                        | _ -> assert false)
                      [|gps|]) in
               let fs =
-                Ndseq.map ~depth 0
+                Ndseq.map ~depth:dep 0
                   (function
                    | `NextArgs (lir, f) when List.map fst lir = li0 -> `Fun f
                    | _ -> assert false)
                   gps in
               let+++ lvs = List.combine li0 lrs in
               let* ar_gps1 =
-                Ndseq.mapn_n_myseq ~depth [|0|]
+                Ndseq.mapn_n_myseq ~depth:dep [|0|]
                   (fun is ar_v ->
                     let lv = Array.to_list ar_v in
                     let f =
@@ -3462,16 +3460,16 @@ module MyDomain : Madil.DOMAIN =
                | [|gps1|] -> aux gps1
                | _ -> assert false)
            | Some (`NextDerived ((i0,_,_), _)) ->
-              let dn = delta_ndims.(i0) in
+              let dn = args_ndim.(i0) in
               let vs, rs, fs =
-                Ndseq.map_tup ~depth (dn,dn,0)
+                Ndseq.map_tup ~depth:dep (dn,dn,0)
                   (function
                    | `NextDerived ((i,vi,ri), fi) when i=i0 -> vi, ri, `Fun fi
                    | _ -> assert false)
                   (tup1 gps) in
               let= () = i0, vs, rs in
               let* gps1 =
-                Ndseq.map_myseq ~depth 0
+                Ndseq.map_myseq ~depth:dep 0
                   (function
                    | `Fun f ->
                       let* gp1 = f () in
@@ -3481,7 +3479,7 @@ module MyDomain : Madil.DOMAIN =
               aux gps1
            | Some (`ResVal _) ->
               let v =
-                Ndseq.map ~depth 0
+                Ndseq.map ~depth:dep v_ndim
                   (function
                    | `ResVal vi -> vi
                    | _ -> assert false)
@@ -3505,9 +3503,19 @@ module MyDomain : Madil.DOMAIN =
       Ndseq.matches 0 (=) v0 v
 
     let rec parseur_pat t c src k (v : value) (r : distrib) =
+      let pp_params () =
+        pp_endline xp_typ t;
+        pp_endline (xp_pat c
+                      (Array.map (fun v -> fun ~html print () -> xp_value ~html print v) src) 
+                      (Array.init k (fun _ -> fun ~html print _ -> print#string "_"))) ();
+        pp_endline xp_value v;
+        pp_endline xp_distrib r
+      in
       let depth = t.ndim in
       let ndim = t.ndim in
-      assert (Ndseq.depth v = depth);
+      if not (Ndseq.depth v = depth) then (
+        pp_params ();
+        assert false);
       assert (Ndseq.depth r = depth);
       match c, src, k, v, r with
       | Vec, [||], 2, `Vec (i,j), `VecRange (ri,rj) ->
@@ -4022,22 +4030,17 @@ module MyDomain : Madil.DOMAIN =
                                 rc)))) |])
 
       | MakeGrid, [||], 1, _, _ ->
-         assert (depth >= 2);
-         let* grid, r_grid =
-           Ndseq.map_tup_myseq ~name:"parse/MakeGrid/grid" ~depth:(depth - 2) (0,0)
-             (fun (v,r) ->
-               let* g = Myseq.from_result (make_grid_from_color_seq_seq v) in
-               (* let filling =
-                 match tc with
-                 | C_OBJ | C_BG true -> `Full
-                 | C_BG false -> `Sprite in *)
-               let h, w = Grid.dims g in
-               let rh = Range.make_exact h in (* grid dims known from above, patterns introducing color seq seq *)
-               let rw = Range.make_exact w in
-               let lc = Grid.all_colors in
-               Myseq.return (`Grid g, `GridRange ((`Sprite,false), rh, rw, lc, None)))
-             (v,r) in
-         Myseq.return (v, [|grid, r_grid|])
+         let* g = Myseq.from_result (make_grid_from_color_seq_seq v) in
+         (* let filling =
+            match tc with
+            | C_OBJ | C_BG true -> `Full
+            | C_BG false -> `Sprite in *)
+         let h, w = Grid.dims g in
+         let rh = Range.make_exact h in (* grid dims known from above, patterns introducing color seq seq *)
+         let rw = Range.make_exact w in
+         let lc = Grid.all_colors in
+         Myseq.return
+           (v, [| `Grid g, `GridRange ((`Sprite,false), rh, rw, lc, None) |])
 
       | Map, [|vseq|], 1, _, _ ->
          assert (ndim > 0);
@@ -4199,14 +4202,16 @@ module MyDomain : Madil.DOMAIN =
          let as_ndseq x = (Obj.magic x : _ Ndseq.t) [@@inline] in
          let as_value x = (Obj.magic x : value) [@@inline] in
          let as_distrib x = (Obj.magic x : distrib) [@@inline] in
-         let delta_ndims = constr_delta_ndims ndim c in
-         assert (Array.length delta_ndims = k);
+         let v_ndim, args_ndim = constr_v_args_ndims c in
+         assert (v_ndim <= ndim);
+         assert (Array.length args_ndim = k);
+         let dep = ndim - v_ndim in
          let dns = Array.init (1 + 2*k)
                      (fun i ->
-                       if i = 0 then 0 (* v *)
-                       else delta_ndims.((i - 1) / 2)) in (* v_r_args *)
+                       if i = 0 then v_ndim (* v *)
+                       else args_ndim.((i - 1) / 2)) in (* v_r_args *)
          let* repr_v_v_r_args =
-           Ndseq.mapn_n_myseq ~depth dns
+           Ndseq.mapn_n_myseq ~depth:dep dns
              (fun is -> function
                | [|repr_v; repr_r|] ->
                   (match array_map_option
@@ -4214,7 +4219,7 @@ module MyDomain : Madil.DOMAIN =
                            src with
                    | Some src ->
                       let v, r = as_value repr_v, as_distrib repr_r in
-                      let* v, vr_args = parseur_pat {t with ndim=0} c src k v r in
+                      let* v, vr_args = parseur_pat {t with ndim = v_ndim} c src k v r in
                       let repr_v_v_r_args = Array.make (1 + 2*k) (as_ndseq v) in
                       Array.iteri
                         (fun i (v,r) ->
@@ -4234,12 +4239,7 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return (v, vr_args)
 
       | _ ->
-         pp_endline xp_typ t;
-         pp_endline (xp_pat c
-                       (Array.map (fun v -> fun ~html print () -> xp_value ~html print v) src) 
-                       (Array.init k (fun _ -> fun ~html print _ -> print#string "_"))) ();
-         pp_endline xp_value v;
-         pp_endline xp_distrib r;
+         pp_params ();
          assert false
     
 
@@ -5243,7 +5243,7 @@ module MyDomain : Madil.DOMAIN =
                 match tc with
                 | C_OBJ | C_BG true -> `Full
                 | C_BG false -> `Sprite in *)
-             (Model.make_pat t MakeGrid
+             (Model.make_pat t (lift_constr MakeGrid)
                 [| Model.make_def var0 (Model.make_any {kind = GRID (`Sprite,false); ndim = ndim-2})|])
               :: rs
            else rs in
