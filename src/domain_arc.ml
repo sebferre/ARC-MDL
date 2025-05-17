@@ -287,10 +287,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MakeGrid (* GRID : COLOR++ *)
       | Map (* [seq: X^1] Y^1 (f(unique(seq))) : Y^1 (f(seq)) *)
       | Unique (* INT, X+, NAT+ : X+ *)
-      | SeqSingle of int (* depth *) (* X : X^1 *)
-      | SeqPair of int (* depth *) (* X, X : X^1 *)
-      | SeqCons of int (* depth *) (* head:X^k-1, tail:X^k : X^k *)
-      | SeqRepeat of int (* depth *) (* X^(k-1) : X^k *)
+      | SeqSingle of int (* depth of seq items *) (* X : X^1 *)
+      | SeqPair of int (* depth of seq items *) (* X, X : X^1 *)
+      | SeqCons of int (* depth of seq items *) (* head:X^k-1, tail:X^k : X^k *)
+      | SeqRepeat of int (* depth of seq items *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
       | SeqIndex (* [seq:X^n] index:INT^1 : X^(n-k) *)
       | NdseqMap of constr
@@ -632,13 +632,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | MakeGrid -> 2, [|0|]
       | Map -> 1, [|1; 1|]
       | Unique -> 1, [| 0; 1; 1|]
-      | SeqSingle _ -> 1, [|0|]
-      | SeqPair _ -> 1, [|0; 0|]
-      | SeqCons _ -> 1, [| 0; 1|]
-      | SeqRepeat _ -> 1, [|0|]
+      | SeqSingle dep -> dep+1, [|dep|]
+      | SeqPair dep -> dep+1, [|dep; dep|]
+      | SeqCons dep -> dep+1, [| dep; dep+1|]
+      | SeqRepeat dep -> dep+1, [|dep|]
       | SeqRange -> 1, [|0; 0|]
       | SeqIndex -> raise TODO (* v_ndim not well-defined *)
-      | NdseqMap c -> constr_v_args_ndims c
+      | NdseqMap c -> raise TODO
 
     
     (* functions *)
@@ -3191,162 +3191,113 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false in
          res_val v
 
-      | Map, [|vseq|], [|vals|], _ ->
+      | Map, [|vseq|], [|vals|], `Seq (0, rs) ->
          let* r_vals =
-           Ndseq.map_tup_myseq ~depth:(ndim-1) 1
-             (fun (r,vseq) ->
-               match Ndseq.as_seq r, Ndseq.as_seq vseq with
-               | Some (0, rs), Some (0, vitems) ->
-                  if List.length rs = List.length vitems
-                  then Myseq.return (Ndseq.seq 0 (list_unique_assoc (List.combine vitems rs)))
-                  else Myseq.empty
-               | _ -> Myseq.empty)
-             (r, vseq) in
+           match vseq with
+           | `Seq (0, vitems) when List.length rs = List.length vitems ->
+              Myseq.return (Ndseq.seq 0 (list_unique_assoc (List.combine vitems rs)))
+           | _ -> Myseq.empty in
          let+ vvals = vals, r_vals in
-         let v : value =
-           Ndseq.map_tup ~depth:(ndim-1) 1
-             (fun (vseq,vvals) ->
-               match Ndseq.as_seq vseq, Ndseq.as_seq vvals with
-               | Some (0, items), Some (0, vals) ->
-                  let m = try List.combine (list_unique_vals items) vals with _ -> assert false in
-                  Ndseq.seq 0
-                    (List.map
-                       (fun item -> try List.assoc item m with _ -> assert false)
-                       items)
-               | _ -> assert false)
-             (vseq, vvals) in
+         let v =
+           match vseq, vvals with
+           | `Seq (0, items), `Seq (0, vals) ->
+              let m = try List.combine (list_unique_vals items) vals with _ -> assert false in
+              Ndseq.seq 0
+                (List.map
+                   (fun item -> try List.assoc item m with _ -> assert false)
+                   items)
+           | _ -> assert false in
          res_val v
 
-      | Unique, [||], [|n; vals; ranks|], _ ->
-         let r_n =
-           Ndseq.map ~depth:(ndim-1) (-1)
-             (fun r ->
-               match Ndseq.as_seq r with
-               | Some (0,l) -> `IntRange (Range.Closed (0, List.length l))
-               | _ -> assert false)
-             r in
+      | Unique, [||], [|n; vals; ranks|], `Seq (0, l) ->
+         let r_n = `IntRange (Range.Closed (0, List.length l)) in
          let+ vn = n, r_n in
          let r_ranks =
-           Ndseq.map_tup ~depth:(ndim-1) 1
-             (fun (vn,r) ->
-               match vn, Ndseq.as_seq r with
-               | `Int n, Some (0,l) ->
-                  let r_rank = `IntRange (Range.Closed (0, n-1)) in
-                  Ndseq.seq 0 (List.map (fun _ -> r_rank) l)
-               | _ -> assert false)
-             (vn, r) in
+           match vn with
+           | `Int n ->
+              let r_rank = `IntRange (Range.Closed (0, n-1)) in
+              Ndseq.seq 0 (List.map (fun _ -> r_rank) l)
+           | _ -> assert false in
          let+ vranks = ranks, r_ranks in
          let r_vals =
-           Ndseq.map_tup ~depth:(ndim-1) 1
-             (fun (r,vranks) ->
-               match Ndseq.as_seq r, Ndseq.as_seq vranks with
-               | Some (0,l), Some (0,ranks) ->
-                  Ndseq.seq 0 (list_unique_assoc (List.combine ranks l))
-               | _ -> assert false)
-             (r,vranks) in
+           match vranks with
+           | `Seq (0,ranks) ->
+              Ndseq.seq 0 (list_unique_assoc (List.combine ranks l))
+           | _ -> assert false in
          let+ vvals = vals, r_vals in
-         let v : value =
-           Ndseq.map_tup ~depth:(ndim-1) 1
-             (fun (vvals, vranks) ->
-               match Ndseq.as_seq vvals, Ndseq.as_seq vranks with
-               | Some (0, lu), Some (0, lr) ->
-                  let ar_u = Array.of_list lu in
-                  let n = Array.length ar_u in
-                  Ndseq.seq 0
-                    (List.map
-                       (function
-                        | `Int i -> assert (i >= 0 && i < n); ar_u.(i)
-                        | _ -> assert false)
-                       lr)
-               | _ -> assert false)
-             (vvals, vranks) in
+         let v =
+           match vvals, vranks with
+           | `Seq (0, lu), `Seq (0, lr) ->
+              let ar_u = Array.of_list lu in
+              let n = Array.length ar_u in
+              Ndseq.seq 0
+                (List.map
+                   (function
+                    | `Int i -> assert (i >= 0 && i < n); ar_u.(i)
+                    | _ -> assert false)
+                   lr)
+           | _ -> assert false in
          res_val v
     
-      | SeqSingle depth, [||], [|p1|], _ ->
+      | SeqSingle dep, [||], [|p1|], `Seq (d, rs) ->
+         assert (d = dep);
          let* r1 =
-           Ndseq.map_myseq ~depth (-1)
-             (fun r ->
-               match Ndseq.as_seq r with
-               | Some (_, r1::_) -> Myseq.return r1
-               | Some _ -> Myseq.empty
-               | _ -> assert false)
-             r in
+           match rs with
+           | r1::_ -> Myseq.return r1
+           | _ -> Myseq.empty in
          let+ v1 = p1, r1 in
-         let v : value =
-           let d = ndim - depth - 1 in
-           Ndseq.map ~depth (+1)
-             (fun v1 -> Ndseq.seq d [v1])
-             v1 in
-         res_val v
-    
-      | SeqPair dep, [||], [|p1; p2|], _ ->
-         let res_depth12 = depth - dep - 1 in
-         let* r1, r2 =
-           Ndseq.map_tup_myseq ~depth:dep (res_depth12, res_depth12)
-             (fun r ->
-               match Ndseq.as_seq r with
-               | Some (_, r1::r2::_) -> Myseq.return (r1, r2)
-               | Some (_, r1::_) -> Myseq.return (r1, r1)
-               | Some _ -> Myseq.empty
-               | _ -> assert false)
-             (tup1 r) in
-         let++ v1, v2 = (p1, r1), (p2, r2) in
-         let v : value =
-           let d = depth - dep - 1 in
-           Ndseq.map2 ~depth:dep (+1)
-             (fun v1 v2 -> Ndseq.seq d [v1; v2])
-             v1 v2 in
-         res_val v
-    
-      | SeqCons depth, [||], [|hd; tl|], _ ->
-         let* r_hd, r_tl = Ndseq.head_tail ~depth r in
-         let++ vhd, vtl = (hd, r_hd), (tl, r_tl) in
-         let v : value = Ndseq.cons ~depth vhd vtl in
-         res_val v
-    
-      | SeqRepeat dep, [||], [|e|], _ ->
-         let* r_e =
-           Ndseq.map_myseq ~depth:dep (-1)
-             (Ndseq.item_of_seq
-                (function
-                 | [] -> Myseq.empty
-                 | r::_ -> Myseq.return r))
-             r in
-         let+ ve = e, r_e in
-         let v : value =
-           Ndseq.map_tup ~depth:dep (depth - dep) 
-             (fun (r,ve) ->
-               match Ndseq.as_seq r with
-               | Some (d,rs) ->
-                  assert (d = Ndseq.depth ve);
-                  Ndseq.seq d (List.map (fun _ -> ve) rs)
-               | _ -> assert false)
-             (r, ve) in
+         let v = Ndseq.seq dep [v1] in
          res_val v
 
-      | SeqRange, [||], [|start; step|], _ ->
+      | SeqPair dep, [||], [|p1; p2|], `Seq (d, rs) ->
+         assert (d = dep);
+         let* r1, r2 =
+           match rs with
+           | r1::r2::_ -> Myseq.return (r1, r2)
+           | r1::_ -> Myseq.return (r1, r1)
+           | _ -> Myseq.empty in
+         let++ v1, v2 = (p1, r1), (p2, r2) in
+         let v = Ndseq.seq dep [v1; v2] in
+         res_val v
+    
+      | SeqCons dep, [||], [|hd; tl|], `Seq (d, rs) ->
+         assert (d = dep);
+         let* r_hd, r_tl =
+           match rs with
+           | r_hd::rs_tl -> Myseq.return (r_hd, `Seq (d, rs_tl))
+           | _ -> Myseq.empty in
+         let++ vhd, vtl = (hd, r_hd), (tl, r_tl) in
+         let v =
+           match vtl with
+           | `Seq (_, l) -> `Seq (dep, vhd::l)
+           | _ -> assert false in
+         res_val v
+
+      | SeqRepeat dep, [||], [|e|], `Seq (d, rs) ->
+         assert (d = dep);
+         let* r_e =
+           match rs with
+           | r::_ -> Myseq.return r
+           | _ -> Myseq.empty in
+         let+ ve = e, r_e in
+         let v = `Seq (dep, List.map (fun _ -> ve) rs) in
+         res_val v
+
+      | SeqRange, [||], [|start; step|], `Seq (d, rs) ->
+         assert (d = 0);
          let* r_start, r_step =
-           Ndseq.map_tup_myseq ~depth:(depth-1) (0,0)
-             (fun r ->
-               match Ndseq.as_seq r with
-               | Some (_,l) ->
-                  (match l with
-                   | `IntRange (Range.Closed (a1,b1))::`IntRange (Range.Closed (a2,b2))::_ ->
-                      Myseq.return (`IntRange (Range.Closed (a1,b1)),
-                                    `IntRange (Range.Closed (a2-b1, b2-a1)))
-                   | _ -> Myseq.empty)
-               | _ -> assert false)
-             (tup1 r) in
+           match rs with
+           | `IntRange (Range.Closed (a1,b1))::`IntRange (Range.Closed (a2,b2))::_ ->
+              Myseq.return (`IntRange (Range.Closed (a1,b1)),
+                            `IntRange (Range.Closed (a2-b1, b2-a1)))
+           | _ -> Myseq.empty in
          let++ vstart, vstep = (start, r_start), (step, r_step) in
-         let v : value =
-           Ndseq.map_tup ~depth:(depth-1) 1
-             (fun (r,vstart,vstep) ->
-               match Ndseq.as_seq r, vstart, vstep with
-               | Some (_,l), `Int start, `Int step ->
-                  let n = List.length l in
-                  Ndseq.seq 0 (List.init n (fun i -> `Int (start + i * step)))
-               | _ -> assert false)
-             (r, vstart, vstep) in
+         let v =
+           match vstart, vstep with
+           | `Int start, `Int step ->
+              let n = List.length rs in
+              `Seq (0, List.init n (fun i -> `Int (start + i * step)))
+           | _ -> assert false in
          res_val v
 
       | SeqIndex, [|vseq|], [|index|], _ ->
@@ -4042,133 +3993,83 @@ module MyDomain : Madil.DOMAIN =
          Myseq.return
            (v, [| `Grid g, `GridRange ((`Sprite,false), rh, rw, lc, None) |])
 
-      | Map, [|vseq|], 1, _, _ ->
-         assert (ndim > 0);
-         let* vals, r_vals =
-           Ndseq.map_tup_myseq ~depth:(ndim-1) (1,1)
-             (fun (vseq,v,r) ->
-               match Ndseq.as_seq vseq, Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (0, xs), Some (0, ys), Some (0, yrs) ->
-                  if List.length xs = List.length ys
-                  then
-                    let vals, r_vals =
-                      List.split (list_unique_assoc (List.combine xs (List.combine ys yrs))) in
-                    let unique_pairs = list_unique_vals (List.combine xs ys) in
-                    if List.length vals = List.length unique_pairs
-                    then Myseq.return (Ndseq.seq 0 vals, Ndseq.seq 0 r_vals)
-                    else Myseq.empty (* not a map *)
-                  else Myseq.empty (* incompatible lengths *)
-               | _ -> Myseq.empty)
-             (vseq,v,r) in
-         Myseq.return (v, [|vals, r_vals|])
+      | Map, [|vseq|], 1, `Seq (0, ys), `Seq (0, yrs) ->
+         (match vseq with
+          | `Seq (0, xs) when List.length xs = List.length ys ->
+             let vals, r_vals =
+               List.split (list_unique_assoc (List.combine xs (List.combine ys yrs))) in
+             let unique_pairs = list_unique_vals (List.combine xs ys) in
+             if List.length vals = List.length unique_pairs
+             then Myseq.return
+                    (v, [|Ndseq.seq 0 vals, Ndseq.seq 0 r_vals|])
+             else Myseq.empty (* not a map *)
+          | _ -> Myseq.empty)
 
-      | Unique, [||], 3, _, _ ->
-         assert (ndim > 0);
-         let n, r_n, vals, r_vals, ranks, r_ranks =
-           Ndseq.map_tup ~depth:(ndim-1) (0,0, 1,1, 1,1)
-             (fun (v,r) ->
-               match Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (0, lv), Some (0, lr) ->
-                  let len = List.length lv in
-                  let vals, ranks = list_unique_ranks lv in
-                  let n = List.length vals in
+      | Unique, [||], 3, `Seq (0, lv), `Seq (0, lr) ->
+         let len = List.length lv in
+         let vals, ranks = list_unique_ranks lv in
+         let n = List.length vals in
+         Myseq.return
+           (v, [| `Int n, `IntRange (Range.Closed (0,len));
                   
-                  `Int n, `IntRange (Range.Closed (0,len)),
-
                   Ndseq.seq 0 vals,
-                  Ndseq.seq 0 (list_unique_assoc (List.combine lv lr)),
-
-                  Ndseq.seq 0 (List.map (fun i -> `Int i) ranks),
-                  Ndseq.seq 0 (List.init len (fun pos -> `IntRange (Range.Closed (0, min pos (n-1)))))
+                  Ndseq.seq 0 (list_unique_assoc (List.combine lv lr));
                   
-               | _ -> assert false)
-             (v,r) in
-         Myseq.return (v, [|n, r_n; vals, r_vals; ranks, r_ranks|])
+                  Ndseq.seq 0 (List.map (fun i -> `Int i) ranks),
+                  Ndseq.seq 0 (List.init len (fun pos -> `IntRange (Range.Closed (0, min pos (n-1))))) |])
     
-      | SeqSingle dep, [||], 1, _, _ ->
-         let dep1 = depth - dep - 1 in
-         let* v1, r1 =
-           Ndseq.map_tup_myseq ~depth:dep (dep1, dep1)
-             (fun (v,r) ->
-               match Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (_, [v1]), Some (_, [r1]) ->
-                  assert (Ndseq.depth v1 = dep1);
-                  Myseq.return (v1,r1)
-               | Some _, Some _ -> Myseq.empty
-               | _ -> assert false)
-             (v,r) in
-         Myseq.return (v, [|v1, r1|])
+      | SeqSingle dep, [||], 1, `Seq (_, vs), `Seq (_, rs) ->
+         (match vs, rs with
+          | [v1], [r1] ->
+             Myseq.return (v, [|v1,r1|])
+          | _ -> Myseq.empty)
 
-      | SeqPair dep, [||], 2, _, _ ->
-         let dep12 = depth - dep - 1 in
-         let* v1, v2, r1, r2 =
-           Ndseq.map_tup_myseq ~depth:dep (dep12, dep12, dep12, dep12)
-             (fun (v,r) ->
-               match Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (_, [v1;v2]), Some (_, [r1;r2]) ->
-                  assert (Ndseq.depth v1 = dep12);
-                  Myseq.return (v1,v2,r1,r2)
-               | Some _, Some _ -> Myseq.empty
-               | _ -> assert false)
-             (v, r) in
-         Myseq.return (v, [|v1, r1; v2, r2|])
+      | SeqPair dep, [||], 2, `Seq (_, vs), `Seq (_, rs) ->
+         (match vs, rs with
+          | [v1;v2], [r1;r2] ->
+             Myseq.return (v, [|v1, r1; v2,r2|])
+          | _ -> Myseq.empty)
 
-      | SeqCons dep, [||], 2, _, _ ->
-         let* hd, tl = Ndseq.head_tail ~depth:dep v in
-         let* r_hd, r_tl = Ndseq.head_tail ~depth:dep r in
-         Myseq.return (v, [|hd, r_hd; tl, r_tl|])
+      | SeqCons dep, [||], 2, `Seq (_, vs), `Seq (_, rs) ->
+         (match vs, rs with
+          | hd::tl, r_hd::r_tl ->
+             Myseq.return (v, [| hd, r_hd;
+                                 `Seq (dep, tl), `Seq (dep, r_tl)|])
+          | _ -> Myseq.empty)
 
-      | SeqRepeat dep, [||], 1, _, _ ->
-         assert (depth >= 1);
-         assert (dep < depth);
-         let delta_d = depth - dep - 1 in
-         let* e, r_e =
-           Ndseq.map_tup_myseq ~name:"parse/SeqRepeat/e" ~depth:dep (delta_d, delta_d)
-             (fun (v,r) ->
-               match Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (d, []), _ -> Myseq.empty
-               | Some (d, v0::l1), Some (_, r0::_) ->
-                  (try
-                     if List.for_all (fun v1 -> v1 = v0) l1 (* all elts should be the same value *)
-                     then Myseq.return (v0,r0)
-                     else Myseq.empty
-                   with _ -> Myseq.empty)
-               | _ -> assert false)
-             (v,r) in
-         Myseq.return (v, [|e, r_e|])
+      | SeqRepeat dep, [||], 1, `Seq (_, vs), `Seq (_, rs) ->
+         (match vs, rs with
+          | [], _ -> Myseq.empty
+          | v0::l1, r0::_ ->
+             (try
+                if List.for_all (fun v1 -> v1 = v0) l1 (* all elts should be the same value *)
+                then Myseq.return (v, [|v0,r0|])
+                else Myseq.empty
+              with _ -> Myseq.empty)
+          | _ -> assert false)
 
-      | SeqRange, [||], 2, _, _ ->
-         let dep = depth - 1 in
-         assert (dep >= 0);
-         let* start, r_start, step, r_step =
-           Ndseq.map_tup_myseq ~depth:dep (0,0,0,0)
-             (fun (v,r) ->
-               match Ndseq.as_seq v, Ndseq.as_seq r with
-               | Some (_,l), Some (_,r_l) ->
-                  let lint =
-                    List.map
-                      (function
-                       | `Int x -> x
-                       | _ -> assert false)
-                      l in
-                  (match l, r_l with
-                   | `Int x0 :: `Int x1 :: _,
-                     `IntRange r0 :: `IntRange r1 :: _ ->
-                      let step = x1 - x0 in
-                      let* () = Myseq.from_bool (lint = List.mapi (fun i _ -> x0 + i * step) l) in
-                      let* range_step = (* TODO: ambiguity with ranges including negative values and Range.sub *)
-                        match r0, r1 with
-                        | Range.Closed (a0,b0), Range.Closed (a1,b1) ->
-                           Myseq.return (Range.Closed (a1 - b0, b1 - a0))
-                        | Range.Closed (a0,b0), Range.Open a1 ->
-                           Myseq.return (Range.Open (a1 - b0))
-                        | Range.Open a0, _ -> Myseq.empty in
-                      Myseq.return (`Int x0, `IntRange r0,
-                                    `Int step, `IntRange range_step)
-                   | _ -> Myseq.empty)
-               | _ -> assert false)
-             (v,r) in
-         Myseq.return (v, [|start, r_start; step, r_step|])
+      | SeqRange, [||], 2, `Seq (_, l), `Seq (_, r_l) ->
+         let lint =
+           List.map
+             (function
+              | `Int x -> x
+              | _ -> assert false)
+             l in
+         (match l, r_l with
+          | `Int x0 :: `Int x1 :: _,
+            `IntRange r0 :: `IntRange r1 :: _ ->
+             let step = x1 - x0 in
+             let* () = Myseq.from_bool (lint = List.mapi (fun i _ -> x0 + i * step) l) in
+             let* range_step = (* TODO: ambiguity with ranges including negative values and Range.sub *)
+               match r0, r1 with
+               | Range.Closed (a0,b0), Range.Closed (a1,b1) ->
+                  Myseq.return (Range.Closed (a1 - b0, b1 - a0))
+               | Range.Closed (a0,b0), Range.Open a1 ->
+                  Myseq.return (Range.Open (a1 - b0))
+               | Range.Open a0, _ -> Myseq.empty in
+             Myseq.return (v, [|`Int x0, `IntRange r0;
+                               `Int step, `IntRange range_step|])
+          | _ -> Myseq.empty)
 
       | SeqIndex, [|vseq|], 1, _, _ ->
          let depth_seq = Ndseq.depth vseq in
@@ -4413,10 +4314,10 @@ module MyDomain : Madil.DOMAIN =
       | MakeGrid, [|enc_grid|] -> enc_grid
       | Map, [|enc_vals|] -> enc_vals
       | Unique, [|enc_n; enc_vals; enc_ranks|] -> enc_n +. enc_vals +. enc_ranks
-      | SeqSingle depth, [|enc1|] -> enc1
-      | SeqPair depth, [|enc1; enc2|] -> enc1 +. enc2
-      | SeqCons depth, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
-      | SeqRepeat depth, [|enc_e|] -> enc_e
+      | SeqSingle dep, [|enc1|] -> enc1
+      | SeqPair dep, [|enc1; enc2|] -> enc1 +. enc2
+      | SeqCons dep, [|enc_hd; enc_tl|] -> enc_hd +. enc_tl
+      | SeqRepeat dep, [|enc_e|] -> enc_e
       | SeqRange, [|enc_start; enc_step|] -> enc_start +. enc_step
       | SeqIndex, [|enc_index|] -> enc_index
       | NdseqMap c, encs -> Array.fold_left (+.) 0. encs
@@ -4478,10 +4379,10 @@ module MyDomain : Madil.DOMAIN =
       | MakeGrid -> 0.
       | Map -> 0.
       | Unique -> 0.
-      | SeqSingle depth -> Mdl.Code.universal_int_star depth
-      | SeqPair depth -> Mdl.Code.universal_int_star depth
-      | SeqCons depth -> Mdl.Code.universal_int_star depth
-      | SeqRepeat depth -> Mdl.Code.universal_int_star depth
+      | SeqSingle dep -> Mdl.Code.universal_int_star dep
+      | SeqPair dep -> Mdl.Code.universal_int_star dep
+      | SeqCons dep -> Mdl.Code.universal_int_star dep
+      | SeqRepeat dep -> Mdl.Code.universal_int_star dep
       | SeqRange -> 0.
       | SeqIndex -> 0.
       | NdseqMap c -> dl_constr_params {t with ndim=0} c 
@@ -5138,15 +5039,15 @@ module MyDomain : Madil.DOMAIN =
       let rs = (* adding SeqRepeat : almost DECOMP *)
         if ndim > 0
         then
-          let$ rs, depth = rs, List.init ndim (fun i -> i) in
-          if Ndseq.for_all ~depth
-                (fun v ->
-                  match Ndseq.as_seq v with
-                  | Some (_,l) -> l <> []
-                  | _ -> assert false)
-                value
+          let$ rs, dep = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth:(ndim-dep-1)
+               (fun v ->
+                 match Ndseq.as_seq v with
+                 | Some (_,l) -> l <> []
+                 | _ -> assert false)
+               value
           then
-            (Model.make_pat t (SeqRepeat depth)
+            (Model.make_pat t (lift_constr (SeqRepeat dep))
                [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
             :: rs
           else rs
@@ -5154,31 +5055,31 @@ module MyDomain : Madil.DOMAIN =
       (* let rs = (* adding SeqSingle : DECOMP *)
         if ndim > 0
         then
-          let$ rs, depth = rs, List.init ndim (fun i -> i) in
-          if Ndseq.for_all ~depth
+          let$ rs, dep = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
                   match Ndseq.as_seq v with
                   | Some (_,l) -> List.length l = 1
                   | _ -> assert false)
                 value
-          then
-            (Model.make_pat t (SeqSingle depth)
+                then
+            (Model.make_pat t (lift_constr (SeqSingle dep))
                [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
             :: rs
-          else rs
+            else rs
         else rs in *)
       let rs = (* adding SeqPair : DECOMP *)
         if ndim > 0
         then
-          let$ rs, depth = rs, List.init ndim (fun i -> i) in
-          if Ndseq.for_all ~depth
+          let$ rs, dep = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
                   match Ndseq.as_seq v with
                   | Some (_,l) -> List.length l = 2
                   | _ -> assert false)
                 value
           then
-            (Model.make_pat t (SeqPair depth)
+            (Model.make_pat t (lift_constr (SeqPair dep))
                [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
                   Model.make_def var0 (Model.make_any {t with ndim = ndim-1}) |])
             :: rs
@@ -5187,7 +5088,7 @@ module MyDomain : Madil.DOMAIN =
       let rs = (* adding Unique *)
         if ndim > 0
         then
-          (Model.make_pat t Unique
+          (Model.make_pat t (lift_constr Unique)
              [| Model.make_def var0 (Model.make_any {kind = INT NAT; ndim = ndim-1});
                 Model.make_def var0 (Model.make_any t);
                 Model.make_def var0 (Model.make_any {t with kind = INT NAT}) |])
@@ -5196,15 +5097,15 @@ module MyDomain : Madil.DOMAIN =
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
         if ndim > 0 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
         then
-          let$ rs, depth = rs, List.init ndim (fun i -> i) in
-          if Ndseq.for_all ~depth
-                (fun v ->
-                  match Ndseq.as_seq v with
-                  | Some (_,l) -> l <> []
-                  | _ -> assert false)
-                value
+          let$ rs, dep = rs, List.init ndim (fun i -> i) in
+          if Ndseq.for_all ~depth:(ndim-dep-1)
+               (fun v ->
+                 match Ndseq.as_seq v with
+                 | Some (_,l) -> l <> []
+                 | _ -> assert false)
+               value
           then
-            (Model.make_pat t (SeqCons depth)
+            (Model.make_pat t (lift_constr (SeqCons dep))
                [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
                   Model.make_def var0 (Model.make_any t) |])
             :: rs
@@ -5215,7 +5116,7 @@ module MyDomain : Madil.DOMAIN =
          let rs = (* adding SeqRange *)
            if ndim > 0
            then
-             (Model.make_pat t SeqRange
+             (Model.make_pat t (lift_constr SeqRange)
                 [| Model.make_def var0 (Model.make_any {t with ndim = ndim-1});
                    Model.make_def var0 (Model.make_any {kind = INT (COORD (I, MOVE)); ndim = ndim-1}) |])
              :: rs
@@ -5557,7 +5458,7 @@ module MyDomain : Madil.DOMAIN =
                 else res)
               env_vars [] in
           let$ rs, (x,tx) = rs, compatible_vars in
-          (Model.make_pat t Map ~src:[|Expr.Ref (tx, x)|]
+          (Model.make_pat t (lift_constr Map) ~src:[|Expr.Ref (tx, x)|]
              [| Model.make_def var0 (Model.make_any t) |])
           :: rs
         else rs in *)
