@@ -1286,8 +1286,8 @@ module MyDomain : Madil.DOMAIN =
       | _ -> None
 
     let make_color_partition (vsize : value) (vcolors : value) (vmasks : value) : value Myseq.t =
-      match vsize, Ndseq.as_seq vcolors, Ndseq.as_seq vmasks with
-      | `Vec (h,w), Some (_,colors), Some (_,masks) ->
+      match vsize, vcolors, vmasks with
+      | `Vec (h,w), `Seq (_,colors), `Seq (_,masks) ->
          let colors =
            List.map
              (function
@@ -1312,7 +1312,7 @@ module MyDomain : Madil.DOMAIN =
          else Myseq.empty
       | _ -> assert false
     
-    let make_objects_v_merger_itemwise h w card objs g_noise : value * value * distrib =
+    let make_objects_v_merger h w card objs g_noise : value * value * distrib =
       assert (card = List.length objs);
       let i0, j0, h0, w0 =
         if card = 0
@@ -1338,8 +1338,8 @@ module MyDomain : Madil.DOMAIN =
       (`Grid g, `Obj (`Vec (i0,j0), `Grid g0), `Null) (* TODO: define better distrib for merger *)
 
     let make_skyline_v_compl size dir pos : value * value * distrib =
-      match size, dir, Ndseq.as_seq pos with
-      | `Vec (h,w), `Vec (i,j), Some (_, lpos) ->
+      match size, dir, pos with
+      | `Vec (h,w), `Vec (i,j), `Seq (_, lpos) ->
          let lpos =
            List.map
              (function
@@ -1359,37 +1359,22 @@ module MyDomain : Madil.DOMAIN =
          let g = Grid.Mask.init h w pred in
          let vcompl =
            let max = if i = 0 then w else h in
-           Ndseq.seq 0 (List.map (fun p -> `Int (max - p)) lpos) in
+           `Seq (0, List.map (fun p -> `Int (max - p)) lpos) in
          (`Grid g, vcompl, `Null)
       | _ -> assert false
     
-    let make_motif_multi_pure_itemwise mot g_core g_noise : (value * distrib) Myseq.t =
+    let make_motif_multi_pure mot g_core g_noise : (value * distrib) Myseq.t =
       let h, w = Grid.dims g_noise in
       let* g_pure = Myseq.from_result (GPat.Motif.make_grid h w mot g_core) in
       Myseq.return (`Grid g_pure, `Null) (* TODO: define better rpure *)
-    let make_motif_bi_pure_itemwise mot bgcolor color g_noise =
+    let make_motif_bi_pure mot bgcolor color g_noise =
       let g_core = GPat.Motif.make_core_bi bgcolor color in
-      make_motif_multi_pure_itemwise mot g_core g_noise
-
-    let make_motif_multi_pure ~depth mot core noise : (value * distrib) Myseq.t =
-      Ndseq.map_tup_myseq ~name:"make_motif_pure" ~depth (0,0)
-        (function
-         | `Motif mot, `Grid g_core, `Grid g_noise ->
-            make_motif_multi_pure_itemwise mot g_core g_noise
-         | _ -> assert false)
-        (mot, core, noise)
-    let make_motif_bi_pure ~depth mot bgcolor color noise =
-      Ndseq.map_tup_myseq ~depth (0,0)
-        (function
-         | `Motif mot, `Color bgcolor, `Color color, `Grid g_noise ->
-            make_motif_bi_pure_itemwise mot bgcolor color g_noise
-         | _ -> assert false)
-        (mot, bgcolor, color, noise)
+      make_motif_multi_pure mot g_core g_noise
 
     let make_grid_from_color_seq dir vcolors =
       let| acolors =
-        match Ndseq.as_seq vcolors with
-        | Some (0,lcolors) when lcolors <> [] ->
+        match vcolors with
+        | `Seq (0,lcolors) when lcolors <> [] ->
            let acolors = Array.of_list lcolors in
            array_map_result
              (function
@@ -1410,13 +1395,13 @@ module MyDomain : Madil.DOMAIN =
     
     let make_grid_from_color_seq_seq vcolorss =
       let| acolorss : Grid.color array array =
-        match Ndseq.as_seq vcolorss with
-        | Some (1, lcolorss) when lcolorss <> [] ->
+        match vcolorss with
+        | `Seq (1, lcolorss) when lcolorss <> [] ->
            let acolorss = Array.of_list lcolorss in
            array_map_result
              (fun vcolors ->
-               match Ndseq.as_seq vcolors with
-               | Some (0,lcolors) when lcolors <> [] ->
+               match vcolors with
+               | `Seq (0,lcolors) when lcolors <> [] ->
                   let acolors = Array.of_list lcolors in
                   array_map_result
                     (function
@@ -2110,7 +2095,7 @@ module MyDomain : Madil.DOMAIN =
       | `Reverse_1 ->
          (function
           | [|v1|] ->
-             if Ndseq.depth v1 >= 1
+             if Ndseq.ndim v1 >= 1
              then
                Result.Ok (Ndseq.map ~depth:0 0
                             (Ndseq.seq_of_seq List.rev)
@@ -2120,7 +2105,7 @@ module MyDomain : Madil.DOMAIN =
       | `Rotate_1 shift ->
          (function
           | [|v1|] ->
-             if Ndseq.depth v1 >= 1
+             if Ndseq.ndim v1 >= 1
              then
                Result.Ok (Ndseq.map ~depth:0 0
                             (Ndseq.seq_of_seq
@@ -2148,8 +2133,8 @@ module MyDomain : Madil.DOMAIN =
                Result.Ok
                  (Ndseq.map ~depth:(ndim-1) 0
                     (fun v1 ->
-                      match Ndseq.as_seq v1 with
-                      | Some (0, l) ->
+                      match v1 with
+                      | `Seq (0, l) ->
                          let _unique, ranks = list_unique_ranks l in
                          Ndseq.seq 0 (List.map (fun n -> `Int n) ranks)
                       | _ -> assert false)
@@ -2175,9 +2160,9 @@ module MyDomain : Madil.DOMAIN =
       | `Cardinal_1 ->
          (function
           | [|v1|] ->
-             if Ndseq.depth v1 >= 1
+             if Ndseq.ndim v1 >= 1
              then
-               Result.Ok (Ndseq.map ~depth:0 (- Ndseq.depth v1)
+               Result.Ok (Ndseq.map ~depth:0 (- Ndseq.ndim v1)
                             (Ndseq.item_of_seq
                                (fun l -> `Int (List.length l)))
                             v1)
@@ -2251,7 +2236,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
       | `MostCommon_1 ->
          (function
-          | [|v1|] when Ndseq.depth v1 > 0 ->
+          | [|v1|] when Ndseq.ndim v1 > 0 ->
              let cnt = new Common.counter in
              let| () =
                eval_aggreg "mostcommon"
@@ -2264,7 +2249,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> assert false)
       | `LeastCommon_1 ->
          (function
-          | [|v1|] when Ndseq.depth v1 > 0 ->
+          | [|v1|] when Ndseq.ndim v1 > 0 ->
              let cnt = new Common.counter in
              let| () =
                eval_aggreg "leastcommon"
@@ -2317,7 +2302,7 @@ module MyDomain : Madil.DOMAIN =
       | `GridOfColorSeq_1 dir ->
          (function
           | [|v1|] ->
-             let ndim = Ndseq.depth v1 in
+             let ndim = Ndseq.ndim v1 in
              if ndim > 0
              then
                Ndseq.map_result ~depth:(ndim-1) (-1)
@@ -2330,7 +2315,7 @@ module MyDomain : Madil.DOMAIN =
       | `GridOfColorMat_1 ->
          (function
           | [|v1|] ->
-             let ndim = Ndseq.depth v1 in
+             let ndim = Ndseq.ndim v1 in
              if ndim > 1
              then
                Ndseq.map_result ~depth:(ndim-2) (-2)
@@ -2397,14 +2382,14 @@ module MyDomain : Madil.DOMAIN =
       | `RelativePos_1 ->
          (function
           | [|v1|] ->
-             let ndim = Ndseq.depth v1 in
+             let ndim = Ndseq.ndim v1 in
              if ndim > 0
              then
                Result.Ok
                (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
                  (fun seq_objs ->
-                   match Ndseq.as_seq seq_objs with
-                   | Some (d, objs) ->
+                   match seq_objs with
+                   | `Seq (d, objs) ->
                       assert (d = 0);
                       Ndseq.seq 1
                         (List.map
@@ -2421,21 +2406,21 @@ module MyDomain : Madil.DOMAIN =
                                     | _ -> assert false)
                                   objs))
                            objs)
-                   | None -> assert false)
+                   | _ -> assert false)
                  v1)
              else Result.Error (Undefined_result "relativePos_1: not a sequence")
           | _ -> assert false)
       | `TranslatedOnto_1 ->
          (function
           | [|v1|] ->
-             let ndim = Ndseq.depth v1 in
+             let ndim = Ndseq.ndim v1 in
              if ndim > 0
              then
                Result.Ok
                (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
                  (fun seq_objs ->
-                   match Ndseq.as_seq seq_objs with
-                   | Some (d, objs) ->
+                   match seq_objs with
+                   | `Seq (d, objs) ->
                       assert (d = 0);
                       Ndseq.seq 1
                         (List.map
@@ -2462,7 +2447,7 @@ module MyDomain : Madil.DOMAIN =
                                     | _ -> assert false)
                                   objs))
                            objs)
-                   | None -> assert false)
+                   | _ -> assert false)
                  v1)
              else Result.Error (Undefined_result "translatedOnto_1: not a sequence")
           | _ -> assert false)
@@ -2477,7 +2462,7 @@ module MyDomain : Madil.DOMAIN =
 
     let generator_value (v0 : value) (r : distrib) =
       let* v =
-        Ndseq.match_myseq 0
+        Ndseq.match_myseq 0 (* TODO Ndseq *)
           (fun v0 r -> Myseq.return v0)
           (* DO NOT check that v agrees with r BECAUSE r is more of a generation hint, not exhaustive *)
           v0 r in
@@ -2485,8 +2470,8 @@ module MyDomain : Madil.DOMAIN =
       Myseq.return (Data.make_dexpr v r)
 
     let generator_any t (r : distrib) =
-      let depth = t.ndim in
-      assert (Ndseq.depth r = depth);
+      let ndim = t.ndim in
+      assert (Ndseq.ndim r = ndim);
       let rec aux = function
         | `Null ->
            Myseq.return `Null
@@ -2534,7 +2519,7 @@ module MyDomain : Madil.DOMAIN =
         | _ -> assert false
       in
       let* v =
-        Ndseq.map_myseq ~depth 0
+        Ndseq.map_myseq ~depth:ndim 0 (* TODO Ndseq *)
           (fun r -> aux r)
           r in
       Myseq.return (Data.make_dany v r)
@@ -2548,9 +2533,8 @@ module MyDomain : Madil.DOMAIN =
     let res_val v = Myseq.return (`ResVal v)
 
     let rec generator_pat t c src k (r : distrib) : generator_pat Myseq.t =
-      let depth = t.ndim in
       let ndim = t.ndim in
-      assert (Ndseq.depth r = depth);
+      assert (Ndseq.ndim r = ndim);
       let args_index = Array.init k (fun i -> i) in
       match c, src, args_index, r with
       | Vec, [||], [|i;j|], `VecRange (ri,rj) ->
@@ -2582,12 +2566,12 @@ module MyDomain : Madil.DOMAIN =
          let k = List.length keys in
          let+ vals = vals, Ndseq.seq 0 (List.init k (fun _ -> r_b)) in
          let v =
-           match Ndseq.as_seq vals with
-           | Some (_, lv) ->
+           match vals with
+           | `Seq (_, lv) ->
               assert (List.length lv = k);
               let m = mymap_of_list (List.combine keys lv) in
               `Map m
-           | None -> assert false in
+           | _ -> assert false in
          res_val v
 
       | Replace, [||], [|a; b|], `MapRange (r_a,r_b) ->
@@ -2688,7 +2672,7 @@ module MyDomain : Madil.DOMAIN =
            match vsize, vcard, vobjs, vnoise with
            | `Vec (h,w), `Int card, `Seq (0, objs), `Grid g_noise ->
               let objs = List.map (function `Obj (`Vec (i,j), `Grid g1) -> (i,j,g1) | _ -> assert false) objs in
-              make_objects_v_merger_itemwise h w card objs g_noise
+              make_objects_v_merger h w card objs g_noise
            | _ -> assert false in
          let= () = merger, vmerger, r_merger in
          res_val v
@@ -2727,7 +2711,7 @@ module MyDomain : Madil.DOMAIN =
          let v, _vmerger, _r_merger =
            match vsize, vobj, vnoise with
            | `Vec (h,w), `Obj (`Vec (i,j), `Grid g1), `Grid g_noise ->
-              make_objects_v_merger_itemwise h w 1 [(i,j,g1)] g_noise
+              make_objects_v_merger h w 1 [(i,j,g1)] g_noise
            | _ -> assert false in
          res_val v
 
@@ -2917,13 +2901,13 @@ module MyDomain : Madil.DOMAIN =
                match vsepcolor, vdims, vheights, vwidths with
                | `Color sepcolor, `Vec (k,l), vheights, vwidths ->
                   let heights =
-                    match Ndseq.as_seq vheights with
-                    | Some (_,l) -> List.map (function `Int i -> i | _ -> assert false) l
-                    | None -> assert false in
+                    match vheights with
+                    | `Seq (_,l) -> List.map (function `Int i -> i | _ -> assert false) l
+                    | _ -> assert false in
                   let widths =
-                    match Ndseq.as_seq vwidths with
-                    | Some (_,l) -> List.map (function `Int j -> j | _ -> assert false) l
-                    | None -> assert false in
+                    match vwidths with
+                    | `Seq (_,l) -> List.map (function `Int j -> j | _ -> assert false) l
+                    | _ -> assert false in
                   let lc1 = List.filter ((<>) sepcolor) lc in
                   let lc1 = if lc1 = [] then Grid.all_colors else lc1 in
                   Ndseq.seq 1
@@ -2943,24 +2927,24 @@ module MyDomain : Madil.DOMAIN =
                match vsepcolor, vborders, vdims, vheights, vwidths, vgridss with
                | `Color sepcolor, `Grid borders, `Vec (k,l), vheights, vwidths, vgridss ->
                   let part_heights =
-                    match Ndseq.as_seq vheights with
-                    | Some (_,l) -> Array.of_list (List.map (function `Int i -> i | _ -> assert false) l)
-                    | None -> assert false in
+                    match vheights with
+                    | `Seq (_,l) -> Array.of_list (List.map (function `Int i -> i | _ -> assert false) l)
+                    | _ -> assert false in
                   let part_widths =
-                    match Ndseq.as_seq vwidths with
-                    | Some (_,l) -> Array.of_list (List.map (function `Int j -> j | _ -> assert false) l)
-                    | None -> assert false in
+                    match vwidths with
+                    | `Seq (_,l) -> Array.of_list (List.map (function `Int j -> j | _ -> assert false) l)
+                    | _ -> assert false in
                   let parts =
-                    match Ndseq.as_seq vgridss with
-                    | Some (_,l) ->
+                    match vgridss with
+                    | `Seq (_,l) ->
                        Array.of_list
                          (List.map
                             (fun row ->
-                              match Ndseq.as_seq row with
-                              | Some (_,l2) -> Array.of_list (List.map (function `Grid g -> g | _ -> assert false) l2)
-                              | None -> assert false)
+                              match row with
+                              | `Seq (_,l2) -> Array.of_list (List.map (function `Grid g -> g | _ -> assert false) l2)
+                              | _ -> assert false)
                             l)
-                    | None -> assert false in
+                    | _ -> assert false in
                   let mg =
                     { GPat.Metagrid.sepcolor;
                       borders;
@@ -3051,8 +3035,8 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false in
          let+ vcolors = colors, r_colors in
          let v =
-           match vsize, Ndseq.as_seq vcolors with
-           | `Int size, Some (0,lcolors) ->
+           match vsize, vcolors with
+           | `Int size, `Seq (0,lcolors) ->
               let n = List.length lcolors in
               assert (n = size);
               let colors = List.map (function `Color c -> c | _ -> assert false) lcolors in
@@ -3079,15 +3063,15 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false in
          let+ vcolorss = colorss, r_colorss in
          let v =
-           match vsize, Ndseq.as_seq vcolorss with
-           | `Vec (size_h,size_w), Some (1,lcolorss) ->
+           match vsize, vcolorss with
+           | `Vec (size_h,size_w), `Seq (1,lcolorss) ->
               let h = List.length lcolorss in
               assert (h = size_h);
               let ll =
                 List.map
                   (fun vcolors ->
-                    match Ndseq.as_seq vcolors with
-                    | Some (0,lcolors) -> lcolors
+                    match vcolors with
+                    | `Seq (0,lcolors) -> lcolors
                     | _ -> assert false)
                   lcolorss in
               let w =
@@ -3109,23 +3093,23 @@ module MyDomain : Madil.DOMAIN =
       | MakeGrid, [||], [|grid|], _ ->
          let* r_grid =
            let* h, w, tc, lc =
-             match Ndseq.as_seq r with
-             | Some (1, row0::rows1) ->
-                (match Ndseq.as_seq row0 with
-                 | Some (0, (`ColorRange (tc,lc) :: cells)) ->
+             match r with
+             | `Seq (1, row0::rows1) ->
+                (match row0 with
+                 | `Seq (0, (`ColorRange (tc,lc) :: cells)) ->
                     let h = 1 + List.length rows1 in
                     let w = 1 + List.length cells in
                     if List.for_all
                          (fun row1 ->
-                           match Ndseq.as_seq row1 with
-                           | Some (0, cells) -> List.length cells = w
+                           match row1 with
+                           | `Seq (0, cells) -> List.length cells = w
                            | _ -> false)
                          rows1
                     then Myseq.return (h, w, tc, lc)
                     else Myseq.empty (* not rectangular *)
-                 | Some (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+                 | `Seq (0, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
                  | _ -> assert false)
-             | Some (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
+             | `Seq (1, []) -> Myseq.empty (* a grid cannot have size 0x0 *)
              | _ -> assert false in
            (* let filling =
               match tc with
@@ -3259,13 +3243,13 @@ module MyDomain : Madil.DOMAIN =
          res_val v
 
       | SeqIndex, [|vseq|], [|index|], _ ->
-         let depth_seq = Ndseq.depth vseq in
+         let ndim_seq = Ndseq.ndim vseq in
          let r_index =
-           Ndseq.seq 0 (List.init (depth_seq - depth) (fun _ -> `IntRange (Range.Closed (0,2)))) in (* default index *)
+           Ndseq.seq 0 (List.init (ndim_seq - ndim) (fun _ -> `IntRange (Range.Closed (0,2)))) in (* default index *)
          let+ vindex = index, r_index in
          let i_index =
-           match Ndseq.as_seq vindex with
-           | Some (0, l) ->
+           match vindex with
+           | `Seq (0, l) ->
               List.map
                 (function
                  | `Int i -> Some i
@@ -3401,7 +3385,7 @@ module MyDomain : Madil.DOMAIN =
       | Param (name, param), [||], [|p; body|], _ ->
          let+ v_param = p, param.distrib in
          let r_body =
-           Ndseq.map ~depth 0
+           Ndseq.map ~depth:ndim 0 (* TODO Ndseq *)
              (fun r -> `ParamRange (name, v_param, r))
              r in
          let+ v = body, r_body in
@@ -3418,7 +3402,7 @@ module MyDomain : Madil.DOMAIN =
     (* model-based parsing *)
            
     let parseur_value (v0 : value) (v : value) =
-      Ndseq.matches 0 (=) v0 v
+      Ndseq.matches 0 (=) v0 v (* TODO Ndseq *)
 
     let rec parseur_pat t c src k (v : value) (r : distrib) =
       let pp_params () =
@@ -3429,12 +3413,11 @@ module MyDomain : Madil.DOMAIN =
         pp_endline xp_value v;
         pp_endline xp_distrib r
       in
-      let depth = t.ndim in
       let ndim = t.ndim in
-      if not (Ndseq.depth v = depth) then (
+      if not (Ndseq.ndim v = ndim) then (
         pp_params ();
         assert false);
-      assert (Ndseq.depth r = depth);
+      assert (Ndseq.ndim r = ndim);
       match c, src, k, v, r with
       | Vec, [||], 2, `Vec (i,j), `VecRange (ri,rj) ->
          Myseq.return
@@ -3527,7 +3510,7 @@ module MyDomain : Madil.DOMAIN =
          let objs = GPat.Objects.sort order objs in
          let card = List.length objs in
          let _v, merger, r_merger =
-           make_objects_v_merger_itemwise h w card objs g_noise in
+           make_objects_v_merger h w card objs g_noise in
          Myseq.return
            (v, [| `Vec (h,w), `VecRange (rh,rw); (* size *)
                   `Int card, `IntRange (Range.make_closed 1 nmax); (* card *)
@@ -3648,7 +3631,7 @@ module MyDomain : Madil.DOMAIN =
          if partial && mask_opt = None
          then Myseq.empty
          else              
-           let* pure, r_pure = make_motif_multi_pure_itemwise mot g_core g_noise in
+           let* pure, r_pure = make_motif_multi_pure mot g_core g_noise in
            let mask_opt, r_mask_opt =
              match partial, mask_opt with
              | true, Some mask ->
@@ -3673,7 +3656,7 @@ module MyDomain : Madil.DOMAIN =
            let bgcolor = Grid.get_pixel ~source:"parse MotifBi bgcolor" g_core 0 0 in
            let color = Grid.get_pixel ~source:"parse MotifBi color" g_core 1 0 in
            let* () = Myseq.from_bool (color <> Grid.transparent) in      
-           let* pure, r_pure = make_motif_bi_pure_itemwise mot bgcolor color g_noise in
+           let* pure, r_pure = make_motif_bi_pure mot bgcolor color g_noise in
            let mask_opt, r_mask_opt =
              match partial, mask_opt with
              | true, Some mask -> `Grid mask, `GridRange ((`Sprite,true), rh, rw, [Grid.one], conn_opt)
@@ -3973,11 +3956,11 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Myseq.empty)
 
       | SeqIndex, [|vseq|], 1, _, _ ->
-         let depth_seq = Ndseq.depth vseq in
-         let* () = Myseq.from_bool (depth < depth_seq) in (* v must be an element or proper substructure of vseq *)
+         let ndim_seq = Ndseq.ndim vseq in
+         let* () = Myseq.from_bool (ndim < ndim_seq) in (* v must be an element or proper substructure of vseq *)
          let* index, r_index =
            let rec aux rev_path rev_r_path depseq vseq = (* iterating over substructures, searching v *)
-             if depseq = depth
+             if depseq = ndim
              then
                if vseq = v
                then
@@ -3986,8 +3969,8 @@ module MyDomain : Madil.DOMAIN =
                  Myseq.return (index, r_index)
                else Myseq.empty
              else
-               match Ndseq.as_seq vseq with
-               | Some (d, l) ->
+               match vseq with
+               | `Seq (d, l) ->
                   if l = []
                   then Myseq.empty
                   else
@@ -3995,9 +3978,9 @@ module MyDomain : Madil.DOMAIN =
                     let range = Range.make_closed 0 (n-1) in
                     let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
                     aux (`Int i :: rev_path) (`IntRange range :: rev_r_path) d vi
-               | None -> assert false
+               | _ -> assert false
            in
-           aux [] [] depth_seq vseq in
+           aux [] [] ndim_seq vseq in
          Myseq.return (v, [|index, r_index|])
 
       | NdseqMap c, _, _, _, _ ->
@@ -4044,9 +4027,9 @@ module MyDomain : Madil.DOMAIN =
          let r_param = param.distrib in
          let* v_param = Myseq.from_list param.values in
          let r_body =
-           Ndseq.map ~depth 0
+           Ndseq.map ~depth:ndim 0 (* TODO Ndseq *)
              (fun r -> `ParamRange (name, v_param, r))
-             r in    
+             r in
          Myseq.return
            (v, [| v_param, r_param;
                   v, r_body |])
@@ -4125,7 +4108,7 @@ module MyDomain : Madil.DOMAIN =
 
     let rec dl_value t v =
       let k = t.kind in
-      Ndseq.fold_left
+      Ndseq.fold_left (* TODO Ndseq *)
         (fun dl v -> dl +. dl_value_scalar k v)
         0. v
     and dl_value_scalar k v = (* on scalars *)
@@ -4191,7 +4174,7 @@ module MyDomain : Madil.DOMAIN =
            pp_endline xp_distrib r;
            assert false (* TODO: cover other distributions *)
       in
-      Ndseq.fold_left2
+      Ndseq.fold_left2 (* TODO Ndseq *)
         (fun dl v r -> dl +. aux v r)
         0. v r
     
@@ -4958,8 +4941,8 @@ module MyDomain : Madil.DOMAIN =
           let$ rs, dep = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
-                 match Ndseq.as_seq v with
-                 | Some (_,l) -> l <> []
+                 match v with
+                 | `Seq (_,l) -> l <> []
                  | _ -> assert false)
                value
           then
@@ -4974,8 +4957,8 @@ module MyDomain : Madil.DOMAIN =
           let$ rs, dep = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
-                  match Ndseq.as_seq v with
-                  | Some (_,l) -> List.length l = 1
+                  match v with
+                  | `Seq (_,l) -> List.length l = 1
                   | _ -> assert false)
                 value
                 then
@@ -4990,8 +4973,8 @@ module MyDomain : Madil.DOMAIN =
           let$ rs, dep = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
-                  match Ndseq.as_seq v with
-                  | Some (_,l) -> List.length l = 2
+                  match v with
+                  | `Seq (_,l) -> List.length l = 2
                   | _ -> assert false)
                 value
           then
@@ -5016,8 +4999,8 @@ module MyDomain : Madil.DOMAIN =
           let$ rs, dep = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth:(ndim-dep-1)
                (fun v ->
-                 match Ndseq.as_seq v with
-                 | Some (_,l) -> l <> []
+                 match v with
+                 | `Seq (_,l) -> l <> []
                  | _ -> assert false)
                value
           then
