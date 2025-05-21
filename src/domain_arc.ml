@@ -2461,12 +2461,28 @@ module MyDomain : Madil.DOMAIN =
     (* model-based generation *)
 
     let generator_value (v0 : value) (r : distrib) =
-      let* v =
-        Ndseq.match_myseq 0 (* TODO Ndseq *)
-          (fun v0 r -> Myseq.return v0)
-          (* DO NOT check that v agrees with r BECAUSE r is more of a generation hint, not exhaustive *)
-          v0 r in
-      (* Warning: v' may be different from v because of broadcasting in Ndseq.match_myseq *)
+      (* the returned value must agree with r Ndseq structure but may be out of distrib itemwise *)
+      let rec aux v0 r =
+        match v0, r with
+        | `Seq (_, lv0), `Seq (d, lr) ->
+           let nv0 = List.length lv0 in
+           let nr = List.length lr in
+           if nv0 >= nr
+           then
+             let lv0 =
+               if nv0 = nr then lv0
+               else Common.sub_list lv0 0 nr in (* ignoring extra values TODO: is this used? *)
+             let* lv = Myseq.product_fair (List.map2 aux lv0 lr) in
+             Myseq.return (Ndseq.seq d lv)
+           else Myseq.empty
+        | _, `Seq (d, lr) ->
+           (* broadcasting TODO: is this used? *)
+           let* lv = Myseq.product_fair (List.map (aux v0) lr) in
+           Myseq.return (Ndseq.seq d lv)
+        | `Seq _, _ -> Myseq.empty
+        | _ -> Myseq.return v0
+      in
+      let* v = aux v0 r in
       Myseq.return (Data.make_dexpr v r)
 
     let generator_any t (r : distrib) =
@@ -2516,12 +2532,12 @@ module MyDomain : Madil.DOMAIN =
            let m = Mymap.singleton a b in
            Myseq.return (`Map m) (* empty map = identity map *)
         | `ParamRange _ -> assert false
+        | `Seq (d, lr) ->
+           let* lv = Myseq.product_fair (List.map aux lr) in
+           Myseq.return (`Seq (d, lv))
         | _ -> assert false
       in
-      let* v =
-        Ndseq.map_myseq ~depth:ndim 0 (* TODO Ndseq *)
-          (fun r -> aux r)
-          r in
+      let* v = aux r in
       Myseq.return (Data.make_dany v r)
 
     type generator_pat_ndseq = [generator_pat | generator_pat_ndseq Ndseq.seq]
@@ -3402,7 +3418,25 @@ module MyDomain : Madil.DOMAIN =
     (* model-based parsing *)
            
     let parseur_value (v0 : value) (v : value) =
-      Ndseq.matches 0 (=) v0 v (* TODO Ndseq *)
+      let rec aux v0 v =
+        match v0, v with
+        | `Seq (_, lv0), `Seq (d, lv) ->
+           let nv0 = List.length lv0 in
+           let nv = List.length lv in
+           if nv0 >= nv
+           then
+             let lv0 =
+               if nv0 = nv then lv0
+               else Common.sub_list lv0 0 nv in (* ignoring extra values TODO: is this used? *)
+             List.for_all2 aux lv0 lv
+           else false
+        | _, `Seq (d, lv) ->
+           (* broadcasting TODO: is this used? *)
+           List.for_all (aux v0) lv
+        | `Seq _, _ -> false
+        | _ -> v0 = v
+      in
+      aux v0 v
 
     let rec parseur_pat t c src k (v : value) (r : distrib) =
       let pp_params () =
@@ -3983,6 +4017,9 @@ module MyDomain : Madil.DOMAIN =
            aux [] [] ndim_seq vseq in
          Myseq.return (v, [|index, r_index|])
 
+(* TEST      | c, _, _, `Seq (d, lv), `Seq (_, lr) ->
+         assert (d < ndim); *)
+    
       | NdseqMap c, _, _, _, _ ->
          let as_ndseq x = (Obj.magic x : _ Ndseq.t) [@@inline] in
          let as_value x = (Obj.magic x : value) [@@inline] in
@@ -4107,12 +4144,7 @@ module MyDomain : Madil.DOMAIN =
            m 0.
 
     let rec dl_value t v =
-      let k = t.kind in
-      Ndseq.fold_left (* TODO Ndseq *)
-        (fun dl v -> dl +. dl_value_scalar k v)
-        0. v
-    and dl_value_scalar k v = (* on scalars *)
-      match k, v with
+      match t.kind, v with
       | _, `Null -> 0. (* for optional parts *)
       | BOOL, `Bool b -> 1.
       | INT NAT, `Int i ->
@@ -4132,8 +4164,8 @@ module MyDomain : Madil.DOMAIN =
           | MOVE ->
              1. +. Mdl.Code.universal_int_star (abs ij))
       | VEC tv, `Vec (i,j) ->
-         dl_value_scalar (INT (COORD (I,tv))) (`Int i)
-         +. dl_value_scalar (INT (COORD (J,tv))) (`Int j)
+         dl_value {t with kind = (INT (COORD (I,tv)))} (`Int i)
+         +. dl_value {t with kind = (INT (COORD (J,tv)))} (`Int j)
       | COLOR tc, `Color c -> dl_color c tc Grid.all_colors
       | SEG, `Seg seg ->
          dl_seg seg (GPat.Objects.candidate_segmentations_connected false)
@@ -4149,11 +4181,14 @@ module MyDomain : Madil.DOMAIN =
          let rmax = Range.make_closed 1 Grid.max_size in
          dl_grid g tg rmax rmax Grid.all_colors None
       | OBJ tg, `Obj (`Vec (i,j), `Grid g) ->
-         dl_value_scalar (INT (COORD (I, POS))) (`Int i)
-         +. dl_value_scalar (INT (COORD (J, POS))) (`Int j)
-         +. dl_value_scalar (GRID (`Sprite,false)) (`Grid g)
+         dl_value {t with kind = (INT (COORD (I, POS)))} (`Int i)
+         +. dl_value {t with kind = (INT (COORD (J, POS)))} (`Int j)
+         +. dl_value {t with kind = (GRID (`Sprite,false))} (`Grid g)
       | MAP (ka,kb), `Map m ->
-         dl_map (dl_value_scalar ka) (dl_value_scalar kb) m
+         dl_map (dl_value {t with kind = ka}) (dl_value {t with kind = kb}) m
+      | _, `Seq (d, lv) ->
+         let t1 = {t with ndim = t.ndim-1} in
+         List.fold_left (fun dl v -> dl +. dl_value t1 v) 0. lv
       | _ -> pp xp_value v; assert false
 
     let encoding_dany v r =
@@ -4168,15 +4203,20 @@ module MyDomain : Madil.DOMAIN =
         | `Grid g, `GridRange (tg, rh, rw, lc, conn_opt) -> dl_grid g tg rh rw lc conn_opt
         | `Obj (pos,g1), `ObjRange (rpos,rg1) -> aux pos rpos +. aux g1 rg1
         | `Map m, `MapRange (ra,rb) -> dl_map (fun a -> aux a ra) (fun b -> aux b rb) m
+        | `Seq (_, lv), `Seq (_, lr) ->
+           List.fold_left2
+             (fun dl v r -> dl +. aux v r)
+             0. lv lr
         | _, `ParamRange (_, _, r_body) -> aux v r_body
         | _ ->
            pp_endline xp_value v;
            pp_endline xp_distrib r;
            assert false (* TODO: cover other distributions *)
       in
-      Ndseq.fold_left2 (* TODO Ndseq *)
+      aux v r
+      (* Ndseq.fold_left2
         (fun dl v r -> dl +. aux v r)
-        0. v r
+        0. v r *)
     
     let encoding_dpat dc vsrc encs =
       match dc, encs with
@@ -4238,7 +4278,7 @@ module MyDomain : Madil.DOMAIN =
           | MAP (ka,kb) ->
              Mdl.Code.universal_int_star (List.length keys)
              +. List.fold_left
-                  (fun res a -> dl_value_scalar ka a)
+                  (fun res a -> dl_value {kind = ka; ndim = 0} a)
                   0. keys
           | _ -> assert false)
       | Replace -> 0.
