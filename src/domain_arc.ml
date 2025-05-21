@@ -42,7 +42,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | GRID of typ_grid
       | OBJ of typ_grid
       | MAP of typ_kind * typ_kind
-      | PARAM of typ_kind * typ_kind (* param and body types *)
+      | PARAMS of typ_kind list * typ_kind (* params and body types *)
     (* list of values have the type of their elts *)
     and typ_int =
       | NAT
@@ -93,9 +93,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | GRID tg -> xp_typ_grid ~html print tg
       | OBJ tg -> print#string "OBJ "; xp_typ_grid ~html print tg
       | MAP (ta,tb) -> xp_typ_kind ~html print ta; print#string " -> "; xp_typ_kind ~html print tb
-      | PARAM (tp, tb) ->
-         print#string "PARAM("; xp_typ_kind ~html print tp;
-         print#string ", "; xp_typ_kind ~html print tb;
+      | PARAMS (tps, tb) ->
+         print#string "PARAMS(";
+         List.iter
+           (fun tp ->
+             xp_typ_kind ~html print tp;
+             print#string ", ")
+           tps;
+         xp_typ_kind ~html print tb;
          print#string ")"
     and xp_typ_int ~html print = function
       | NAT -> print#string "NAT"
@@ -215,7 +220,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `GridRange of typ_grid * Range.t * Range.t * Grid.color list * GPat.Objects.connectedness option (* height, width, colors, conn_opt *) (* TODO: consider removing typ_grid *)
       | `ObjRange of distrib * distrib (* pos, grid *)
       | `MapRange of distrib * distrib (* src, dst *)
-      | `ParamRange of string * value * distrib
+      | `ParamsRange of (string * value) list * distrib
       | distrib Ndseq.seq ]
 
     let rec xp_distrib ~html print : distrib -> unit = function
@@ -248,10 +253,14 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
          print#string "MAP(src ~ "; xp_distrib ~html print ra;
          print#string ", dst ~ "; xp_distrib ~html print rb;
          print#string ")"
-      | `ParamRange (name,vparam,r) ->
-         print#string "PARAM("; print#string name;
-         print#string " = "; xp_value ~html print vparam;
-         print#string ", "; xp_distrib ~html print r;
+      | `ParamsRange (params,r) ->
+         print#string "PARAM(";
+         List.iter (fun (name, vparam) ->
+             print#string name;
+             print#string " = "; xp_value ~html print vparam;
+             print#string ", ")
+           params;
+         xp_distrib ~html print r;
          print#string ")"
       | #Ndseq.seq as rs -> Ndseq.xp_seq xp_distrib ~html print rs
     
@@ -326,7 +335,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRepeat of int (* depth of seq items *) (* X^(k-1) : X^k *)
       | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
       | SeqIndex (* [seq:X^n] index:INT^1 : X^(n-k) *)
-      | Param of string * param
+      | Params of (string * param) list
 
     let xp_any t ~html print () =
       xp_html_elt "span" ~classe:"model-any" ~html print
@@ -513,9 +522,15 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqIndex, [|xp_seq|], [|xp_index|] ->
          print#string "Index";
          xp_tuple2 xp_seq xp_index ~html print ((),())
-      | Param (name, param), [||], [|xp_param; xp_body|] ->
-         print#string ("with " ^ name ^ " "); xp_param ~html print ();
-         print#string ", "; xp_body ~html print ()
+      | Params params, [||], _ ->
+         let k = List.length params in
+         assert (Array.length xp_args = k+1);
+         List.iteri
+           (fun i (name, param) ->
+             print#string ("with " ^ name ^ " "); xp_args.(i) ~html print ();
+             print#string ", ")
+           params;
+         xp_args.(k) ~html print ()
       | _ -> assert false
 
     let rec xp_field ~html print = function
@@ -624,9 +639,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRange, _ -> assert false
       | SeqIndex, 0 -> print#string "index"
       | SeqIndex, _ -> assert false
-      | Param _, 0 -> print#string "param"
-      | Param _, 1 -> print#string "body"
-      | Param _, _ -> assert false
+      | Params params, i ->
+         let k = List.length params in
+         if i < k then print#string ("param" ^ string_of_int (i+1))
+         else if i = k then print#string "body"
+         else assert false
 
     let constr_v_args_ndims : constr -> int * int array = function
       (* provides arity and ndim of whole value and parts (args) *)
@@ -664,7 +681,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqRepeat dep -> dep+1, [|dep|]
       | SeqRange -> 1, [|0; 0|]
       | SeqIndex -> assert false (* v_ndim not well-defined *)
-      | Param _ -> assert false
+      | Params _ -> assert false
 
     
     (* functions *)
@@ -1080,7 +1097,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
                  ka=kb, ("Swap", [||],
                          [| {t with kind = ka};
                             {t with kind = ka} |]) ]
-          | PARAM _ -> res
+          | PARAMS _ -> res
         method funcs t (* abstract *) =
           assert (t.ndim = 0);
           let res =
@@ -1226,10 +1243,10 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("Neighbors_1", [|t|])
              ::res
           | MAP (ka,kb) -> res
-          | PARAM _ -> res
+          | PARAMS _ -> res
 
         method expr_opt = function
-          | { kind = PARAM _ } -> false
+          | { kind = PARAMS _ } -> false
           | t -> true
         method alt_opt t = false (* LATER *)
       end
@@ -2481,8 +2498,6 @@ module MyDomain : Madil.DOMAIN =
       Myseq.return (Data.make_dexpr v r)
 
     let generator_any t (r : distrib) =
-      let ndim = t.ndim in
-      assert (Ndseq.ndim r = ndim);
       let rec aux = function
         | `Null ->
            Myseq.return `Null
@@ -2526,7 +2541,7 @@ module MyDomain : Madil.DOMAIN =
            let* b = aux rb in
            let m = Mymap.singleton a b in
            Myseq.return (`Map m) (* empty map = identity map *)
-        | `ParamRange _ -> assert false
+        | `ParamsRange _ -> assert false
         | `Seq (d, lr) ->
            let* lv = Myseq.product_fair (List.map aux lr) in
            Myseq.return (`Seq (d, lv))
@@ -2545,7 +2560,6 @@ module MyDomain : Madil.DOMAIN =
 
     let rec generator_pat t c src k (r : distrib) : generator_pat Myseq.t =
       let ndim = t.ndim in
-      assert (Ndseq.ndim r = ndim);
       let args_index = Array.init k (fun i -> i) in
       match c, src, args_index, r with
       | Vec, [||], [|i;j|], `VecRange (ri,rj) ->
@@ -2635,13 +2649,13 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Myseq.empty)
 
       | Objects (nmax,mode), [||], [|size; card; objs; merger; noise|],
-        `ParamRange ("order", `Order order,
-                     `ParamRange ("seg", `Seg seg,
-                                  `GridRange ((filling,nocolor),
-                                              Range.Closed (minh,maxh),
-                                              Range.Closed (minw,maxw),
-                                              lc,
-                                              conn_opt)))->
+        `ParamsRange (["seg", `Seg seg;
+                       "order", `Order order],
+                      `GridRange ((filling,nocolor),
+                                  Range.Closed (minh,maxh),
+                                  Range.Closed (minw,maxw),
+                                  lc,
+                                  conn_opt)) ->
          let r_card = `IntRange (Range.Closed (1,nmax)) in
          let+ vcard = card, r_card in
          let r_objs =
@@ -2689,7 +2703,7 @@ module MyDomain : Madil.DOMAIN =
          res_val v
 
       | Object mode, [||], [|size; obj; noise|],
-        `ParamRange ("seg", `Seg seg,
+        `ParamsRange (["seg", `Seg seg],
                      `GridRange ((filling,nocolor),
                                  Range.Closed (minh,maxh),
                                  Range.Closed (minw,maxw),
@@ -2790,7 +2804,7 @@ module MyDomain : Madil.DOMAIN =
           | _ -> Myseq.empty)
 
       | MotifMulti partial, [||], [|core; pure; mask_opt; noise|],
-        `ParamRange ("motif", `Motif mot,
+        `ParamsRange (["motif", `Motif mot],
                      `GridRange ((filling,nocolor as tg), rh, rw, lc, conn_opt)) ->
          let r_noise = `GridRange ((`Noise,nocolor), rh, rw, [Grid.transparent], None) in
          let+ vnoise = (noise, r_noise) in
@@ -2834,7 +2848,7 @@ module MyDomain : Madil.DOMAIN =
          res_val v
 
       | MotifBi partial, [||], [|bgcolor; color; pure; mask_opt; noise|],
-        `ParamRange ("motif", `Motif mot,
+        `ParamsRange (["motif", `Motif mot],
                      `GridRange ((filling,nocolor), Range.Closed (minh,maxh), Range.Closed (minw,maxw), lc, conn_opt)) ->
          let* r_noise =
            if maxh >= 3 && maxw >= 3 (* bicolor motifs have size at least 3x3 *)
@@ -2972,7 +2986,7 @@ module MyDomain : Madil.DOMAIN =
              res_val v
           | _ -> assert false)
     
-(* TODO      | Repeat, [|gen_grid; gen_nis; gen_njs|], _ ->
+(*       | Repeat, [|gen_grid; gen_nis; gen_njs|], _ ->
          let* dgrid, dnis, dnjs = Myseq.product_fair3 (gen_grid r, gen_nis r, gen_njs r) in
          let* data = Myseq.from_result (make_drepeat dgrid dnis dnjs) in
          Myseq.return (data, `Null) *)
@@ -3274,15 +3288,21 @@ module MyDomain : Madil.DOMAIN =
            | None -> Myseq.empty (* index undefined *) in
          res_val v
 
-      | Param (name, param), [||], [|p; body|], _ ->
-         let+ v_param = p, param.distrib in
-         let r_body =
-           Ndseq.map ~depth:ndim 0 (* TODO Ndseq *)
-             (fun r -> `ParamRange (name, v_param, r))
-             r in
-         let+ v = body, r_body in
+      | Params nparams, [||], _, _ ->
+         let l = List.length nparams in
+         assert (l + 1 = k);
+         let names, params = List.split nparams in
+         let+++ lv_params = List.mapi (fun i param -> i, param.distrib) params in
+         let r_body = `ParamsRange (List.combine names lv_params, r) in
+         let+ v = l, r_body in
          res_val v
 
+      | c, _, _, `ParamsRange (params, `Seq (d, lr)) ->
+         (* from Params/Seq to Seq/Params *)
+         let lr = List.map (fun r -> `ParamsRange (params, r)) lr in
+         let r = `Seq (d, lr) in
+         generator_pat t c src k r
+    
       | c, _, _, `Seq (d, lr) ->
          let v_ndim, args_ndim = constr_v_args_ndims c in
          assert (d = ndim-1);
@@ -3426,10 +3446,7 @@ module MyDomain : Madil.DOMAIN =
         pp_endline xp_distrib r
       in
       let ndim = t.ndim in
-      if not (Ndseq.ndim v = ndim) then (
-        pp_params ();
-        assert false);
-      assert (Ndseq.ndim r = ndim);
+      assert (Ndseq.ndim v = ndim);
       match c, src, k, v, r with
       | Vec, [||], 2, `Vec (i,j), `VecRange (ri,rj) ->
          Myseq.return
@@ -3507,9 +3524,9 @@ module MyDomain : Madil.DOMAIN =
            | _ -> Myseq.empty)
 
       | Objects (nmax,mode), [||], 5, `Grid g,
-        `ParamRange ("order", `Order order,
-                     `ParamRange ("seg", `Seg seg,
-                                  `GridRange ((filling,nocolor), rh, rw, lc, conn_opt))) ->
+        `ParamsRange (["seg", `Seg seg;
+                       "order", `Order order],
+                      `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
          let h, w = Grid.dims g in
          let tg1 = (`Sprite,nocolor) in
          let lc1 = lc in
@@ -3548,7 +3565,7 @@ module MyDomain : Madil.DOMAIN =
                   `Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, lc, None) |]) (* noise *)
 
       | Object mode, [||], 3, `Grid g,
-        `ParamRange ("seg", `Seg seg,
+        `ParamsRange (["seg", `Seg seg],
                      `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
          let h, w = Grid.dims g in
          let tg1 = (`Sprite,nocolor) in
@@ -3635,7 +3652,9 @@ module MyDomain : Madil.DOMAIN =
               | None -> Myseq.empty)
           | _ -> Myseq.empty)
 
-      | MotifMulti partial, [||], 4, `Grid g, `ParamRange ("motif", `Motif mot, `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
+      | MotifMulti partial, [||], 4, `Grid g,
+        `ParamsRange (["motif", `Motif mot],
+                      `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* _mot, ru, rv, g_core, mask_opt, g_noise =
            Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
@@ -3657,7 +3676,9 @@ module MyDomain : Madil.DOMAIN =
                     mask_opt, r_mask_opt;
                     `Grid g_noise, `GridRange ((`Noise,nocolor), rh, rw, lc, None) |])
     
-      | MotifBi partial, [||], 5, `Grid g, `ParamRange ("motif", `Motif mot, `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
+      | MotifBi partial, [||], 5, `Grid g,
+        `ParamsRange (["motif", `Motif mot],
+                      `GridRange ((filling,nocolor), rh, rw, lc, conn_opt)) ->
          let g_bgcolor = if partial then Grid.transparent else Grid.undefined in
          let* _mot, _ru, _rv, g_core, mask_opt, g_noise =
            Myseq.from_list (GPat.Motif.from_grid [mot] g_bgcolor g) in
@@ -3995,16 +4016,31 @@ module MyDomain : Madil.DOMAIN =
            aux [] [] ndim_seq vseq in
          Myseq.return (v, [|index, r_index|])
 
-      | Param (name, param), [||], 2, _, _ ->
-         let r_param = param.distrib in
-         let* v_param = Myseq.from_list param.values in
-         let r_body =
-           Ndseq.map ~depth:ndim 0 (* TODO Ndseq *)
-             (fun r -> `ParamRange (name, v_param, r))
-             r in
-         Myseq.return
-           (v, [| v_param, r_param;
-                  v, r_body |])
+      | Params nparams, [||], _, _, _ ->
+         let l = List.length nparams in
+         assert (l + 1 = k);
+         let names, params = List.split nparams in
+         let rs = Array.of_list (List.map (fun param -> param.distrib) params) in
+         let* lv_params =
+           Myseq.product
+             (List.map
+                (fun param -> Myseq.from_list param.values)
+                params) in
+         let vs = Array.of_list lv_params in
+         let r_body = `ParamsRange (List.combine names lv_params, r) in
+         let args =
+           Array.init k
+             (fun i ->
+               if i < l
+               then vs.(i), rs.(i)
+               else v, r_body) in
+         Myseq.return (v, args)
+
+      | c, _, _, _, `ParamsRange (params, `Seq (d, lr)) ->
+         (* from Params/Seq to Seq/Params *)
+         let lr = List.map (fun r -> `ParamsRange (params, r)) lr in
+         let r = `Seq (d, lr) in
+         parseur_pat t c src k v r
 
       | c, _, _, `Seq (d, lv), `Seq (_, lr) ->
          let v_ndim, args_ndim = constr_v_args_ndims c in
@@ -4177,7 +4213,7 @@ module MyDomain : Madil.DOMAIN =
            List.fold_left2
              (fun dl v r -> dl +. aux v r)
              0. lv lr
-        | _, `ParamRange (_, _, r_body) -> aux v r_body
+        | _, `ParamsRange (_, r_body) -> aux v r_body
         | _ ->
            pp_endline xp_value v;
            pp_endline xp_distrib r;
@@ -4224,7 +4260,7 @@ module MyDomain : Madil.DOMAIN =
       | SeqRepeat dep, [|enc_e|] -> enc_e
       | SeqRange, [|enc_start; enc_step|] -> enc_start +. enc_step
       | SeqIndex, [|enc_index|] -> enc_index
-      | Param (name,param), [|enc_param; enc_body|] -> enc_param +. enc_body
+      | Params params, _ -> Array.fold_left (+.) 0. encs
       | _ -> assert false
     let encoding_alt dl_choice enc = dl_choice +. enc
     let encoding_expr_value v = 0.
@@ -4289,7 +4325,7 @@ module MyDomain : Madil.DOMAIN =
       | SeqRepeat dep -> Mdl.Code.universal_int_star dep
       | SeqRange -> 0.
       | SeqIndex -> 0.
-      | Param (name,param) -> 0. (* nothing to encode, implicit from body constr *)
+      | Params params -> 0. (* nothing to encode, implicit from body constr *)
 
     let dl_periodicity_mode : Grid.Transf.periodicity_mode -> dl = function
       | `Total -> Mdl.Code.usage 0.25
@@ -5115,21 +5151,19 @@ module MyDomain : Madil.DOMAIN =
              let mode = `Connected in
              let param_seg = param_seg nocolor nmax mode in
              let param_order = param_order nocolor nmax mode in
-             let t_param_seg = {t with kind = PARAM (SEG, t.kind)} in
-             let t_param_order_seg = {t with kind = PARAM (ORDER nocolor, t_param_seg.kind)} in
-             (Model.make_pat t (Param ("seg", param_seg))
+             let t_param = {t with kind = PARAMS ([SEG; ORDER nocolor], t.kind)} in
+             (Model.make_pat t (Params ["seg", param_seg; "order", param_order])
                 [| Model.make_def var0 (Model.make_any {kind = SEG; ndim = 0});
-                   Model.make_pat t_param_seg (Param ("order", param_order))
-                     [| Model.make_def var0 (Model.make_any {kind = ORDER nocolor; ndim = 0});
-                        Model.make_pat t_param_order_seg (Objects (nmax, mode))
-                          [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
-                             Model.make_def var0 (Model.make_any {t with kind = INT NAT});
-                             Model.make_def var0
-                               (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                                  [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                                     Model.make_def var0 (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1}) |]);
-                             Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
-                             Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |] |])
+                   Model.make_def var0 (Model.make_any {kind = ORDER nocolor; ndim = 0});
+                   Model.make_pat t_param (Objects (nmax, mode))
+                     [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                        Model.make_def var0 (Model.make_any {t with kind = INT NAT});
+                        Model.make_def var0
+                          (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
+                             [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                                Model.make_def var0 (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1}) |]);
+                        Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                        Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |])
              :: refs
            else refs in
          let refs = (* Objects - SameColor *)
@@ -5138,32 +5172,30 @@ module MyDomain : Madil.DOMAIN =
              let mode = `SameColor in
              let param_seg = param_seg nocolor nmax mode in
              let param_order = param_order nocolor nmax mode in
-             let t_param_seg = {t with kind = PARAM (SEG, t.kind)} in
-             let t_param_order_seg = {t with kind = PARAM (ORDER nocolor, t_param_seg.kind)} in
-             (Model.make_pat t (Param ("seg", param_seg))
+             let t_param = {t with kind = PARAMS ([SEG; ORDER nocolor], t.kind)} in
+             (Model.make_pat t (Params ["seg", param_seg; "order", param_order])
                 [| Model.make_expr_const {kind = SEG; ndim = 0} (`Seg GPat.Objects.SameColor); (* TODO: remove constant param? *)
-                   Model.make_pat t_param_seg (Param ("order", param_order))
-                     [| Model.make_def var0 (Model.make_any {kind = ORDER nocolor; ndim = 0});
-                        Model.make_pat t_param_order_seg (Objects (nmax, mode))
-                          [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
-                             Model.make_def var0 (Model.make_any {t with kind = INT NAT});
-                             Model.make_def var0
-                               (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
-                                  [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
-                                     Model.make_def var0
-                                       (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
-                                          [| Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
-                                             Model.make_def var0 (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
-                             Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
-                             Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |] |])
+                   Model.make_def var0 (Model.make_any {kind = ORDER nocolor; ndim = 0});
+                   Model.make_pat t_param (Objects (nmax, mode))
+                     [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
+                        Model.make_def var0 (Model.make_any {t with kind = INT NAT});
+                        Model.make_def var0
+                          (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
+                             [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
+                                Model.make_def var0
+                                  (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
+                                     [| Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
+                                        Model.make_def var0 (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
+                        Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
+                        Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |])
              :: refs
            else refs in
          let refs = (* Object - Connected *)
            if filling <> `Full then
              let mode = `Connected in
              let param_seg = param_seg nocolor 1 mode in
-             let t_param = {t with kind = PARAM (SEG, t.kind)} in
-             (Model.make_pat t (Param ("seg", param_seg))
+             let t_param = {t with kind = PARAMS ([SEG], t.kind)} in
+             (Model.make_pat t (Params ["seg", param_seg])
                 [| Model.make_def var0 (Model.make_any {kind = SEG; ndim = 0});
                    Model.make_pat t_param (Object mode)
                      [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
@@ -5178,8 +5210,8 @@ module MyDomain : Madil.DOMAIN =
            if filling <> `Full && not nocolor then
              let mode = `SameColor in
              let param_seg = param_seg nocolor 1 mode in
-             let t_param = {t with kind = PARAM (SEG, t.kind)} in
-             (Model.make_pat t (Param ("seg", param_seg))
+             let t_param = {t with kind = PARAMS ([SEG], t.kind)} in
+             (Model.make_pat t (Params ["seg", param_seg])
                 [| Model.make_expr_const {kind = SEG; ndim = 0} (`Seg GPat.Objects.SameColor);
                    Model.make_pat t_param (Object mode)
                      [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
@@ -5197,8 +5229,8 @@ module MyDomain : Madil.DOMAIN =
            if filling <> `Full && nocolor then
              let mode = `SameColor in
              let param_seg = param_seg nocolor 1 mode in
-             let t_param = {t with kind = PARAM (SEG, t.kind)} in
-             (Model.make_pat t (Param ("seg", param_seg))
+             let t_param = {t with kind = PARAMS ([SEG], t.kind)} in
+             (Model.make_pat t (Params ["seg", param_seg])
                 [| Model.make_expr_const {kind = SEG; ndim = 0} (`Seg GPat.Objects.SameColor);
                    Model.make_pat t_param (Object mode)
                      [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
@@ -5256,12 +5288,12 @@ module MyDomain : Madil.DOMAIN =
            else refs in
          let refs = (* MotifMulti *)
            let param_mot = param_motif GPat.Motif.candidates_multi in
-           let t_param = {t with kind = PARAM (MOTIF MULTI, t.kind)} in
+           let t_param = {t with kind = PARAMS ([MOTIF MULTI], t.kind)} in
            let t_mask = {t with kind = GRID (`Sprite,true)} in
            let$ refs, partial = refs, (match filling with
                                        | `Full -> [false]
                                        | _ -> [false; true]) in
-           (Model.make_pat t (Param ("motif", param_mot))
+           (Model.make_pat t (Params ["motif", param_mot])
               [| Model.make_def var0 (Model.make_any {kind = MOTIF MULTI; ndim = 0});
                  Model.make_pat t_param (MotifMulti partial)
                    [| Model.make_def var0 (Model.make_any {t with kind = GRID ((if filling = `Noise then `Sprite else filling), nocolor)});
@@ -5275,12 +5307,12 @@ module MyDomain : Madil.DOMAIN =
            :: refs in
          let refs = (* MotifBi *)
            let param_mot = param_motif GPat.Motif.candidates_bi in
-           let t_param = {t with kind = PARAM (MOTIF BI, t.kind)} in
+           let t_param = {t with kind = PARAMS ([MOTIF BI], t.kind)} in
            let t_mask = {t with kind = GRID (`Sprite,true)} in
            let$ refs, partial = refs, (match filling with
                                        | `Full -> [false]
                                        | _ -> [false; true]) in
-           (Model.make_pat t (Param ("motif", param_mot))
+           (Model.make_pat t (Params ["motif", param_mot])
               [| Model.make_def var0 (Model.make_any {kind = MOTIF BI; ndim = 0});
                  Model.make_pat t_param (MotifBi partial)
                    [| Model.make_def var0 (Model.make_any {t with kind = COLOR (C_BG (filling = `Full))});
