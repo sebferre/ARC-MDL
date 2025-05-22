@@ -711,13 +711,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
-      | `Average_n (* on Int, Vec *)
+      | `Average_n (* on Int, Vec *) (* TODO: make an aggregate *)
       | `Span_2 (* on Vec *)
       | `Norm_1 (* Vec -> Int *)
       | `Diag1_1 of int (* Vec -> Int *)
       | `Diag2_1 of int (* Vec -> Int *)
       | `LogNot_1 (* on Mask *)
-      | `Stack_n (* on Grids *)
+      | `Stack_n (* on Grids *) (* TODO: make an aggregate *)
       | `Area_1 (* on Shape *)
       | `Left_1 (* on Obj, Grid *)
       | `Right_1 (* on Obj, Grid *)
@@ -1443,8 +1443,6 @@ module MyDomain : Madil.DOMAIN =
 
     let value_of_bool b = `Bool b
       
-    exception Invalid_expr of string
-            
     module Funct =
       struct
 
@@ -1458,62 +1456,32 @@ module MyDomain : Madil.DOMAIN =
           | `Rotate90 -> Grid.Transf.rotate90
           | `Rotate270 -> Grid.Transf.rotate270
 
-        let apply_symmetry_vec (sym : symmetry) (tv : typ_vec) e (d1 : value) : value result =
-(*  let sym_pos d = (* symmetry of a point relative to the grid *)
-    let p_grid_size = `Field (`Size, `Root) in
-    match lookup p_grid_size, d with (* getting the grid size *)
-    | Result.Ok (`Vec (`Int h, `Int w)), `Vec (`Int i, `Int j) ->
-       let i', j' =
-         match sym with
-         | `Id -> i, j
-         | `FlipHeight -> h-1-i, j
-         | `FlipWidth -> i, w-1-j
-         | `FlipDiag1 -> j, i
-         | `FlipDiag2 -> w-1-j, h-1-i
-         | `Rotate180 -> h-1-i, w-1-j
-         | `Rotate90 -> j, h-1-i
-         | `Rotate270 -> w-1-j, i in
-       `Vec (`Int i', `Int j')
-    | _ -> assert false in *)
-          let sym_size = function
-            | `Vec (h,w) ->
-               let h', w' =
-                 match sym with
-                 | `Id | `FlipHeight | `FlipWidth | `Rotate180 -> h, w
-                 | `FlipDiag1 | `FlipDiag2 | `Rotate90 | `Rotate270 -> w, h in
-               `Vec (h', w')
-            | _ -> assert false in
-          let sym_move = function (* symmetry relative to position (0,0) *)
-            | `Vec (i, j) ->
-               let i', j' =
-                 match sym with
-                 | `Id -> i, j
-                 | `FlipHeight -> -i, j
-                 | `FlipWidth -> i, -j
-                 | `FlipDiag1 -> j, i
-                 | `FlipDiag2 -> -j, -i
-                 | `Rotate180 -> -i, -j
-                 | `Rotate90 -> j, -i
-                 | `Rotate270 -> -j, i in
-               `Vec (i', j')
-            | _ -> assert false
+        let apply_symmetry_vec (sym : symmetry) (tv : typ_vec) (i : int) (j : int) : value result =
+          let sym_size i j =
+            let h, w = i, j in
+            let h', w' =
+              match sym with
+              | `Id | `FlipHeight | `FlipWidth | `Rotate180 -> h, w
+              | `FlipDiag1 | `FlipDiag2 | `Rotate90 | `Rotate270 -> w, h in
+            `Vec (h', w') in
+          let sym_move i j = (* symmetry relative to position (0,0) *)
+            let i', j' =
+              match sym with
+              | `Id -> i, j
+              | `FlipHeight -> -i, j
+              | `FlipWidth -> i, -j
+              | `FlipDiag1 -> j, i
+              | `FlipDiag2 -> -j, -i
+              | `Rotate180 -> -i, -j
+              | `Rotate90 -> j, -i
+              | `Rotate270 -> -j, i in
+            `Vec (i', j')
           in
-          match tv, d1 with
-  (*  | POS, _ -> Result.Ok (sym_pos d1) *)
-          | SIZE, _ -> Result.Ok (sym_size d1)
-          | MOVE, _ -> Result.Ok (sym_move d1)
-          | _ -> Result.Error (Invalid_expr e)
+          match tv with
+          | SIZE -> Result.Ok (sym_size i j)
+          | MOVE -> Result.Ok (sym_move i j)
+          | POS -> Result.Error (Undefined_result "apply_symmetry_vec: only SIZE and MOVE")
         
-        let apply_symmetry_grid (sym : symmetry) e (d1 : value) : value result =
-          match d1 with
-          | `Obj (`Vec (i, j), `Grid g1) ->
-             let g1' = grid_sym sym g1 in
-             Result.Ok (`Obj (`Vec (i, j), `Grid g1')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
-          | `Grid g ->
-             let g' = grid_sym sym g in
-             Result.Ok (`Grid g')
-          | _ -> Result.Error (Invalid_expr e)
-
         let unfold_any
               (concatHeight : 'a -> 'a -> 'a result)
               (concatWidth : 'a -> 'a -> 'a result)
@@ -1545,17 +1513,6 @@ module MyDomain : Madil.DOMAIN =
           unfold_any Grid.Transf.concatHeight Grid.Transf.concatWidth grid_sym sym_matrix g
         let unfold_grid, reset_unfold_grid =
           Memo.memoize2 ~size:101 unfold_grid
-          
-        let rec unfold_symmetry (sym_matrix : symmetry list list) : _ -> value -> value result =
-          fun e d ->
-          match d with
-          | `Grid g ->
-             let| g' = unfold_grid sym_matrix g in
-             Result.Ok (`Grid g')
-          | `Obj (`Vec (i, j), `Grid g1) ->
-             let| g1 = unfold_grid sym_matrix g1 in
-             Result.Ok (`Obj (`Vec (i, j), `Grid g1))
-          | _ -> Result.Error (Invalid_expr e)
 
         let close_any
               (stack : 'a list -> 'a result)
@@ -1578,408 +1535,255 @@ module MyDomain : Madil.DOMAIN =
         let close_grid, reset_close_grid =
           Memo.memoize3 ~size:101 close_grid
 
-        let rec close_symmetry (sym_seq : symmetry list) (bgcolor : Grid.color) =
-          fun e d ->
-          match d with
-          | `Grid g ->
-             let| g' = close_grid sym_seq bgcolor g in
-             Result.Ok (`Grid g')
-          | `Obj (`Vec (i, j), `Grid g1) ->
-             let| g1 = close_grid sym_seq bgcolor g1 in
-             Result.Ok (`Obj (`Vec (i, j), `Grid g1))
-          | _ -> Result.Error (Invalid_expr e)
-
         let reset_memoized_functions_apply () =
           reset_unfold_grid ();
           reset_close_grid ()
   
       end
 
-    let eval_func_itemwise : func_itemwise -> (value array -> value result) =
-      let e = "" in
-      function
-      | `Plus_2 ->
-         (function
-          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
-          | [| `Vec (i1,j1); `Vec (i2,j2)|] -> Result.Ok (`Vec (i1+i2, j1+j2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Minus_2 ->
-         (function
-          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1-i2))
-          | [| `Vec (i1, j1); `Vec (i2, j2)|] -> Result.Ok (`Vec (i1-i2, j1-j2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Modulo_2 ->
-         (function
-          | [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 mod i2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ScaleUp_2 ->
-         (function
-          | [| d1; `Int 0|] -> Result.Error (Invalid_argument "ScaleUp: k=0") 
-          | [| d1; `Int k|] ->
-             assert (k > 0);
-             ( match d1 with
-               | `Int i -> Result.Ok (`Int (i * k))
-               | `Vec (i,j) -> Result.Ok (`Vec (i * k, j * k))
-               | `Grid g ->
-                  let| g' = Grid.Transf.scale_up k k g in
-                  Result.Ok (`Grid g')
-               | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ScaleDown_2 ->
-         (function
-          | [| d1; `Int 0|] -> Result.Error (Invalid_argument "ScaleDown: k=0") 
-          | [| d1; `Int k|] ->
-             assert (k > 0);
-             (match d1 with
-              | `Int i1 ->
-                 let rem = i1 mod k in
-                 if rem = 0 || rem = k - 1 (* account for separators *)
-                 then Result.Ok (`Int (i1 / k))
-                 else Result.Error (Undefined_result "ScaleDown: not an integer")
-              | `Vec (i1, j1) ->
-                 let remi, remj = i1 mod k, j1 mod k in
-                  if remi = remj && (remi = 0 || remi = k-1) (* account for separators *)
-                  then Result.Ok (`Vec (i1 / k, j1 / k))
-                  else Result.Error (Undefined_result "ScaleDown: not an integer")
-              | `Grid g ->
-                 let| g' = Grid.Transf.scale_down k k g in
-                 Result.Ok (`Grid g')
-              | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ScaleTo_2 ->
-         (function
-          | [| `Grid g; (`Vec (new_h, new_w))|] ->
-             let| g' = Grid.Transf.scale_to new_h new_w g in
-             Result.Ok (`Grid g')
-          | _ -> Result.Error (Invalid_expr e))
-      | `I_1 ->
-         (function
-          | [| `Vec (i,j)|] -> Result.Ok (`Int i)
-          | _ -> Result.Error (Invalid_expr e))
-      | `J_1 ->
-         (function
-          | [| `Vec (i,j)|] -> Result.Ok (`Int j)
-          | _ -> Result.Error (Invalid_expr e))
-      | `IJTranspose_1 ->
-         (function
-          | [| `Int ij|] -> Result.Ok (`Int ij)
-          | [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Direction_1 ->
+    let eval_func_itemwise (f : func_itemwise) (args : value array) : value result =
+      let pp_params () =
+        print_string "eval_func: ";
+        pp xp_func (f :> func);
+        Array.iteri
+          (fun i arg ->
+            if i > 0 then print_string ", ";
+            pp xp_value arg)
+          args;
+        print_endline ")"        
+      in
+      match f, args with
+      | `Plus_2, [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
+      | `Plus_2, [| `Vec (i1,j1); `Vec (i2,j2)|] -> Result.Ok (`Vec (i1+i2, j1+j2))
+      | `Minus_2, [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1-i2))
+      | `Minus_2, [| `Vec (i1, j1); `Vec (i2, j2)|] -> Result.Ok (`Vec (i1-i2, j1-j2))
+      | `Modulo_2, [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 mod i2))
+      | `ScaleUp_2, [| `Int i; `Int k|] when k <> 0 -> Result.Ok (`Int (i * k))
+      | `ScaleUp_2, [| `Vec (i,j); `Vec (k,l)|] when k <> 0 && l <> 9 -> Result.Ok (`Vec (i * k, j * l))
+      | `ScaleUp_2, [| `Grid g; `Int k|] when k > 0 ->
+         let| g' = Grid.Transf.scale_up k k g in
+         Result.Ok (`Grid g')
+      | `ScaleDown_2, [| `Int i1; `Int k|] when k <> 0 ->
+         let rem = i1 mod k in
+         if rem = 0 || rem = k - 1 (* account for separators *)
+         then Result.Ok (`Int (i1 / k))
+         else Result.Error (Undefined_result "ScaleDown: not an integer")
+      | `ScaleDown_2, [| `Vec (i1, j1); `Vec (k,l)|] when k <> 0 && l <> 0 ->
+         let remi, remj = i1 mod k, j1 mod l in
+         if (remi = 0 || remi = k-1) && (remj = 0 || remj = l-1) (* account for separators *)
+         then Result.Ok (`Vec (i1 / k, j1 / l))
+         else Result.Error (Undefined_result "ScaleDown: not an integer")
+      | `ScaleDown_2, [| `Grid g; `Int k|] when k > 0 ->
+         let| g' = Grid.Transf.scale_down k k g in
+         Result.Ok (`Grid g')
+      | `ScaleTo_2, [| `Grid g; (`Vec (new_h, new_w))|] ->
+         let| g' = Grid.Transf.scale_to new_h new_w g in
+         Result.Ok (`Grid g')
+      | `I_1, [| `Vec (i,j)|] -> Result.Ok (`Int i)
+      | `J_1, [| `Vec (i,j)|] -> Result.Ok (`Int j)
+      | `IJTranspose_1, [| `Int ij|] -> Result.Ok (`Int ij)
+      | `IJTranspose_1, [| `Vec (i,j)|] -> Result.Ok (`Vec (j,i))
+      | `Direction_1, [| `Int ij|] ->
          let dir ij = if ij = 0 then 0 else ij / abs ij [@@inline] in
-         (function
-          | [| `Int ij|] -> Result.Ok (`Int (dir ij))
-          | [| `Vec (i,j)|] -> Result.Ok (`Vec (dir i, dir j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Abs_1 ->
-         (function
-          | [| `Int ij|] -> Result.Ok (`Int (abs ij))
-          | [| `Vec (i,j)|] -> Result.Ok (`Vec (abs i, abs j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `AsTVec_1 POS ->
-         (function
-          | [| `Int ij|] when ij >= 0 -> Result.Ok (`Int ij)
-          | [| `Vec (i,j)|] when i >= 0 && j >= 0 -> Result.Ok (`Vec (i,j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `AsTVec_1 SIZE ->
-         (function
-          | [| `Int ij|] when ij >= 1 -> Result.Ok (`Int ij)
-          | [| `Vec (i,j)|] when i >= 1 && j >= 1 -> Result.Ok (`Vec (i,j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `AsTVec_1 MOVE ->
-         (function
-          | [| `Int ij|] -> Result.Ok (`Int ij)
-          | [| `Vec (i,j)|] -> Result.Ok (`Vec (i,j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Pos_1 ->
-         (function
-          | [| `Obj (pos, _)|] -> Result.Ok (pos :> value)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Grid_1 ->
-         (function
-          | [| `Obj (pos,g1)|] -> Result.Ok g1
-          | _ -> Result.Error (Invalid_expr e))    
-      | `Size_1 ->
-         (function
-          | [|`Grid g|] ->
-             let h, w = Grid.dims g in
-             Result.Ok (`Vec (h, w))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Crop_2 ->
-         (function
-          | [| `Grid g; `Obj (`Vec (ri, rj), `Grid shape)|] ->
-             let| c = Grid.majority_color Grid.transparent shape in
-             if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
-             then
-               let rh, rw = Grid.dims shape in
-               let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
-               let| g' = Grid.Transf.crop g i j h w in
-               Result.Ok (`Grid g')
-             else Result.Error (Invalid_expr e)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Strip_1 ->
-         (function
-          | [| `Grid g|] ->
-             (*let| bgcolor = Grid.majority_color Grid.transparent g in*)
-             let| i, j, _, _, g1 = Grid.Transf.strip Grid.transparent g Grid.transparent in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g1))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Corner_2 ->
-         (function
-          | [| `Vec (i1, j1); `Vec (i2, j2)|] ->
-             if i1 <> i2 && j1 <> j2
-             then Result.Ok (`Vec (i1, j2))
-             else Result.Error (Undefined_result "Corner: vectors on same row/column")
-          | _ -> Result.Error (Invalid_expr e))
-      | `Average_n ->
-         (fun ds ->
-           let| is_int,is_vec,n,sumi,sumj =
-             ds
-             |> Array.fold_left
-                  (fun res t ->
-                    let| is_int,is_vec,n,sumi,sumj = res in
-                    match t with
-                    | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
-                    | `Vec (i, j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
-                    | _ -> Result.Error (Invalid_expr e))
-                  (Result.Ok (false, false, 0, 0, 0)) in
-           (match is_int, is_vec with
-            | true, false ->
-               if sumi mod n = 0
-               then Result.Ok (`Int (sumi / n))
-               else Result.Error (Undefined_result "Average: not an integer")
-            | false, true ->
-               if sumi mod n = 0 && sumj mod n = 0
-               then Result.Ok (`Vec (sumi / n, sumj / n))
-               else Result.Error (Undefined_result "Average: not an integer")
-            | _ -> assert false)) (* empty or ill-typed list *)
-      | `Span_2 ->
-         (function
-          | [| `Int i1; `Int i2|] ->
-             if i1=i2
-             then Result.Error (Undefined_result "Span: same int")
-             else Result.Ok (`Int (abs (i2-i1) + 1))
-          | [| `Vec (i1, j1); `Vec (i2, j2)|] ->
-             if i1=i2 && j1=j2
-             then Result.Error (Undefined_result "Span: same vector")
-             else Result.Ok (`Vec (abs (i2-i1) + 1, abs (j2-j1) + 1))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Norm_1 ->
-         (function
-          | [| `Vec (i, j)|] -> Result.Ok (`Int (abs i + abs j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Diag1_1 k ->
-         (function
-          | [| `Vec (i, j)|] -> Result.Ok (`Int ((i+j) mod k))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Diag2_1 k ->
-         (function
-          | [| `Vec (i, j)|] -> Result.Ok (`Int ((i-j) mod k))
-          | _ -> Result.Error (Invalid_expr e))
-      | `LogNot_1 ->
-         (function
-          | [| `Grid m1|] ->
-             let m = Grid.Mask.compl m1 in
-             Result.Ok (`Grid m)
-             | _ -> Result.Error (Invalid_expr e))
-      | `Stack_n ->
-         (fun ds ->
-           let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) ds in
-           let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
-           Result.Ok (`Grid g))
-      | `Area_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Int (Grid.color_area Grid.transparent g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Left_1 ->
-         (function
-          | [| `Obj (`Vec (_, j), _)|] -> Result.Ok (`Int j)
-          | [| `Grid g |] -> Result.Ok (`Int 0)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Right_1 ->
-         (function
-          | [| `Obj (`Vec (_, j), `Grid shape)|] ->
-             let h, w = Grid.dims shape in
-             Result.Ok (`Int (j+w-1))
-          | [| `Grid g |] ->
-             let h, w = Grid.dims g in
-             Result.Ok (`Int (w - 1))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Center_1 ->
-         (function
-          | [| `Obj (`Vec (_, j), `Grid shape)|] ->
-             let h, w = Grid.dims shape in
-             if w mod 2 = 0
-             then Result.Error (Undefined_result "Center: no center, even width")
-             else Result.Ok (`Int (j + w/2))
-          | [| `Grid g |] ->
-             let h, w = Grid.dims g in
-             if w mod 2 = 0
-             then Result.Error (Undefined_result "Center: no center, even width")
-             else Result.Ok (`Int (w/2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Top_1 ->
-         (function
-          | [| `Obj (`Vec (i, _), _) |] -> Result.Ok (`Int i)
-          | [| `Grid g |] -> Result.Ok (`Int 0)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Bottom_1 ->
-         (function
-          | [| `Obj (`Vec (i, _), `Grid shape)|] ->
-             let h, w = Grid.dims shape in
-             Result.Ok (`Int (i+h-1))
-          | [| `Grid g |] ->
-             let h, w = Grid.dims g in
-             Result.Ok (`Int (h - 1))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Middle_1 ->
-         (function
-          | [| `Obj (`Vec (i, _), `Grid shape)|] ->
-             let h, w = Grid.dims shape in
-             if h mod 2 = 0
-             then Result.Error (Undefined_result "Middle: no middle, even height")
-             else Result.Ok (`Int (i + h/2))
-          | [| `Grid g |] ->
-             let h, w = Grid.dims g in
-             if h mod 2 = 0
-             then Result.Error (Undefined_result "Middle: no middle, even height")
-             else Result.Ok (`Int (h/2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `MiddleCenter_1 ->
-         (function
-          | [| `Obj (`Vec (i, j), `Grid shape)|] ->
-             let h, w = Grid.dims shape in
-             if h mod 2 = 0 || w mod 2 = 0
-             then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
-             else Result.Ok (`Vec (i + h/2, j + w/2))
-          | [| `Grid g |] ->
-             let h, w = Grid.dims g in
-             if h mod 2 = 0 || w mod 2 = 0
-             then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
-             else Result.Ok (`Vec (h/2, w/2))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ProjI_1 ->
-         (function
-          | [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
-          | _ -> Result.Error (Invalid_expr e))
-      | `ProjJ_1 ->
-         (function
-          | [| `Vec (_, j)|] -> Result.Ok (`Vec (0, j))
-          | _ -> Result.Error (Invalid_expr e))
-      | `MaskOfGrid_1 ->
-         (function
-          | [| `Grid g|] -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.transparent g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `GridOfMask_2 ->
-         (function
-          | [| `Grid m; `Color c|] ->
-             Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Tiling_1 (k,l) ->
-         (function
-          | [| `Vec (h, w)|] -> Result.Ok (`Vec (h*k, w*l))
-          | [| `Grid g|] ->
-             let| g' = Grid.Transf.tile k l g in
-             Result.Ok (`Grid g')
-          | _ -> Result.Error (Invalid_expr e))
-      | `Border_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Grid (Grid.Transf.border Grid.transparent g))
-          | [| `Obj (`Vec (i,j), `Grid g)|] ->
-             let| i, j, g = Grid.Transf.border_at_pos Grid.transparent (i,j) g in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Interior_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Grid (Grid.Transf.interior Grid.transparent g))
-          | [| `Obj (`Vec (i,j), `Grid g)|] ->
-             let| i, j, g = Grid.Transf.interior_at_pos Grid.transparent (i,j) g in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `DNeighbors_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Grid (Grid.Transf.dneighbors Grid.transparent g))
-          | [| `Obj (`Vec (i,j), `Grid g)|] ->
-             let| i, j, g = Grid.Transf.dneighbors_at_pos Grid.transparent (i,j) g in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `INeighbors_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Grid (Grid.Transf.ineighbors Grid.transparent g))
-          | [| `Obj (`Vec (i,j), `Grid g)|] ->
-             let| i, j, g = Grid.Transf.ineighbors_at_pos Grid.transparent (i,j) g in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g))
-          | _ -> Result.Error (Invalid_expr e))
-      | `Neighbors_1 ->
-         (function
-          | [| `Grid g|] ->
-             Result.Ok (`Grid (Grid.Transf.neighbors Grid.transparent g))
-          | [| `Obj (`Vec (i,j), `Grid g)|] ->
-             let| i, j, g = Grid.Transf.neighbors_at_pos Grid.transparent (i,j) g in
-             Result.Ok (`Obj (`Vec (i,j), `Grid g))
-          | _ -> Result.Error (Invalid_expr e))             
-      | `Unrepeat_1 ->
-         (function
-          | [| `Grid g|] ->
-             (match Grid_patterns.parse_repeat g with
-              | Some (g1,_,_) -> Result.Ok (`Grid g1)
-              | None -> Result.Error (Invalid_expr e))             
-          | _ -> Result.Error (Invalid_expr e))
-      | `PeriodicFactor_2 mode ->
-         (function
-          | [| `Color bgcolor; d2|] ->
-             (match d2 with
-              | `Grid g ->
-                 let| g' = Grid.Transf.periodic_factor mode bgcolor g in
-                 Result.Ok (`Grid g')
-              | `Obj (pos, `Grid shape) ->
-                 let| shape' = Grid.Transf.periodic_factor mode bgcolor shape in
-                 Result.Ok (`Obj (pos, `Grid shape'))
-              | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `FillResizeAlike_3 mode ->
-         (function
-          | [| `Color bgcolor; `Vec (h, w); d3|] when h > 0 && w > 0 ->
-             let new_size = h, w in
-             (match d3 with
-              | `Grid g ->
-                 let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size g in
-                 Result.Ok (`Grid g')
-              | `Obj (pos, `Grid shape) ->
-                 let| shape' = Grid.Transf.fill_and_resize_alike mode bgcolor new_size shape in
-                 Result.Ok (`Obj (pos, `Grid shape'))
-              | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `SelfCompose_3 ->
-         (function
-          | [| `Color bgcolor; `Color c_mask; `Grid g1|] ->
-             let| g = Grid.Transf.compose bgcolor c_mask g1 g1 in
-             Result.Ok (`Grid g)
-          | _ -> Result.Error (Invalid_expr e))
-      | `ApplySymVec_1 (sym,tv) ->
-         (function
-          | [|d1|] -> Funct.apply_symmetry_vec sym tv e d1
-          | _ -> Result.Error (Invalid_expr e))
-      | `ApplySymGrid_1 sym ->
-         (function
-          | [|d1|] -> Funct.apply_symmetry_grid sym e d1
-          | _ -> Result.Error (Invalid_expr e))
-      | `UnfoldSym_1 sym_matrix ->
-         (function
-          | [|d1|] -> Funct.unfold_symmetry sym_matrix e d1
-          | _ -> Result.Error (Invalid_expr e))
-      | `CloseSym_2 sym_matrix ->
-         (function
-          | [| `Color bgcolor; d2|] -> Funct.close_symmetry sym_matrix bgcolor e d2
-          | _ -> Result.Error (Invalid_expr e))
-      | `TranslationSym_2 sym ->
-         (function
-          | [|d1;d2|] ->
+         Result.Ok (`Int (dir ij))
+      | `Direction_1, [| `Vec (i,j)|] ->
+         let dir ij = if ij = 0 then 0 else ij / abs ij [@@inline] in
+         Result.Ok (`Vec (dir i, dir j))
+      | `Abs_1, [| `Int ij|] -> Result.Ok (`Int (abs ij))
+      | `Abs_1, [| `Vec (i,j)|] -> Result.Ok (`Vec (abs i, abs j))
+      | `AsTVec_1 POS, [| `Int ij|] when ij >= 0 -> Result.Ok (`Int ij)
+      | `AsTVec_1 POS, [| `Vec (i,j)|] when i >= 0 && j >= 0 -> Result.Ok (`Vec (i,j))
+      | `AsTVec_1 SIZE, [| `Int ij|] when ij >= 1 -> Result.Ok (`Int ij)
+      | `AsTVec_1 SIZE, [| `Vec (i,j)|] when i >= 1 && j >= 1 -> Result.Ok (`Vec (i,j))
+      | `AsTVec_1 MOVE, [| `Int ij|] -> Result.Ok (`Int ij)
+      | `AsTVec_1 MOVE, [| `Vec (i,j)|] -> Result.Ok (`Vec (i,j))
+      | `Pos_1, [| `Obj (pos, _)|] -> Result.Ok (pos :> value)
+      | `Grid_1, [| `Obj (pos,g1)|] -> Result.Ok g1
+      | `Size_1, [| `Grid g|] ->
+         let h, w = Grid.dims g in
+         Result.Ok (`Vec (h, w))
+      | `Crop_2, [| `Grid g; `Obj (`Vec (ri, rj), `Grid shape)|] ->
+         let| c = Grid.majority_color Grid.transparent shape in
+         if Mask_model.matches (Grid.Mask.from_grid_color c shape) `Border (* TODO: allow crop on Full rectangles as well ? *)
+         then
+           let rh, rw = Grid.dims shape in
+           let i, j, h, w = ri+1, rj+1, rh-2, rw-2 in (* inside border *)
+           let| g' = Grid.Transf.crop g i j h w in
+           Result.Ok (`Grid g')
+         else Result.Error (Undefined_result "crop: invalid shape")
+      | `Strip_1, [| `Grid g|] ->
+         (*let| bgcolor = Grid.majority_color Grid.transparent g in*)
+         let| i, j, _, _, g1 = Grid.Transf.strip Grid.transparent g Grid.transparent in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g1))
+      | `Corner_2, [| `Vec (i1, j1); `Vec (i2, j2)|] ->
+         if i1 <> i2 && j1 <> j2
+         then Result.Ok (`Vec (i1, j2))
+         else Result.Error (Undefined_result "Corner: vectors on same row/column")
+      | `Average_n, _ ->
+         let| is_int,is_vec,n,sumi,sumj =
+           args
+           |> Array.fold_left
+                (fun res t ->
+                  let| is_int,is_vec,n,sumi,sumj = res in
+                  match t with
+                  | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
+                  | `Vec (i, j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
+                  | _ -> Result.Error (Undefined_result "average_n: expects ints and vecs"))
+                (Result.Ok (false, false, 0, 0, 0)) in
+         (match is_int, is_vec with
+          | true, false ->
+             if sumi mod n = 0
+             then Result.Ok (`Int (sumi / n))
+             else Result.Error (Undefined_result "Average: not an integer")
+          | false, true ->
+             if sumi mod n = 0 && sumj mod n = 0
+             then Result.Ok (`Vec (sumi / n, sumj / n))
+             else Result.Error (Undefined_result "Average: not an integer")
+          | _ -> assert false) (* empty or ill-typed list *)
+      | `Span_2, [| `Int i1; `Int i2|] ->
+         if i1=i2
+         then Result.Error (Undefined_result "Span: same int")
+         else Result.Ok (`Int (abs (i2-i1) + 1))
+      | `Span_2, [| `Vec (i1, j1); `Vec (i2, j2)|] ->
+         if i1=i2 && j1=j2
+         then Result.Error (Undefined_result "Span: same vector")
+         else Result.Ok (`Vec (abs (i2-i1) + 1, abs (j2-j1) + 1))
+      | `Norm_1, [| `Vec (i, j)|] -> Result.Ok (`Int (abs i + abs j))
+      | `Diag1_1 k, [| `Vec (i, j)|] -> Result.Ok (`Int ((i+j) mod k))
+      | `Diag2_1 k, [| `Vec (i, j)|] -> Result.Ok (`Int ((i-j) mod k))
+      | `LogNot_1, [| `Grid m1|] ->
+         let m = Grid.Mask.compl m1 in
+         Result.Ok (`Grid m)
+      | `Stack_n, _ ->
+         let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) args in
+         let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
+         Result.Ok (`Grid g)
+      | `Area_1, [| `Grid g|] ->
+         Result.Ok (`Int (Grid.color_area Grid.transparent g))
+      | `Left_1, [| `Obj (`Vec (_, j), _)|] -> Result.Ok (`Int j)
+      | `Left_1, [| `Grid g |] -> Result.Ok (`Int 0)
+      | `Right_1, [| `Obj (`Vec (_, j), `Grid shape)|] ->
+         let h, w = Grid.dims shape in
+         Result.Ok (`Int (j+w-1))
+      | `Right_1, [| `Grid g |] ->
+         let h, w = Grid.dims g in
+         Result.Ok (`Int (w - 1))
+      | `Center_1, [| `Obj (`Vec (_, j), `Grid shape)|] ->
+         let h, w = Grid.dims shape in
+         if w mod 2 = 0
+         then Result.Error (Undefined_result "Center: no center, even width")
+         else Result.Ok (`Int (j + w/2))
+      | `Center_1, [| `Grid g |] ->
+         let h, w = Grid.dims g in
+         if w mod 2 = 0
+         then Result.Error (Undefined_result "Center: no center, even width")
+         else Result.Ok (`Int (w/2))
+      | `Top_1, [| `Obj (`Vec (i, _), _) |] -> Result.Ok (`Int i)
+      | `Top_1, [| `Grid g |] -> Result.Ok (`Int 0)
+      | `Bottom_1, [| `Obj (`Vec (i, _), `Grid shape)|] ->
+         let h, w = Grid.dims shape in
+         Result.Ok (`Int (i+h-1))
+      | `Bottom_1, [| `Grid g |] ->
+         let h, w = Grid.dims g in
+         Result.Ok (`Int (h - 1))
+      | `Middle_1, [| `Obj (`Vec (i, _), `Grid shape)|] ->
+         let h, w = Grid.dims shape in
+         if h mod 2 = 0
+         then Result.Error (Undefined_result "Middle: no middle, even height")
+         else Result.Ok (`Int (i + h/2))
+      | `Middle_1, [| `Grid g |] ->
+         let h, w = Grid.dims g in
+         if h mod 2 = 0
+         then Result.Error (Undefined_result "Middle: no middle, even height")
+         else Result.Ok (`Int (h/2))
+      | `MiddleCenter_1, [| `Obj (`Vec (i, j), `Grid shape)|] ->
+         let h, w = Grid.dims shape in
+         if h mod 2 = 0 || w mod 2 = 0
+         then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
+         else Result.Ok (`Vec (i + h/2, j + w/2))
+      | `MiddleCenter_1, [| `Grid g |] ->
+         let h, w = Grid.dims g in
+         if h mod 2 = 0 || w mod 2 = 0
+         then Result.Error (Undefined_result "MiddleCenter: no middle or no center, even height or width")
+         else Result.Ok (`Vec (h/2, w/2))
+      | `ProjI_1, [| `Vec (i, _)|] -> Result.Ok (`Vec (i, 0))
+      | `ProjJ_1, [| `Vec (_, j)|] -> Result.Ok (`Vec (0, j))
+      | `MaskOfGrid_1, [| `Grid g|] -> Result.Ok (`Grid (Grid.Mask.from_grid_background Grid.transparent g))
+      | `GridOfMask_2, [| `Grid m; `Color c|] ->
+         Result.Ok (`Grid (Grid.Mask.to_grid m Grid.black c)) (* TODO: improve *)
+      | `Tiling_1 (k,l), [| `Vec (h, w)|] -> Result.Ok (`Vec (h*k, w*l))
+      | `Tiling_1 (k,l), [| `Grid g|] ->
+         let| g' = Grid.Transf.tile k l g in
+         Result.Ok (`Grid g')
+      | `Border_1, [| `Grid g|] ->
+         Result.Ok (`Grid (Grid.Transf.border Grid.transparent g))
+      | `Border_1, [| `Obj (`Vec (i,j), `Grid g)|] ->
+         let| i, j, g = Grid.Transf.border_at_pos Grid.transparent (i,j) g in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g))
+      | `Interior_1, [| `Grid g|] ->
+         Result.Ok (`Grid (Grid.Transf.interior Grid.transparent g))
+      | `Interior_1, [| `Obj (`Vec (i,j), `Grid g)|] ->
+         let| i, j, g = Grid.Transf.interior_at_pos Grid.transparent (i,j) g in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g))
+      | `DNeighbors_1, [| `Grid g|] ->
+         Result.Ok (`Grid (Grid.Transf.dneighbors Grid.transparent g))
+      | `DNeighbors_1, [| `Obj (`Vec (i,j), `Grid g)|] ->
+         let| i, j, g = Grid.Transf.dneighbors_at_pos Grid.transparent (i,j) g in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g))
+      | `INeighbors_1, [| `Grid g|] ->
+         Result.Ok (`Grid (Grid.Transf.ineighbors Grid.transparent g))
+      | `INeighbors_1, [| `Obj (`Vec (i,j), `Grid g)|] ->
+         let| i, j, g = Grid.Transf.ineighbors_at_pos Grid.transparent (i,j) g in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g))
+      | `Neighbors_1, [| `Grid g|] ->
+         Result.Ok (`Grid (Grid.Transf.neighbors Grid.transparent g))
+      | `Neighbors_1, [| `Obj (`Vec (i,j), `Grid g)|] ->
+         let| i, j, g = Grid.Transf.neighbors_at_pos Grid.transparent (i,j) g in
+         Result.Ok (`Obj (`Vec (i,j), `Grid g))
+      | `Unrepeat_1, [| `Grid g|] ->
+         (match Grid_patterns.parse_repeat g with
+          | Some (g1,_,_) -> Result.Ok (`Grid g1)
+          | None -> Result.Error (Undefined_result "unrepeat: invalid grid"))             
+      | `PeriodicFactor_2 mode, [| `Color bgcolor; `Grid g|] ->
+         let| g' = Grid.Transf.periodic_factor mode bgcolor g in
+         Result.Ok (`Grid g')
+      | `PeriodicFactor_2 mode, [| `Color bgcolor; `Obj (pos, `Grid shape)|] ->
+         let| shape' = Grid.Transf.periodic_factor mode bgcolor shape in
+         Result.Ok (`Obj (pos, `Grid shape'))
+      | `FillResizeAlike_3 mode, [| `Color bgcolor; `Vec (h, w); `Grid g|] when h > 0 && w > 0 ->
+         let| g' = Grid.Transf.fill_and_resize_alike mode bgcolor (h,w) g in
+         Result.Ok (`Grid g')
+      | `FillResizeAlike_3 mode, [| `Color bgcolor; `Vec (h, w); `Obj (pos, `Grid shape)|] when h > 0 && w > 0 ->
+         let| shape' = Grid.Transf.fill_and_resize_alike mode bgcolor (h,w) shape in
+         Result.Ok (`Obj (pos, `Grid shape'))
+      | `SelfCompose_3, [| `Color bgcolor; `Color c_mask; `Grid g1|] ->
+         let| g = Grid.Transf.compose bgcolor c_mask g1 g1 in
+         Result.Ok (`Grid g)
+      | `ApplySymVec_1 (sym,tv), [| `Vec (i,j)|] ->
+         Funct.apply_symmetry_vec sym tv i j
+
+      | `ApplySymGrid_1 sym, [| `Obj (`Vec (i, j), `Grid g1)|] ->
+         let g1' = Funct.grid_sym sym g1 in
+         Result.Ok (`Obj (`Vec (i, j), `Grid g1')) (* NOTE: do not use sym_pos because pos in PosShape must be the top-left corner of the shape, see def of TranslationSym *)
+      | `ApplySymGrid_1 sym, [| `Grid g|] ->
+         let g' = Funct.grid_sym sym g in
+         Result.Ok (`Grid g')
+
+      | `UnfoldSym_1 sym_matrix, [| `Obj (`Vec (i,j), `Grid g1)|] ->
+         let| g1 = Funct.unfold_grid sym_matrix g1 in
+         Result.Ok (`Obj (`Vec (i, j), `Grid g1))
+      | `UnfoldSym_1 sym_matrix, [| `Grid g|] ->
+         let| g' = Funct.unfold_grid sym_matrix g in
+         Result.Ok (`Grid g')
+
+      | `CloseSym_2 sym_seq, [| `Color bgcolor; `Obj (`Vec (i,j), `Grid g1)|] ->
+         let| g1 = Funct.close_grid sym_seq bgcolor g1 in
+         Result.Ok (`Obj (`Vec (i, j), `Grid g1))
+      | `CloseSym_2 sym_seq, [| `Color bgcolor; `Grid g|] ->
+         let| g' = Funct.close_grid sym_seq bgcolor g in
+         Result.Ok (`Grid g')
+
+      | `TranslationSym_2 sym, [| (`Obj _ | `Grid _ as d1); (`Obj _ | `Grid _ as d2)|] ->
          (match get_pos d1, get_size d1, get_pos d2, get_size d2 with
           | Some (mini1,minj1), Some (h1,w1), Some (mini2,minj2), Some (h2,w2) ->
              let| ti, tj =
@@ -2016,42 +1820,26 @@ module MyDomain : Madil.DOMAIN =
                   else Result.Error (Undefined_result "TranslationSym: Rotate90: non-square pivot object")
              in
              Result.Ok (`Vec (ti, tj))
-          | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `MajorityColor_1 ->
-         (function
-          | [| `Grid g|] ->
-             let| c = Grid.majority_color Grid.black g in
-             Result.Ok (`Color c)
-          | _ -> Result.Error (Invalid_expr e))
-      | `MinorityColor_1 ->
-         (function
-          | [| `Grid g|] ->
-             let| c = Grid.minority_color Grid.black g in
-             Result.Ok (`Color c)
-          | _ -> Result.Error (Invalid_expr e))
-      | `ColorCount_1 ->
-         (function
-          | [| `Grid g|] ->
-             let n = Grid.color_count Grid.black g in
-             Result.Ok (`Int n)
-          | _ -> Result.Error (Invalid_expr e))
-      | `Coloring_2 ->
-         (function
-          | [| d1; `Color c|] ->
-             (match d1 with
-              | `Grid g ->
-                 let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
-                 let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
-                 Result.Ok (`Grid g')
-              | _ -> Result.Error (Invalid_expr e))
-          | _ -> Result.Error (Invalid_expr e))
-      | `SwapColors_3 ->
-         (function
-          | [| `Grid g; `Color c1; `Color c2|] ->
-             let| g' = Grid.Transf.swap_colors g c1 c2 in
-             Result.Ok (`Grid g')
-          | _ -> Result.Error (Invalid_expr e))
+          | _ -> Result.Error (Undefined_result "translation_sym: expects objs and grids"))
+      | `MajorityColor_1, [| `Grid g|] ->
+         let| c = Grid.majority_color Grid.black g in
+         Result.Ok (`Color c)
+      | `MinorityColor_1, [| `Grid g|] ->
+         let| c = Grid.minority_color Grid.black g in
+         Result.Ok (`Color c)
+      | `ColorCount_1, [| `Grid g|] ->
+         let n = Grid.color_count Grid.black g in
+         Result.Ok (`Int n)
+      | `Coloring_2, [| `Grid g; `Color c|] ->
+         let m = Grid.Mask.from_grid_background Grid.transparent g in (* collapsing all colors *)
+         let g' = Grid.Mask.to_grid m Grid.transparent c in (* mask to shape with color c *)
+         Result.Ok (`Grid g')
+      | `SwapColors_3, [| `Grid g; `Color c1; `Color c2|] ->
+         let| g' = Grid.Transf.swap_colors g c1 c2 in
+         Result.Ok (`Grid g')
+      | _ ->
+         pp_params ();
+         assert false
 
     let eval_aggreg (name : string) (init : value -> 'a option) (g_item : 'a * value -> 'a option) (v1 : value) : 'a result =
       (* v1 is usually a sequence *)
@@ -2083,388 +1871,289 @@ module MyDomain : Madil.DOMAIN =
          Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) best_revpath))
       | None -> Result.Error (Undefined_result (name ^ ": no values"))
 
-    let rec eval_func (f : func) : value array -> value result = (* QUICK *)
-      match f with
-      | `Cast_1 (k,k') ->
-         (function
-          | [|v1|] -> Result.Ok v1
-          | _ -> assert false)         
-      | `Index_1 is ->
-         (function
-          | [|v1|] ->
-             Option.to_result
-               ~none:(Undefined_result "index: undefined")
-               (Ndseq.index_list v1 is)
-          | _ -> assert false)
-      | `Tail_1 ->
-         (function
-          | [|v1|] ->
-             Option.to_result
-               ~none:(Undefined_result "tail: undefined on the empty sequence")
-               (Ndseq.tail ~depth:0 v1)
-          | _ -> assert false)
-      | `Reverse_1 ->
-         (function
-          | [|v1|] ->
-             if Ndseq.ndim v1 >= 1
-             then
-               Result.Ok (Ndseq.map ~depth:0 0
-                            (Ndseq.seq_of_seq List.rev)
-                            v1)
-             else Result.Error (Undefined_result "reverse: not defined on scalars")
-          | _ -> assert false)
-      | `Rotate_1 shift ->
-         (function
-          | [|v1|] ->
-             if Ndseq.ndim v1 >= 1
-             then
-               Result.Ok (Ndseq.map ~depth:0 0
-                            (Ndseq.seq_of_seq
-                               (fun l -> list_rotate l shift))
-                            v1)
-             else Result.Error (Undefined_result "rotate: not defined on scalars")
-          | _ -> assert false)
-      | `UniqueVals_1 ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim >= 1
-             then
-               Result.Ok (Ndseq.map ~depth:(ndim-1) 0
-                            (Ndseq.seq_of_seq list_unique_vals)
-                          v1)
-             else Result.Error (Undefined_result "unique_vals: not defined on scalars")
-          | _ -> assert false)
-      | `UniqueRanks_1 ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim >= 1
-             then
-               Result.Ok
-                 (Ndseq.map ~depth:(ndim-1) 0
-                    (fun v1 ->
-                      match v1 with
-                      | `Seq (0, l) ->
-                         let _unique, ranks = list_unique_ranks l in
-                         Ndseq.seq 0 (List.map (fun n -> `Int n) ranks)
-                      | _ -> assert false)
-                    v1)
-             else Result.Error (Undefined_result "unique_ranks: not defined on scalars")
-          | _ -> assert false)
-      | `Transpose_1 ->
-         (function
-          | [|v1|] ->
-             Option.to_result
-               ~none:(Undefined_result "transpose: rows have different lengths")
-               (Ndseq.transpose v1)
-          | _ -> assert false)
-      | `Flatten_1 (rows,snake) ->
-         (function
-          | [|v1|] ->
-             Option.to_result
-               ~none:(Undefined_result "flatten: less than 2 dims")
-               (if rows
-                then Ndseq.flatten_by_rows ~snake v1
-                else Ndseq.flatten_by_cols ~snake v1)
-          | _ -> assert false)
-      | `Cardinal_1 ->
-         (function
-          | [|v1|] ->
-             if Ndseq.ndim v1 >= 1
-             then
-               Result.Ok (Ndseq.map ~depth:0 (- Ndseq.ndim v1)
-                            (Ndseq.item_of_seq
-                               (fun l -> `Int (List.length l)))
-                            v1)
-             else Result.Error (Undefined_result "cardinal: not a sequence")
-          | _ -> assert false)
-      | `Count_1 ->
-         (function
-          | [|v1|] ->
-             let| count =
-               eval_aggreg "count"
-                 (fun v -> Some 1)
-                 (fun (sum, _) -> Some (sum + 1))
-                 v1 in
-             Result.Ok (`Int count)
-          | _ -> assert false)
-      | `DistinctCount_1 ->
-         (function
-          | [|v1|] ->
-             let| seen =
-               eval_aggreg "distinct_count"
-                 (fun v -> Some (Bintree.singleton v))
-                 (fun (seen, v) -> Some (Bintree.add v seen))
-                 v1 in
-             Result.Ok (`Int (Bintree.cardinal seen))
-          | _ -> assert false)
-      | `Sum_1 ->
-         (function
-          | [|v1|] ->
-             let| sum =
-               eval_aggreg "sum"
-                 (function `Int i -> Some i | _ -> None)
-                 (function (sum, `Int i) -> Some (sum + i) | _ -> None)
-                 v1 in
-             Result.Ok (`Int sum)
-          | _ -> assert false)
-      | `Min_1 ->
-         (function
-          | [|v1|] ->
-             let| m =
-               eval_aggreg "min"
-                 (function `Int i -> Some i | _ -> None)
-                 (function (m, `Int i) -> Some (min m i) | _ -> None)
-                 v1 in
-             Result.Ok (`Int m)
-          | _ -> assert false)
-      | `Max_1 ->
-         (function
-          | [|v1|] ->
-             let| m =
-               eval_aggreg "max"
-                 (function `Int i -> Some i | _ -> None)
-                 (function (m, `Int i) -> Some (max m i) | _ -> None)
-                 v1 in
-             Result.Ok (`Int m)
-          | _ -> assert false)
-      | `ArgMin_1 ->
-         (function
-          | [|v1|] -> (* returns first index if multiple *)
-             eval_arg_best "argmin"
-               (function `Int i -> Some i | _ -> None)
-               (fun i best -> i < best)
-               v1
-          | _ -> assert false)
-      | `ArgMax_1 ->
-         (function
-          | [|v1|] -> (* returns first index if multiple *)
-             eval_arg_best "argmax"
-               (function `Int i -> Some i | _ -> None)
-               (fun i best -> i > best)
-               v1
-          | _ -> assert false)
-      | `MostCommon_1 ->
-         (function
-          | [|v1|] when Ndseq.ndim v1 > 0 ->
-             let cnt = new Common.counter in
-             let| () =
-               eval_aggreg "mostcommon"
-                 (fun v -> cnt#add v; Some ())
-                 (fun (res, v) -> cnt#add v; Some res)
-                 v1 in
-             (match cnt#most_frequents with
-              | _, [v] -> Result.Ok v
-              | _ -> Result.Error (Undefined_result "mostcommon: ambiguous"))
-          | _ -> assert false)
-      | `LeastCommon_1 ->
-         (function
-          | [|v1|] when Ndseq.ndim v1 > 0 ->
-             let cnt = new Common.counter in
-             let| () =
-               eval_aggreg "leastcommon"
-                 (fun v -> cnt#add v; Some ())
-                 (fun (res, v) -> cnt#add v; Some res)
-                 v1 in
-             (match cnt#least_frequents with
-              | _, [v] -> Result.Ok v
-              | _ -> Result.Error (Undefined_result "leastcommon: ambiguous"))
-          | _ -> assert false)
-      | `LogAnd_1 ->
-         (function
-          | [|v1|] ->
-             let| m =
-               eval_aggreg "and"
-                 (function `Grid m -> Some m | _ -> None)
-                 (function
-                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
-                     Some (Grid.Mask.inter m1 m2)
-                  | _ -> None)
-                 v1 in
-             Result.Ok (`Grid m)
-          | _ -> assert false)
-      | `LogOr_1 ->
-         (function
-          | [|v1|] ->
-             let| m =
-               eval_aggreg "or"
-                 (function `Grid m -> Some m | _ -> None)
-                 (function
-                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
-                     Some (Grid.Mask.union m1 m2)
-                  | _ -> None)
-                 v1 in
-             Result.Ok (`Grid m)
-          | _ -> assert false)
-      | `LogXOr_1 ->
-         (function
-          | [|v1|] ->
-             let| m =
-               eval_aggreg "xor"
-                 (function `Grid m -> Some m | _ -> None)
-                 (function
-                  | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
-                     Some (Grid.Mask.diff_sym m1 m2)
-                  | _ -> None)
-                 v1 in
-             Result.Ok (`Grid m)
-          | _ -> assert false)
-      | `GridOfColorSeq_1 dir ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim > 0
-             then
-               Ndseq.map_result ~depth:(ndim-1) (-1)
-                 (fun vcolors ->
-                   let| g = make_grid_from_color_seq dir vcolors in
-                   Result.Ok (`Grid g))
-                 v1
-             else Result.Error (Undefined_result "gridOfColorSeq: not a sequence")
-          | _ -> assert false)
-      | `GridOfColorMat_1 ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim > 1
-             then
-               Ndseq.map_result ~depth:(ndim-2) (-2)
-                 (fun vcolorss ->
-                   let| g = make_grid_from_color_seq_seq vcolorss in
-                   Result.Ok (`Grid g))
-                 v1
-             else Result.Error (Undefined_result "gridOfColorMat: not matrix")
-          | _ -> assert false)
-      | `Colors_1 ->
-         (function
-          | [|v1|] ->
-             Ndseq.map_result 1
-               (function
-                | `Grid g ->
-                   let lnc = Grid.color_freq_desc g in
-                   Result.Ok (Ndseq.seq 0 (List.map (fun (n,c) -> `Color c) lnc))
-                | _ -> Result.Error (Undefined_result "colors: not a grid"))
-               v1
-          | _ -> assert false)
-      | `Halves_1 dir ->
-         (function
-          | [|v1|] ->
-             Ndseq.map_result 1
-               (function
-                | `Grid g ->
-                   let h, w = Grid.dims g in
-                   let| g1, g2 =
-                     match dir with
-                     | `H ->
-                        let w' = w / 2 in
-                        let| g1 = Grid.Transf.crop g 0 0 h w' in
-                        let| g2 = Grid.Transf.crop g 0 (w-w') h w' in
-                        Result.Ok (g1,g2)
-                     | `V ->
-                        let h' = h / 2 in
-                        let| g1 = Grid.Transf.crop g 0 0 h' w in
-                        let| g2 = Grid.Transf.crop g (h - h') 0 h' w in
-                        Result.Ok (g1,g2) in
-                   Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
-                | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
-               v1
-          | _ -> assert false)
-      | `Quadrants_1 ->
-         (function
-          | [|v1|] ->
-             Ndseq.map_result 2
-               (function
-                | `Grid g ->
-                   let h, w = Grid.dims g in
-                   let h' = h / 2 in
-                   let w' = w / 2 in
-                   let| g00 = Grid.Transf.crop g 0 0 h' w' in
-                   let| g01 = Grid.Transf.crop g 0 (w-w') h' w' in
-                   let| g10 = Grid.Transf.crop g (h-h') 0 h' w' in
-                   let| g11 = Grid.Transf.crop g (h-h') (w-w') h' w' in
-                   Result.Ok
-                     (Ndseq.seq 1
-                        [ Ndseq.seq 0 [`Grid g00; `Grid g01];
-                          Ndseq.seq 0 [`Grid g10; `Grid g11]])
-                | _ -> Result.Error (Undefined_result "quadrants: not a grid"))
-               v1
-          | _ -> assert false)             
-      | `RelativePos_1 ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim > 0
-             then
-               Result.Ok
-               (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
-                 (fun seq_objs ->
-                   match seq_objs with
-                   | `Seq (d, objs) ->
-                      assert (d = 0);
-                      Ndseq.seq 1
-                        (List.map
-                           (fun obj1 ->
-                             Ndseq.seq 0
-                               (List.map
-                                  (fun obj2 ->
-                                    match obj1, obj2 with
-                                    | `Obj (`Vec (mini1,minj1), `Grid g1),
-                                      `Obj (`Vec (mini2,minj2), `Grid g2) ->
-                                       let i = abs (mini2 - mini1) in
-                                       let j = abs (minj2 - minj1) in
-                                       `Vec (i, j)
-                                    | _ -> assert false)
-                                  objs))
-                           objs)
-                   | _ -> assert false)
-                 v1)
-             else Result.Error (Undefined_result "relativePos_1: not a sequence")
-          | _ -> assert false)
-      | `TranslatedOnto_1 ->
-         (function
-          | [|v1|] ->
-             let ndim = Ndseq.ndim v1 in
-             if ndim > 0
-             then
-               Result.Ok
-               (Ndseq.map ~depth:(ndim - 1) 1 (* adding a dimension *)
-                 (fun seq_objs ->
-                   match seq_objs with
-                   | `Seq (d, objs) ->
-                      assert (d = 0);
-                      Ndseq.seq 1
-                        (List.map
-                           (fun obj1 ->
-                             Ndseq.seq 0
-                               (List.map
-                                  (fun obj2 ->
-                                    match obj1, obj2 with
-                                    | `Obj (`Vec (mini1,minj1), `Grid g1),
-                                      `Obj (`Vec (mini2,minj2), `Grid g2) ->
-                                       let h1, w1 = Grid.dims g1 in
-                                       let h2, w2 = Grid.dims g2 in
-                                       let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
-                                       let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
-                                       let ti =
-                                         if maxi1 < mini2 then mini2 - maxi1 - 1
-                                         else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
-                                         else 0 in
-                                       let tj =
-                                         if maxj1 < minj2 then minj2 - maxj1 - 1
-                                         else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
-                                         else 0 in
-                                       `Vec (mini1 + ti, minj1 + tj)
-                                    | _ -> assert false)
-                                  objs))
-                           objs)
-                   | _ -> assert false)
-                 v1)
-             else Result.Error (Undefined_result "translatedOnto_1: not a sequence")
-          | _ -> assert false)
-      | #func_itemwise as f ->
+    let rec eval_func (f : func) (args : value array) : value result = (* QUICK *)
+      let pp_params () =
+        print_string "eval_func: ";
+        pp xp_func (f :> func);
+        Array.iteri
+          (fun i arg ->
+            if i > 0 then print_string ", ";
+            pp xp_value arg)
+          args;
+        print_endline ")"        
+      in
+      let k = Array.length args in
+      let ndim1 = if k < 1 then 0 else Ndseq.ndim args.(0) in
+      let _ndim2 = if k < 2 then 0 else Ndseq.ndim args.(1) in
+      match f, args with
+      | #func_itemwise as f, _ ->
          let f_item = eval_func_itemwise f in
-         (fun args -> Ndseq.broadcast_result f_item args)
+         Ndseq.broadcast_result f_item args
+      | `Cast_1 (k,k'), [|v1|] -> Result.Ok v1
+      | `Index_1 is, [|v1|] ->
+         Option.to_result
+           ~none:(Undefined_result "index: undefined")
+           (Ndseq.index_list v1 is)
+      | `Tail_1, [|v1|] ->
+         Option.to_result
+           ~none:(Undefined_result "tail: undefined on the empty sequence")
+           (Ndseq.tail ~depth:0 v1)
+      | `Reverse_1, [|v1|] when ndim1 >= 1 ->
+         Result.Ok (Ndseq.map ~depth:0 0
+                      (Ndseq.seq_of_seq List.rev)
+                      v1)
+      | `Rotate_1 shift, [|v1|] when ndim1 >= 1 ->
+         Result.Ok (Ndseq.map ~depth:0 0
+                      (Ndseq.seq_of_seq
+                         (fun l -> list_rotate l shift))
+                      v1)
+      | `UniqueVals_1, [|v1|] when ndim1 >= 1 ->
+         Result.Ok (Ndseq.map ~depth:(ndim1 - 1) 0
+                      (Ndseq.seq_of_seq list_unique_vals)
+                      v1)
+      | `UniqueRanks_1, [|v1|] when ndim1 >= 1 ->
+         Result.Ok
+           (Ndseq.map ~depth:(ndim1 - 1) 0
+              (fun v1 ->
+                match v1 with
+                | `Seq (0, l) ->
+                   let _unique, ranks = list_unique_ranks l in
+                   Ndseq.seq 0 (List.map (fun n -> `Int n) ranks)
+                | _ -> assert false)
+              v1)
+      | `Transpose_1, [|v1|] ->
+         Option.to_result
+           ~none:(Undefined_result "transpose: rows have different lengths")
+           (Ndseq.transpose v1)
+      | `Flatten_1 (rows,snake), [|v1|] ->
+         Option.to_result
+           ~none:(Undefined_result "flatten: less than 2 dims")
+           (if rows
+            then Ndseq.flatten_by_rows ~snake v1
+            else Ndseq.flatten_by_cols ~snake v1)
+      | `Cardinal_1, [|v1|] when ndim1 >= 1 ->
+         Result.Ok (Ndseq.map ~depth:0 (- ndim1)
+                      (Ndseq.item_of_seq
+                         (fun l -> `Int (List.length l)))
+                      v1)
+      | `Count_1, [|v1|] ->
+         let| count =
+           eval_aggreg "count"
+             (fun v -> Some 1)
+             (fun (sum, _) -> Some (sum + 1))
+             v1 in
+         Result.Ok (`Int count)
+      | `DistinctCount_1, [|v1|] ->
+         let| seen =
+           eval_aggreg "distinct_count"
+             (fun v -> Some (Bintree.singleton v))
+             (fun (seen, v) -> Some (Bintree.add v seen))
+             v1 in
+         Result.Ok (`Int (Bintree.cardinal seen))
+      | `Sum_1, [|v1|] ->
+         let| sum =
+           eval_aggreg "sum"
+             (function `Int i -> Some i | _ -> None)
+             (function (sum, `Int i) -> Some (sum + i) | _ -> None)
+             v1 in
+         Result.Ok (`Int sum)
+      | `Min_1, [|v1|] ->
+         let| m =
+           eval_aggreg "min"
+             (function `Int i -> Some i | _ -> None)
+             (function (m, `Int i) -> Some (min m i) | _ -> None)
+             v1 in
+         Result.Ok (`Int m)
+      | `Max_1, [|v1|] ->
+         let| m =
+           eval_aggreg "max"
+             (function `Int i -> Some i | _ -> None)
+             (function (m, `Int i) -> Some (max m i) | _ -> None)
+             v1 in
+         Result.Ok (`Int m)
+      | `ArgMin_1, [|v1|] -> (* returns first index if multiple *)
+         eval_arg_best "argmin"
+           (function `Int i -> Some i | _ -> None)
+           (fun i best -> i < best)
+           v1
+      | `ArgMax_1, [|v1|] -> (* returns first index if multiple *)
+         eval_arg_best "argmax"
+           (function `Int i -> Some i | _ -> None)
+           (fun i best -> i > best)
+           v1
+      | `MostCommon_1, [|v1|] when ndim1 > 0 ->
+         let cnt = new Common.counter in
+         let| () =
+           eval_aggreg "mostcommon"
+             (fun v -> cnt#add v; Some ())
+             (fun (res, v) -> cnt#add v; Some res)
+             v1 in
+         (match cnt#most_frequents with
+          | _, [v] -> Result.Ok v
+          | _ -> Result.Error (Undefined_result "mostcommon: ambiguous"))
+      | `LeastCommon_1, [|v1|] when ndim1 > 0 ->
+         let cnt = new Common.counter in
+         let| () =
+           eval_aggreg "leastcommon"
+             (fun v -> cnt#add v; Some ())
+             (fun (res, v) -> cnt#add v; Some res)
+             v1 in
+         (match cnt#least_frequents with
+          | _, [v] -> Result.Ok v
+          | _ -> Result.Error (Undefined_result "leastcommon: ambiguous"))
+      | `LogAnd_1, [|v1|] ->
+         let| m =
+           eval_aggreg "and"
+             (function `Grid m -> Some m | _ -> None)
+             (function
+              | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                 Some (Grid.Mask.inter m1 m2)
+              | _ -> None)
+             v1 in
+         Result.Ok (`Grid m)
+      | `LogOr_1, [|v1|] ->
+         let| m =
+           eval_aggreg "or"
+             (function `Grid m -> Some m | _ -> None)
+             (function
+              | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                 Some (Grid.Mask.union m1 m2)
+              | _ -> None)
+             v1 in
+         Result.Ok (`Grid m)
+      | `LogXOr_1, [|v1|] ->
+         let| m =
+           eval_aggreg "xor"
+             (function `Grid m -> Some m | _ -> None)
+             (function
+              | (m1, `Grid m2) when Grid.dims m1 = Grid.dims m2 ->
+                 Some (Grid.Mask.diff_sym m1 m2)
+              | _ -> None)
+             v1 in
+         Result.Ok (`Grid m)
+      | `GridOfColorSeq_1 dir, [|v1|] when ndim1 > 0 ->
+         Ndseq.map_result ~depth:(ndim1 - 1) (-1)
+           (fun vcolors ->
+             let| g = make_grid_from_color_seq dir vcolors in
+             Result.Ok (`Grid g))
+           v1
+      | `GridOfColorMat_1, [|v1|] when ndim1 > 1 ->
+         Ndseq.map_result ~depth:(ndim1 - 2) (-2)
+           (fun vcolorss ->
+             let| g = make_grid_from_color_seq_seq vcolorss in
+             Result.Ok (`Grid g))
+           v1
+      | `Colors_1, [|v1|] ->
+         Ndseq.map_result 1
+           (function
+            | `Grid g ->
+               let lnc = Grid.color_freq_desc g in
+               Result.Ok (Ndseq.seq 0 (List.map (fun (n,c) -> `Color c) lnc))
+            | _ -> Result.Error (Undefined_result "colors: not a grid"))
+           v1
+      | `Halves_1 dir, [|v1|] ->
+         Ndseq.map_result 1
+           (function
+            | `Grid g ->
+               let h, w = Grid.dims g in
+               let| g1, g2 =
+                 match dir with
+                 | `H ->
+                    let w' = w / 2 in
+                    let| g1 = Grid.Transf.crop g 0 0 h w' in
+                    let| g2 = Grid.Transf.crop g 0 (w-w') h w' in
+                    Result.Ok (g1,g2)
+                 | `V ->
+                    let h' = h / 2 in
+                    let| g1 = Grid.Transf.crop g 0 0 h' w in
+                    let| g2 = Grid.Transf.crop g (h - h') 0 h' w in
+                    Result.Ok (g1,g2) in
+               Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
+            | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
+           v1
+      | `Quadrants_1, [|v1|] ->
+         Ndseq.map_result 2
+           (function
+            | `Grid g ->
+               let h, w = Grid.dims g in
+               let h' = h / 2 in
+               let w' = w / 2 in
+               let| g00 = Grid.Transf.crop g 0 0 h' w' in
+               let| g01 = Grid.Transf.crop g 0 (w-w') h' w' in
+               let| g10 = Grid.Transf.crop g (h-h') 0 h' w' in
+               let| g11 = Grid.Transf.crop g (h-h') (w-w') h' w' in
+               Result.Ok
+                 (Ndseq.seq 1
+                    [ Ndseq.seq 0 [`Grid g00; `Grid g01];
+                      Ndseq.seq 0 [`Grid g10; `Grid g11]])
+            | _ -> Result.Error (Undefined_result "quadrants: not a grid"))
+           v1
+      | `RelativePos_1, [|v1|] when ndim1 > 0 ->
+         Result.Ok
+           (Ndseq.map ~depth:(ndim1 - 1) 1 (* adding a dimension *)
+              (fun seq_objs ->
+                match seq_objs with
+                | `Seq (d, objs) ->
+                   assert (d = 0);
+                   Ndseq.seq 1
+                     (List.map
+                        (fun obj1 ->
+                          Ndseq.seq 0
+                            (List.map
+                               (fun obj2 ->
+                                 match obj1, obj2 with
+                                 | `Obj (`Vec (mini1,minj1), `Grid g1),
+                                   `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                                    let i = abs (mini2 - mini1) in
+                                    let j = abs (minj2 - minj1) in
+                                    `Vec (i, j)
+                                 | _ -> assert false)
+                               objs))
+                        objs)
+                | _ -> assert false)
+              v1)
+      | `TranslatedOnto_1, [|v1|] when ndim1 > 0 ->
+         Result.Ok
+           (Ndseq.map ~depth:(ndim1 - 1) 1 (* adding a dimension *)
+              (fun seq_objs ->
+                match seq_objs with
+                | `Seq (d, objs) ->
+                   assert (d = 0);
+                   Ndseq.seq 1
+                     (List.map
+                        (fun obj1 ->
+                          Ndseq.seq 0
+                            (List.map
+                               (fun obj2 ->
+                                 match obj1, obj2 with
+                                 | `Obj (`Vec (mini1,minj1), `Grid g1),
+                                   `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                                    let h1, w1 = Grid.dims g1 in
+                                    let h2, w2 = Grid.dims g2 in
+                                    let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
+                                    let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
+                                    let ti =
+                                      if maxi1 < mini2 then mini2 - maxi1 - 1
+                                      else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
+                                      else 0 in
+                                    let tj =
+                                      if maxj1 < minj2 then minj2 - maxj1 - 1
+                                      else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
+                                      else 0 in
+                                    `Vec (mini1 + ti, minj1 + tj)
+                                 | _ -> assert false)
+                               objs))
+                        objs)
+                | _ -> assert false)
+              v1)
+
+(* TEST      | f, [| `Seq (d, lv)|] ->
+         let| lres = list_map_result (fun v -> eval_func f [|v|]) lv in
+         Result.Ok (`Seq (d, lres)) *)
+    
+      | _ ->
+         pp_params ();
+         assert false
 
     let eval_unbound_var x = Result.Error (Failure ("eval: unbound var $" ^ string_of_int x)) (* Result.Ok `Null *)
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
