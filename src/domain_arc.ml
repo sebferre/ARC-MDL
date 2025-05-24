@@ -959,6 +959,98 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Strict -> "_strict"
       | `TradeOff -> ""
 
+    let func_res_args_ndims : func -> int * int array = function
+      | `Plus_2 -> 0, [|0; 0|]
+      | `Minus_2 -> 0, [|0; 0|]
+      | `Modulo_2 -> 0, [|0; 0|]
+      | `ScaleUp_2 -> 0, [|0; 0|]
+      | `ScaleDown_2 -> 0, [|0; 0|]
+      | `ScaleTo_2 -> 0, [|0; 0|]
+      | `I_1 -> 0, [|0|]
+      | `J_1 -> 0, [|0|]
+      | `IJTranspose_1 -> 0, [|0|]
+      | `Direction_1 -> 0, [|0|]
+      | `Abs_1 -> 0, [|0|]
+      | `AsTVec_1 tv -> 0, [|0|]
+      | `Pos_1 -> 0, [|0|]
+      | `Grid_1 -> 0, [|0|]
+      | `Size_1 -> 0, [|0|]
+      | `Crop_2 -> 0, [|0; 0|]
+      | `Strip_1 -> 0, [|0|]
+      | `Corner_2 -> 0, [|0; 0|]
+      | `Average_n -> raise TODO
+      | `Span_2 -> 0, [|0; 0|]
+      | `Norm_1 -> 0, [|0|]
+      | `Diag1_1 k -> 0, [|0|]
+      | `Diag2_1 k -> 0, [|0|]
+      | `LogNot_1 -> 0, [|0|]
+      | `Stack_n -> raise TODO
+      | `Area_1 -> 0, [|0|]
+      | `Left_1 -> 0, [|0|]
+      | `Right_1 -> 0, [|0|]
+      | `Center_1 -> 0, [|0|]
+      | `Top_1 -> 0, [|0|]
+      | `Bottom_1 -> 0, [|0|]
+      | `Middle_1 -> 0, [|0|]
+      | `MiddleCenter_1 -> 0, [|0|]
+      | `ProjI_1 -> 0, [|0|]
+      | `ProjJ_1 -> 0, [|0|]
+      | `MaskOfGrid_1 -> 0, [|0|]
+      | `GridOfMask_2 -> 0, [|0; 0|]
+      | `Tiling_1 (k,l) -> 0, [|0|]
+      | `Border_1 -> 0, [|0|]
+      | `Interior_1 -> 0, [|0|]
+      | `DNeighbors_1 -> 0, [|0|]
+      | `INeighbors_1 -> 0, [|0|]
+      | `Neighbors_1 -> 0, [|0|]
+      | `Unrepeat_1 -> 0, [|0|]
+      | `PeriodicFactor_2 mode -> 0, [|0; 0|]
+      | `FillResizeAlike_3 mode -> 0, [|0; 0; 0|]
+      | `SelfCompose_3 -> 0, [|0; 0; 0|]
+      | `ApplySymVec_1 (sym,tv) -> 0, [|0|]
+      | `ApplySymGrid_1 sym -> 0, [|0|]
+      | `UnfoldSym_1 sym_matrix -> 0, [|0|]
+      (* sym list list = matrix to be filled with symmetries of some mask *)
+      | `CloseSym_2 sym_seq -> 0, [|0; 0|]
+      (* symmetry list = list of symmetries to chain and stack to force some symmetry, taking the given color as transparent *)
+      | `TranslationSym_2 sym -> 0, [|0; 0|]
+      | `MajorityColor_1 -> 0, [|0|]
+      | `MinorityColor_1 -> 0, [|0|]
+      | `ColorCount_1 -> 0, [|0|]
+      | `Coloring_2 -> 0, [|0; 0|]
+      | `SwapColors_3 -> 0, [|0; 0; 0|]
+
+      | `Cast_1 (k,k') -> 0, [|0|]
+      | `Index_1 is -> assert false
+      | `Tail_1 -> 1, [|1|]
+      | `Reverse_1 -> 1, [|1|]
+      | `Rotate_1 shift -> 1, [|1|]
+      | `UniqueVals_1 -> 1, [|1|]
+      | `UniqueRanks_1 -> 1, [|1|]
+      | `Transpose_1 -> 2, [|2|]
+      | `Flatten_1 (rows,snake) -> 1, [|2|]
+      | `Cardinal_1 -> 0, [|1|]
+      | `Count_1 -> assert false
+      | `DistinctCount_1 -> assert false
+      | `Sum_1 -> assert false
+      | `Min_1 -> assert false
+      | `Max_1 -> assert false
+      | `ArgMin_1 -> assert false
+      | `ArgMax_1 -> assert false
+      | `MostCommon_1 -> assert false
+      | `LeastCommon_1 -> assert false
+      | `LogAnd_1 -> assert false
+      | `LogOr_1 -> assert false
+      | `LogXOr_1 -> assert false
+      | `GridOfColorSeq_1 dir -> 0, [|1|]
+      | `GridOfColorMat_1 -> 0, [|2|]
+      | `Colors_1 -> 1, [|0|]
+      | `Halves_1 dir -> 1, [|0|]
+      | `Quadrants_1 -> 2, [|0|]
+      | `RelativePos_1 -> 2, [|1|]
+      | `TranslatedOnto_1 -> 2, [|1|]
+
+    
     (* ASD *)
               
     let asd (* : asd *) =
@@ -1541,10 +1633,41 @@ module MyDomain : Madil.DOMAIN =
   
       end
 
-    let eval_func_itemwise (f : func_itemwise) (args : value array) : value result =
+    let eval_aggreg (name : string) (init : value -> 'a option) (g_item : 'a * value -> 'a option) (v1 : value) : 'a result =
+      (* v1 is usually a sequence *)
+      let acc_opt =
+        Ndseq.fold_left
+          (fun res v ->
+            match res with
+            | None -> init v
+            | Some acc -> g_item (acc, v))
+          None v1 in
+      match acc_opt with
+      | Some acc -> Result.Ok acc
+      | None -> Result.Error (Undefined_result (name ^ ": no values"))
+
+    let eval_arg_best (name : string) (proj : value -> 'a option) (better : 'a -> 'a -> bool) (v1 : value) : value result (* index *) =
+      let res =
+        Ndseq.foldi_left
+          (fun res revpath v ->
+            match res, proj v with
+            | _, None -> None
+            | None, Some x -> Some (revpath, x)
+            | Some (best_revpath, best), Some x ->
+               if better x best
+               then Some (revpath, x)
+               else res)
+          None v1 in
+      match res with
+      | Some (best_revpath, _best) ->
+         Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) best_revpath))
+      | None -> Result.Error (Undefined_result (name ^ ": no values"))
+
+    let rec eval_func (f : func) (args : value array) : value result =
       let pp_params () =
         print_string "eval_func: ";
         pp xp_func (f :> func);
+        print_string "(";
         Array.iteri
           (fun i arg ->
             if i > 0 then print_string ", ";
@@ -1552,6 +1675,9 @@ module MyDomain : Madil.DOMAIN =
           args;
         print_endline ")"        
       in
+      let k = Array.length args in
+      let ndim1 = if k < 1 then 0 else Ndseq.ndim args.(0) in
+      let _ndim2 = if k < 2 then 0 else Ndseq.ndim args.(1) in
       match f, args with
       | `Plus_2, [| `Int i1; `Int i2|] -> Result.Ok (`Int (i1 + i2))
       | `Plus_2, [| `Vec (i1,j1); `Vec (i2,j2)|] -> Result.Ok (`Vec (i1+i2, j1+j2))
@@ -1837,105 +1963,37 @@ module MyDomain : Madil.DOMAIN =
       | `SwapColors_3, [| `Grid g; `Color c1; `Color c2|] ->
          let| g' = Grid.Transf.swap_colors g c1 c2 in
          Result.Ok (`Grid g')
-      | _ ->
-         pp_params ();
-         assert false
-
-    let eval_aggreg (name : string) (init : value -> 'a option) (g_item : 'a * value -> 'a option) (v1 : value) : 'a result =
-      (* v1 is usually a sequence *)
-      let acc_opt =
-        Ndseq.fold_left
-          (fun res v ->
-            match res with
-            | None -> init v
-            | Some acc -> g_item (acc, v))
-          None v1 in
-      match acc_opt with
-      | Some acc -> Result.Ok acc
-      | None -> Result.Error (Undefined_result (name ^ ": no values"))
-
-    let eval_arg_best (name : string) (proj : value -> 'a option) (better : 'a -> 'a -> bool) (v1 : value) : value result (* index *) =
-      let res =
-        Ndseq.foldi_left
-          (fun res revpath v ->
-            match res, proj v with
-            | _, None -> None
-            | None, Some x -> Some (revpath, x)
-            | Some (best_revpath, best), Some x ->
-               if better x best
-               then Some (revpath, x)
-               else res)
-          None v1 in
-      match res with
-      | Some (best_revpath, _best) ->
-         Result.Ok (Ndseq.seq 0 (List.rev_map (fun i -> `Int i) best_revpath))
-      | None -> Result.Error (Undefined_result (name ^ ": no values"))
-
-    let rec eval_func (f : func) (args : value array) : value result = (* QUICK *)
-      let pp_params () =
-        print_string "eval_func: ";
-        pp xp_func (f :> func);
-        Array.iteri
-          (fun i arg ->
-            if i > 0 then print_string ", ";
-            pp xp_value arg)
-          args;
-        print_endline ")"        
-      in
-      let k = Array.length args in
-      let ndim1 = if k < 1 then 0 else Ndseq.ndim args.(0) in
-      let _ndim2 = if k < 2 then 0 else Ndseq.ndim args.(1) in
-      match f, args with
-      | #func_itemwise as f, _ ->
-         let f_item = eval_func_itemwise f in
-         Ndseq.broadcast_result f_item args
+    
       | `Cast_1 (k,k'), [|v1|] -> Result.Ok v1
       | `Index_1 is, [|v1|] ->
          Option.to_result
            ~none:(Undefined_result "index: undefined")
            (Ndseq.index_list v1 is)
-      | `Tail_1, [|v1|] ->
-         Option.to_result
-           ~none:(Undefined_result "tail: undefined on the empty sequence")
-           (Ndseq.tail ~depth:0 v1)
-      | `Reverse_1, [|v1|] when ndim1 >= 1 ->
-         Result.Ok (Ndseq.map ~depth:0 0
-                      (Ndseq.seq_of_seq List.rev)
-                      v1)
-      | `Rotate_1 shift, [|v1|] when ndim1 >= 1 ->
-         Result.Ok (Ndseq.map ~depth:0 0
-                      (Ndseq.seq_of_seq
-                         (fun l -> list_rotate l shift))
-                      v1)
-      | `UniqueVals_1, [|v1|] when ndim1 >= 1 ->
-         Result.Ok (Ndseq.map ~depth:(ndim1 - 1) 0
-                      (Ndseq.seq_of_seq list_unique_vals)
-                      v1)
-      | `UniqueRanks_1, [|v1|] when ndim1 >= 1 ->
-         Result.Ok
-           (Ndseq.map ~depth:(ndim1 - 1) 0
-              (fun v1 ->
-                match v1 with
-                | `Seq (0, l) ->
-                   let _unique, ranks = list_unique_ranks l in
-                   Ndseq.seq 0 (List.map (fun n -> `Int n) ranks)
-                | _ -> assert false)
-              v1)
-      | `Transpose_1, [|v1|] ->
+      | `Tail_1, [| `Seq (0, lv1)|] ->
+         (match lv1 with
+          | [] -> Result.Error (Undefined_result "tail: undefined on the empty sequence")
+          | _::tl -> Result.Ok (`Seq (0, tl)))
+      | `Reverse_1, [| `Seq (0, lv1)|] ->
+         Result.Ok (`Seq (0, List.rev lv1))
+      | `Rotate_1 shift, [| `Seq (0, lv1)|] ->
+         Result.Ok (`Seq (0, list_rotate lv1 shift))
+      | `UniqueVals_1, [| `Seq (0, lv1)|] ->
+         Result.Ok (`Seq (0, list_unique_vals lv1))
+      | `UniqueRanks_1, [| `Seq (0, lv1)|] ->
+         let _unique, ranks = list_unique_ranks lv1 in
+         Result.Ok (`Seq (0, List.map (fun n -> `Int n) ranks))
+      | `Transpose_1, [| v1|] when ndim1 = 2 ->
          Option.to_result
            ~none:(Undefined_result "transpose: rows have different lengths")
            (Ndseq.transpose v1)
-      | `Flatten_1 (rows,snake), [|v1|] ->
+      | `Flatten_1 (rows,snake), [|v1|] when ndim1 = 2 ->
          Option.to_result
            ~none:(Undefined_result "flatten: less than 2 dims")
            (if rows
             then Ndseq.flatten_by_rows ~snake v1
             else Ndseq.flatten_by_cols ~snake v1)
-      | `Cardinal_1, [|v1|] when ndim1 >= 1 ->
-         Result.Ok (Ndseq.map ~depth:0 (- ndim1)
-                      (Ndseq.item_of_seq
-                         (fun l -> `Int (List.length l)))
-                      v1)
+      | `Cardinal_1, [| `Seq (0, lv1)|] ->
+         Result.Ok (`Int (List.length lv1))
       | `Count_1, [|v1|] ->
          let| count =
            eval_aggreg "count"
@@ -2031,129 +2089,155 @@ module MyDomain : Madil.DOMAIN =
               | _ -> None)
              v1 in
          Result.Ok (`Grid m)
-      | `GridOfColorSeq_1 dir, [|v1|] when ndim1 > 0 ->
-         Ndseq.map_result ~depth:(ndim1 - 1) (-1)
-           (fun vcolors ->
-             let| g = make_grid_from_color_seq dir vcolors in
-             Result.Ok (`Grid g))
-           v1
-      | `GridOfColorMat_1, [|v1|] when ndim1 > 1 ->
-         Ndseq.map_result ~depth:(ndim1 - 2) (-2)
-           (fun vcolorss ->
-             let| g = make_grid_from_color_seq_seq vcolorss in
-             Result.Ok (`Grid g))
-           v1
-      | `Colors_1, [|v1|] ->
-         Ndseq.map_result 1
-           (function
-            | `Grid g ->
-               let lnc = Grid.color_freq_desc g in
-               Result.Ok (Ndseq.seq 0 (List.map (fun (n,c) -> `Color c) lnc))
-            | _ -> Result.Error (Undefined_result "colors: not a grid"))
-           v1
-      | `Halves_1 dir, [|v1|] ->
-         Ndseq.map_result 1
-           (function
-            | `Grid g ->
-               let h, w = Grid.dims g in
-               let| g1, g2 =
-                 match dir with
-                 | `H ->
-                    let w' = w / 2 in
-                    let| g1 = Grid.Transf.crop g 0 0 h w' in
-                    let| g2 = Grid.Transf.crop g 0 (w-w') h w' in
-                    Result.Ok (g1,g2)
-                 | `V ->
-                    let h' = h / 2 in
-                    let| g1 = Grid.Transf.crop g 0 0 h' w in
-                    let| g2 = Grid.Transf.crop g (h - h') 0 h' w in
-                    Result.Ok (g1,g2) in
-               Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
-            | _ -> Result.Error (Undefined_result "halvesX: not a grid"))
-           v1
-      | `Quadrants_1, [|v1|] ->
-         Ndseq.map_result 2
-           (function
-            | `Grid g ->
-               let h, w = Grid.dims g in
-               let h' = h / 2 in
-               let w' = w / 2 in
-               let| g00 = Grid.Transf.crop g 0 0 h' w' in
-               let| g01 = Grid.Transf.crop g 0 (w-w') h' w' in
-               let| g10 = Grid.Transf.crop g (h-h') 0 h' w' in
-               let| g11 = Grid.Transf.crop g (h-h') (w-w') h' w' in
-               Result.Ok
-                 (Ndseq.seq 1
-                    [ Ndseq.seq 0 [`Grid g00; `Grid g01];
-                      Ndseq.seq 0 [`Grid g10; `Grid g11]])
-            | _ -> Result.Error (Undefined_result "quadrants: not a grid"))
-           v1
-      | `RelativePos_1, [|v1|] when ndim1 > 0 ->
+      | `GridOfColorSeq_1 dir, [|v1|] when ndim1 = 1 ->
+         let| g = make_grid_from_color_seq dir v1 in
+         Result.Ok (`Grid g)
+      | `GridOfColorMat_1, [|v1|] when ndim1 = 2 ->
+         let| g = make_grid_from_color_seq_seq v1 in
+         Result.Ok (`Grid g)
+      | `Colors_1, [| `Grid g|] ->
+         let lnc = Grid.color_freq_desc g in
+         Result.Ok (`Seq (0, List.map (fun (n,c) -> `Color c) lnc))
+      | `Halves_1 dir, [| `Grid g|] ->
+         let h, w = Grid.dims g in
+         let| g1, g2 =
+           match dir with
+           | `H ->
+              let w' = w / 2 in
+              let| g1 = Grid.Transf.crop g 0 0 h w' in
+              let| g2 = Grid.Transf.crop g 0 (w-w') h w' in
+              Result.Ok (g1,g2)
+           | `V ->
+              let h' = h / 2 in
+              let| g1 = Grid.Transf.crop g 0 0 h' w in
+              let| g2 = Grid.Transf.crop g (h - h') 0 h' w in
+              Result.Ok (g1,g2) in
+         Result.Ok (Ndseq.seq 0 [`Grid g1; `Grid g2])
+      | `Quadrants_1, [| `Grid g|] ->
+         let h, w = Grid.dims g in
+         let h' = h / 2 in
+         let w' = w / 2 in
+         let| g00 = Grid.Transf.crop g 0 0 h' w' in
+         let| g01 = Grid.Transf.crop g 0 (w-w') h' w' in
+         let| g10 = Grid.Transf.crop g (h-h') 0 h' w' in
+         let| g11 = Grid.Transf.crop g (h-h') (w-w') h' w' in
          Result.Ok
-           (Ndseq.map ~depth:(ndim1 - 1) 1 (* adding a dimension *)
-              (fun seq_objs ->
-                match seq_objs with
-                | `Seq (d, objs) ->
-                   assert (d = 0);
-                   Ndseq.seq 1
-                     (List.map
-                        (fun obj1 ->
-                          Ndseq.seq 0
-                            (List.map
-                               (fun obj2 ->
-                                 match obj1, obj2 with
-                                 | `Obj (`Vec (mini1,minj1), `Grid g1),
-                                   `Obj (`Vec (mini2,minj2), `Grid g2) ->
-                                    let i = abs (mini2 - mini1) in
-                                    let j = abs (minj2 - minj1) in
-                                    `Vec (i, j)
-                                 | _ -> assert false)
-                               objs))
-                        objs)
-                | _ -> assert false)
-              v1)
-      | `TranslatedOnto_1, [|v1|] when ndim1 > 0 ->
+           (Ndseq.seq 1
+              [ Ndseq.seq 0 [`Grid g00; `Grid g01];
+                Ndseq.seq 0 [`Grid g10; `Grid g11] ])
+      | `RelativePos_1, [| `Seq (0, objs)|] ->
          Result.Ok
-           (Ndseq.map ~depth:(ndim1 - 1) 1 (* adding a dimension *)
-              (fun seq_objs ->
-                match seq_objs with
-                | `Seq (d, objs) ->
-                   assert (d = 0);
-                   Ndseq.seq 1
+           (Ndseq.seq 1
+              (List.map
+                 (fun obj1 ->
+                   Ndseq.seq 0
                      (List.map
-                        (fun obj1 ->
-                          Ndseq.seq 0
-                            (List.map
-                               (fun obj2 ->
-                                 match obj1, obj2 with
-                                 | `Obj (`Vec (mini1,minj1), `Grid g1),
-                                   `Obj (`Vec (mini2,minj2), `Grid g2) ->
-                                    let h1, w1 = Grid.dims g1 in
-                                    let h2, w2 = Grid.dims g2 in
-                                    let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
-                                    let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
-                                    let ti =
-                                      if maxi1 < mini2 then mini2 - maxi1 - 1
-                                      else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
-                                      else 0 in
-                                    let tj =
-                                      if maxj1 < minj2 then minj2 - maxj1 - 1
-                                      else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
-                                      else 0 in
-                                    `Vec (mini1 + ti, minj1 + tj)
-                                 | _ -> assert false)
-                               objs))
-                        objs)
-                | _ -> assert false)
-              v1)
-
-(* TEST      | f, [| `Seq (d, lv)|] ->
-         let| lres = list_map_result (fun v -> eval_func f [|v|]) lv in
-         Result.Ok (`Seq (d, lres)) *)
-    
-      | _ ->
-         pp_params ();
-         assert false
+                        (fun obj2 ->
+                          match obj1, obj2 with
+                          | `Obj (`Vec (mini1,minj1), `Grid g1),
+                            `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                             let i = abs (mini2 - mini1) in
+                             let j = abs (minj2 - minj1) in
+                             `Vec (i, j)
+                          | _ -> assert false)
+                        objs))
+                 objs))
+      | `TranslatedOnto_1, [| `Seq (0, objs)|] ->
+         Result.Ok
+           (Ndseq.seq 1
+              (List.map
+                 (fun obj1 ->
+                   Ndseq.seq 0
+                     (List.map
+                        (fun obj2 ->
+                          match obj1, obj2 with
+                          | `Obj (`Vec (mini1,minj1), `Grid g1),
+                            `Obj (`Vec (mini2,minj2), `Grid g2) ->
+                             let h1, w1 = Grid.dims g1 in
+                             let h2, w2 = Grid.dims g2 in
+                             let maxi1, maxj1 = mini1 + h1 - 1, minj1 + w1 - 1 in
+                             let maxi2, maxj2 = mini2 + h2 - 1, minj2 + w2 - 1 in
+                             let ti =
+                               if maxi1 < mini2 then mini2 - maxi1 - 1
+                               else if maxi2 < mini1 then - (mini1 - maxi2 - 1)
+                               else 0 in
+                             let tj =
+                               if maxj1 < minj2 then minj2 - maxj1 - 1
+                               else if maxj2 < minj1 then - (minj1 - maxj2 - 1)
+                               else 0 in
+                             `Vec (mini1 + ti, minj1 + tj)
+                          | _ -> assert false)
+                        objs))
+                 objs))
+            
+      | f, args -> (* when extra Seq layer on some arg *)
+         let res_ndim, args_ndim = func_res_args_ndims f in
+         assert (Array.length args_ndim = k);
+         let extra_ndims =
+           Array.map2
+             (fun vi ndimi ->
+               let extra_ndimi = Ndseq.ndim vi - ndimi in
+               if extra_ndimi < 0 then (
+                 pp_params ();
+                 assert false);
+               extra_ndimi)
+             args args_ndim in
+         let max_extra_ndim =
+           let res = ref (-1) in
+           Array.iteri
+             (fun i extra_ndim ->
+               if extra_ndim > !res
+               then res := extra_ndim)
+             extra_ndims;
+           !res in
+         if max_extra_ndim = 0 then (
+           (* no Seq to iterate on, should be covered by case above *)
+           pp_params ();
+           assert false);
+         let lv_s =
+           Array.map2
+             (fun vi extra_ndimi ->
+               if extra_ndimi = max_extra_ndim
+               then
+                 match vi with
+                 | `Seq (_, lvi) -> lvi
+                 | _ -> assert false
+               else [vi])
+             args extra_ndims in
+         let all_same_size_or_one =
+           Array.fold_left
+             (fun size_opt lv ->
+               match size_opt with
+               | None -> None
+               | Some size ->
+                  let n = List.length lv in
+                  if n = 0 then None
+                  else if size = 1 || n = 1 || size = n then Some (max size n)
+                  else None)
+             (Some 1) lv_s in
+         (match all_same_size_or_one with
+          | Some size ->
+             let rec aux size rev_res =
+               (* consumes lv_s *)
+               if size = 0
+               then List.rev rev_res
+               else
+                 (* taking list heads *)
+                 let vs = Array.map List.hd lv_s in
+                 (* replacing lists by tails, except singleton *)
+                 for i = 0 to k-1 do
+                   match lv_s.(i) with
+                   | [] -> assert false
+                   | [_] -> ()
+                   | _::tl -> lv_s.(i) <- tl
+                 done;
+                 aux (size-1) (vs :: rev_res) in
+             let l_vs = aux size [] in
+             let| lres = list_map_result (fun vs -> eval_func f vs) l_vs in
+             let dres = max_extra_ndim + res_ndim - 1 in
+             assert (dres >= 0);
+                 Result.Ok (`Seq (dres, lres))
+          | None -> Result.Error (Undefined_result "eval_func: incompatible lengths"))
 
     let eval_unbound_var x = Result.Error (Failure ("eval: unbound var $" ^ string_of_int x)) (* Result.Ok `Null *)
     let eval_arg () = Result.Error (Failure "eval: unexpected Arg")
@@ -2313,8 +2397,9 @@ module MyDomain : Madil.DOMAIN =
            | _ -> assert false in
          res_val v
 
-      | IsFull, [||], [|g1|], _ ->
-         let+ vg1 = g1, r in
+      | IsFull, [||], [|g1|], `GridRange (tg, rh, rw, lc, _conn_opt) ->
+         let r1 = `GridRange (tg, rh, rw, lc, None) in
+         let+ vg1 = g1, r1 in
          res_val vg1
     
       | Crop, [|vg|], [|pos; size|], `GridRange ((filling,nocolor),
@@ -3016,6 +3101,12 @@ module MyDomain : Madil.DOMAIN =
                 lr) in
          let rec aux (gps : generator_pat list) : generator_pat Myseq.t =
            match gps with
+           | [] ->
+              let+++ lv =
+                List.init k (* using empty seq for each arg *)
+                  (fun i -> i, `Seq (d - v_ndim + args_ndim.(i), [])) in
+              res_val (`Seq (d, []))
+
            | `NextArg ((i0,ri), fi) :: _ ->
               let di = d - v_ndim + args_ndim.(i0) in
               let lrf =
@@ -3089,7 +3180,6 @@ module MyDomain : Madil.DOMAIN =
                    | _ -> assert false)
                   gps in
               res_val (`Seq (d, lv))
-           | _ -> assert false
          in
          aux gps
     
@@ -3098,7 +3188,7 @@ module MyDomain : Madil.DOMAIN =
          pp_endline (xp_pat c
                        (Array.map (fun v -> fun ~html print () -> xp_value ~html print v) src) 
                        (Array.init k (fun _ -> fun ~html print _ -> print#string "_"))) ();
-         (if r = `Null then print_endline "r = NULL");
+         pp_endline xp_distrib r;
          assert false
 
     (* model-based parsing *)
@@ -4455,7 +4545,7 @@ module MyDomain : Madil.DOMAIN =
             let res = (* IJTranspose *)
               match t1.kind with
               | INT (COORD (axis,tv)) ->
-                 ({t1 with kind = INT (COORD (axis_transpose axis, tv))}, `Transpose_1, `Default)::res
+                 ({t1 with kind = INT (COORD (axis_transpose axis, tv))}, `IJTranspose_1, `Default)::res
               | VEC tv ->
                  ({t1 with kind = VEC tv}, `IJTranspose_1, `Default)::res
               | _ -> res in
