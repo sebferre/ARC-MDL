@@ -333,7 +333,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | SeqPair of int (* depth of seq items *) (* X, X : X^1 *)
       | SeqCons of int (* depth of seq items *) (* head:X^k-1, tail:X^k : X^k *)
       | SeqRepeat of int (* depth of seq items *) (* X^(k-1) : X^k *)
-      | SeqRange (* start:INT, step:INT : INT+ *) (* TODO: add depth arg *)
+      | SeqRange (* start:INT, step:INT : INT+ *)
       | SeqIndex (* [seq:X^n] index:INT^1 : X^(n-k) *)
       | Params of (string * param) list
 
@@ -698,26 +698,22 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Modulo_2 (* on Int *)
       | `ScaleUp_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
       | `ScaleDown_2 (* on (Int, Vec, Mask, Shape, Grid as T), Card -> T *)
-      | `ScaleTo_2 (* Mask, Grid, Vec -> Mask *)
       | `I_1 (* Vec -> Coord *)
       | `J_1 (* Vec -> Coord *)
       | `IJTranspose_1 (* I <-> J *)
       | `Direction_1 (* Int/Vec -> Int/Vec *)
       | `Abs_1 (* Int/Vec -> Int/Vec *)
-      | `AsTVec_1 of typ_vec (* Int/Vec -> tv *)
       | `Pos_1 (* Obj -> Pos *)
       | `Grid_1 (* Obj -> Grid *)
       | `Size_1 (* Grid -> Vec *)
       | `Crop_2 (* Grid, Rectangle -> Grid *)
       | `Strip_1 (* on Grid *)
       | `Corner_2 (* on Vec *)
-      | `Average_n (* on Int, Vec *) (* TODO: make an aggregate *)
       | `Span_2 (* on Vec *)
       | `Norm_1 (* Vec -> Int *)
       | `Diag1_1 of int (* Vec -> Int *)
       | `Diag2_1 of int (* Vec -> Int *)
       | `LogNot_1 (* on Mask *)
-      | `Stack_n (* on Grids *) (* TODO: make an aggregate *)
       | `Area_1 (* on Shape *)
       | `Left_1 (* on Obj, Grid *)
       | `Right_1 (* on Obj, Grid *)
@@ -768,6 +764,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Count_1 (* Int^k -> Int *)
       | `DistinctCount_1 (* Int^k -> Int *)
       | `Sum_1 (* Int^k -> Int *)
+      | `Avg_1 (* Int^k -> Int *)
       | `Min_1 (* Int^k -> Int *)
       | `Max_1 (* Int^k -> Int *)
       | `ArgMin_1 (* Int^k -> Index^1 *)
@@ -777,6 +774,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogAnd_1 (* Mask^k -> Mask *)
       | `LogOr_1 (* Mask^k -> Mask *)
       | `LogXOr_1 (* Mask^k -> Mask *)
+      | `Stack_1 (* Sprite^k -> Sprite *)
       | `GridOfColorSeq_1 of direction (* Color^k -> Grid^(k-1) *)
       | `GridOfColorMat_1 (* Color^k -> Grid^(k-2) *)
       | `Colors_1 (* Grid -> Color^1, in decreasing frequency *)
@@ -847,13 +845,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Modulo_2 -> print#string "%"
       | `ScaleUp_2 -> print#string "*"
       | `ScaleDown_2 -> print#string "/"
-      | `ScaleTo_2 -> print#string "scaleTo"
       | `I_1 -> print#string "i"
       | `J_1 -> print#string "j"
       | `IJTranspose_1 -> print#string "ij_transpose"
       | `Direction_1 -> print#string "direction"
       | `Abs_1 -> print#string "abs"
-      | `AsTVec_1 tv -> print#string "as"; xp_typ_vec ~html print tv
       | `Pos_1 -> print#string "pos"
       | `Grid_1 -> print#string "grid"
       | `Size_1 -> print#string "size"
@@ -863,13 +859,13 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Count_1 -> print#string "count"
       | `DistinctCount_1 -> print#string "distinct_count"
       | `Sum_1 -> print#string "sum"
+      | `Avg_1 -> print#string "avg"
       | `Min_1 -> print#string "min"
       | `Max_1 -> print#string "max"
       | `ArgMin_1 -> print#string "argmin"
       | `ArgMax_1 -> print#string "argmax"
       | `MostCommon_1 -> print#string "most_common"
       | `LeastCommon_1 -> print#string "least_common"
-      | `Average_n -> print#string "average"
       | `Span_2 -> print#string "span"
       | `Norm_1 -> print#string "norm"
       | `Diag1_1 k -> print#string "diag1"
@@ -878,7 +874,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogOr_1 -> print#string "or"
       | `LogXOr_1 -> print#string "xor"
       | `LogNot_1 -> print#string "not"
-      | `Stack_n -> print#string "stack"
+      | `Stack_1 -> print#string "stack"
       | `Area_1 -> print#string "area"
       | `Left_1 -> print#string "left"
       | `Right_1 -> print#string "right"
@@ -965,26 +961,22 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Modulo_2 -> 0, [|0; 0|]
       | `ScaleUp_2 -> 0, [|0; 0|]
       | `ScaleDown_2 -> 0, [|0; 0|]
-      | `ScaleTo_2 -> 0, [|0; 0|]
       | `I_1 -> 0, [|0|]
       | `J_1 -> 0, [|0|]
       | `IJTranspose_1 -> 0, [|0|]
       | `Direction_1 -> 0, [|0|]
       | `Abs_1 -> 0, [|0|]
-      | `AsTVec_1 tv -> 0, [|0|]
       | `Pos_1 -> 0, [|0|]
       | `Grid_1 -> 0, [|0|]
       | `Size_1 -> 0, [|0|]
       | `Crop_2 -> 0, [|0; 0|]
       | `Strip_1 -> 0, [|0|]
       | `Corner_2 -> 0, [|0; 0|]
-      | `Average_n -> raise TODO
       | `Span_2 -> 0, [|0; 0|]
       | `Norm_1 -> 0, [|0|]
       | `Diag1_1 k -> 0, [|0|]
       | `Diag2_1 k -> 0, [|0|]
       | `LogNot_1 -> 0, [|0|]
-      | `Stack_n -> raise TODO
       | `Area_1 -> 0, [|0|]
       | `Left_1 -> 0, [|0|]
       | `Right_1 -> 0, [|0|]
@@ -1033,6 +1025,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `Count_1 -> assert false
       | `DistinctCount_1 -> assert false
       | `Sum_1 -> assert false
+      | `Avg_1 -> assert false
       | `Min_1 -> assert false
       | `Max_1 -> assert false
       | `ArgMin_1 -> assert false
@@ -1042,6 +1035,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
       | `LogAnd_1 -> assert false
       | `LogOr_1 -> assert false
       | `LogXOr_1 -> assert false
+      | `Stack_1 -> assert false
       | `GridOfColorSeq_1 dir -> 0, [|1|]
       | `GridOfColorMat_1 -> 0, [|2|]
       | `Colors_1 -> 1, [|0|]
@@ -1210,6 +1204,7 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ("Count_1", [|t|])
              ::("DistinctCount_1", [|t|])
              ::("Sum_1", [|t|])
+             ::("Avg_1", [|t|])
              ::("Min_1", [|t|])
              ::("Max_1", [|t|])
              ::("ArgMin_1", [| {t with kind = INT NAT} |]) (* TODO: should be any INT *)
@@ -1218,11 +1213,11 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("Minus_2", [|t (* const *)|])
              ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
              ::("ColorCount_1", [| {t with kind = GRID (`Sprite,false)} |]) (* also for `Noise? *)
-             (* ::("Average_n", [|t; t|]) *)
              ::("UniqueRanks_1", [|{t with kind = GRID (`Sprite,false)}|]) (* TODO: should be any type, not only GRID *)
              ::res
           | INT (COORD (axis,tv)) ->
              ("Sum_1", [|t|])
+             ::("Avg_1", [|t|])
              ::("Min_1", [|t|])
              ::("Max_1", [|t|])
              ::("I_1", [| {t with kind = VEC tv} |])
@@ -1240,7 +1235,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("IJTranspose_1", [| {t with kind = INT (COORD (axis_transpose axis, tv))} |])
              ::("Direction_1", [|t|])
              ::("Abs_1", [|t|])
-             ::("AsTVec_1", [| {t with kind = INT (COORD (axis, tv))} |]) (* should be any other tv *)
              ::("Area_1", [| {t with kind = GRID (`Sprite,false)} |])
              ::("Plus_2", [|t (* const *)|])
              ::("Minus_2", [|t (* const *)|])
@@ -1261,7 +1255,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("IJTranspose_1", [|t|])
              ::("Direction_1", [|t|])
              ::("Abs_1", [|t|])
-             ::("AsTVec_1", [| {t with kind = VEC tv} |]) (* should be any other tv *)
              ::("RelativePos_1", [| {t with kind = OBJ (`Sprite,false)} |])
              ::("TranslatedOnto_1", [| {t with kind = OBJ (`Sprite,false)} |])
              (* ::("TranslationSym_2", [| {t with kind = OBJ (`Sprite,false)};
@@ -1287,7 +1280,6 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              ::("GridOfColorMat_1", [| {t with kind = COLOR C_OBJ} |])
              ::("ScaleUp_2", [|t (* const:{t with kind = INT NAT} *) |])
              ::("ScaleDown_2", [|t (* const: {t with kind = INT NAT} *) |])
-             (* ::("ScaleTo_2", [|t; {t with kind = VEC SIZE} |]) *)
              (* ::("PeriodicFactor_2", [| {t with kind = COLOR (C_BG full)}; t|]) *)
              (* ::("Crop_2", [| {t with kind = GRID (`Full,false)};
                             {t with kind = OBJ (`Sprite,false)} |]) *)
@@ -1311,12 +1303,12 @@ module Basic_types (* : Madil.BASIC_TYPES *) =
              (* ::("UnfoldSym_1", [|t|]) *)
              ::("CloseSym_2", [| (* const: {t with kind = COLOR (C_BG full)};*) t|])
              (* ::("SwapColors_3", [|t; {t with kind = COLOR C_OBJ}; {t with kind = COLOR C_OBJ} |]) *)
-             (* ::("Stack_n", [|t; t|]) *)
              (* on masks *)
              ::("LogNot_1", [|t|])
              ::("LogAnd_1", [|t|])
              ::("LogOr_1", [|t|])
              ::("LogXOr_1", [|t|])
+             ::("Stack_1", [|t|])
              ::res
           | OBJ (filling,nocolor) ->
              (*let full = (filling = `Full) in*)
@@ -1702,9 +1694,6 @@ module MyDomain : Madil.DOMAIN =
       | `ScaleDown_2, [| `Grid g; `Int k|] when k > 0 ->
          let| g' = Grid.Transf.scale_down k k g in
          Result.Ok (`Grid g')
-      | `ScaleTo_2, [| `Grid g; (`Vec (new_h, new_w))|] ->
-         let| g' = Grid.Transf.scale_to new_h new_w g in
-         Result.Ok (`Grid g')
       | `I_1, [| `Vec (i,j)|] -> Result.Ok (`Int i)
       | `J_1, [| `Vec (i,j)|] -> Result.Ok (`Int j)
       | `IJTranspose_1, [| `Int ij|] -> Result.Ok (`Int ij)
@@ -1717,12 +1706,6 @@ module MyDomain : Madil.DOMAIN =
          Result.Ok (`Vec (dir i, dir j))
       | `Abs_1, [| `Int ij|] -> Result.Ok (`Int (abs ij))
       | `Abs_1, [| `Vec (i,j)|] -> Result.Ok (`Vec (abs i, abs j))
-      | `AsTVec_1 POS, [| `Int ij|] when ij >= 0 -> Result.Ok (`Int ij)
-      | `AsTVec_1 POS, [| `Vec (i,j)|] when i >= 0 && j >= 0 -> Result.Ok (`Vec (i,j))
-      | `AsTVec_1 SIZE, [| `Int ij|] when ij >= 1 -> Result.Ok (`Int ij)
-      | `AsTVec_1 SIZE, [| `Vec (i,j)|] when i >= 1 && j >= 1 -> Result.Ok (`Vec (i,j))
-      | `AsTVec_1 MOVE, [| `Int ij|] -> Result.Ok (`Int ij)
-      | `AsTVec_1 MOVE, [| `Vec (i,j)|] -> Result.Ok (`Vec (i,j))
       | `Pos_1, [| `Obj (pos, _)|] -> Result.Ok (pos :> value)
       | `Grid_1, [| `Obj (pos,g1)|] -> Result.Ok g1
       | `Size_1, [| `Grid g|] ->
@@ -1745,27 +1728,6 @@ module MyDomain : Madil.DOMAIN =
          if i1 <> i2 && j1 <> j2
          then Result.Ok (`Vec (i1, j2))
          else Result.Error (Undefined_result "Corner: vectors on same row/column")
-      | `Average_n, _ ->
-         let| is_int,is_vec,n,sumi,sumj =
-           args
-           |> Array.fold_left
-                (fun res t ->
-                  let| is_int,is_vec,n,sumi,sumj = res in
-                  match t with
-                  | `Int i -> Result.Ok (true, is_vec, n+1, sumi+i, sumj)
-                  | `Vec (i, j) -> Result.Ok (is_int, true, n+1, sumi+i, sumj+j)
-                  | _ -> Result.Error (Undefined_result "average_n: expects ints and vecs"))
-                (Result.Ok (false, false, 0, 0, 0)) in
-         (match is_int, is_vec with
-          | true, false ->
-             if sumi mod n = 0
-             then Result.Ok (`Int (sumi / n))
-             else Result.Error (Undefined_result "Average: not an integer")
-          | false, true ->
-             if sumi mod n = 0 && sumj mod n = 0
-             then Result.Ok (`Vec (sumi / n, sumj / n))
-             else Result.Error (Undefined_result "Average: not an integer")
-          | _ -> assert false) (* empty or ill-typed list *)
       | `Span_2, [| `Int i1; `Int i2|] ->
          if i1=i2
          then Result.Error (Undefined_result "Span: same int")
@@ -1780,10 +1742,6 @@ module MyDomain : Madil.DOMAIN =
       | `LogNot_1, [| `Grid m1|] ->
          let m = Grid.Mask.compl m1 in
          Result.Ok (`Grid m)
-      | `Stack_n, _ ->
-         let lg1 = Array.map (function `Grid g1 -> g1 | _ -> assert false) args in
-         let| g = Grid.Transf.layers Grid.transparent (Array.to_list lg1) in
-         Result.Ok (`Grid g)
       | `Area_1, [| `Grid g|] ->
          Result.Ok (`Int (Grid.color_area Grid.transparent g))
       | `Left_1, [| `Obj (`Vec (_, j), _)|] -> Result.Ok (`Int j)
@@ -1972,16 +1930,16 @@ module MyDomain : Madil.DOMAIN =
       | `Tail_1, [| `Seq (0, lv1)|] ->
          (match lv1 with
           | [] -> Result.Error (Undefined_result "tail: undefined on the empty sequence")
-          | _::tl -> Result.Ok (`Seq (0, tl)))
+          | _::tl -> Result.Ok (Ndseq.seq 0 tl))
       | `Reverse_1, [| `Seq (0, lv1)|] ->
-         Result.Ok (`Seq (0, List.rev lv1))
+         Result.Ok (Ndseq.seq 0 (List.rev lv1))
       | `Rotate_1 shift, [| `Seq (0, lv1)|] ->
-         Result.Ok (`Seq (0, list_rotate lv1 shift))
+         Result.Ok (Ndseq.seq 0 (list_rotate lv1 shift))
       | `UniqueVals_1, [| `Seq (0, lv1)|] ->
-         Result.Ok (`Seq (0, list_unique_vals lv1))
+         Result.Ok (Ndseq.seq 0 (list_unique_vals lv1))
       | `UniqueRanks_1, [| `Seq (0, lv1)|] ->
          let _unique, ranks = list_unique_ranks lv1 in
-         Result.Ok (`Seq (0, List.map (fun n -> `Int n) ranks))
+         Result.Ok (Ndseq.seq 0 (List.map (fun n -> `Int n) ranks))
       | `Transpose_1, [| v1|] when ndim1 = 2 ->
          Option.to_result
            ~none:(Undefined_result "transpose: rows have different lengths")
@@ -2015,6 +1973,15 @@ module MyDomain : Madil.DOMAIN =
              (function (sum, `Int i) -> Some (sum + i) | _ -> None)
              v1 in
          Result.Ok (`Int sum)
+      | `Avg_1, [|v1|] ->
+         let| n, sum =
+           eval_aggreg "avg"
+             (function `Int i -> Some (1, i) | _ -> None)
+             (function ((n, sum), `Int i) -> Some (n+1, sum+i) | _ -> None)
+             v1 in
+         if sum mod n = 0
+         then Result.Ok (`Int (sum / n))
+         else Result.Error (Undefined_result "Avg: not an integer")
       | `Min_1, [|v1|] ->
          let| m =
            eval_aggreg "min"
@@ -2089,6 +2056,17 @@ module MyDomain : Madil.DOMAIN =
               | _ -> None)
              v1 in
          Result.Ok (`Grid m)
+      | `Stack_1, [|v1|] ->
+         let| dims, lg1 =
+           eval_aggreg "stack"
+             (function `Grid g -> Some (Grid.dims g, [g]) | _ -> None)
+             (function
+              | ((dims,lg1), `Grid g2) when Grid.dims g2 = dims ->
+                 Some (dims, g2::lg1)
+              | _ -> None)
+             v1 in
+         let| g = Grid.Transf.layers Grid.transparent lg1 in
+         Result.Ok (`Grid g)
       | `GridOfColorSeq_1 dir, [|v1|] when ndim1 = 1 ->
          let| g = make_grid_from_color_seq dir v1 in
          Result.Ok (`Grid g)
@@ -2097,7 +2075,7 @@ module MyDomain : Madil.DOMAIN =
          Result.Ok (`Grid g)
       | `Colors_1, [| `Grid g|] ->
          let lnc = Grid.color_freq_desc g in
-         Result.Ok (`Seq (0, List.map (fun (n,c) -> `Color c) lnc))
+         Result.Ok (Ndseq.seq 0 (List.map (fun (n,c) -> `Color c) lnc))
       | `Halves_1 dir, [| `Grid g|] ->
          let h, w = Grid.dims g in
          let| g1, g2 =
@@ -2236,7 +2214,13 @@ module MyDomain : Madil.DOMAIN =
              let| lres = list_map_result (fun vs -> eval_func f vs) l_vs in
              let dres = max_extra_ndim + res_ndim - 1 in
              assert (dres >= 0);
-                 Result.Ok (`Seq (dres, lres))
+             (try Result.Ok (Ndseq.seq dres lres)
+              with exn ->
+                print_endline "BUG";
+                pp_endline xp_value (`Seq (dres, lres));
+                pp_params ();
+                print_endline (Printexc.to_string exn);
+                raise exn)
           | None -> Result.Error (Undefined_result "eval_func: incompatible lengths"))
 
     let eval_unbound_var x = Result.Error (Failure ("eval: unbound var $" ^ string_of_int x)) (* Result.Ok `Null *)
@@ -4168,13 +4152,11 @@ module MyDomain : Madil.DOMAIN =
       | `Modulo_2 -> 0.
       | `ScaleUp_2 -> 0.
       | `ScaleDown_2 -> 0.
-      | `ScaleTo_2 -> 0.
       | `I_1 -> 0.
       | `J_1 -> 0.
       | `IJTranspose_1 -> 0.
       | `Direction_1 -> 0.
       | `Abs_1 -> 0.
-      | `AsTVec_1 tv -> Mdl.Code.uniform nb_typ_vec
       | `Pos_1 -> 0.
       | `Grid_1 -> 0.
       | `Size_1 -> 0.
@@ -4184,19 +4166,19 @@ module MyDomain : Madil.DOMAIN =
       | `Count_1 -> 0.
       | `DistinctCount_1 -> 0.
       | `Sum_1 -> 0.
+      | `Avg_1 -> 0.
       | `Min_1 -> 0.
       | `Max_1 -> 0.
       | `ArgMin_1 -> 0.
       | `ArgMax_1 -> 0.
       | `MostCommon_1 -> 0.
       | `LeastCommon_1 -> 0.
-      | `Average_n -> 0.
       | `Span_2 -> 0.
       | `Norm_1 -> 0.
       | `Diag1_1 k -> Mdl.Code.universal_int_star k
       | `Diag2_1 k -> Mdl.Code.universal_int_star k
       | `LogAnd_1 | `LogOr_1 | `LogXOr_1 | `LogNot_1 -> 0.
-      | `Stack_n -> 0.
+      | `Stack_1 -> 0.
       | `Area_1 -> 0.
       | `Left_1 | `Right_1 | `Center_1 | `Top_1 | `Bottom_1 | `Middle_1 -> 0.
       | `MiddleCenter_1 -> 0.
@@ -4390,7 +4372,7 @@ module MyDomain : Madil.DOMAIN =
               match t1.kind with
               | GRID (filling,nocolor) ->
                  ({t1 with kind = INT NAT}, `Area_1, `Default)
-                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default) (* TODO: add cast from NAT to COORD? *)
+                 ::({t1 with kind = INT (COORD (I, SIZE))}, `Area_1, `Default)
                  ::({t1 with kind = INT (COORD (J, SIZE))}, `Area_1, `Default)
                  ::res
               | _ -> res in
@@ -4677,10 +4659,11 @@ module MyDomain : Madil.DOMAIN =
                 (typ_card, `Count_1, `Default)
                 ::(typ_card, `DistinctCount_1, `Default)
                 ::res in
-              let res = (* Sum, Min, Max, ArgMin, ArgMax *)
+              let res = (* Sum, Avg, Min, Max, ArgMin, ArgMax *)
                 match t1.kind with
                 | INT _ ->
                    (t1_scalar, `Sum_1, `Default)
+                   ::(t1_scalar, `Avg_1, `Default)
                    ::(t1_scalar, `Min_1, `Default)
                    ::(t1_scalar, `Max_1, `Default)
                    ::(typ_index, `ArgMin_1, `Default)
@@ -4697,6 +4680,12 @@ module MyDomain : Madil.DOMAIN =
                    (t1_scalar, `LogAnd_1, `Default)
                    ::(t1_scalar, `LogOr_1, `Default)
                    ::(t1_scalar, `LogXOr_1, `Default)
+                   ::res
+                | _ -> res in
+              let res = (* Stack *)
+                match t1.kind with
+                | GRID (`Sprite, _) ->
+                   (t1_scalar, `Stack_1, `Default)
                    ::res
                 | _ -> res in
               res
@@ -4811,7 +4800,7 @@ module MyDomain : Madil.DOMAIN =
           :: rs
         else rs in
       let rs = (* adding SeqCons : DECOMP *) (* TODO: find better, for any position, matching some pattern *)
-        if ndim > 0 (* > 0 : TODO BUG: this entails missing refinements, unrelated ones *)
+        if ndim > 0
         then
           let$ rs, dep = rs, List.init ndim (fun i -> i) in
           if Ndseq.for_all ~depth:(ndim-dep-1)
@@ -4953,7 +4942,7 @@ module MyDomain : Madil.DOMAIN =
              let param_order = param_order nocolor nmax mode in
              let t_param = {t with kind = PARAMS ([SEG; ORDER nocolor], t.kind)} in
              (Model.make_pat t (Params ["seg", param_seg; "order", param_order])
-                [| Model.make_expr_const {kind = SEG; ndim = 0} (`Seg GPat.Objects.SameColor); (* TODO: remove constant param? *)
+                [| Model.make_expr_const {kind = SEG; ndim = 0} (`Seg GPat.Objects.SameColor);
                    Model.make_def var0 (Model.make_any {kind = ORDER nocolor; ndim = 0});
                    Model.make_pat t_param (Objects (nmax, mode))
                      [| Model.make_def var0 (Model.make_any {t with kind = VEC SIZE});
