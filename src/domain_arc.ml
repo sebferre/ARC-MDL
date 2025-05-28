@@ -4988,9 +4988,11 @@ module MyDomain : Madil.DOMAIN =
                           (Model.make_pat {kind = OBJ (`Sprite,nocolor); ndim = ndim+1} Obj
                              [| Model.make_def var0 (Model.make_any {kind = VEC POS; ndim = ndim+1});
                                 Model.make_def var0
-                                  (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
+                                  (Model.make_any {kind = GRID (`Sprite,nocolor); ndim = ndim+1})
+                                  (* TEST                                  (Model.make_pat {kind = GRID (`Sprite,nocolor); ndim = ndim+1} Monocolor
                                      [| Model.make_def var0 (Model.make_any {kind = COLOR C_OBJ; ndim = ndim+1});
-                                        Model.make_def var0 (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) |]);
+                                        Model.make_def var0 (Model.make_any {kind = GRID (filling,true); ndim = ndim+1}) |]) *)
+                             |]);
                         Model.make_def var0 (Model.make_derived {t with kind = OBJ (`Sprite,nocolor)});
                         Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |])
              :: refs
@@ -5024,9 +5026,11 @@ module MyDomain : Madil.DOMAIN =
                           (Model.make_pat {t with kind = OBJ (`Sprite,nocolor)} Obj
                              [| Model.make_def var0 (Model.make_any {t with kind = VEC POS});
                                 Model.make_def var0
-                                  (Model.make_pat {t with kind = GRID (`Sprite,nocolor)} Monocolor
+                                  (Model.make_any {t with kind = GRID (`Sprite,nocolor)})
+                                  (* TEST (Model.make_pat {t with kind = GRID (`Sprite,nocolor)} Monocolor
                                      [| Model.make_def var0 (Model.make_any {t with kind = COLOR C_OBJ});
-                                        Model.make_def var0 (Model.make_any {t with kind = GRID (filling,true)}) |]) |]);
+                                        Model.make_def var0 (Model.make_any {t with kind = GRID (filling,true)}) |]) *)
+                             |]);
                         Model.make_def var0 (Model.make_any {t with kind = GRID (`Noise,nocolor)}) |] |])
              :: refs
            else refs in
