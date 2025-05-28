@@ -80,7 +80,7 @@ let parse_skyline (g : Grid.t) (* mask *) : ((int * int) * int list) option = (*
              if b0 <> b then
                state := `Wrong
           | `Wrong -> ()      
-      done;
+        done;
         match !state with
         | `Left false -> (* all false *)
            rev_lpos := 0 :: !rev_lpos
@@ -104,7 +104,7 @@ let parse_skyline (g : Grid.t) (* mask *) : ((int * int) * int list) option = (*
            ok := false
       )
     done;
-    if !ok
+    if !ok && !dir_j <> 0
     then Some ((dir_i, !dir_j), List.rev !rev_lpos)
     else None
   and aux_horizontal () =
@@ -149,7 +149,7 @@ let parse_skyline (g : Grid.t) (* mask *) : ((int * int) * int list) option = (*
            ok := false
       )
     done;
-    if !ok
+    if !ok && !dir_i <> 0
     then Some ((!dir_i, dir_j), List.rev !rev_lpos)
     else None
   in

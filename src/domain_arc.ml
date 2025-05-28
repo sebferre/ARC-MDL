@@ -3280,9 +3280,11 @@ module MyDomain : Madil.DOMAIN =
               let h1, w1 = Grid.dims g1 in
               let h, w = Grid.dims g in
               let* i, j = Myseq.from_list (Grid_patterns.parse_crop g g1) in
+              let ri = Range.make_closed 0 (h-h1) in
+              let rj = Range.make_closed 0 (w-w1) in
+              assert (Range.mem i ri && Range.mem j rj);
               Myseq.return
-                (v, [| `Vec (i,j), `VecRange (Range.make_closed 0 (h-h1),
-                                              Range.make_closed 0 (w-w1));
+                (v, [| `Vec (i,j), `VecRange (ri,rj);
                        `Vec (h1, w1), `VecRange (rh1, rw1) |])
            | _ -> Myseq.empty)
 
@@ -3301,11 +3303,13 @@ module MyDomain : Madil.DOMAIN =
          let* objs, g_noise = GPat.Objects.parse nmax seg g in
          let objs = GPat.Objects.sort order objs in
          let card = List.length objs in
+         let rcard = Range.make_closed 1 nmax in
+         assert (Range.mem card rcard);
          let _v, merger, r_merger =
            make_objects_v_merger h w card objs g_noise in
          Myseq.return
            (v, [| `Vec (h,w), `VecRange (rh,rw); (* size *)
-                  `Int card, `IntRange (Range.make_closed 1 nmax); (* card *)
+                  `Int card, `IntRange rcard; (* card *)
                     
                   Ndseq.seq 0 (* objs *)
                     (List.map
@@ -3315,12 +3319,14 @@ module MyDomain : Madil.DOMAIN =
                     (List.map
                        (fun (i,j,g1) ->
                          let h1, w1 = Grid.dims g1 in
-                         `ObjRange (`VecRange (Range.make_closed 0 (h-h1), (* (h-1)), *)
-                                               Range.make_closed 0 (w-w1)), (* (w-1))), *)
-                                    `GridRange (tg1,
-                                                Range.make_closed 1 h, (* (h-i), *)
-                                                Range.make_closed 1 w, (* (w-j), *)
-                                                lc1,
+                         let ri = Range.make_closed 0 (h-h1) in
+                         let rj = Range.make_closed 0 (w-w1) in
+                         assert (Range.mem i ri && Range.mem j rj);
+                         let rh1 = Range.make_closed 1 h in
+                         let rw1 = Range.make_closed 1 w in
+                         assert (Range.mem h1 rh1 && Range.mem w1 rw1);
+                         `ObjRange (`VecRange (ri, rj),
+                                    `GridRange (tg1, rh1, rw1, lc1,
                                                 GPat.Objects.seg_conn_opt seg)))
                        objs);
 
@@ -3344,16 +3350,18 @@ module MyDomain : Madil.DOMAIN =
            | [obj] -> obj
            | _ -> assert false in
          let h1, w1 = Grid.dims g1 in
+         let rh1 = Range.make_closed 1 h in
+         let rw1 = Range.make_closed 1 w in
+         assert (Range.mem h1 rh1 && Range.mem w1 rw1);
+         let ri = Range.make_closed 0 (h-h1) in
+         let rj = Range.make_closed 0 (w-w1) in
+         assert (Range.mem i ri && Range.mem j rj);
          Myseq.return
            (v, [| `Vec (h,w), `VecRange (rh,rw); (* size *)
                      
                   `Obj (`Vec (i,j), `Grid g1), (* obj *)
-                  `ObjRange (`VecRange (Range.make_closed 0 (h-h1), (* (h-1)), *)
-                                        Range.make_closed 0 (w-w1)), (* (w-1))), *)
-                             `GridRange (tg1,
-                                         Range.make_closed 1 h, (* (h-i), *)
-                                         Range.make_closed 1 w, (* (w-j), *)
-                                         lc1,
+                  `ObjRange (`VecRange (ri,rj),
+                             `GridRange (tg1, rh1, rw1, lc1,
                                          GPat.Objects.seg_conn_opt seg));
                     
                   `Grid g_noise, `GridRange (tg_noise, Range.make_exact h, Range.make_exact w, lc, None) (* noise *)
@@ -3364,6 +3372,8 @@ module MyDomain : Madil.DOMAIN =
          let nc = List.length lc in
          let layers = Grid_patterns.partition_by_color g in
          let ncol = List.length layers in
+         let rncol = Range.make_closed 1 nc in
+         assert (Range.mem ncol rncol);
          let* () = Myseq.from_bool (ncol > 0) in
          let tm = (`Sprite, true) in
          let* layers = (* permutations of first three objects *)
@@ -3380,7 +3390,7 @@ module MyDomain : Madil.DOMAIN =
                             (Myseq.return (o3::o1::o2::os)))))) in
          Myseq.return
            (v, [| `Vec (h,w), `VecRange (rh, rw);
-                  `Int ncol, `IntRange (Range.make_closed 1 nc);
+                  `Int ncol, `IntRange rncol;
 
                   Ndseq.seq 0 (List.map (fun (c,m) -> `Color c) layers),
                   Ndseq.seq 0 (List.map (fun (c,m) -> `ColorRange (C_OBJ,lc)) layers);
@@ -3599,8 +3609,10 @@ module MyDomain : Madil.DOMAIN =
       | Line, [||], 2, `Grid mask, `GridRange (tmask, rh, rw, lc, conn_opt) -> (* 1 color *)
          (match GPat.parse_line mask with
           | Some (len, (di,dj)) ->
+             let rlen = Range.union rh rw in
+             assert (Range.mem len rlen);
              Myseq.return
-               (v, [| `Int len, `IntRange (Range.union rh rw);
+               (v, [| `Int len, `IntRange rlen;
                       `Vec (di,dj), `VecRange (Range.make_closed 0 1, Range.make_closed (-1) 1) |])
           | None -> Myseq.empty)
 
@@ -3608,13 +3620,24 @@ module MyDomain : Madil.DOMAIN =
          let h, w = Grid.dims g in
          (match GPat.parse_skyline g with
           | Some ((i,j),lpos) ->
+             assert ((i=0) <> (j=0));
+             let rij = Range.make_closed (-1) 1 in
+             assert (Range.mem i rij && Range.mem j rij);
              let max_pos = if i = 0 then w else h in
+             let rpos = Range.Closed (0,max_pos) in
              Myseq.return
                (v, [| `Vec (h,w), `VecRange (rh, rw);
-                      `Vec (i,j), `VecRange (Range.Closed (-1,1), Range.Closed (-1, 1));
+                      `Vec (i,j), `VecRange (rij, rij);
                         
                       Ndseq.seq 0 (List.map (fun p -> `Int p) lpos),
-                      Ndseq.seq 0 (List.map (fun p -> `IntRange (Range.Closed (0,max_pos))) lpos);
+                      Ndseq.seq 0 (List.map (fun p ->
+                                       if not (Range.mem p rpos) then (
+                                         print_int i; print_char ','; print_int j;
+                                         print_newline ();
+                                         List.iter (fun pos -> print_int pos; print_char ' ') lpos;
+                                         print_newline ();
+                                       );
+                                       `IntRange rpos) lpos);
 
                       Ndseq.seq 0 (List.map (fun p -> `Int (max_pos - p)) lpos),
                       Ndseq.seq 0 (List.map (fun p -> `IntRange (Range.make_exact (max_pos - p))) lpos) |])
@@ -3689,14 +3712,22 @@ module MyDomain : Madil.DOMAIN =
          let len = List.length lv in
          let vals, ranks = list_unique_ranks lv in
          let n = List.length vals in
+         let rn = Range.Closed (0,len) in
+         assert (Range.mem n rn);
          Myseq.return
-           (v, [| `Int n, `IntRange (Range.Closed (0,len));
+           (v, [| `Int n, `IntRange rn;
                   
                   Ndseq.seq 0 vals,
                   Ndseq.seq 0 (list_unique_assoc (List.combine lv lr));
                   
-                  Ndseq.seq 0 (List.map (fun i -> `Int i) ranks),
-                  Ndseq.seq 0 (List.init len (fun pos -> `IntRange (Range.Closed (0, min pos (n-1))))) |])
+                  Ndseq.seq 0 (List.map (fun rank -> `Int rank) ranks),
+                  Ndseq.seq 0
+                    (List.mapi
+                       (fun pos rank ->
+                         let rrank = Range.Closed (0, min pos (n-1)) in
+                         assert (Range.mem rank rrank);
+                         `IntRange rrank)
+                       ranks) |])
     
       | SeqSingle dep, [||], 1, `Seq (d, vs), `Seq (_, rs) when d = dep ->
          (match vs, rs with
@@ -3747,6 +3778,7 @@ module MyDomain : Madil.DOMAIN =
                | Range.Closed (a0,b0), Range.Open a1 ->
                   Myseq.return (Range.Open (a1 - b0))
                | Range.Open a0, _ -> Myseq.empty in
+             assert (Range.mem step range_step);
              Myseq.return (v, [|`Int x0, `IntRange r0;
                                `Int step, `IntRange range_step|])
           | _ -> Myseq.empty)
@@ -3773,6 +3805,7 @@ module MyDomain : Madil.DOMAIN =
                     let n = List.length l in
                     let range = Range.make_closed 0 (n-1) in
                     let* i, vi = Myseq.zip (Myseq.range 0 (n-1)) (Myseq.from_list l) in
+                    assert (Range.mem i range);
                     aux (`Int i :: rev_path) (`IntRange range :: rev_r_path) d vi
                | _ -> assert false
            in
@@ -3947,8 +3980,12 @@ module MyDomain : Madil.DOMAIN =
            | BI -> GPat.Motif.candidates_bi in
          dl_motif m lm
       | GRID tg, `Grid g ->
-         let rmax = Range.make_closed 1 Grid.max_size in
-         dl_grid g tg rmax rmax Grid.all_colors None
+         let h, w = Grid.dims g in
+         if h <= Grid.max_size && w <= Grid.max_size
+         then
+           let rmax = Range.make_closed 1 Grid.max_size in
+           dl_grid g tg rmax rmax Grid.all_colors None
+         else (print_int h; print_char ','; print_int w; assert false)
       | OBJ tg, `Obj (`Vec (i,j), `Grid g) ->
          dl_value {t with kind = (INT (COORD (I, POS)))} (`Int i)
          +. dl_value {t with kind = (INT (COORD (J, POS)))} (`Int j)
