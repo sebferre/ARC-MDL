@@ -1139,6 +1139,7 @@ let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * R
   (* bgcolor is the color to be ignored *)
   Common.prof "Grid_patterns.Motif.from_grid" (fun () ->
   let h, w = Grid.dims g in
+  let area = Grid.color_area Grid.transparent g in
   (* color stats: lists of (color,count) pairs *)
   let add_color c (n,n_def,cstats) =
     let rec aux_cstats = function
@@ -1288,8 +1289,10 @@ let from_grid (candidates : t list) (bgcolor : Grid.color) (g : Grid.t) : (t * R
                      let area_core = Grid.color_area Grid.undefined g_core in
                      (* mask area not relevant *)
                      let area_noise = Grid.color_area Grid.transparent g_noise in
-                     Some (area_core + 2 * area_noise,
-                           g_core,g_mask_opt,g_noise))
+                     if 3 * area_noise < area (* noise less than a third of the contents *)
+                     then Some (area_core + 3 * area_noise,
+                                g_core,g_mask_opt,g_noise)
+                     else None)
               | None -> None)
             cores in
         match list_best
